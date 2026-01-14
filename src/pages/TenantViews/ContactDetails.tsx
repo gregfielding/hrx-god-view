@@ -40,6 +40,7 @@ import {
   TableCell,
   TableBody,
   Tooltip,
+  Badge,
 } from '@mui/material';
 import {
   Email as EmailIcon,
@@ -49,12 +50,13 @@ import {
   Facebook as FacebookIcon,
   Instagram as InstagramIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
   Save as SaveIcon,
   Delete as DeleteIcon,
   Info as InfoIcon,
   Language as LanguageIcon,
   AutoAwesome as AutoAwesomeIcon,
-  Task as TaskIcon,
+  AddTask as AddTaskIcon,
   CloudUpload as UploadIcon,
   Business as BusinessIcon,
   AttachMoney as DealIcon,
@@ -69,7 +71,7 @@ import {
   Work as WorkIcon,
   Person as PersonIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -85,7 +87,7 @@ import ContactOpportunitiesTab from '../../components/ContactOpportunitiesTab';
 import AIAssistantChat from '../../components/AIAssistantChat';
 import ContactActivityTab from '../../components/ContactActivityTab';
 import ContactEmailsTab from '../../components/ContactEmailsTab';
-import SalesCoach from '../../components/SalesCoach';
+import { useChatGPT } from '../../contexts/ChatGPTContext';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import { TaskService } from '../../utils/taskService';
 import LogActivityDialog from '../../components/LogActivityDialog';
@@ -246,6 +248,7 @@ const ContactDetails: React.FC = () => {
   const { contactId } = useParams<{ contactId: string }>();
   const navigate = useNavigate();
   const { tenantId, user } = useAuth();
+  const { openChatGPT } = useChatGPT();
   const taskService = TaskService.getInstance();
   
   // Favorites
@@ -374,6 +377,7 @@ const ContactDetails: React.FC = () => {
   const [recentActivities, setRecentActivities] = useState<any[]>([]);
   const [loadingActivities, setLoadingActivities] = useState(false);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [notesCount, setNotesCount] = useState<number>(0);
   
   // Edit mode state for Contact Details card
   const [isEditingContactDetails, setIsEditingContactDetails] = useState(false);
@@ -997,6 +1001,21 @@ const ContactDetails: React.FC = () => {
     loadRecentActivities();
     loadAllCompanies();
     loadJobOrdersForContact();
+    
+    // Load notes count
+    if (contactId && tenantId) {
+      const notesRef = collection(db, 'tenants', tenantId, 'notes');
+      const notesQuery = query(notesRef, where('entityId', '==', contactId), where('entityType', '==', 'contact'));
+      const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
+        setNotesCount(snapshot.size);
+      }, (err) => {
+        console.error('Error loading notes count:', err);
+      });
+      
+      return () => {
+        unsubscribeNotes();
+      };
+    }
   }, [contactId, tenantId]);
 
   // Initialize selected locations when contact or companyLocations change
@@ -1450,7 +1469,7 @@ const ContactDetails: React.FC = () => {
   const getActivityIcon = (iconType: string) => {
     switch (iconType) {
       case 'task':
-        return <TaskIcon sx={{ fontSize: 16 }} />;
+        return <AddTaskIcon sx={{ fontSize: 16 }} />;
       case 'email':
         return <EmailIcon sx={{ fontSize: 16 }} />;
       case 'note':
@@ -1803,6 +1822,104 @@ const ContactDetails: React.FC = () => {
                       </IconButton>
                     </Tooltip>
                   )}
+                  {/* Add Note Icon Button */}
+                  <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                    <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowAddNoteDialog(true)}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <NoteIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Badge>
+                  </Tooltip>
+                  {/* AI Enhance Icon Button */}
+                  <Tooltip title={aiEnhancing ? 'Enhancing...' : 'AI Enhance'}>
+                    <IconButton
+                      size="small"
+                      onClick={handleAIEnhancement}
+                      disabled={aiEnhancing}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        '&:disabled': {
+                          opacity: 0.6
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {aiEnhancing ? (
+                        <CircularProgress size={16} sx={{ color: 'primary.main' }} />
+                      ) : (
+                        <AutoAwesomeIcon sx={{ fontSize: 20 }} />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                  {/* Add Task Icon Button */}
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowTaskDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  {/* Log Activity Icon Button */}
+                  <Tooltip title="Log Activity">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowLogActivityDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <CheckCircleIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
                 </Stack>
                 
                 {/* Line 3: Connections (replaces email/ID/date row) */}
@@ -1995,7 +2112,7 @@ const ContactDetails: React.FC = () => {
                   fontWeight: 400,
                 }),
               }}
-              startIcon={<TaskIcon fontSize="small" />}
+              startIcon={<AddTaskIcon fontSize="small" />}
             >
               Tasks
             </Button>
@@ -2076,28 +2193,36 @@ const ContactDetails: React.FC = () => {
             >
               Back
             </Button>
-            <Button
-              variant="outlined"
-              startIcon={<AddIcon />}
-              onClick={() => setShowAddNoteDialog(true)}
-            >
-              Add Note
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={aiEnhancing ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
-              onClick={handleAIEnhancement}
-              disabled={aiEnhancing}
-            >
-              {aiEnhancing ? 'Enhancing...' : 'AI Enhance'}
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<CheckCircleIcon />}
-              onClick={() => setShowLogActivityDialog(true)}
-            >
-              Log Activity
-            </Button>
+            <Tooltip title="Open Sales Coach">
+              <IconButton
+                onClick={() => {
+                  if (contact && tenantId) {
+                    const contactName = contact.fullName || contact.firstName || contact.lastName || 'Contact';
+                    console.log('[ContactDetails] Opening Sales Coach for:', contactName, contact.id);
+                    openChatGPT({
+                      type: 'sales_coach',
+                      entityType: 'contact',
+                      entityId: contact.id,
+                      entityName: contactName,
+                      tenantId: tenantId,
+                      contactCompany: company?.companyName || company?.name,
+                      contactTitle: contact.jobTitle || contact.title,
+                      associations: contact.associations,
+                    });
+                  }
+                }}
+                sx={{
+                  backgroundColor: 'transparent !important',
+                  color: 'rgba(255,255,255,.8)',
+                  '&:hover': { 
+                    backgroundColor: 'transparent !important',
+                    color: '#FFFFFF',
+                  },
+                }}
+              >
+                <RocketLaunchIcon sx={{ fontSize: 20 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         }
       />
@@ -3126,43 +3251,6 @@ const ContactDetails: React.FC = () => {
                 </Card>
               )}
 
-              {/* Sales Coach Widget */}
-              <Card>
-                <CardHeader 
-                  title="Sales Coach" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <IconButton 
-                      size="small" 
-                      title="Start new conversation"
-                      onClick={() => {
-                        // This will trigger a new conversation in the SalesCoach component
-                        const event = new CustomEvent('startNewSalesCoachConversation', {
-                          detail: { entityId: contact.id }
-                        });
-                        window.dispatchEvent(event);
-                      }}
-                    >
-                      <AddIcon />
-                    </IconButton>
-                  }
-                  sx={{ pb: 1 }}
-                />
-                <CardContent sx={{ p: 0 }}>
-                 <Box sx={{ height: 850 }}>
-                   <SalesCoach 
-                     entityType="contact"
-                     entityId={contact.id}
-                     entityName={contact.fullName || contact.firstName || contact.lastName || 'Contact'}
-                     tenantId={tenantId}
-                     contactCompany={company?.companyName || company?.name}
-                     contactTitle={contact.jobTitle || contact.title}
-                     associations={contact.associations}
-                     hideHeader
-                   />
-                 </Box>
-                 </CardContent>
-               </Card>
 
               {/* Contact Intelligence */}
               {/* Contact Intelligence - Hidden for now */}

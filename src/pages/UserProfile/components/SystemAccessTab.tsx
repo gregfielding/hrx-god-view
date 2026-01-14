@@ -732,8 +732,11 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
         </>
       )}
 
-      {/* Email Signature Section - Only for users viewing their own profile or admins */}
-      {(user?.uid === uid || parseInt(securityLevel || '0', 10) >= 5) && (
+      {/* Email Signature Section - Only for users with security level 5-7 */}
+      {(() => {
+        const viewerLevel = parseInt(securityLevel || '0', 10);
+        return viewerLevel >= 5 && viewerLevel <= 7;
+      })() && (
         <EmailSignatureTab uid={uid} />
       )}
 

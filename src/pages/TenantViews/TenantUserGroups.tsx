@@ -8,12 +8,7 @@ const TenantUserGroups: React.FC = () => {
   const { tenantId } = useAuth();
   if (!tenantId) return null;
   return (
-    <Box sx={{ p: 0, width: '100%' }}>
-      {/* <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
-        <Typography variant="h4" component="h1">
-          User Groups
-        </Typography>
-      </Box> */}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <UserGroupsTab tenantId={tenantId} />
     </Box>
   );

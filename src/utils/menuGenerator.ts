@@ -126,17 +126,7 @@ export async function generateMenuItems(
 
   if (!isHRX) {
     // Add basic menu items that don't require specific roles (for users without claims)
-    // Only show ChatGPT for security levels 5+ (Worker, Manager, Admin)
-    if (effectiveSecurityLevel && !['1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
-      menuItems.push(
-        {
-          text: 'ChatGPT',
-          to: '/chatgpt',
-          icon: 'chatgpt',
-          // Only available to security levels 5, 6, 7 (Worker, Manager, Admin)
-        },
-      );
-    }
+    // ChatGPT moved to top bar navigation - removed from sidebar
 
     // Inbox - available to all users (email-only per decoupling spec)
     menuItems.push({
@@ -156,25 +146,7 @@ export async function generateMenuItems(
 
     // Slack Channels removed - now combined with Mentions in top bar
 
-    // Tasks - requires security level 5+ (Worker, Manager, Admin)
-    if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
-      menuItems.push({
-        text: 'Tasks',
-        to: '/tasks',
-        icon: 'tasks',
-        requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
-      });
-    }
-
-    // Calendar - requires security level 5+ (Worker, Manager, Admin)
-    if (effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) {
-      menuItems.push({
-        text: 'Calendar',
-        to: '/calendar',
-        icon: 'calendar',
-        requiredRoles: ['Worker', 'Manager', 'Admin'] as ClaimsRole[],
-      });
-    }
+    // Tasks and Calendar moved to top bar navigation - removed from sidebar
     // {
     //   text: 'My Profile',
     //   to: '/profile',
@@ -182,13 +154,8 @@ export async function generateMenuItems(
     // },
 
     // Add tenant-specific menu items with claims-based role requirements
+    // Workforce Management moved to Settings - removed from sidebar
     menuItems.push(
-      {
-        text: 'Workforce',
-        to: '/workforce',
-        icon: 'people',
-        requiredRoles: ['Admin', 'Manager'] as ClaimsRole[], // Admin and Manager only
-      },
       // Canonical Contacts/Companies (avoid duplication across Recruiter + CRM)
       // Show for security levels 5+ (Recruiter/Manager/Admin/Worker types)
       ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
@@ -208,6 +175,12 @@ export async function generateMenuItems(
           text: 'Users',
           to: '/users',
           icon: 'people',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+        },
+        {
+          text: 'User Groups',
+          to: '/usergroups',
+          icon: 'diversity3',
           requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
         },
       ] : []),
@@ -346,17 +319,7 @@ export async function generateMenuItems(
 
   if (isHRX) {
     // Add basic menu items for HRX users (no role requirements)
-    // Only show ChatGPT for security levels 5+ (Worker, Manager, Admin)
-    if (effectiveSecurityLevel && !['1', '2', '3', '4'].includes(effectiveSecurityLevel)) {
-      menuItems.push(
-        {
-          text: 'ChatGPT',
-          to: '/chatgpt',
-          icon: 'chatgpt',
-          // Only available to security levels 5, 6, 7 (Worker, Manager, Admin)
-        },
-      );
-    }
+    // ChatGPT moved to top bar navigation - removed from sidebar
     menuItems.push({
       text: 'My Profile',
       to: '/profile',

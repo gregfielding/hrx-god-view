@@ -11,6 +11,16 @@ import {
   IconButton,
   CircularProgress,
   Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Grid,
+  FormControlLabel,
+  Switch,
+  Chip,
+  Alert,
+  Snackbar,
 } from '@mui/material';
 import {
   Clear as ClearIcon,
@@ -19,16 +29,21 @@ import {
   Phone as PhoneIcon,
   Business as BusinessIcon,
   LocationOn as LocationOnIcon,
+  Close as CloseIcon,
 } from '@mui/icons-material';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, orderBy, getDocs, doc, getDoc, limit, startAfter } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, doc, getDoc, limit, startAfter, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useFavorites } from '../hooks/useFavorites';
+import { usePageCache } from '../hooks/usePageCache';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import ContactTable from '../components/ContactTable';
 import ContactTableRow from '../components/ContactTableRow';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
+import PageHeader from '../components/PageHeader';
+import InboxSearchBar from '../components/InboxSearchBar';
+import FavoritesFilter from '../components/FavoritesFilter';
 
 interface Contact {
   id: string;
@@ -53,19 +68,33 @@ const RecruiterContacts: React.FC = () => {
   const navigate = useNavigate();
   const { tenantId, currentUser } = useAuth();
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
+  
+  // Page cache for search and filters
+  const { cacheState, updateCache } = usePageCache({
+    pageKey: 'contacts',
+    defaultState: {
+      companyFilter: 'all',
+      roleFilter: 'all',
+      statusFilter: 'all',
+      stateFilter: 'all',
+      sortField: 'fullName',
+      sortDirection: 'asc',
+    },
+  });
+  
   const headerSearch = outletCtx?.search ?? '';
   const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
   
-  // State
+  // State - initialize from cache
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [companyFilter, setCompanyFilter] = useState<string>('all');
-  const [roleFilter, setRoleFilter] = useState<string>('all');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [stateFilter, setStateFilter] = useState<string>('all');
-  const [sortField, setSortField] = useState<string>('fullName');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [companyFilter, setCompanyFilter] = useState<string>(cacheState.companyFilter || 'all');
+  const [roleFilter, setRoleFilter] = useState<string>(cacheState.roleFilter || 'all');
+  const [statusFilter, setStatusFilter] = useState<string>(cacheState.statusFilter || 'all');
+  const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
+  const [sortField, setSortField] = useState<string>(cacheState.sortField || 'fullName');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'asc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   
@@ -74,9 +103,31 @@ const RecruiterContacts: React.FC = () => {
   const [contactsLastDoc, setContactsLastDoc] = useState<any>(null);
   const [contactsHasMore, setContactsHasMore] = useState(false);
   const loadingMoreRef = useRef(false);
+  
+  // Refs for sticky positioning
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const filtersRef = useRef<HTMLDivElement | null>(null);
 
   // Favorites
   const { favorites, isFavorite, toggleFavorite } = useFavorites('contacts');
+
+  // Add Contact Dialog state
+  const [showAddContactDialog, setShowAddContactDialog] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactForm, setContactForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    jobTitle: '',
+    contactType: 'Unknown',
+    isActive: true,
+    tags: [] as string[],
+    companyId: '',
+    locationId: '',
+  });
+  const [contactError, setContactError] = useState<string | null>(null);
+  const [contactSuccess, setContactSuccess] = useState(false);
 
   // Load contacts and companies
   useEffect(() => {
@@ -97,6 +148,18 @@ const RecruiterContacts: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headerSearch]);
+
+  // Update cache when filters change
+  useEffect(() => {
+    updateCache({
+      companyFilter: companyFilter as any,
+      roleFilter,
+      statusFilter,
+      stateFilter,
+      sortField,
+      sortDirection,
+    });
+  }, [companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection, updateCache]);
 
   // Reset UI pagination when filters/search/sort change
   useEffect(() => {
@@ -323,10 +386,13 @@ const RecruiterContacts: React.FC = () => {
   // Handle sorting
   const handleSort = (field: string) => {
     if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+      const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      setSortDirection(newDirection);
+      updateCache({ sortDirection: newDirection });
     } else {
       setSortField(field);
       setSortDirection('asc');
+      updateCache({ sortField: field, sortDirection: 'asc' });
     }
   };
 
@@ -475,8 +541,82 @@ const RecruiterContacts: React.FC = () => {
   };
 
   const handleAddNew = () => {
-    // Navigate to CRM contacts page for now
-    navigate('/crm/contacts');
+    setShowAddContactDialog(true);
+  };
+
+  const handleContactFormChange = (field: string, value: any) => {
+    setContactForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleTagsChange = (newTags: string[]) => {
+    setContactForm(prev => ({ ...prev, tags: newTags }));
+  };
+
+  const handleSaveContact = async () => {
+    if (!tenantId) return;
+    
+    if (!contactForm.firstName || !contactForm.lastName) {
+      setContactError('First name and last name are required');
+      return;
+    }
+
+    setSavingContact(true);
+    setContactError(null);
+
+    try {
+      const contactData: any = {
+        firstName: contactForm.firstName,
+        lastName: contactForm.lastName,
+        fullName: `${contactForm.firstName} ${contactForm.lastName}`,
+        email: contactForm.email || '',
+        phone: contactForm.phone || '',
+        workPhone: contactForm.phone || '',
+        jobTitle: contactForm.jobTitle || '',
+        title: contactForm.jobTitle || '',
+        contactType: contactForm.contactType,
+        role: contactForm.contactType.toLowerCase().replace(' ', '_'),
+        isActive: contactForm.isActive,
+        tags: contactForm.tags,
+        companyId: contactForm.companyId || '',
+        locationId: contactForm.locationId || '',
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      };
+
+      // If company is selected, add company association
+      if (contactForm.companyId) {
+        const company = companies.find(c => c.id === contactForm.companyId);
+        contactData.companyName = company?.companyName || company?.name || '';
+        contactData.associations = {
+          companies: [contactForm.companyId],
+        };
+      }
+
+      await addDoc(collection(db, 'tenants', tenantId, 'crm_contacts'), contactData);
+      
+      setContactSuccess(true);
+      setShowAddContactDialog(false);
+      setContactForm({
+        firstName: '',
+        lastName: '',
+        email: '',
+        phone: '',
+        jobTitle: '',
+        contactType: 'Unknown',
+        isActive: true,
+        tags: [],
+        companyId: '',
+        locationId: '',
+      });
+      
+      // Reload contacts
+      loadContacts();
+    } catch (error: any) {
+      console.error('Error saving contact:', error);
+      setContactError(error.message || 'Failed to save contact');
+    } finally {
+      setSavingContact(false);
+    }
   };
 
   // Get unique roles from contacts
@@ -503,26 +643,90 @@ const RecruiterContacts: React.FC = () => {
   }, [companies]);
 
   return (
-    <Box
-      sx={{
-        flex: 1,
-        minHeight: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        px: { xs: 2, md: 3 },
-        pt: 2,
-      }}
-    >
-      {/* Filters (search + favorites + add are in the header per Inbox Standard) */}
-      <Box sx={{ 
-        mb: 2,
-        p: 1.5,
-        backgroundColor: '#F9FAFB',
-        borderRadius: '8px',
-        border: '1px solid #E5E7EB',
-        borderBottom: '1px solid #D1D5DB'
-      }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+            <Typography
+              variant="h6"
+              sx={{
+                fontSize: { xs: '20px', md: '24px' },
+                fontWeight: 600,
+                lineHeight: 1.2,
+              }}
+            >
+              Contacts
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+              <InboxSearchBar
+                value={headerSearch}
+                onChange={() => {}}
+                onSearch={() => {}}
+                placeholder="Search contacts..."
+              />
+              <FavoritesFilter
+                favoriteType="contacts"
+                showFavoritesOnly={headerShowFavoritesOnly}
+                onToggle={() => {}}
+              />
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={handleAddNew}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  px: 2.5,
+                  py: 1,
+                  height: '40px',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  bgcolor: '#0057B8',
+                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                  '&:hover': {
+                    bgcolor: '#004a9f',
+                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                  },
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Add Contact
+              </Button>
+            </Box>
+          </Box>
+        }
+      />
+      
+      <Box
+        ref={contentRef}
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {/* Filter & Toolbar Area */}
+        <Box
+          ref={filtersRef}
+          sx={{ 
+            mt: 0,
+            mb: 0,
+            px: 1.5,
+            py: 1.25,
+            backgroundColor: '#F9FAFB',
+            borderRadius: 0,
+            border: '1px solid #E5E7EB',
+            borderBottom: '1px solid #EAEEF4',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            position: 'sticky',
+            top: 0,
+            zIndex: 15,
+          }}
+        >
         <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'wrap' }}>
 
           {/* Company Filter */}
@@ -531,7 +735,11 @@ const RecruiterContacts: React.FC = () => {
             options={companies}
             getOptionLabel={(option) => option.companyName || option.name || 'Unnamed Company'}
             value={companyFilter === 'all' ? null : companies.find(c => c.id === companyFilter) || null}
-            onChange={(_, newValue) => setCompanyFilter(newValue?.id || 'all')}
+            onChange={(_, newValue) => {
+              const newFilter = newValue?.id || 'all';
+              setCompanyFilter(newFilter);
+              updateCache({ companyFilter: newFilter });
+            }}
             sx={{ 
               minWidth: 200,
               height: 36,
@@ -556,7 +764,11 @@ const RecruiterContacts: React.FC = () => {
             <InputLabel sx={{ fontSize: '0.875rem' }}>Role</InputLabel>
             <Select
               value={roleFilter}
-              onChange={(e) => setRoleFilter(String(e.target.value))}
+              onChange={(e) => {
+                const newFilter = String(e.target.value);
+                setRoleFilter(newFilter);
+                updateCache({ roleFilter: newFilter });
+              }}
               label="Role"
               sx={{
                 height: 36,
@@ -583,7 +795,11 @@ const RecruiterContacts: React.FC = () => {
             <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
             <Select
               value={statusFilter}
-              onChange={(e) => setStatusFilter(String(e.target.value))}
+              onChange={(e) => {
+                const newFilter = String(e.target.value);
+                setStatusFilter(newFilter);
+                updateCache({ statusFilter: newFilter });
+              }}
               label="Status"
               sx={{
                 height: 36,
@@ -609,7 +825,11 @@ const RecruiterContacts: React.FC = () => {
             <InputLabel sx={{ fontSize: '0.875rem' }}>State</InputLabel>
             <Select
               value={stateFilter}
-              onChange={(e) => setStateFilter(String(e.target.value))}
+              onChange={(e) => {
+                const newFilter = String(e.target.value);
+                setStateFilter(newFilter);
+                updateCache({ stateFilter: newFilter });
+              }}
               label="State"
               sx={{
                 height: 36,
@@ -634,21 +854,70 @@ const RecruiterContacts: React.FC = () => {
       </Box>
       
       {/* Contacts Table */}
-      <ContactTable
-        contacts={paginatedContacts}
-        loading={loading}
-        columns={{
-          favorites: true,
-          name: true,
-          jobTitle: true,
-          role: true,
-          contactInfo: true,
-          company: true,
-          location: true,
-        }}
-        sortField={sortField}
-        sortDirection={sortDirection}
-        onSort={handleSort}
+      <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* Loading overlay */}
+        {loading && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(255, 255, 255, 0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              borderRadius: '8px',
+            }}
+          >
+            <CircularProgress size={40} />
+          </Box>
+        )}
+        
+        {/* No Results Found message */}
+        {!loading && filteredContacts.length === 0 && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 999,
+              flexDirection: 'column',
+              gap: 2,
+            }}
+          >
+            <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 500 }}>
+              No Results Found
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Try adjusting your search or filters
+            </Typography>
+          </Box>
+        )}
+        
+        <ContactTable
+          contacts={paginatedContacts}
+          loading={loading}
+          square={true}
+          columns={{
+            favorites: true,
+            name: true,
+            jobTitle: true,
+            role: true,
+            contactInfo: true,
+            company: true,
+            location: true,
+          }}
+          sortField={sortField}
+          sortDirection={sortDirection}
+          onSort={handleSort}
         renderRow={(contact, index) => (
           <ContactTableRow
             key={contact.id}
@@ -686,52 +955,177 @@ const RecruiterContacts: React.FC = () => {
           },
         }}
       />
+      </Box>
+      </Box>
 
-      {/* Empty State */}
-      {filteredContacts.length === 0 && !loading && (
-        <Box sx={{ 
-          display: 'flex', 
-          flexDirection: 'column', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          py: 8,
-          textAlign: 'center'
-        }}>
-          <Box sx={{ 
-            width: 120, 
-            height: 120, 
-            borderRadius: '50%', 
-            backgroundColor: '#F3F4F6',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            mb: 3
-          }}>
-            <EmailIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+      {/* Add Contact Dialog */}
+      <Dialog open={showAddContactDialog} onClose={() => !savingContact && setShowAddContactDialog(false)} maxWidth="md" fullWidth>
+        <DialogTitle>
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Typography variant="h6">Add New Contact</Typography>
+            <IconButton onClick={() => !savingContact && setShowAddContactDialog(false)} disabled={savingContact}>
+              <CloseIcon />
+            </IconButton>
           </Box>
-          <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827', mb: 1 }}>
-            No contacts found
-          </Typography>
-          <Typography variant="body2" color="#6B7280" sx={{ mb: 3 }}>
-            {headerSearch || companyFilter !== 'all' || roleFilter !== 'all' || statusFilter !== 'all' || stateFilter !== 'all'
-              ? 'Try adjusting your filters to see more results'
-              : 'Add your first contact to start building your CRM'}
-          </Typography>
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<AddIcon />}
-            onClick={handleAddNew}
-            sx={{
-              borderRadius: '8px',
-              textTransform: 'none',
-              fontWeight: 500
-            }}
-          >
-            Add Your First Contact
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ pt: 1 }}>
+            {contactError && (
+              <Alert severity="error" sx={{ mb: 2 }} onClose={() => setContactError(null)}>
+                {contactError}
+              </Alert>
+            )}
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="First Name"
+                  value={contactForm.firstName}
+                  onChange={(e) => handleContactFormChange('firstName', e.target.value)}
+                  required
+                  disabled={savingContact}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Last Name"
+                  value={contactForm.lastName}
+                  onChange={(e) => handleContactFormChange('lastName', e.target.value)}
+                  required
+                  disabled={savingContact}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Email"
+                  type="email"
+                  value={contactForm.email}
+                  onChange={(e) => handleContactFormChange('email', e.target.value)}
+                  disabled={savingContact}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Phone"
+                  value={contactForm.phone}
+                  onChange={(e) => handleContactFormChange('phone', e.target.value)}
+                  disabled={savingContact}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="Job Title"
+                  value={contactForm.jobTitle}
+                  onChange={(e) => handleContactFormChange('jobTitle', e.target.value)}
+                  disabled={savingContact}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Contact Type</InputLabel>
+                  <Select
+                    value={contactForm.contactType}
+                    label="Contact Type"
+                    onChange={(e) => handleContactFormChange('contactType', e.target.value)}
+                    disabled={savingContact}
+                  >
+                    <MenuItem value="Decision Maker">Decision Maker</MenuItem>
+                    <MenuItem value="Influencer">Influencer</MenuItem>
+                    <MenuItem value="Gatekeeper">Gatekeeper</MenuItem>
+                    <MenuItem value="Referrer">Referrer</MenuItem>
+                    <MenuItem value="Evaluator">Evaluator</MenuItem>
+                    <MenuItem value="Unknown">Unknown</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid item xs={12}>
+                <Autocomplete
+                  size="small"
+                  options={companies}
+                  getOptionLabel={(option) => option.companyName || option.name || 'Unnamed Company'}
+                  value={contactForm.companyId ? companies.find(c => c.id === contactForm.companyId) || null : null}
+                  onChange={(_, newValue) => {
+                    handleContactFormChange('companyId', newValue?.id || '');
+                  }}
+                  disabled={savingContact}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Company"
+                      placeholder="Select a company"
+                    />
+                  )}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={contactForm.isActive}
+                      onChange={(e) => handleContactFormChange('isActive', e.target.checked)}
+                      color="primary"
+                      disabled={savingContact}
+                    />
+                  }
+                  label="Active Contact"
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <Autocomplete
+                  multiple
+                  freeSolo
+                  options={[]}
+                  value={contactForm.tags}
+                  onChange={(event, newValue) => handleTagsChange(newValue)}
+                  disabled={savingContact}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        key={`${option}-${index}`}
+                        variant="outlined"
+                        label={option}
+                        {...getTagProps({ index })}
+                        color="primary"
+                      />
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Tags"
+                      placeholder="Add tags (e.g., Hospitality, Seasonal Hiring)"
+                    />
+                  )}
+                />
+              </Grid>
+            </Grid>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowAddContactDialog(false)} disabled={savingContact}>
+            Cancel
           </Button>
-        </Box>
-      )}
+          <Button onClick={handleSaveContact} variant="contained" disabled={savingContact}>
+            {savingContact ? 'Saving...' : 'Save Contact'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Success Snackbar */}
+      <Snackbar
+        open={contactSuccess}
+        autoHideDuration={3000}
+        onClose={() => setContactSuccess(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert severity="success" onClose={() => setContactSuccess(false)}>
+          Contact added successfully!
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

@@ -66,7 +66,7 @@ const SlackAdminPage: React.FC = () => {
   }
 
   return (
-    <Box sx={{ px: 1, py: 2 }}>
+    <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
       <Grid container spacing={3}>
         {/* Left Column: Mappings */}
         <Grid item xs={12} md={7}>

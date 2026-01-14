@@ -523,7 +523,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   };
 
   return (
-    <Box sx={{ width: '100%', p: 0 }}>
+    <Box sx={{ width: '100%', px: { xs: 2, md: 3 }, py: 2 }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Manage SMS and Email message templates and recruiter phone number assignments. Templates support variables like {'{firstName}'}, {'{jobTitle}'}, and {'{locationCity}'}.
       </Typography>

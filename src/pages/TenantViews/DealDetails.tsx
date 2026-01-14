@@ -39,7 +39,7 @@ import {
   Timeline as TimelineIcon,
   Notes as NotesIcon,
   List as ListIcon,
-  Task as TaskIcon,
+  AddTask as AddTaskIcon,
   Delete as DeleteIcon,
 
   Edit as EditIcon,
@@ -59,6 +59,7 @@ import {
   Stairs as StairsIcon,
   Work as WorkIcon,
   Description as DescriptionIcon,
+  RocketLaunch as RocketLaunchIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -74,7 +75,7 @@ import DealFormRenderer from '../../forms/DealFormRenderer';
 import { getDealCompanyIds, getDealPrimaryCompanyId } from '../../utils/associationsAdapter';
 import DealActivityTab from '../../components/DealActivityTab';
 import DealStageAISuggestions from '../../components/DealStageAISuggestions';
-import SalesCoach from '../../components/SalesCoach';
+import { useChatGPT } from '../../contexts/ChatGPTContext';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import DealAISummary from '../../components/DealAISummary';
@@ -208,6 +209,7 @@ const DealDetails: React.FC = () => {
   const { dealId } = useParams<{ dealId: string }>();
   const navigate = useNavigate();
   const { tenantId, user } = useAuth();
+  const { openChatGPT } = useChatGPT();
   
   // FOUNDATIONAL DATA - Load first, before anything else
   const [deal, setDeal] = useState<DealData | null>(null);
@@ -1984,7 +1986,64 @@ const DealDetails: React.FC = () => {
 
           {/* Action Buttons */}
           <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <Tooltip title="Open Sales Coach">
+                <IconButton
+                  onClick={() => {
+                    if (deal && tenantId) {
+                      openChatGPT({
+                        type: 'sales_coach',
+                        entityType: 'deal',
+                        entityId: deal.id,
+                        entityName: deal.name || 'Deal',
+                        tenantId: tenantId,
+                        associations: {
+                          companies: company ? [company] : [],
+                          contacts: associatedContacts,
+                          deals: [deal],
+                          salespeople: associatedSalespeople,
+                          locations: (deal as any)?.associations?.locations || []
+                        },
+                      });
+                    }
+                  }}
+                  sx={{
+                    p: 1,
+                    color: 'primary.main',
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: 'primary.dark',
+                      bgcolor: 'primary.light',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <RocketLaunchIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Add Task">
+                <IconButton
+                  onClick={() => setShowCreateTaskDialog(true)}
+                  sx={{
+                    p: 1,
+                    color: 'primary.main',
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: 'primary.dark',
+                      bgcolor: 'primary.light',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <AddTaskIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </Tooltip>
               <Button 
                 variant="outlined" 
                 startIcon={<AddIcon />}
@@ -2207,41 +2266,6 @@ const DealDetails: React.FC = () => {
           {/* Center Column - Deal Intelligence */}
           <Grid item xs={12} md={5}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Sales Coach */}
-              <Card>
-                <CardHeader 
-                  title="Sales Coach" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  action={
-                    <IconButton size="small" onClick={() => {
-                      const event = new CustomEvent('startNewSalesCoachConversation', {
-                        detail: { entityId: deal.id }
-                      });
-                      window.dispatchEvent(event);
-                    }}>
-                      <AddIcon />
-                    </IconButton>
-                  }
-                />
-                <CardContent sx={{ p: 0 }}>
-                  <Box sx={{ height: 650 }}>
-                    <SalesCoach 
-                      entityType="deal"
-                      entityId={deal.id}
-                      entityName={deal.name || 'Deal'}
-                      tenantId={tenantId}
-                      associations={{
-                        companies: company ? [company] : [],
-                        contacts: associatedContacts,
-                        deals: [deal],
-                        salespeople: associatedSalespeople,
-                        locations: (deal as any)?.associations?.locations || []
-                      }}
-                      hideHeader
-                    />
-                  </Box>
-                </CardContent>
-              </Card>
 
               {/* Relationship Map */}
               <Box sx={{ mb: 0 }}>

@@ -185,7 +185,7 @@ const CompanyTable: React.FC<CompanyTableProps> = ({
           flexDirection: 'column',
           minHeight: 0,
           overflowY: useOuterScroll ? 'visible' : 'auto',
-          overflowX: useOuterScroll ? 'visible' : 'auto',
+          overflowX: 'auto',
           width: '100%',
           // Scrollbar styling per Inbox Standard
           '&::-webkit-scrollbar': { width: '8px', height: '8px' },

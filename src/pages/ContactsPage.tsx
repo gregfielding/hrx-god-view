@@ -1,27 +1,16 @@
 import React from 'react';
 import { Box, Typography } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
-import { CRMCacheProvider } from '../contexts/CRMCacheContext';
 import RecruiterContacts from './RecruiterContacts';
-import TenantCRM from './TenantViews/TenantCRM';
 
 /**
  * Canonical Contacts route.
- * - If CRM is enabled, route to CRM Contacts (canonical UI for sales).
- * - Else if Recruiter is enabled, render Recruiter Contacts list.
+ * - Renders Recruiter Contacts list (standalone contacts view).
  * - Else show access denied.
  */
 const ContactsPage: React.FC = () => {
-  const { crmSalesEnabled, recruiterEnabled } = useAuth();
+  const { recruiterEnabled } = useAuth();
 
-  // Standalone master table view
-  if (crmSalesEnabled) {
-    return (
-      <CRMCacheProvider>
-        <TenantCRM standaloneTab="contacts" />
-      </CRMCacheProvider>
-    );
-  }
   if (recruiterEnabled) return <RecruiterContacts />;
 
   return (
@@ -30,7 +19,7 @@ const ContactsPage: React.FC = () => {
         Access Denied
       </Typography>
       <Typography variant="body2" color="text.secondary">
-        You don’t have permission to access Contacts.
+        You don't have permission to access Contacts.
       </Typography>
     </Box>
   );

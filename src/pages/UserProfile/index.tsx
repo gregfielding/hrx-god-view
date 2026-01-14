@@ -7,6 +7,8 @@ import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import DescriptionIcon from '@mui/icons-material/Description';
 import NoteIcon from '@mui/icons-material/Note';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
+import AddTaskIcon from '@mui/icons-material/AddTask';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
@@ -40,6 +42,8 @@ import MessagesTab from './components/MessagesTab';
 import StartOnboardingDialog from './components/StartOnboardingDialog';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
 import AddUserNoteDialog from './components/AddUserNoteDialog';
+import CreateTaskDialog from '../../components/CreateTaskDialog';
+import LogActivityDialog from '../../components/LogActivityDialog';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -109,6 +113,10 @@ const UserProfilePage = () => {
   const [viewerHasSmsSender, setViewerHasSmsSender] = useState(false);
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
   const [showAddUserNoteDialog, setShowAddUserNoteDialog] = useState(false);
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
+  const [logActivityLoading, setLogActivityLoading] = useState(false);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
 
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
 
@@ -1171,6 +1179,54 @@ const UserProfilePage = () => {
                       </Badge>
                     </Tooltip>
                   )}
+                  {/* Add Task Icon Button */}
+                  {isAdminView && (
+                    <Tooltip title="Add Task">
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowCreateTaskDialog(true)}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <AddTaskIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {/* Log Activity Icon Button */}
+                  {isAdminView && (
+                    <Tooltip title="Log Activity">
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowLogActivityDialog(true)}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <CheckCircleIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                     </Stack>
                     {/* Line 3: Metadata subtitle */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
@@ -1609,6 +1665,88 @@ const UserProfilePage = () => {
           }}
         />
       )}
+
+      {/* Create Task Dialog */}
+      {showCreateTaskDialog && uid && (tenantId || authTenantId || activeTenant?.id) && (
+        <CreateTaskDialog
+          open={showCreateTaskDialog}
+          onClose={() => setShowCreateTaskDialog(false)}
+          onSubmit={async (taskData) => {
+            if (taskSubmitting) return;
+            setTaskSubmitting(true);
+            setShowCreateTaskDialog(false);
+            try {
+              // Import TaskService dynamically to avoid circular dependencies
+              const { TaskService } = await import('../../utils/taskService');
+              const taskService = TaskService.getInstance();
+              
+              await taskService.createTask({
+                ...taskData,
+                tenantId: (tenantId || authTenantId || activeTenant?.id) as string,
+                createdBy: user?.uid || '',
+                associations: {
+                  companies: [],
+                  contacts: [],
+                  deals: [],
+                  salespeople: user?.uid ? [user.uid] : []
+                }
+              });
+            } catch (error) {
+              console.error('Error creating task:', error);
+            } finally {
+              setTaskSubmitting(false);
+            }
+          }}
+          prefilledData={{
+            assignedTo: user?.uid || '',
+            associations: {
+              companies: [],
+              contacts: [],
+              deals: [],
+              salespeople: user?.uid ? [user.uid] : []
+            }
+          }}
+          contacts={[]}
+          salespeople={[]}
+          currentUserId={user?.uid || ''}
+          loading={taskSubmitting}
+        />
+      )}
+
+      {/* Log Activity Dialog */}
+      <LogActivityDialog
+        open={showLogActivityDialog}
+        onClose={() => setShowLogActivityDialog(false)}
+        onSubmit={async (taskData) => {
+          setLogActivityLoading(true);
+          try {
+            const { TaskService } = await import('../../utils/taskService');
+            const taskService = TaskService.getInstance();
+            await taskService.createTask({
+              ...taskData,
+              tenantId: (tenantId || authTenantId || activeTenant?.id) as string,
+              createdBy: user?.uid || '',
+              status: 'completed',
+              completedAt: new Date(),
+              associations: {
+                ...taskData.associations,
+                salespeople: user?.uid ? [user.uid] : []
+              }
+            });
+            setShowLogActivityDialog(false);
+          } catch (error) {
+            console.error('Error logging activity:', error);
+          } finally {
+            setLogActivityLoading(false);
+          }
+        }}
+        loading={logActivityLoading}
+        salespeople={[]}
+        contacts={[]}
+        preselectContactsFromProps={false}
+        currentUserId={user?.uid || ''}
+        tenantId={tenantId || authTenantId || activeTenant?.id || ''}
+      />
     </Box>
   );
 };

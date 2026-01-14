@@ -31,8 +31,13 @@ import { useNavigate } from 'react-router-dom';
 import InfoIcon from '@mui/icons-material/Info';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import AddTaskIcon from '@mui/icons-material/AddTask';
+import IconButton from '@mui/material/IconButton';
+import Tooltip from '@mui/material/Tooltip';
 
 import { db } from '../../firebase';
+import CreateTaskDialog from '../../components/CreateTaskDialog';
+import { useAuth } from '../../contexts/AuthContext';
 
 import JobOrderShiftsTab from './JobOrderShiftsTab';
 
@@ -85,6 +90,10 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
   const [timesheetsEnabled, setTimesheetsEnabled] = useState(false);
   const [tenantName, setTenantName] = useState('');
   const [tenantLocations, setTenantLocations] = useState<any[]>([]);
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
+  
+  const { user } = useAuth();
 
   useEffect(() => {
     fetchJobOrder();
@@ -542,9 +551,31 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
                 <Typography variant="h6" gutterBottom>
                   Details: Job Order {editForm.jobOrderId || jobOrderId}
                 </Typography>
-                <Button variant="outlined" onClick={onBack || (() => navigate('/flex'))}>
-                  &larr; Back to Job Orders
-                </Button>
+                <Box display="flex" gap={1} alignItems="center">
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      onClick={() => setShowCreateTaskDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Button variant="outlined" onClick={onBack || (() => navigate('/flex'))}>
+                    &larr; Back to Job Orders
+                  </Button>
+                </Box>
               </Box>
               <Box component="form" mb={3}>
                 <Grid container spacing={2} mb={2}>
@@ -990,6 +1021,53 @@ const JobOrderDetails: React.FC<{ tenantId: string; jobOrderId: string; onBack?:
           Job order updated!
         </Alert>
       </Snackbar>
+
+      {/* Create Task Dialog */}
+      {showCreateTaskDialog && (
+        <CreateTaskDialog
+          open={showCreateTaskDialog}
+          onClose={() => setShowCreateTaskDialog(false)}
+          onSubmit={async (taskData) => {
+            if (taskSubmitting) return;
+            setTaskSubmitting(true);
+            setShowCreateTaskDialog(false);
+            try {
+              // Import TaskService dynamically to avoid circular dependencies
+              const { TaskService } = await import('../../utils/taskService');
+              const taskService = TaskService.getInstance();
+              
+              await taskService.createTask({
+                ...taskData,
+                tenantId,
+                createdBy: user?.uid || '',
+                associations: {
+                  companies: jobOrder?.customerId ? [jobOrder.customerId] : [],
+                  contacts: [],
+                  deals: [],
+                  salespeople: user?.uid ? [user.uid] : []
+                }
+              });
+            } catch (error) {
+              console.error('Error creating task:', error);
+            } finally {
+              setTaskSubmitting(false);
+            }
+          }}
+          prefilledData={{
+            assignedTo: user?.uid || '',
+            associations: {
+              companies: jobOrder?.customerId ? [jobOrder.customerId] : [],
+              contacts: [],
+              deals: [],
+              salespeople: user?.uid ? [user.uid] : []
+            }
+          }}
+          contacts={[]}
+          salespeople={[]}
+          currentUserId={user?.uid || ''}
+          loading={taskSubmitting}
+        />
+      )}
     </Box>
   );
 };

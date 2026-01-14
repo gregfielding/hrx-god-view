@@ -22,12 +22,7 @@ const CompanySetup: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 0, width: '100%' }}>
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3} mt={0}>
-        <Typography variant="h4" component="h1">
-          Company Setup
-        </Typography>
-      </Box>
+    <Box sx={{ px: { xs: 2, md: 3 }, py: 2, width: '100%' }}>
       {/* Tabs Navigation */}
       <Paper elevation={1} sx={{ mb: 3, borderRadius: 0 }}>
         <Tabs

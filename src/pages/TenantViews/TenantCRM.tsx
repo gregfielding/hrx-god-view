@@ -147,9 +147,9 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
   const isLockingTabRef = useRef(false);
   const [tabValue, setTabValue] = useState(() => {
     const standaloneTabMap: Record<TenantCRMStandaloneTab, number> = {
-      contacts: 1,
-      companies: 2,
-      opportunities: 3,
+      contacts: 1, // Deprecated - will redirect
+      companies: 2, // Deprecated - will redirect
+      opportunities: 1,
     };
     if (standaloneTab) return standaloneTabMap[standaloneTab];
 
@@ -1442,7 +1442,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     }
 
     // When on Prospecting tab, skip real-time listeners to avoid unnecessary reads
-    if (tabValue === 5) {
+    if (tabValue === 3) {
       return;
     }
 
@@ -2032,12 +2032,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
               >
                 {[
                   { label: 'Dashboard', value: 0, icon: <DashboardIcon fontSize="small" /> },
-                  { label: 'Contacts', value: 1, icon: <PersonIcon fontSize="small" /> },
-                  { label: 'Companies', value: 2, icon: <BusinessIcon fontSize="small" /> },
-                  { label: 'Opportunities', value: 3, icon: <DealIcon fontSize="small" /> },
-                  { label: 'Pipeline', value: 4, icon: <PipelineIcon fontSize="small" /> },
-                  { label: 'Prospect', value: 5, icon: <FilterAltIcon fontSize="small" /> },
-                  { label: 'Activity', value: 6, icon: <TrendingUpIcon fontSize="small" /> },
+                  { label: 'Opportunities', value: 1, icon: <DealIcon fontSize="small" /> },
+                  { label: 'Pipeline', value: 2, icon: <PipelineIcon fontSize="small" /> },
+                  { label: 'Prospect', value: 3, icon: <FilterAltIcon fontSize="small" /> },
+                  { label: 'Activity', value: 4, icon: <TrendingUpIcon fontSize="small" /> },
                 ].map((t) => {
                   const isActive = tabValue === t.value;
                   return (
@@ -2072,50 +2070,21 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         rightActions={
           standaloneTab === 'contacts' ? undefined : (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-              {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
+              {tabValue === 1 && (
                 <InboxSearchBar
                   value={search}
                   onChange={setSearch}
                   onSearch={setSearch}
-                  placeholder={
-                    tabValue === 1 ? 'Search contacts...' : tabValue === 2 ? 'Search companies...' : 'Search opportunities...'
-                  }
+                  placeholder="Search opportunities..."
                 />
               )}
 
-              {/* Favorites filter (Contacts + Companies) */}
-              {(tabValue === 1 || tabValue === 2) && (
-                <FavoritesFilter
-                  favoriteType={tabValue === 1 ? 'contacts' : 'companies'}
-                  showFavoritesOnly={tabValue === 1 ? contactsShowFavoritesOnly : companiesShowFavoritesOnly}
-                  onToggle={tabValue === 1 ? setContactsShowFavoritesOnly : setCompaniesShowFavoritesOnly}
-                  showText={false}
-                  size="small"
-                  sx={{
-                    minWidth: '32px',
-                    width: '32px',
-                    height: '32px',
-                    borderRadius: '50%',
-                    '&:hover': {
-                      backgroundColor:
-                        tabValue === 1
-                          ? (contactsShowFavoritesOnly ? 'primary.dark' : 'action.hover')
-                          : (companiesShowFavoritesOnly ? 'primary.dark' : 'action.hover'),
-                    },
-                  }}
-                />
-              )}
-
-              {(tabValue === 1 || tabValue === 2 || tabValue === 3) && (
+              {tabValue === 1 && (
                 <Button
                   variant="contained"
                   startIcon={<AddIcon />}
                   onClick={() => {
-                    if (tabValue === 3) {
-                      setOpportunityDialogOpen(true);
-                      return;
-                    }
-                    handleAddNew(tabValue === 1 ? 'contact' : 'company');
+                    setOpportunityDialogOpen(true);
                   }}
                   sx={{
                     textTransform: 'none',
@@ -2134,7 +2103,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                     whiteSpace: 'nowrap',
                   }}
                 >
-                  {tabValue === 1 ? 'Add Contact' : tabValue === 2 ? 'Add Company' : 'Add Opportunity'}
+                  Add Opportunity
                 </Button>
               )}
             </Box>
@@ -2190,80 +2159,6 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       )}
       
       {tabValue === 1 && (
-        <ContactsTab 
-          contacts={contacts}
-          companies={companies}
-          locations={locations}
-          search={search}
-          onSearchChange={setSearch}
-          onAddNew={() => handleAddNew('contact')}
-          loading={contactsLoading}
-          hasMore={contactsHasMore}
-          onLoadMore={loadMoreContacts}
-          contactFilter={contactFilter}
-          onContactFilterChange={handleContactFilterChange}
-          locationStateFilter={contactsStateFilter}
-          showFavoritesOnly={contactsShowFavoritesOnly}
-          scrollContainerRef={contentRef}
-          onLocationStateFilterChange={(newFilter) => {
-            console.log('🔄 Contacts state filter changing:', { 
-              from: contactsStateFilter, 
-              to: newFilter 
-            });
-            
-            // Set flag to prevent URL-based overrides
-            setIsUserTabChange(true);
-            
-            setContactsStateFilter(newFilter);
-            updateCacheState({ contactsStateFilter: newFilter });
-            
-            // Update URL with new state filter
-            const searchParams = new URLSearchParams(window.location.search);
-            if (newFilter === 'all') {
-              searchParams.delete('contactState');
-            } else {
-              searchParams.set('contactState', newFilter);
-            }
-            
-            // Update URL without triggering navigation
-            const newUrl = `${window.location.pathname}?${searchParams.toString()}`;
-            window.history.replaceState(null, '', newUrl);
-            
-            // Clear the flag after a delay to allow the change to process
-            setTimeout(() => {
-              setIsUserTabChange(false);
-            }, 500);
-          }}
-        />
-      )}
-      
-      {tabValue === 2 && (
-        <Box data-testid="companies-panel">
-          <CompaniesTab 
-            companies={companies}
-            contacts={contacts}
-            deals={deals}
-            salesTeam={salesTeam}
-            search={search}
-            onSearchChange={handleSearchChange}
-            onAddNew={() => handleAddNew('company')}
-            loading={companiesLoading}
-            hasMore={companiesHasMore}
-            onLoadMore={loadMoreCompanies}
-            companyFilter={companyFilter}
-            onCompanyFilterChange={handleCompanyFilterChange}
-            tenantId={tenantId}
-            onUpdatePipelineTotals={handleUpdatePipelineTotals}
-            locationStateFilter={companyLocationState}
-            onLocationStateFilterChange={handleCompanyLocationStateChange}
-            showFavoritesOnly={companiesShowFavoritesOnly}
-            onShowFavoritesOnlyChange={setCompaniesShowFavoritesOnly}
-            scrollContainerRef={contentRef}
-          />
-        </Box>
-      )}
-      
-      {tabValue === 3 && (
         <Box data-testid="deals-panel">
           <DealsTab 
             deals={deals}
@@ -2288,7 +2183,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         </Box>
       )}
       
-      {tabValue === 4 && (
+      {tabValue === 2 && (
         <PipelineTab 
           deals={deals}
           companies={companies}
@@ -2300,11 +2195,11 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         />
       )}
       
-      {tabValue === 5 && (
+      {tabValue === 3 && (
         <ProspectingHub />
       )}
       
-      {tabValue === 6 && (
+      {tabValue === 4 && (
         <SalespersonActivityView
           tenantId={tenantId}
           salespersonId={currentUser?.uid || ''}

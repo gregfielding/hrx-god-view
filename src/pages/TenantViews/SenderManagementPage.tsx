@@ -195,16 +195,8 @@ const SenderManagementPage: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 2, width: '100%' }}>
-      <Box display="flex" alignItems="center" justifyContent="space-between" mb={3}>
-        <Box>
-          <Typography variant="h4" component="h1" fontWeight={600}>
-            Sender Management
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Manage Twilio number assignments and Gmail connections for your team
-          </Typography>
-        </Box>
+    <Box sx={{ px: { xs: 2, md: 3 }, py: 2, width: '100%' }}>
+      <Box display="flex" alignItems="center" justifyContent="flex-end" mb={3}>
         <Button
           variant="outlined"
           startIcon={<RefreshIcon />}

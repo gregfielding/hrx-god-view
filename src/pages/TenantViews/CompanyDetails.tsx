@@ -58,8 +58,10 @@ import {
   Place as PlaceIcon,
   AttachMoney as OpportunitiesIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
   LinkedIn as LinkedInIcon,
   SmartToy as AIIcon,
+  AutoAwesome as AutoAwesomeIcon,
   CloudUpload as UploadIcon,
   Delete as DeleteIcon,
   Facebook as FacebookIcon,
@@ -90,8 +92,9 @@ import {
   ArrowDownward as ArrowDownwardIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
-import SalesCoach from '../../components/SalesCoach';
+import { useChatGPT } from '../../contexts/ChatGPTContext';
 import LogActivityDialog from '../../components/LogActivityDialog';
+import CreateTaskDialog from '../../components/CreateTaskDialog';
 import CompanyHeader from '../../components/CompanyHeader';
 import { useFavorites } from '../../hooks/useFavorites';
 import PageHeader from '../../components/PageHeader';
@@ -99,6 +102,7 @@ import FavoriteButton from '../../components/FavoriteButton';
 import { Stack, Tooltip } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
+import AddTaskIcon from '@mui/icons-material/AddTask';
 import {
   collection,
   doc,
@@ -319,6 +323,7 @@ const CompanyDetails: React.FC = () => {
   const { companyId } = useParams<{ companyId: string }>();
   const { tenantId, currentUser } = useAuth();
   const { updateCacheState } = useCRMCache();
+  const { openChatGPT } = useChatGPT();
   const navigate = useNavigate();
 
   // Favorites
@@ -367,6 +372,8 @@ const CompanyDetails: React.FC = () => {
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
 
   // Apollo data processing function
   const processApolloData = useCallback(async (apolloData: any) => {
@@ -1176,6 +1183,104 @@ const CompanyDetails: React.FC = () => {
                       </IconButton>
                     </Tooltip>
                   )}
+                  {/* Add Note Icon Button */}
+                  <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                    <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowAddNoteDialog(true)}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <NoteIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Badge>
+                  </Tooltip>
+                  {/* AI Enhance Icon Button */}
+                  <Tooltip title={aiLoading ? 'Enhancing...' : 'AI Enhance'}>
+                    <IconButton
+                      size="small"
+                      onClick={handleEnhanceWithAI}
+                      disabled={aiLoading}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        '&:disabled': {
+                          opacity: 0.6
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      {aiLoading ? (
+                        <CircularProgress size={16} sx={{ color: 'primary.main' }} />
+                      ) : (
+                        <AutoAwesomeIcon sx={{ fontSize: 20 }} />
+                      )}
+                    </IconButton>
+                  </Tooltip>
+                  {/* Add Task Icon Button */}
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowCreateTaskDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  {/* Log Activity Icon Button */}
+                  <Tooltip title="Log Activity">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowLogActivityDialog(true)}
+                      sx={{ 
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                        },
+                        transition: 'all 0.2s ease'
+                      }}
+                    >
+                      <CheckCircleIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
                 </Stack>
                 
                 {/* Line 3: Metadata subtitle */}
@@ -1376,31 +1481,38 @@ const CompanyDetails: React.FC = () => {
             >
               Back
             </Button>
-            <Button
-              variant="outlined"
-              startIcon={<AddIcon />}
-              onClick={() => setShowAddNoteDialog(true)}
-              sx={{ textTransform: 'none' }}
-            >
-              Add Note
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={aiLoading ? <CircularProgress size={16} color="inherit" /> : <RocketLaunchIcon />}
-              onClick={handleEnhanceWithAI}
-              disabled={aiLoading}
-              sx={{ textTransform: 'none' }}
-            >
-              {aiLoading ? 'Enhancing...' : 'AI Enhance'}
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<CheckCircleIcon />}
-              onClick={() => setShowLogActivityDialog(true)}
-              sx={{ textTransform: 'none' }}
-            >
-              Log Activity
-            </Button>
+            <Tooltip title="Open Sales Coach">
+              <IconButton
+                onClick={() => {
+                  if (company && tenantId) {
+                    openChatGPT({
+                      type: 'sales_coach',
+                      entityType: 'company',
+                      entityId: company.id,
+                      entityName: company.companyName || company.name,
+                      tenantId: tenantId,
+                      associations: {
+                        companies: [],
+                        contacts: contacts,
+                        deals: deals,
+                        salespeople: [],
+                        locations: locations || []
+                      },
+                    });
+                  }
+                }}
+                sx={{
+                  backgroundColor: 'transparent !important',
+                  color: 'rgba(255,255,255,.8)',
+                  '&:hover': { 
+                    backgroundColor: 'transparent !important',
+                    color: '#FFFFFF',
+                  },
+                }}
+              >
+                <RocketLaunchIcon sx={{ fontSize: 20 }} />
+              </IconButton>
+            </Tooltip>
           </Box>
         }
       />
@@ -3545,43 +3657,6 @@ const CompanyDashboardTab: React.FC<{
               </CardContent>
             </Card>
           </Box>
-
-          {/* Sales Coach */}
-          <Card>
-            <CardHeader 
-              title="Sales Coach" 
-              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              action={
-                <IconButton size="small" onClick={() => {
-                  // This will trigger a new conversation in the SalesCoach component
-                  const event = new CustomEvent('startNewSalesCoachConversation', {
-                    detail: { entityId: company.id }
-                  });
-                  window.dispatchEvent(event);
-                }}>
-                  <AddIcon />
-                </IconButton>
-              }
-            />
-            <CardContent sx={{ p: 0 }}>
-              <Box sx={{ height: 650 }}>
-                <SalesCoach 
-                  entityType="company"
-                  entityId={company.id}
-                  entityName={company.companyName || company.name}
-                  tenantId={tenantId}
-                  associations={{
-                    companies: [],
-                    contacts: contacts,
-                    deals: deals,
-                    salespeople: [],
-                    locations: []
-                  }}
-                  hideHeader
-                />
-              </Box>
-            </CardContent>
-          </Card>
 
           {/* Relationship Map - Moved from right column */}
           <Card>

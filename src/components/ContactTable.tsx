@@ -174,8 +174,9 @@ const ContactTable: React.FC<ContactTableProps> = ({
           flexDirection: 'column',
           minHeight: 0,
           overflowY: useOuterScroll ? 'visible' : 'auto',
-          overflowX: useOuterScroll ? 'visible' : 'auto',
+          overflowX: 'auto', // Always allow horizontal scrolling when table is wider than viewport
           width: '100%',
+          px: 2, // 16px left and right padding
           mt: 0, // Ensure no top margin
           pt: 0, // Ensure no top padding
           marginTop: 0, // Explicitly set to 0
@@ -198,9 +199,13 @@ const ContactTable: React.FC<ContactTableProps> = ({
           <TableHead
             sx={{
               backgroundColor: 'background.paper',
+              borderRadius: 0,
+              '& .MuiTableCell-root': {
+                borderRadius: 0,
+              },
             }}
           >
-            <TableRow sx={{ height: '32px', backgroundColor: 'background.paper' }}>
+            <TableRow sx={{ height: '32px', backgroundColor: 'background.paper', borderRadius: 0 }}>
               {onSelectAll && (
                 <TableCell
                   padding="checkbox"
@@ -212,6 +217,7 @@ const ContactTable: React.FC<ContactTableProps> = ({
                     width: '48px',
                     minWidth: '48px',
                     maxWidth: '48px',
+                    borderRadius: 0,
                   }}
                 >
                   <Checkbox

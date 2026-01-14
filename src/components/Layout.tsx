@@ -30,6 +30,7 @@ import AssignmentIcon from '@mui/icons-material/Assignment';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import GroupsIcon from '@mui/icons-material/Groups';
+import Diversity3Icon from '@mui/icons-material/Diversity3';
 import WavesIcon from '@mui/icons-material/Waves';
 import CampaignIcon from '@mui/icons-material/Campaign';
 import RecordVoiceOverIcon from '@mui/icons-material/RecordVoiceOver';
@@ -70,6 +71,8 @@ import { GoogleStatusProvider } from '../contexts/GoogleStatusContext';
 import MessengerIconButton from './messenger/MessengerIconButton';
 import MessengerDrawer from './messenger/MessengerDrawer';
 import { useUnreadMentionsCount } from '../hooks/useUnreadMentionsCount';
+import { useChatGPT } from '../contexts/ChatGPTContext';
+import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
 
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
@@ -99,6 +102,7 @@ const Layout: React.FC = React.memo(function Layout() {
     recruiterEnabled,
     jobsBoardEnabled,
   } = useAuth();
+  const { openChatGPT } = useChatGPT();
   useHeartbeatPresence(); // Write user presence to Firestore
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
@@ -835,7 +839,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Schedules': <GroupWorkIcon />,
       'My Schedule': <GroupWorkIcon />,
       'AI Settings': <AutoFixHighIcon />, 
-      'User Groups': <GroupsIcon />,
+      'User Groups': <Diversity3Icon />,
       'Departments': <BusinessIcon />,
       'Reports': <SettingsIcon />,
       'Scheduling': <GroupWorkIcon />,
@@ -1564,6 +1568,63 @@ const Layout: React.FC = React.memo(function Layout() {
                 </IconButton>
               </Tooltip>
               
+              {/* Tasks Icon - Only for security levels 5-7 */}
+              {currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel) && (
+                <Tooltip title="Tasks">
+                  <IconButton
+                    onClick={() => navigate('/tasks')}
+                    sx={{
+                      backgroundColor: 'transparent !important',
+                      color: location.pathname.startsWith('/tasks') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: '#FFFFFF',
+                      },
+                    }}
+                  >
+                    <DoneAllIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              
+              {/* Calendar Icon - Only for security levels 5-7 */}
+              {currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel) && (
+                <Tooltip title="Calendar">
+                  <IconButton
+                    onClick={() => navigate('/calendar')}
+                    sx={{
+                      backgroundColor: 'transparent !important',
+                      color: location.pathname.startsWith('/calendar') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: '#FFFFFF',
+                      },
+                    }}
+                  >
+                    <CalendarMonthIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              
+              {/* ChatGPT Icon - Only for security levels 5-7 */}
+              {currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel) && (
+                <Tooltip title="ChatGPT">
+                  <IconButton
+                    onClick={() => openChatGPT()}
+                    sx={{
+                      backgroundColor: 'transparent !important',
+                      color: 'rgba(255,255,255,.8)',
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: '#FFFFFF',
+                      },
+                    }}
+                  >
+                    <RocketLaunchIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+              
               {/* Direct Messenger Icon */}
               {user && (
                 <MessengerIconButton />
@@ -1683,6 +1744,9 @@ const Layout: React.FC = React.memo(function Layout() {
         
         {/* Direct Messenger Drawer */}
         <MessengerDrawer />
+        
+        {/* ChatGPT Drawer */}
+        <ChatGPTDrawer />
         
         {/* Floating Chatbot Button and Widget */}
         {/* {showChatbotButton && (

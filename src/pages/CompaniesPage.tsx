@@ -17,7 +17,7 @@ import {
 } from '@mui/material';
 import { Add as AddIcon } from '@mui/icons-material';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, where, orderBy, limit, getDocs, startAfter, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, startAfter, addDoc, serverTimestamp, doc, getDoc } from 'firebase/firestore';
 import { db, functions } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import PageHeader from '../components/PageHeader';
@@ -25,6 +25,7 @@ import CompanyTable from '../components/CompanyTable';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
+import { usePageCache } from '../hooks/usePageCache';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import ToggleButton from '@mui/material/ToggleButton';
 import FormControl from '@mui/material/FormControl';
@@ -40,19 +41,35 @@ const CompaniesPage: React.FC = () => {
   const navigate = useNavigate();
   const contentRef = useRef<HTMLDivElement | null>(null);
   
-  // State
-  const [companies, setCompanies] = useState<any[]>([]);
+  // Page cache for search and filters
+  const { cacheState, updateCache, getCachedResults } = usePageCache({
+    pageKey: 'companies',
+    defaultState: {
+      search: '',
+      companyFilter: 'all',
+      locationStateFilter: 'all',
+      showFavoritesOnly: false,
+    },
+  });
+  
+  // State - initialize from cache (including cached results)
+  const cachedResults = getCachedResults();
+  const [companies, setCompanies] = useState<any[]>(cachedResults || []);
   const [contacts, setContacts] = useState<any[]>([]);
   const [deals, setDeals] = useState<any[]>([]);
   const [salesTeam, setSalesTeam] = useState<any[]>([]);
-  const [search, setSearch] = useState('');
-  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>('all');
-  const [locationStateFilter, setLocationStateFilter] = useState<string>('all');
-  const [companiesLoading, setCompaniesLoading] = useState(true);
+  const [search, setSearch] = useState(cacheState.search || '');
+  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>(cacheState.companyFilter || 'all');
+  const [locationStateFilter, setLocationStateFilter] = useState<string>(cacheState.locationStateFilter || 'all');
+  const [companiesLoading, setCompaniesLoading] = useState(!cachedResults); // Don't show loading if we have cached results
   const [companiesLastDoc, setCompaniesLastDoc] = useState<any>(null);
   const [companiesHasMore, setCompaniesHasMore] = useState(true);
   const [companiesPageSize] = useState(20);
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(cacheState.showFavoritesOnly || false);
+  
+  // Pagination state for inbox spec
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(20);
   
   // Add Company Dialog state
   const [showAddCompanyDialog, setShowAddCompanyDialog] = useState(false);
@@ -99,12 +116,153 @@ const CompaniesPage: React.FC = () => {
     setCompaniesLoading(true);
     try {
       const selectedState = stateOverride ?? locationStateFilter;
+      
+      // Advanced filter: Companies with at least one location in selected state
+      if (selectedState && selectedState !== 'all') {
+        console.log('🔍 Companies state filter active:', { selectedState });
+        
+        // Fast path using mirror collection: tenants/{tenantId}/company_locations
+        const locationsRef = collection(db, 'tenants', tenantId, 'company_locations');
+        const locQ = query(locationsRef, where('stateCode', '==', selectedState));
+        const locSnap = await getDocs(locQ);
+        console.log(`📍 Found ${locSnap.docs.length} location documents in mirror collection for state ${selectedState}`);
+        const companyIdSet = new Set<string>();
+        locSnap.docs.forEach(d => {
+          const data: any = d.data();
+          if (data?.companyId) companyIdSet.add(data.companyId);
+        });
+
+        const ids = Array.from(companyIdSet);
+        console.log(`📍 Found ${ids.length} unique company IDs from mirror collection`);
+
+        // Fallback: if mirror has no entries for this state, scan company subcollections directly
+        if (ids.length === 0) {
+          // Map for full state names by code
+          const STATE_BY_CODE: Record<string, string> = {
+            AL: 'Alabama', AK: 'Alaska', AZ: 'Arizona', AR: 'Arkansas', CA: 'California', CO: 'Colorado', CT: 'Connecticut', DE: 'Delaware', FL: 'Florida', GA: 'Georgia', HI: 'Hawaii', ID: 'Idaho', IL: 'Illinois', IN: 'Indiana', IA: 'Iowa', KS: 'Kansas', KY: 'Kentucky', LA: 'Louisiana', ME: 'Maine', MD: 'Maryland', MA: 'Massachusetts', MI: 'Michigan', MN: 'Minnesota', MS: 'Mississippi', MO: 'Missouri', MT: 'Montana', NE: 'Nebraska', NV: 'Nevada', NH: 'New Hampshire', NJ: 'New Jersey', NM: 'New Mexico', NY: 'New York', NC: 'North Carolina', ND: 'North Dakota', OH: 'Ohio', OK: 'Oklahoma', OR: 'Oregon', PA: 'Pennsylvania', RI: 'Rhode Island', SC: 'South Carolina', SD: 'South Dakota', TN: 'Tennessee', TX: 'Texas', UT: 'Utah', VT: 'Vermont', VA: 'Virginia', WA: 'Washington', WV: 'West Virginia', WI: 'Wisconsin', WY: 'Wyoming'
+          };
+          const code = selectedState;
+          const full = STATE_BY_CODE[code] || code;
+          const variants = [code, code.toLowerCase(), (full || '').toString(), (full || '').toString().toLowerCase(), (full || '').toString().toUpperCase()];
+
+          const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+          const allCompaniesQuery = query(companiesRef, orderBy('companyName', 'asc'));
+          const allCompaniesSnapshot = await getDocs(allCompaniesQuery);
+
+          const validated: any[] = [];
+          for (const companyDoc of allCompaniesSnapshot.docs) {
+            try {
+              const cData = companyDoc.data();
+              const c = { id: companyDoc.id, ...cData } as any;
+              const locRef = collection(db, 'tenants', tenantId, 'crm_companies', companyDoc.id, 'locations');
+              let exists = false;
+              try {
+                const s1 = await getDocs(query(locRef, where('stateCode', '==', code), limit(1)));
+                exists = !s1.empty;
+              } catch {}
+              if (!exists) {
+                try {
+                  const s2 = await getDocs(query(locRef, where('state', 'in', variants.slice(0, 10)), limit(1)));
+                  exists = !s2.empty;
+                } catch {}
+              }
+              if (!exists) {
+                try {
+                  const s3 = await getDocs(query(locRef, where('address.state', 'in', variants.slice(0, 10)), limit(1)));
+                  exists = !s3.empty;
+                } catch {}
+              }
+              if (exists) validated.push(c);
+            } catch {}
+          }
+
+          const searchLower = searchQuery.trim().toLowerCase();
+          const companiesData = validated.filter((company: any) => {
+            if (filterByUser && currentUser?.uid) {
+              if (company.accountOwnerId !== currentUser.uid) return false;
+            }
+            if (!searchLower) return true;
+            const companyName = (company.companyName || company.name || '').toLowerCase();
+            const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+            const city = (company.city || '').toLowerCase();
+            const industry = (company.industry || '').toLowerCase();
+            return companyName.includes(searchLower) || companyUrl.includes(searchLower) || city.includes(searchLower) || industry.includes(searchLower);
+          });
+
+          const resultData = companiesData;
+          if (append) {
+            setCompanies(prev => [...prev, ...resultData]);
+          } else {
+            setCompanies(resultData);
+            // Cache the results
+            updateCache({ cachedResults: resultData });
+          }
+          setCompaniesHasMore(false);
+          setCompaniesLastDoc(null);
+          setCompaniesLoading(false);
+          return;
+        }
+
+        // OPTIMIZED: Batch fetch companies using 'in' queries (much faster than individual getDoc calls)
+        const companyDocs: any[] = [];
+        const batchSize = 10; // Firestore limit for 'in' queries
+        
+        for (let i = 0; i < ids.length; i += batchSize) {
+          const batch = ids.slice(i, i + batchSize);
+          const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
+          // Use __name__ to query by document ID
+          const q = query(companiesRef, where('__name__', 'in', batch));
+          const snapshot = await getDocs(q);
+          snapshot.docs.forEach(doc => {
+            companyDocs.push({ id: doc.id, ...doc.data() });
+          });
+        }
+        
+        // OPTIMIZATION: Skip re-validation since mirror collection is maintained by Cloud Functions
+        // This saves 100+ subcollection queries. If validation is needed, it can be done in background.
+        const validated = companyDocs;
+
+        // Apply search and my filters client-side
+        const searchLower = searchQuery.trim().toLowerCase();
+        const companiesData = validated.filter((company: any) => {
+          if (filterByUser && currentUser?.uid) {
+            if (company.accountOwnerId !== currentUser.uid) return false;
+          }
+          if (!searchLower) return true;
+          const companyName = (company.companyName || company.name || '').toLowerCase();
+          const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+          const city = (company.city || '').toLowerCase();
+          const industry = (company.industry || '').toLowerCase();
+          return companyName.includes(searchLower) || companyUrl.includes(searchLower) || city.includes(searchLower) || industry.includes(searchLower);
+        });
+
+        // When filtering by state, return full results (no pagination cap)
+        const resultData = companiesData;
+        console.log(`✅ Applying ${resultData.length} companies for state ${selectedState}`, {
+          totalValidated: validated.length,
+          afterUserFilter: companiesData.length,
+          companyIds: resultData.map(c => c.id).slice(0, 5)
+        });
+        if (append) {
+          setCompanies(prev => [...prev, ...resultData]);
+        } else {
+          setCompanies(resultData);
+          // Cache the results
+          updateCache({ cachedResults: resultData });
+        }
+        setCompaniesHasMore(false);
+        setCompaniesLastDoc(null);
+        setCompaniesLoading(false);
+        return;
+      }
+
+      // Normal load (no state filter) - default to ascending alphabetical by companyName
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
       
-      let q: any = query(companiesRef, orderBy('createdAt', 'desc'), limit(companiesPageSize));
+      let q: any = query(companiesRef, orderBy('companyName', 'asc'), limit(companiesPageSize));
       
       if (startDoc) {
-        q = query(companiesRef, orderBy('createdAt', 'desc'), startAfter(startDoc), limit(companiesPageSize));
+        q = query(companiesRef, orderBy('companyName', 'asc'), startAfter(startDoc), limit(companiesPageSize));
       }
       
       if (filterByUser && currentUser?.uid) {
@@ -118,6 +276,10 @@ const CompaniesPage: React.FC = () => {
         setCompanies(prev => [...prev, ...newCompanies]);
       } else {
         setCompanies(newCompanies);
+        // Cache the results (only for non-filtered loads)
+        if (!filterByUser && !searchQuery) {
+          updateCache({ cachedResults: newCompanies });
+        }
       }
       
       setCompaniesLastDoc(snapshot.docs[snapshot.docs.length - 1] || null);
@@ -266,12 +428,25 @@ const CompaniesPage: React.FC = () => {
     loadSalesTeam();
   }, [tenantId]);
 
-  // Initial load
+  // Initial load and reload when filters change
   useEffect(() => {
-    loadCompanies('', null, false, companyFilter === 'my');
-  }, [tenantId, companyFilter]);
+    if (tenantId) {
+      // Check if we have cached results that match current filters
+      const cached = getCachedResults();
+      if (cached && cached.length > 0) {
+        // Restore cached results immediately (no loading spinner)
+        setCompanies(cached);
+        setCompaniesLoading(false);
+      } else {
+        // No cache, load fresh data
+        setCompanies([]);
+        setCompaniesLoading(true);
+        loadCompanies('', null, false, companyFilter === 'my', locationStateFilter);
+      }
+    }
+  }, [tenantId, companyFilter, locationStateFilter, loadCompanies, getCachedResults]);
 
-  // Sorting state
+  // Sorting state - default to ascending alphabetical by company name
   const [sortField, setSortField] = useState<string>('companyName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
@@ -445,6 +620,49 @@ const CompaniesPage: React.FC = () => {
     return filtered;
   }, [companies, search, sortField, sortDirection, showFavoritesOnly, isFavorite]);
 
+  // Paginated companies (for inbox spec)
+  const paginatedCompanies = React.useMemo(() => {
+    const startIndex = page * rowsPerPage;
+    const endIndex = startIndex + rowsPerPage;
+    return filteredCompanies.slice(startIndex, endIndex);
+  }, [filteredCompanies, page, rowsPerPage]);
+
+  // Update cache when search or filters change (but don't clear cached results unless filters actually changed)
+  const prevFiltersRef = useRef({ search, companyFilter, locationStateFilter, showFavoritesOnly });
+  useEffect(() => {
+    const filtersChanged = 
+      prevFiltersRef.current.search !== search ||
+      prevFiltersRef.current.companyFilter !== companyFilter ||
+      prevFiltersRef.current.locationStateFilter !== locationStateFilter ||
+      prevFiltersRef.current.showFavoritesOnly !== showFavoritesOnly;
+    
+    if (filtersChanged) {
+      // Only clear cached results if filters actually changed
+      updateCache({
+        search,
+        companyFilter,
+        locationStateFilter,
+        showFavoritesOnly,
+        cachedResults: undefined,
+        cachedResultsTimestamp: undefined,
+      });
+      prevFiltersRef.current = { search, companyFilter, locationStateFilter, showFavoritesOnly };
+    } else {
+      // Just update the cache state without clearing results
+      updateCache({
+        search,
+        companyFilter,
+        locationStateFilter,
+        showFavoritesOnly,
+      });
+    }
+  }, [search, companyFilter, locationStateFilter, showFavoritesOnly, updateCache]);
+
+  // Reset page when search or filters change
+  useEffect(() => {
+    setPage(0);
+  }, [search, showFavoritesOnly, locationStateFilter, companyFilter]);
+
   const handleViewCompany = (company: any) => {
     navigate(`/companies/${company.id}`);
   };
@@ -473,8 +691,14 @@ const CompaniesPage: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
               <InboxSearchBar
                 value={search}
-                onChange={setSearch}
-                onSearch={setSearch}
+                onChange={(value) => {
+                  setSearch(value);
+                  updateCache({ search: value });
+                }}
+                onSearch={(value) => {
+                  setSearch(value);
+                  updateCache({ search: value });
+                }}
                 placeholder="Search companies..."
               />
               
@@ -482,7 +706,10 @@ const CompaniesPage: React.FC = () => {
               <FavoritesFilter
                 favoriteType="companies"
                 showFavoritesOnly={showFavoritesOnly}
-                onToggle={setShowFavoritesOnly}
+                onToggle={(value) => {
+                  setShowFavoritesOnly(value);
+                  updateCache({ showFavoritesOnly: value });
+                }}
                 showText={false}
                 size="small"
                 sx={{
@@ -561,6 +788,7 @@ const CompaniesPage: React.FC = () => {
               onChange={(event, newFilter) => {
                 if (newFilter !== null) {
                   setCompanyFilter(newFilter);
+                  updateCache({ companyFilter: newFilter });
                 }
               }}
               size="small"
@@ -591,7 +819,12 @@ const CompaniesPage: React.FC = () => {
                 <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
                 <Select
                   value={locationStateFilter}
-                  onChange={(e) => setLocationStateFilter(String(e.target.value))}
+                  onChange={(e) => {
+                    const newState = String(e.target.value);
+                    setLocationStateFilter(newState);
+                    updateCache({ locationStateFilter: newState });
+                    // The useEffect will handle reloading when locationStateFilter changes
+                  }}
                   label="State Filter"
                   sx={{
                     height: 36,
@@ -608,7 +841,11 @@ const CompaniesPage: React.FC = () => {
               </FormControl>
               <IconButton
                 size="small"
-                onClick={() => setLocationStateFilter('all')}
+                onClick={() => {
+                  setLocationStateFilter('all');
+                  updateCache({ locationStateFilter: 'all' });
+                  // The useEffect will handle reloading when locationStateFilter changes
+                }}
                 disabled={locationStateFilter === 'all'}
                 sx={{ height: 36, width: 36, p: 0.75 }}
               >
@@ -619,59 +856,124 @@ const CompaniesPage: React.FC = () => {
         </Box>
         
         {/* Companies Table */}
-        <CompanyTable
-          companies={filteredCompanies}
-          loading={companiesLoading}
-          hasMore={companiesHasMore}
-          onLoadMore={handleLoadMore}
-          columns={{
-            favorites: true,
-            companyName: true,
-            contacts: true,
-            deals: true,
-            pipelineValue: true,
-            headquarters: true,
-            salespeople: true,
-          }}
-          sortField={sortField}
-          sortDirection={sortDirection}
-          onSort={handleSort}
-          onRowClick={handleViewCompany}
-          isFavorite={isFavorite}
-          toggleFavorite={toggleFavorite}
-          getAvatarColor={getAvatarColor}
-          getAvatarTextColor={getAvatarTextColor}
-          getCompanyContacts={getCompanyContacts}
-          getCompanyDeals={getCompanyDeals}
-          getCompanyPipelineValue={getCompanyPipelineValue}
-          getCompanySalespeople={getCompanySalespeople}
-          formatCurrency={formatCurrency}
-          stickyHeaderOffset={isScrolled ? filtersHeight : 0}
-          useOuterScroll
-          square
-          emptyStateMessage="No companies found"
-          emptyStateAction={
-            filteredCompanies.length === 0 && !companiesLoading ? (
-              <Box sx={{ textAlign: 'center' }}>
-                <Box
-                  sx={{
-                    width: 120,
-                    height: 120,
-                    borderRadius: '50%',
-                    backgroundColor: '#F3F4F6',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    mb: 3,
-                    mx: 'auto',
-                  }}
-                >
-                  <BusinessIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+        <Box sx={{ 
+          px: 2, 
+          pb: 2, 
+          flex: 1, 
+          minHeight: 0, 
+          display: 'flex', 
+          flexDirection: 'column',
+          position: 'relative',
+        }}>
+          {/* Loading overlay */}
+          {companiesLoading && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 1000,
+                borderRadius: '8px',
+              }}
+            >
+              <CircularProgress size={40} />
+            </Box>
+          )}
+          
+          {/* No Results Found message */}
+          {!companiesLoading && filteredCompanies.length === 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 999,
+                flexDirection: 'column',
+                gap: 2,
+              }}
+            >
+              <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 500 }}>
+                No Results Found
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Try adjusting your search or filters
+              </Typography>
+            </Box>
+          )}
+          
+          <CompanyTable
+            companies={paginatedCompanies}
+            loading={companiesLoading}
+            columns={{
+              favorites: true,
+              companyName: true,
+              contacts: true,
+              deals: true,
+              pipelineValue: true,
+              headquarters: true,
+              salespeople: true,
+            }}
+            sortField={sortField}
+            sortDirection={sortDirection}
+            onSort={handleSort}
+            onRowClick={handleViewCompany}
+            isFavorite={isFavorite}
+            toggleFavorite={toggleFavorite}
+            getAvatarColor={getAvatarColor}
+            getAvatarTextColor={getAvatarTextColor}
+            getCompanyContacts={getCompanyContacts}
+            getCompanyDeals={getCompanyDeals}
+            getCompanyPipelineValue={getCompanyPipelineValue}
+            getCompanySalespeople={getCompanySalespeople}
+            formatCurrency={formatCurrency}
+            stickyHeaderOffset={isScrolled ? filtersHeight : 0}
+            useOuterScroll={false}
+            square
+            pagination={{
+              count: filteredCompanies.length,
+              page: page,
+              rowsPerPage: rowsPerPage,
+              onPageChange: (_, newPage) => setPage(newPage),
+              onRowsPerPageChange: (e) => {
+                setRowsPerPage(parseInt(e.target.value, 10));
+                setPage(0);
+              },
+            }}
+            emptyStateMessage="No companies found"
+            emptyStateAction={
+              filteredCompanies.length === 0 && !companiesLoading ? (
+                <Box sx={{ textAlign: 'center' }}>
+                  <Box
+                    sx={{
+                      width: 120,
+                      height: 120,
+                      borderRadius: '50%',
+                      backgroundColor: '#F3F4F6',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      mb: 3,
+                      mx: 'auto',
+                    }}
+                  >
+                    <BusinessIcon sx={{ fontSize: 48, color: '#9CA3AF' }} />
+                  </Box>
                 </Box>
-              </Box>
-            ) : undefined
-          }
-        />
+              ) : undefined
+            }
+          />
+        </Box>
       </Box>
 
       {/* Add Company Dialog */}

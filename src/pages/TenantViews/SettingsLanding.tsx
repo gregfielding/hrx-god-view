@@ -1,93 +1,134 @@
-import React from 'react';
-import { Box, Typography, Grid, Card, CardContent, CardActionArea, Stack } from '@mui/material';
+import React, { useState } from 'react';
+import { Box, Typography, Button } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import BusinessIcon from '@mui/icons-material/Business';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ChatIcon from '@mui/icons-material/Chat';
-import { useNavigate } from 'react-router-dom';
+import PeopleIcon from '@mui/icons-material/People';
+import PageHeader from '../../components/PageHeader';
+import CompanySetup from './CompanySetup';
+import MessagingTab from './MessagingTab';
+import SenderManagementPage from './SenderManagementPage';
+import SlackAdminPage from '../Admin/SlackAdminPage';
+import WorkforceManagement from './WorkforceManagement';
+import { useAuth } from '../../contexts/AuthContext';
+
+type SettingsTab = 'company-setup' | 'messaging' | 'senders' | 'slack' | 'workforce';
 
 const SettingsLanding: React.FC = () => {
-  const navigate = useNavigate();
+  const { tenantId } = useAuth();
+  const [activeTab, setActiveTab] = useState<SettingsTab>('company-setup');
 
-  const settingsCards = [
+  const settingsTabs = [
     {
+      id: 'company-setup' as SettingsTab,
       title: 'Company Setup',
-      description: 'Manage branding, regions, divisions, departments, locations, and organizational structure',
-      icon: <BusinessIcon sx={{ fontSize: 40, color: 'primary.main' }} />,
-      path: '/settings/company-setup',
-      color: '#1976d2',
+      icon: <BusinessIcon sx={{ fontSize: 20 }} />,
     },
     {
+      id: 'messaging' as SettingsTab,
       title: 'Messaging',
-      description: 'Configure SMS and email templates, manage recruiter phone numbers, and set up messaging preferences',
-      icon: <EmailIcon sx={{ fontSize: 40, color: 'primary.main' }} />,
-      path: '/settings/messaging',
-      color: '#1976d2',
+      icon: <EmailIcon sx={{ fontSize: 20 }} />,
     },
     {
+      id: 'senders' as SettingsTab,
       title: 'Sender Management',
-      description: 'Manage Twilio number assignments and Gmail connections for your team members',
-      icon: <PhoneAndroidIcon sx={{ fontSize: 40, color: 'primary.main' }} />,
-      path: '/settings/senders',
-      color: '#1976d2',
+      icon: <PhoneAndroidIcon sx={{ fontSize: 20 }} />,
     },
     {
+      id: 'slack' as SettingsTab,
       title: 'Slack Integration',
-      description: 'Connect and manage Slack workspace integration, map users and channels, and configure messaging settings',
-      icon: <ChatIcon sx={{ fontSize: 40, color: 'primary.main' }} />,
-      path: '/admin/slack',
-      color: '#1976d2',
+      icon: <ChatIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'workforce' as SettingsTab,
+      title: 'Workforce Management',
+      icon: <PeopleIcon sx={{ fontSize: 20 }} />,
     },
   ];
 
+  const renderTabContent = () => {
+    switch (activeTab) {
+      case 'company-setup':
+        return <CompanySetup />;
+      case 'messaging':
+        return tenantId ? <MessagingTab tenantId={tenantId} /> : null;
+      case 'senders':
+        return <SenderManagementPage />;
+      case 'slack':
+        return <SlackAdminPage />;
+      case 'workforce':
+        return <WorkforceManagement />;
+      default:
+        return <CompanySetup />;
+    }
+  };
+
   return (
-    <Box sx={{ p: 2, width: '100%' }}>
-      <Box display="flex" alignItems="center" gap={1.5} mb={2}>
-        <SettingsIcon sx={{ fontSize: 32, color: 'primary.main' }} />
-        <Typography variant="h4" component="h1">
-          Settings
-        </Typography>
-      </Box>
-
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-        Manage your organization's configuration and preferences
-      </Typography>
-
-      <Grid container spacing={2}>
-        {settingsCards.map((card) => (
-          <Grid item xs={12} sm={6} md={6} key={card.path}>
-            <Card
-              elevation={2}
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <SettingsIcon sx={{ fontSize: 24, color: 'primary.main' }} />
+            <Typography
+              variant="h6"
               sx={{
-                height: '100%',
-                transition: 'all 0.3s ease',
-                '&:hover': {
-                  elevation: 4,
-                  transform: 'translateY(-4px)',
-                },
+                fontSize: { xs: '20px', md: '24px' },
+                fontWeight: 600,
+                lineHeight: 1.2,
               }}
             >
-              <CardActionArea
-                onClick={() => navigate(card.path)}
-                sx={{ height: '100%', p: 0 }}
+              Settings
+            </Typography>
+          </Box>
+        }
+        subtitle="Manage your organization's configuration and preferences"
+        filters={
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            {settingsTabs.map((tab) => (
+              <Button
+                key={tab.id}
+                variant="text"
+                startIcon={tab.icon}
+                onClick={() => setActiveTab(tab.id)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '999px',
+                  fontSize: '14px',
+                  fontWeight: activeTab === tab.id ? 500 : 400,
+                  color: activeTab === tab.id ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                  bgcolor: activeTab === tab.id ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                  px: 1.5,
+                  py: 0.75,
+                  minWidth: 'auto',
+                  whiteSpace: 'nowrap',
+                  '&:hover': {
+                    bgcolor: activeTab === tab.id ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                  },
+                }}
               >
-                <CardContent sx={{ p: 2, height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <Stack spacing={1.5}>
-                    <Box>{card.icon}</Box>
-                    <Typography variant="h5" component="h2" fontWeight={600}>
-                      {card.title}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {card.description}
-                    </Typography>
-                  </Stack>
-                </CardContent>
-              </CardActionArea>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
+                {tab.title}
+              </Button>
+            ))}
+          </Box>
+        }
+      />
+
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        <Box sx={{ flex: 1, minHeight: 0 }}>
+          {renderTabContent()}
+        </Box>
+      </Box>
     </Box>
   );
 };

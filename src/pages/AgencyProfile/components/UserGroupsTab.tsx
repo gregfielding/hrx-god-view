@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -15,14 +15,20 @@ import {
   Snackbar,
   Alert,
   Autocomplete,
-  InputAdornment,
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
-import SearchIcon from '@mui/icons-material/Search';
+import AddIcon from '@mui/icons-material/Add';
 import { collection, addDoc, getDocs, doc, getDoc, serverTimestamp } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
 
 import { db } from '../../../firebase';
+import PageHeader from '../../../components/PageHeader';
+import InboxSearchBar from '../../../components/InboxSearchBar';
 import FavoriteButton from '../../../components/FavoriteButton';
 import FavoritesFilter from '../../../components/FavoritesFilter';
 import { useFavorites } from '../../../hooks/useFavorites';
@@ -42,10 +48,21 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const navigate = useNavigate();
   const location = useLocation();
   
+  // Refs for sticky positioning
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  
   // Check if we're accessing from the recruiter module
   const isFromRecruiter = location.pathname.includes('/recruiter/user-groups');
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('userGroups');
+  
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+  };
+  
+  const handleFavoritesToggle = () => {
+    setShowFavoritesOnly(!showFavoritesOnly);
+  };
 
   useEffect(() => {
     fetchGroups();
@@ -139,6 +156,7 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
       });
       setForm({ title: '', description: '' });
       setGroupManagerIds([]);
+      setShowForm(false);
       setSuccess(true);
       fetchGroups();
     } catch (err: any) {
@@ -148,29 +166,247 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   };
 
   return (
-    <Box sx={{ p: 0, width: '100%' }}>
-      {(
-        <Box display="flex" alignItems="center" justifyContent="space-between" mb={0}>
-          <Typography variant="h6" component="h1">
-            User Groups
-          </Typography>
-          <Button
-            variant="contained"
-            color="primary"
-            onClick={() => setShowForm(true)}
-          >
-            CREATE NEW GROUP
-          </Button>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+            <Typography
+              variant="h6"
+              sx={{
+                fontSize: { xs: '20px', md: '24px' },
+                fontWeight: 600,
+                lineHeight: 1.2,
+              }}
+            >
+              User Groups
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+              <InboxSearchBar
+                value={searchTerm}
+                onChange={handleSearchChange}
+                onSearch={handleSearchChange}
+                placeholder="Search groups..."
+              />
+              
+              {/* Favorites filter */}
+              <FavoritesFilter
+                favoriteType="userGroups"
+                showFavoritesOnly={showFavoritesOnly}
+                onToggle={handleFavoritesToggle}
+                showText={false}
+                size="small"
+                sx={{
+                  minWidth: '32px',
+                  width: '32px',
+                  height: '32px',
+                  borderRadius: '50%',
+                  '&:hover': {
+                    backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                  },
+                }}
+              />
+              
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={() => setShowForm(true)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  px: 2.5,
+                  py: 1,
+                  height: '40px',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  bgcolor: '#0057B8',
+                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                  '&:hover': {
+                    bgcolor: '#004a9f',
+                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                  },
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Create New Group
+              </Button>
+            </Box>
+          </Box>
+        }
+      />
+      
+      <Box
+        ref={contentRef}
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+      >
+        {/* Table Container */}
+        <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', px: 2, pb: 2 }}>
+          {/* Loading overlay */}
+          {loading && groups.length === 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 10,
+              }}
+            >
+              <CircularProgress />
+            </Box>
+          )}
+          
+          {/* No Results Message */}
+          {!loading && filteredGroups.length === 0 && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                minHeight: '200px',
+                textAlign: 'center',
+              }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                {groups.length === 0
+                  ? 'No groups yet.'
+                  : 'No groups match your search.'}
+              </Typography>
+            </Box>
+          )}
+          
+          {filteredGroups.length > 0 && (
+            <TableContainer
+              component={Paper}
+              elevation={0}
+              sx={{
+                borderRadius: 0,
+                border: '1px solid #EAEEF4',
+                position: 'relative',
+                flex: 1,
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                overflowY: 'auto',
+                overflowX: 'auto',
+                width: '100%',
+                '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+                '&::-webkit-scrollbar-track': {
+                  background: 'rgba(0, 0, 0, 0.02)',
+                  borderRadius: '4px',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: 'rgba(0, 0, 0, 0.15)',
+                  borderRadius: '4px',
+                  '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+                },
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+              }}
+            >
+              <Table size="small" stickyHeader sx={{ width: '100%' }}>
+                <TableHead
+                  sx={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 10,
+                    backgroundColor: 'background.paper',
+                    borderRadius: 0,
+                    '& .MuiTableCell-root': {
+                      borderRadius: 0,
+                    },
+                  }}
+                >
+                  <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
+                    <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Title
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Description
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Created
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Created By
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Members
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {filteredGroups.map((group, index) => (
+                    <TableRow
+                      key={group.id}
+                      hover
+                      sx={{
+                        cursor: 'pointer',
+                        backgroundColor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                        '&:hover': {
+                          backgroundColor: 'action.selected',
+                        },
+                      }}
+                      onClick={() => navigate(isFromRecruiter ? `/recruiter/user-groups/${group.id}` : `/usergroups/${group.id}`)}
+                    >
+                      <TableCell onClick={(event) => event.stopPropagation()}>
+                        <FavoriteButton
+                          itemId={group.id}
+                          favoriteType="userGroups"
+                          isFavorite={isFavorite}
+                          toggleFavorite={toggleFavorite}
+                          size="small"
+                          tooltipText={{
+                            favorited: 'Remove from favorites',
+                            notFavorited: 'Add to favorites',
+                          }}
+                        />
+                      </TableCell>
+                      <TableCell>{group.title}</TableCell>
+                      <TableCell>
+                        {group.description && group.description.length > 40
+                          ? group.description.slice(0, 40) + '...'
+                          : group.description || '-'}
+                      </TableCell>
+                      <TableCell>
+                        {group.createdAt?.toDate ? group.createdAt.toDate().toLocaleDateString() : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {group.createdBy
+                          ? `${group.createdBy.firstName} ${group.createdBy.lastName}`
+                          : '-'}
+                      </TableCell>
+                      <TableCell>
+                        {Array.isArray(group.memberIds) ? group.memberIds.length : 0}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
         </Box>
-      )}
-      {showForm && (
-        <>
-          <Typography variant="h6" gutterBottom>
-            Create User Group
-          </Typography>
-          <form onSubmit={handleSubmit}>
-            <Grid container spacing={2} mb={2}>
-              <Grid item xs={12} sm={6}>
+      </Box>
+      
+      {/* Create Group Dialog */}
+      <Dialog open={showForm} onClose={() => setShowForm(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Create User Group</DialogTitle>
+        <form onSubmit={handleSubmit}>
+          <DialogContent>
+            <Grid container spacing={2}>
+              <Grid item xs={12}>
                 <TextField
                   label="Group Title"
                   fullWidth
@@ -179,7 +415,7 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                   onChange={(e) => handleChange('title', e.target.value)}
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12}>
                 <TextField
                   label="Description"
                   fullWidth
@@ -187,9 +423,10 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                   value={form.description}
                   onChange={(e) => handleChange('description', e.target.value)}
                   multiline
+                  rows={3}
                 />
               </Grid>
-              <Grid item xs={12} sm={6}>
+              <Grid item xs={12}>
                 <Autocomplete
                   multiple
                   options={agencyUsers}
@@ -204,164 +441,35 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                       fullWidth
                     />
                   )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
-                      <Button
-                        variant="outlined"
-                        {...getTagProps({ index })}
-                        key={option.id}
-                        sx={{ mr: 1 }}
-                      >
-                        {option.firstName} {option.lastName}
-                      </Button>
-                    ))
-                  }
                 />
-              </Grid>
-              <Grid item xs={12} display="flex" gap={2}>
-                <Button
-                  type="submit"
-                  variant="contained"
-                  color="primary"
-                  disabled={loading || !form.title || !form.description}
-                >
-                  {loading ? 'Adding...' : 'Add Group'}
-                </Button>
-                <Button variant="outlined" color="secondary" onClick={() => setShowForm(false)}>
-                  Cancel
-                </Button>
               </Grid>
             </Grid>
-          </form>
-        </>
-      )}
-
-      <Box
-        sx={{
-          mb: 3,
-          display: 'flex',
-          gap: 2,
-          alignItems: 'center',
-        }}
-      >
-        <TextField
-          placeholder="Search groups..."
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          variant="outlined"
-          size="small"
-          sx={{
-            flexGrow: 1,
-            maxWidth: 480,
-            '& .MuiOutlinedInput-root': {
-              borderRadius: '8px',
-              backgroundColor: 'white',
-            },
-          }}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <SearchIcon sx={{ color: 'text.secondary' }} />
-              </InputAdornment>
-            ),
-            endAdornment: (
-              <InputAdornment position="end">
-                <FavoritesFilter
-                  favoriteType="userGroups"
-                  showFavoritesOnly={showFavoritesOnly}
-                  onToggle={setShowFavoritesOnly}
-                  showText={false}
-                  size="small"
-                />
-              </InputAdornment>
-            ),
-          }}
-        />
-      </Box>
-
-      <TableContainer component={Paper}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ width: 60 }} />
-              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                Title
-              </TableCell>
-              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                Description
-              </TableCell>
-              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                Created
-              </TableCell>
-              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                Created By
-              </TableCell>
-              <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
-                Members
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {filteredGroups.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={6} sx={{ textAlign: 'center', py: 4 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    {groups.length === 0
-                      ? 'No groups yet.'
-                      : 'No groups match your search.'}
-                  </Typography>
-                </TableCell>
-              </TableRow>
-            ) : (
-              filteredGroups.map((group, index) => (
-                <TableRow
-                  key={group.id}
-                  hover
-                  sx={{
-                    cursor: 'pointer',
-                    backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
-                    '&:hover': {
-                      backgroundColor: 'action.selected',
-                    },
-                  }}
-                  onClick={() => navigate(isFromRecruiter ? `/recruiter/user-groups/${group.id}` : `/usergroups/${group.id}`)}
-                >
-                  <TableCell onClick={(event) => event.stopPropagation()}>
-                    <FavoriteButton
-                      itemId={group.id}
-                      favoriteType="userGroups"
-                      isFavorite={isFavorite}
-                      toggleFavorite={toggleFavorite}
-                      size="small"
-                      tooltipText={{
-                        favorited: 'Remove from favorites',
-                        notFavorited: 'Add to favorites',
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell>{group.title}</TableCell>
-                  <TableCell>
-                    {group.description && group.description.length > 40
-                      ? group.description.slice(0, 40) + '...'
-                      : group.description || '-'}
-                  </TableCell>
-                  <TableCell>
-                    {group.createdAt?.toDate ? group.createdAt.toDate().toLocaleDateString() : '-'}
-                  </TableCell>
-                  <TableCell>
-                    {group.createdBy
-                      ? `${group.createdBy.firstName} ${group.createdBy.lastName}`
-                      : '-'}
-                  </TableCell>
-                  <TableCell>
-                    {Array.isArray(group.memberIds) ? group.memberIds.length : 0}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="outlined" onClick={() => {
+              setShowForm(false);
+              setForm({ title: '', description: '' });
+              setGroupManagerIds([]);
+            }}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="contained"
+              disabled={loading || !form.title || !form.description}
+              sx={{
+                bgcolor: '#0057B8',
+                '&:hover': {
+                  bgcolor: '#004a9f',
+                },
+              }}
+            >
+              {loading ? 'Adding...' : 'Create Group'}
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
+      
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
         <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
           {error}

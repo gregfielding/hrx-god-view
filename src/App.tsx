@@ -20,6 +20,7 @@ import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import { CRMCacheProvider } from './contexts/CRMCacheContext';
 import { SalespeopleProvider } from './contexts/SalespeopleContext';
 import { DirectMessengerProvider } from './contexts/DirectMessengerContext';
+import { ChatGPTProvider } from './contexts/ChatGPTContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import SlackProtectedRoute from './components/SlackProtectedRoute';
 import { Box, Typography } from '@mui/material';
@@ -1023,19 +1024,21 @@ function App() {
         <PageViewTracker />
         <AuthProvider>
           <DirectMessengerProvider>
-            <AssociationsCacheProvider>
-              <SalespeopleProvider>
-              {googleMapsApiKey ? (
-                <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
-                  {routes}
-                </LoadScript>
-              ) : (
-                <div>
-                  {routes}
-                </div>
-              )}
-              </SalespeopleProvider>
-            </AssociationsCacheProvider>
+            <ChatGPTProvider>
+              <AssociationsCacheProvider>
+                <SalespeopleProvider>
+                  {googleMapsApiKey ? (
+                    <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
+                      {routes}
+                    </LoadScript>
+                  ) : (
+                    <div>
+                      {routes}
+                    </div>
+                  )}
+                </SalespeopleProvider>
+              </AssociationsCacheProvider>
+            </ChatGPTProvider>
           </DirectMessengerProvider>
         </AuthProvider>
       </Router>

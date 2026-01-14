@@ -34,6 +34,7 @@ import { collection, getDocs, query, where, limit, startAfter, orderBy, QueryDoc
 import { SelectChangeEvent } from '@mui/material/Select';
 
 import FavoriteButton from '../components/FavoriteButton';
+import { usePageCache } from '../hooks/usePageCache';
 import StandardTablePagination from '../components/StandardTablePagination';
 import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
@@ -90,6 +91,19 @@ const RecruiterUsers: React.FC = () => {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const filtersRef = useRef<HTMLDivElement | null>(null);
   
+  // Page cache for search and filters
+  const { cacheState, updateCache } = usePageCache({
+    pageKey: 'users',
+    defaultState: {
+      securityLevelFilter: 'all',
+      groupFilter: 'all',
+      skillFilter: 'all',
+      stateFilter: 'all',
+      sortBy: 'accountCreated',
+      sortDirection: 'desc',
+    },
+  });
+  
   // Use outlet context if available, otherwise use local state
   const searchTerm = outletCtx?.search !== undefined ? outletCtx.search : localSearch;
   const showFavoritesOnly = outletCtx?.showFavoritesOnly !== undefined ? outletCtx.showFavoritesOnly : localShowFavoritesOnly;
@@ -121,12 +135,13 @@ const RecruiterUsers: React.FC = () => {
   const [hasMore, setHasMore] = useState(true);
   const PAGE_SIZE = 500; // Load up to 500 users at a time so search can filter locally without reloads
 
-  const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
-  const [groupFilter, setGroupFilter] = useState<string>('all');
-  const [skillFilter, setSkillFilter] = useState<string>('all');
-  const [stateFilter, setStateFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'accountCreated'>('accountCreated');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  // State - initialize from cache
+  const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>(cacheState.securityLevelFilter || 'all');
+  const [groupFilter, setGroupFilter] = useState<string>(cacheState.groupFilter || 'all');
+  const [skillFilter, setSkillFilter] = useState<string>(cacheState.skillFilter || 'all');
+  const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
+  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'accountCreated'>((cacheState.sortBy as any) || 'accountCreated');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
 
@@ -150,6 +165,18 @@ const RecruiterUsers: React.FC = () => {
     loadUsers(activeTenant.id, true);
   }, [activeTenant?.id, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
 
+  // Update cache when filters change
+  useEffect(() => {
+    updateCache({
+      securityLevelFilter,
+      groupFilter,
+      skillFilter,
+      stateFilter,
+      sortBy,
+      sortDirection,
+    });
+  }, [securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, sortDirection, updateCache]);
+
   // Reset client pagination when filters/search change
   useEffect(() => {
     setPage(0);
@@ -157,11 +184,15 @@ const RecruiterUsers: React.FC = () => {
 
   const handleSort = (key: 'name' | 'aiScore' | 'lastLogin') => {
     if (sortBy === key) {
-      setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+      const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      setSortDirection(newDirection);
+      updateCache({ sortDirection: newDirection });
       return;
     }
+    const newDirection = key === 'name' ? 'asc' : 'desc';
     setSortBy(key);
-    setSortDirection(key === 'name' ? 'asc' : 'desc');
+    setSortDirection(newDirection);
+    updateCache({ sortBy: key, sortDirection: newDirection });
   };
 
   const loadGroups = async (tenantId: string) => {
@@ -575,9 +606,11 @@ const RecruiterUsers: React.FC = () => {
               <Select
                 label="Role"
                 value={securityLevelFilter}
-                onChange={(event: SelectChangeEvent<SecurityLevel>) =>
-                  setSecurityLevelFilter(event.target.value as SecurityLevel)
-                }
+                onChange={(event: SelectChangeEvent<SecurityLevel>) => {
+                  const newFilter = event.target.value as SecurityLevel;
+                  setSecurityLevelFilter(newFilter);
+                  updateCache({ securityLevelFilter: newFilter });
+                }}
                 sx={{
                   height: 36,
                   borderRadius: '6px',
@@ -599,7 +632,11 @@ const RecruiterUsers: React.FC = () => {
               options={groups}
               getOptionLabel={(option) => option.title || option.id || 'Unnamed Group'}
               value={groupFilter === 'all' ? null : groups.find(g => g.id === groupFilter) || null}
-              onChange={(_, newValue) => setGroupFilter(newValue ? newValue.id : 'all')}
+              onChange={(_, newValue) => {
+                const newFilter = newValue ? newValue.id : 'all';
+                setGroupFilter(newFilter);
+                updateCache({ groupFilter: newFilter });
+              }}
               renderInput={(params) => (
                 <TextField
                   {...params}
@@ -614,7 +651,11 @@ const RecruiterUsers: React.FC = () => {
               size="small"
               options={uniqueSkills}
               value={skillFilter === 'all' ? null : skillFilter}
-              onChange={(_, newValue) => setSkillFilter(newValue || 'all')}
+              onChange={(_, newValue) => {
+                const newFilter = newValue || 'all';
+                setSkillFilter(newFilter);
+                updateCache({ skillFilter: newFilter });
+              }}
               renderInput={(params) => (
                 <TextField
                   {...params}
@@ -631,7 +672,11 @@ const RecruiterUsers: React.FC = () => {
                 <InputLabel sx={{ fontSize: '0.875rem' }}>State Filter</InputLabel>
                 <Select
                   value={stateFilter}
-                  onChange={(e) => setStateFilter(String(e.target.value))}
+                  onChange={(e) => {
+                    const newFilter = String(e.target.value);
+                    setStateFilter(newFilter);
+                    updateCache({ stateFilter: newFilter });
+                  }}
                   label="State Filter"
                   sx={{
                     height: 36,
@@ -649,7 +694,10 @@ const RecruiterUsers: React.FC = () => {
               <IconButton
                 size="small"
                 aria-label="Clear state filter"
-                onClick={() => setStateFilter('all')}
+                onClick={() => {
+                  setStateFilter('all');
+                  updateCache({ stateFilter: 'all' });
+                }}
                 disabled={stateFilter === 'all'}
                 sx={{ height: 36, width: 36, p: 0.75 }}
               >
@@ -662,7 +710,11 @@ const RecruiterUsers: React.FC = () => {
               <Select
                 label="Sort By"
                 value={sortBy}
-                onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
+                onChange={(event) => {
+                  const newSortBy = event.target.value as typeof sortBy;
+                  setSortBy(newSortBy);
+                  updateCache({ sortBy: newSortBy });
+                }}
                 sx={{
                   height: 36,
                   borderRadius: '6px',
@@ -689,6 +741,54 @@ const RecruiterUsers: React.FC = () => {
 
         {!loading || users.length > 0 ? (
           <>
+          <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            {/* Loading overlay */}
+            {loading && users.length > 0 && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(255, 255, 255, 0.8)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 1000,
+                  borderRadius: '8px',
+                }}
+              >
+                <CircularProgress size={40} />
+              </Box>
+            )}
+            
+            {/* No Results Found message */}
+            {!loading && filteredUsers.length === 0 && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 999,
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                <Typography variant="h6" color="text.secondary" sx={{ fontWeight: 500 }}>
+                  No Results Found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Try adjusting your search or filters
+                </Typography>
+              </Box>
+            )}
+            
           <TableContainer
             component={Paper}
             elevation={0}
@@ -919,6 +1019,7 @@ const RecruiterUsers: React.FC = () => {
               setPage(0);
             }}
           />
+          </Box>
           </>
         ) : null}
       </Box>
