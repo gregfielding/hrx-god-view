@@ -1209,33 +1209,36 @@ const CompanyDetails: React.FC = () => {
                   </Tooltip>
                   {/* AI Enhance Icon Button */}
                   <Tooltip title={aiLoading ? 'Enhancing...' : 'AI Enhance'}>
-                    <IconButton
-                      size="small"
-                      onClick={handleEnhanceWithAI}
-                      disabled={aiLoading}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        '&:disabled': {
-                          opacity: 0.6
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      {aiLoading ? (
-                        <CircularProgress size={16} sx={{ color: 'primary.main' }} />
-                      ) : (
-                        <AutoAwesomeIcon sx={{ fontSize: 20 }} />
-                      )}
-                    </IconButton>
+                    {/* Tooltip won't trigger on disabled buttons; wrap in span per MUI guidance */}
+                    <span style={{ display: 'inline-flex' }}>
+                      <IconButton
+                        size="small"
+                        onClick={handleEnhanceWithAI}
+                        disabled={aiLoading}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          '&:disabled': {
+                            opacity: 0.6
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {aiLoading ? (
+                          <CircularProgress size={16} sx={{ color: 'primary.main' }} />
+                        ) : (
+                          <AutoAwesomeIcon sx={{ fontSize: 20 }} />
+                        )}
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   {/* Add Task Icon Button */}
                   <Tooltip title="Add Task">

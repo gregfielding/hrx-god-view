@@ -337,7 +337,7 @@ const UserInboxPage: React.FC = () => {
       const result = await syncGmailEmailsFn({
         userId: user.uid,
         tenantId: effectiveTenantId,
-        maxResults: silent ? 500 : 5000, // Smaller batch for automatic syncs, full for manual
+        maxResults: silent ? 200 : 1000, // Reduced to avoid timeouts - 200 for auto syncs, 1000 for manual
       });
 
       const data = result.data as any;

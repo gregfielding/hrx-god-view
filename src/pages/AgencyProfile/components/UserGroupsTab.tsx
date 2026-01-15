@@ -22,7 +22,7 @@ import {
   DialogActions,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
-import { collection, addDoc, getDocs, doc, getDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, getDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getAuth } from 'firebase/auth';
 
@@ -65,22 +65,44 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   };
 
   useEffect(() => {
-    fetchGroups();
-    fetchCurrentUser();
-    fetchAgencyUsers();
-    // eslint-disable-next-line
+    if (!tenantId) return;
+    
+    let isMounted = true;
+    
+    const loadData = async () => {
+      try {
+        await Promise.all([
+          fetchGroups(),
+          fetchCurrentUser(),
+          fetchAgencyUsers()
+        ]);
+      } catch (err) {
+        console.error('Error loading user groups data:', err);
+      }
+    };
+    
+    loadData();
+    
+    return () => {
+      isMounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
   const fetchGroups = async () => {
+    if (!tenantId) return;
     setLoading(true);
     try {
       const q = collection(db, 'tenants', tenantId, 'userGroups');
       const snapshot = await getDocs(q);
       setGroups(snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })));
     } catch (err: any) {
+      console.error('Error fetching user groups:', err);
       setError(err.message || 'Failed to fetch groups');
+      setGroups([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const fetchCurrentUser = async () => {
@@ -102,14 +124,20 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   const fetchAgencyUsers = async () => {
     try {
-      const q = collection(db, 'users');
+      // Query only users for this tenant to avoid loading all users
+      const q = query(
+        collection(db, 'users'),
+        where('tenantId', '==', tenantId),
+        where('role', '==', 'Agency')
+      );
       const snapshot = await getDocs(q);
       setAgencyUsers(
-        snapshot.docs
-          .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((user: any) => user.tenantId === tenantId && user.role === 'Agency'),
+        snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
       );
-    } catch {}
+    } catch (err: any) {
+      console.error('Error fetching agency users:', err);
+      setAgencyUsers([]);
+    }
   };
 
   const handleChange = (field: string, value: string) => {

@@ -157,20 +157,21 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     const tabParam = searchParams.get('tab');
     if (tabParam) {
       const tabMap: Record<string, number> = {
-        'dashboard': 0,
-        'contacts': 1,
-        'companies': 2,
-        'opportunities': 3,
-        'pipeline': 4,
-        'prospect': 5,
-        'activity': 6,
+        // CRM tab buttons now only show Opportunities + Pipeline.
+        // Hidden tabs map to Opportunities to avoid landing users on hidden views.
+        'dashboard': 1,
+        'opportunities': 1,
+        'pipeline': 2,
+        'prospect': 1,
+        'activity': 1,
         'reports': 9,
         'kpi-management': 7,
-        'kpi-dashboard': 8
+        'kpi-dashboard': 8,
       };
-      return tabMap[tabParam] ?? 0;
+      return tabMap[tabParam] ?? 1;
     }
-    return 0;
+    // Default active tab: Opportunities
+    return 1;
   });
   
   // Track if we're in the middle of a user-initiated tab change to prevent URL override
@@ -181,10 +182,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     if (standaloneTab) return;
     // Only run this on initial mount when we don't have a URL tab param
     const tabParam = searchParams.get('tab');
-    if (!tabParam && hasCachedState && cacheState.activeTab !== tabValue) {
-      // Fallback to cached state if no URL param
-      console.log('🔄 Setting tab value from cache on mount:', { cachedTab: cacheState.activeTab, currentTabValue: tabValue });
-      setTabValue(cacheState.activeTab);
+    // CRM default should always land on Opportunities when no explicit tab is provided.
+    if (!tabParam && tabValue !== 1) {
+      setTabValue(1);
+      updateCacheState({ activeTab: 1 });
     }
   }, []); // Empty dependency array - only run on mount
   
@@ -1331,6 +1332,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
 
   // Reload contacts immediately when the Contacts state filter changes
   useEffect(() => {
+    // Contacts tab was removed from CRM; only keep this for deprecated standalone contacts mode.
+    if (standaloneTab !== 'contacts') return;
     console.log('🔄 Contacts state filter changed, reloading contacts:', { 
       contactsStateFilter, 
       contactFilter,
@@ -1358,18 +1361,18 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     
     if (tabParam && !didRestoreTabFromCacheRef.current) {
       const tabMap: Record<string, number> = {
-        'dashboard': 0,
-        'contacts': 1,
-        'companies': 2,
-        'opportunities': 3,
-        'pipeline': 4,
-        'prospect': 5,
-        'activity': 6,
+        // CRM tab buttons now only show Opportunities + Pipeline.
+        // Hidden tabs map to Opportunities to avoid landing users on hidden views.
+        'dashboard': 1,
+        'opportunities': 1,
+        'pipeline': 2,
+        'prospect': 1,
+        'activity': 1,
         'reports': 9,
         'kpi-management': 7,
-        'kpi-dashboard': 8
+        'kpi-dashboard': 8,
       };
-      const newTabValue = tabMap[tabParam] ?? 0;
+      const newTabValue = tabMap[tabParam] ?? 1;
       if (newTabValue !== tabValue) {
         console.log('🔄 Setting tab value from URL parameter change:', { tabParam, newTabValue, currentTabValue: tabValue });
         setTabValue(newTabValue);
@@ -1392,15 +1395,15 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     }
   }, [searchParams, isUserTabChange, companyLocationState, contactsStateFilter, updateCacheState]);
 
-    // Sync Companies state filter into URL when Companies tab is active
+  // Sync Companies state filter into URL when Companies tab is active (deprecated standalone mode only)
   useEffect(() => {
+    if (standaloneTab !== 'companies') return;
     // Skip during user tab changes to prevent interference
     if (isUserTabChange) {
       console.log('🔄 Skipping Companies state URL sync - user tab change in progress');
       return;
     }
 
-    if (tabValue !== 2) return;
     const params = new URLSearchParams(searchParams);
     if (companyLocationState && companyLocationState !== 'all') {
       params.set('companyState', companyLocationState);
@@ -1410,15 +1413,15 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     setSearchParams(params);
   }, [companyLocationState, tabValue, isUserTabChange, searchParams]);
 
-  // Sync Contacts state filter into URL when Contacts tab is active
+  // Sync Contacts state filter into URL when Contacts tab is active (deprecated standalone mode only)
   useEffect(() => {
+    if (standaloneTab !== 'contacts') return;
     // Skip during user tab changes to prevent interference
     if (isUserTabChange) {
       console.log('🔄 Skipping Contacts state URL sync - user tab change in progress');
       return;
     }
 
-    if (tabValue !== 1) return;
     const params = new URLSearchParams(searchParams);
     if (contactsStateFilter && contactsStateFilter !== 'all') {
       params.set('contactState', contactsStateFilter);
@@ -1568,13 +1571,6 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     updateCacheState({ activeTab: newValue });
     console.log('🔄 Updated cache state with activeTab:', newValue);
     
-    // Set loading states when switching tabs to prevent flash
-    if (newValue === 1) { // Contacts tab
-      setContactsLoading(true);
-    } else if (newValue === 2) { // Companies tab
-      setCompaniesLoading(true);
-    }
-    
     // Set flag to prevent URL-based override and update URL in next tick
     setIsUserTabChange(true);
     console.log('🔄 Set isUserTabChange to true');
@@ -1582,13 +1578,9 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     // Update URL in the next tick to ensure isUserTabChange is set first
     setTimeout(() => {
       const tabMap: Record<number, string> = {
-        0: 'dashboard',
-        1: 'contacts',
-        2: 'companies',
-        3: 'opportunities',
-        4: 'pipeline',
-        5: 'prospect',
-        6: 'activity',
+        // CRM tab buttons now only show Opportunities + Pipeline.
+        1: 'opportunities',
+        2: 'pipeline',
         9: 'reports',
         7: 'kpi-management',
         8: 'kpi-dashboard'
@@ -1598,24 +1590,9 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       if (tabName) {
         const newSearchParams = new URLSearchParams(searchParams);
         newSearchParams.set('tab', tabName);
-        
-        // Clean up all tab-specific state parameters first
+        // Clean up deprecated tab-specific state parameters
         newSearchParams.delete('companyState');
         newSearchParams.delete('contactState');
-        
-        // Add state filter to URL if on companies tab
-        if (newValue === 2) {
-          if (companyLocationState && companyLocationState !== 'all') {
-            newSearchParams.set('companyState', companyLocationState);
-          }
-        }
-        
-        // Add state filter to URL if on contacts tab
-        if (newValue === 1) {
-          if (contactsStateFilter && contactsStateFilter !== 'all') {
-            newSearchParams.set('contactState', contactsStateFilter);
-          }
-        }
         
         navigate(`?${newSearchParams.toString()}`, { replace: true });
       }
@@ -2003,7 +1980,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
           subtitle={
             standaloneTab === 'contacts'
               ? undefined
-              : 'Manage contacts, companies, opportunities, and pipeline'
+              : 'Manage opportunities and pipeline'
           }
         filters={
           standaloneTab
@@ -2031,11 +2008,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                 }}
               >
                 {[
-                  { label: 'Dashboard', value: 0, icon: <DashboardIcon fontSize="small" /> },
                   { label: 'Opportunities', value: 1, icon: <DealIcon fontSize="small" /> },
                   { label: 'Pipeline', value: 2, icon: <PipelineIcon fontSize="small" /> },
-                  { label: 'Prospect', value: 3, icon: <FilterAltIcon fontSize="small" /> },
-                  { label: 'Activity', value: 4, icon: <TrendingUpIcon fontSize="small" /> },
                 ].map((t) => {
                   const isActive = tabValue === t.value;
                   return (

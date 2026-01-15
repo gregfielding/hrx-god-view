@@ -47,6 +47,7 @@ import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
+import SellIcon from '@mui/icons-material/Sell';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
 import Menu from '@mui/material/Menu';
@@ -832,7 +833,7 @@ const Layout: React.FC = React.memo(function Layout() {
       'Job Orders': <AssignmentIcon />,
       'Flex Jobs': <AssignmentIcon />,
       'Jobs Board': <WorkIcon />,
-      'Sales CRM': <BusinessIcon />,
+      'Sales CRM': <SellIcon />,
       'My Applications': <FactCheckIcon />,
       'My Assignments': <AssignmentTurnedInIcon />,
       'Locations': <LocationOnIcon />,
@@ -1548,10 +1549,18 @@ const Layout: React.FC = React.memo(function Layout() {
                   onClick={() => navigate('/slack')}
                   sx={{
                     backgroundColor: 'transparent !important',
-                    color: 'rgba(255,255,255,.8)',
+                    color: location.pathname.startsWith('/slack') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
+                    '& svg': {
+                      fill: 'currentColor',
+                      stroke: 'currentColor',
+                    },
                     '&:hover': { 
                       backgroundColor: 'transparent !important',
                       color: '#FFFFFF',
+                      '& svg': {
+                        fill: 'currentColor',
+                        stroke: 'currentColor',
+                      },
                     },
                   }}
                 >

@@ -537,7 +537,7 @@ const RecruiterContacts: React.FC = () => {
   };
 
   const handleViewContact = (contact: Contact) => {
-    navigate(`/recruiter/contacts/${contact.id}`);
+    navigate(`/contacts/${contact.id}`);
   };
 
   const handleAddNew = () => {

@@ -259,31 +259,78 @@ const CompaniesPage: React.FC = () => {
       // Normal load (no state filter) - default to ascending alphabetical by companyName
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
       
-      let q: any = query(companiesRef, orderBy('companyName', 'asc'), limit(companiesPageSize));
-      
-      if (startDoc) {
-        q = query(companiesRef, orderBy('companyName', 'asc'), startAfter(startDoc), limit(companiesPageSize));
-      }
-      
-      if (filterByUser && currentUser?.uid) {
-        q = query(q, where('accountOwnerId', '==', currentUser.uid));
-      }
-      
-      const snapshot = await getDocs(q);
-      const newCompanies = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
-      
-      if (append) {
-        setCompanies(prev => [...prev, ...newCompanies]);
-      } else {
-        setCompanies(newCompanies);
-        // Cache the results (only for non-filtered loads)
-        if (!filterByUser && !searchQuery) {
-          updateCache({ cachedResults: newCompanies });
+      // If search query is provided, query the entire collection for matching companies
+      if (searchQuery && searchQuery.trim()) {
+        const searchLower = searchQuery.trim().toLowerCase();
+        const searchUpper = searchQuery.trim().toUpperCase();
+        const searchCapitalized = searchQuery.trim().charAt(0).toUpperCase() + searchQuery.trim().slice(1).toLowerCase();
+        
+        // Query all companies and filter by name (Firestore doesn't support case-insensitive search natively)
+        // We'll fetch all companies and filter client-side, but at least we're querying the full collection
+        let allCompaniesQuery: any = query(companiesRef, orderBy('companyName', 'asc'));
+        
+        if (filterByUser && currentUser?.uid) {
+          allCompaniesQuery = query(allCompaniesQuery, where('accountOwnerId', '==', currentUser.uid));
         }
+        
+        const allSnapshot = await getDocs(allCompaniesQuery);
+        const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
+        
+        // Filter by search term (case-insensitive)
+        const filtered = allCompanies.filter((company: any) => {
+          const companyName = (company.companyName || company.name || '').toLowerCase();
+          const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
+          const city = (company.city || '').toLowerCase();
+          const industry = (company.industry || '').toLowerCase();
+          const state = (company.state || '').toLowerCase();
+          const headquarters = (company.headquarters || '').toLowerCase();
+          
+          return companyName.includes(searchLower) ||
+                 companyUrl.includes(searchLower) ||
+                 city.includes(searchLower) ||
+                 industry.includes(searchLower) ||
+                 state.includes(searchLower) ||
+                 headquarters.includes(searchLower);
+        });
+        
+        if (append) {
+          setCompanies(prev => [...prev, ...filtered]);
+        } else {
+          setCompanies(filtered);
+          // Cache search results
+          updateCache({ cachedResults: filtered });
+        }
+        
+        setCompaniesHasMore(false);
+        setCompaniesLastDoc(null);
+      } else {
+        // No search query - use pagination
+        let q: any = query(companiesRef, orderBy('companyName', 'asc'), limit(companiesPageSize));
+        
+        if (startDoc) {
+          q = query(companiesRef, orderBy('companyName', 'asc'), startAfter(startDoc), limit(companiesPageSize));
+        }
+        
+        if (filterByUser && currentUser?.uid) {
+          q = query(q, where('accountOwnerId', '==', currentUser.uid));
+        }
+        
+        const snapshot = await getDocs(q);
+        const newCompanies = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
+        
+        if (append) {
+          setCompanies(prev => [...prev, ...newCompanies]);
+        } else {
+          setCompanies(newCompanies);
+          // Cache the results (only for non-filtered loads)
+          if (!filterByUser && !searchQuery) {
+            updateCache({ cachedResults: newCompanies });
+          }
+        }
+        
+        setCompaniesLastDoc(snapshot.docs[snapshot.docs.length - 1] || null);
+        setCompaniesHasMore(snapshot.docs.length === companiesPageSize);
       }
-      
-      setCompaniesLastDoc(snapshot.docs[snapshot.docs.length - 1] || null);
-      setCompaniesHasMore(snapshot.docs.length === companiesPageSize);
     } catch (error: any) {
       console.error('Error loading companies:', error);
     } finally {
@@ -428,13 +475,13 @@ const CompaniesPage: React.FC = () => {
     loadSalesTeam();
   }, [tenantId]);
 
-  // Initial load and reload when filters change
+  // Initial load and reload when filters change (NOT search - search is handled separately)
   useEffect(() => {
-    if (tenantId) {
-      // Check if we have cached results that match current filters
+    if (tenantId && !search.trim()) {
+      // Check if we have cached results that match current filters (only if no search)
       const cached = getCachedResults();
       if (cached && cached.length > 0) {
-        // Restore cached results immediately (no loading spinner)
+        // Restore cached results immediately (no loading spinner) - only if no search active
         setCompanies(cached);
         setCompaniesLoading(false);
       } else {
@@ -585,7 +632,7 @@ const CompaniesPage: React.FC = () => {
     }
   };
 
-  // Filter and sort companies
+  // Filter and sort companies (search is now handled server-side, but we still filter favorites client-side)
   const filteredCompanies = React.useMemo(() => {
     let filtered = companies;
     
@@ -593,20 +640,8 @@ const CompaniesPage: React.FC = () => {
       filtered = filtered.filter(company => isFavorite(company.id));
     }
     
-    if (search.trim()) {
-      const searchLower = search.toLowerCase().trim();
-      filtered = filtered.filter(company => {
-        const companyName = (company.companyName || company.name || '').toLowerCase();
-        const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
-        const city = (company.city || '').toLowerCase();
-        const industry = (company.industry || '').toLowerCase();
-        
-        return companyName.includes(searchLower) ||
-               companyUrl.includes(searchLower) ||
-               city.includes(searchLower) ||
-               industry.includes(searchLower);
-      });
-    }
+    // Search is now handled in loadCompanies by querying Firestore
+    // No need to filter here if search is active (companies already filtered from Firestore)
     
     filtered.sort((a, b) => {
       const aValue = getSortableValue(a, sortField);
@@ -618,7 +653,7 @@ const CompaniesPage: React.FC = () => {
     });
     
     return filtered;
-  }, [companies, search, sortField, sortDirection, showFavoritesOnly, isFavorite]);
+  }, [companies, sortField, sortDirection, showFavoritesOnly, isFavorite]);
 
   // Paginated companies (for inbox spec)
   const paginatedCompanies = React.useMemo(() => {
@@ -663,6 +698,19 @@ const CompaniesPage: React.FC = () => {
     setPage(0);
   }, [search, showFavoritesOnly, locationStateFilter, companyFilter]);
 
+  // Trigger search query when search value changes (debounced)
+  useEffect(() => {
+    if (!tenantId) return;
+    
+    const timeoutId = setTimeout(() => {
+      setCompanies([]);
+      setCompaniesLoading(true);
+      loadCompanies(search.trim(), null, false, companyFilter === 'my', locationStateFilter);
+    }, 500); // 500ms debounce
+    
+    return () => clearTimeout(timeoutId);
+  }, [search, tenantId, companyFilter, locationStateFilter, loadCompanies]);
+
   const handleViewCompany = (company: any) => {
     navigate(`/companies/${company.id}`);
   };
@@ -694,10 +742,17 @@ const CompaniesPage: React.FC = () => {
                 onChange={(value) => {
                   setSearch(value);
                   updateCache({ search: value });
+                  // Trigger search query when user types (with debounce handled by InboxSearchBar)
                 }}
                 onSearch={(value) => {
                   setSearch(value);
                   updateCache({ search: value });
+                  // Reload companies with search query
+                  if (tenantId) {
+                    setCompanies([]);
+                    setCompaniesLoading(true);
+                    loadCompanies(value, null, false, companyFilter === 'my', locationStateFilter);
+                  }
                 }}
                 placeholder="Search companies..."
               />

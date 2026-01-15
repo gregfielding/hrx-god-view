@@ -10,8 +10,6 @@ import React, { useState, useEffect } from 'react';
 import { Box, Button, useTheme } from '@mui/material';
 import {
   Work as WorkIcon,
-  Group as GroupIcon,
-  Badge as BadgeIcon,
   Assignment as AssignmentIcon,
   Add as AddIcon,
   Person as PersonIcon,
@@ -25,8 +23,6 @@ import { useAuth } from '../contexts/AuthContext';
 export type RecruiterTab =
   | 'job-orders'
   | 'my-orders'
-  | 'users'
-  | 'user-groups'
   | 'jobs-board'
   | 'reports';
 
@@ -54,8 +50,6 @@ const RecruiterDashboard: React.FC = () => {
     const path = location.pathname;
     if (path.includes('/my-orders')) return 'my-orders';
     if (path.includes('/job-orders')) return 'job-orders';
-    if (path.includes('/users')) return 'users';
-    if (path.includes('/user-groups')) return 'user-groups';
     if (path.includes('/jobs-board')) return 'jobs-board';
     if (path.includes('/reports')) return 'reports';
     return 'job-orders'; // Default to Job Orders
@@ -98,16 +92,6 @@ const RecruiterDashboard: React.FC = () => {
       icon: <PersonIcon fontSize="small" />,
     },
     {
-      id: 'users' as RecruiterTab,
-      label: 'All Users',
-      icon: <BadgeIcon fontSize="small" />,
-    },
-    {
-      id: 'user-groups' as RecruiterTab,
-      label: 'User Groups',
-      icon: <GroupIcon fontSize="small" />,
-    },
-    {
       id: 'jobs-board' as RecruiterTab,
       label: 'Jobs Board',
       icon: <AssignmentIcon fontSize="small" />,
@@ -126,7 +110,7 @@ const RecruiterDashboard: React.FC = () => {
       {isTopLevelTabRoute && (
         <PageHeader
           title="Recruiter"
-          subtitle="Manage job orders, users, companies, and contacts"
+          subtitle="Manage job orders and job posts"
           filters={
             <Box display="flex" gap={0.5}>
               {tabs.map((tab) => {
@@ -162,34 +146,28 @@ const RecruiterDashboard: React.FC = () => {
           rightActions={
             activeTab === 'job-orders' ||
             activeTab === 'my-orders' ||
-            activeTab === 'users' ||
-            activeTab === 'user-groups' ||
             activeTab === 'jobs-board' ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                {activeTab !== 'user-groups' && (
-                  <FavoritesFilter
-                    favoriteType={
-                      activeTab === 'job-orders' || activeTab === 'my-orders'
-                        ? 'jobOrders'
-                        : activeTab === 'users'
-                          ? 'users'
-                          : 'jobPosts'
-                    }
-                    showFavoritesOnly={showFavoritesOnly}
-                    onToggle={setShowFavoritesOnly}
-                    showText={false}
-                    size="small"
-                    sx={{
-                      minWidth: '36px',
-                      width: '36px',
-                      height: '36px',
-                      borderRadius: '50%',
-                      '&:hover': {
-                        backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                      },
-                    }}
-                  />
-                )}
+                <FavoritesFilter
+                  favoriteType={
+                    activeTab === 'job-orders' || activeTab === 'my-orders'
+                      ? 'jobOrders'
+                      : 'jobPosts'
+                  }
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={setShowFavoritesOnly}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '36px',
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                />
                 <InboxSearchBar
                   value={search}
                   onChange={setSearch}
@@ -197,11 +175,7 @@ const RecruiterDashboard: React.FC = () => {
                   placeholder={
                     activeTab === 'job-orders' || activeTab === 'my-orders'
                       ? 'Search job orders...'
-                      : activeTab === 'users'
-                        ? 'Search users...'
-                        : activeTab === 'user-groups'
-                          ? 'Search user groups...'
-                          : 'Search job posts...'
+                      : 'Search job posts...'
                   }
                 />
 
@@ -228,32 +202,6 @@ const RecruiterDashboard: React.FC = () => {
                     }}
                   >
                     New Order
-                  </Button>
-                )}
-
-                {activeTab === 'user-groups' && (
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => navigate('/recruiter/user-groups?new=1')}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    New Group
                   </Button>
                 )}
 

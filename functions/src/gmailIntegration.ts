@@ -278,7 +278,8 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
 export const syncGmailEmails = onCall({
   cors: true,
   memory: '1GiB',          // Avoid OOM while processing message bodies
-  concurrency: 10          // Reduce per-instance load to prevent memory spikes
+  concurrency: 10,         // Reduce per-instance load to prevent memory spikes
+  timeoutSeconds: 540      // 9 minutes - allow time for processing large batches
 }, async (request) => {
   try {
     // Default to 1000 emails per sync
@@ -343,7 +344,7 @@ export const syncGmailEmails = onCall({
     const allMessages: any[] = [];
     let nextPageToken: string | undefined = undefined;
     let totalFetched = 0;
-    const maxTotalResults = Math.min(maxResults, 5000); // Cap at 5000 emails per sync (increased from 1000)
+    const maxTotalResults = Math.min(maxResults, 1000); // Cap at 1000 emails per sync to avoid timeouts
 
     // First, try to get unread emails with pagination
     // Note: Removed 'is:email' filter as it was too restrictive - test queries show messages exist without it

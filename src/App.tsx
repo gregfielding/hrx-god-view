@@ -164,6 +164,11 @@ function UsersRedirect() {
   return <Navigate to={`/users/${uid}`} replace />;
 }
 
+function RecruiterUserGroupsRedirect() {
+  const { groupId } = useParams();
+  return <Navigate to={`/usergroups/${groupId}`} replace />;
+}
+
 function UsersPageWrapper() {
   const [search, setSearch] = useState('');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
@@ -970,8 +975,9 @@ function App() {
           <Route path="companies/:companyId/locations/:locationId" element={<RecruiterLocationDetails />} />
           <Route path="contacts" element={<Navigate to="/contacts" replace />} />
           <Route path="contacts/:contactId" element={<RecruiterContactDetails />} />
-          <Route path="user-groups" element={<RecruiterUserGroups />} />
-          <Route path="user-groups/:groupId" element={<RecruiterUserGroupDetails />} />
+          {/* User Groups moved to main menu; keep recruiter routes as redirects */}
+          <Route path="user-groups" element={<Navigate to="/usergroups" replace />} />
+          <Route path="user-groups/:groupId" element={<RecruiterUserGroupsRedirect />} />
           <Route path="jobs-board" element={
             <JobsBoardAccessGuard>
               <JobsBoard />

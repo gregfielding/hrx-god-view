@@ -103,30 +103,93 @@ export class GmailEmailProvider implements EmailProvider {
       if (signatureUserId) {
         try {
           const userDoc = await db.collection('users').doc(signatureUserId).get();
-          const userData = userDoc.data();
-          const signatureSettings = userData?.emailSignature;
-          
-          // Always include signature if it exists (treat enabled as always true)
-          if (signatureSettings && (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data)) {
-            // Import signature generation utilities
-            const { generateEmailSignature, appendSignatureToEmail } = await import('./emailSignature');
-            // Temporarily enable signature for generation
-            const enabledSettings = { ...signatureSettings, enabled: true };
-            const signatureHtml = generateEmailSignature(enabledSettings);
+          // Admin SDK: DocumentSnapshot.exists is a boolean (not a function)
+          if (!userDoc.exists) {
+            logger.warn(`User document not found for signature lookup: ${signatureUserId}`);
+          } else {
+            const userData = userDoc.data();
+            let signatureSettings = userData?.emailSignature;
             
-            if (signatureHtml) {
-              htmlBodyWithSignature = appendSignatureToEmail(htmlBodyWithSignature, signatureHtml);
-              // For plain text, strip HTML tags
-              const textSignature = signatureHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
-              if (textSignature) {
-                textBodyWithSignature = (textBodyWithSignature || '').trim() + '\n\n' + textSignature;
+            logger.info('Email signature check', {
+              userId: signatureUserId,
+              hasSignatureSettings: !!signatureSettings,
+              hasTemplate: !!signatureSettings?.template,
+              hasCustomHtml: !!signatureSettings?.customHtml,
+              hasData: !!signatureSettings?.data,
+              dataKeys: signatureSettings?.data ? Object.keys(signatureSettings.data) : [],
+            });
+            
+            // Always include signature if it exists (treat enabled as always true)
+            if (signatureSettings && (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data)) {
+              // Import signature generation utilities
+              const { generateEmailSignature, appendSignatureToEmail } = await import('./emailSignature');
+              
+              // Ensure signature data has required fields, fallback to user data if missing
+              if (signatureSettings.data) {
+                if (!signatureSettings.data.email && userData?.email) {
+                  signatureSettings.data.email = userData.email;
+                }
+                if (!signatureSettings.data.fullName) {
+                  const fullName = userData?.displayName || 
+                    `${userData?.firstName || ''} ${userData?.lastName || ''}`.trim() || 
+                    userData?.email?.split('@')[0] || 
+                    '';
+                  if (fullName) {
+                    signatureSettings.data.fullName = fullName;
+                  }
+                }
+                if (!signatureSettings.data.phone && userData?.phone) {
+                  signatureSettings.data.phone = userData.phone;
+                }
+                if (!signatureSettings.data.jobTitle && userData?.jobTitle) {
+                  signatureSettings.data.jobTitle = userData.jobTitle;
+                }
               }
+              
+              // Temporarily enable signature for generation
+              const enabledSettings = { ...signatureSettings, enabled: true };
+              const signatureHtml = generateEmailSignature(enabledSettings);
+              
+              logger.info('Email signature generation result', {
+                userId: signatureUserId,
+                signatureLength: signatureHtml?.length || 0,
+                signaturePreview: signatureHtml?.substring(0, 100) || 'empty',
+              });
+              
+              if (signatureHtml && signatureHtml.trim()) {
+                htmlBodyWithSignature = appendSignatureToEmail(htmlBodyWithSignature, signatureHtml);
+                // For plain text, strip HTML tags
+                const textSignature = signatureHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+                if (textSignature) {
+                  textBodyWithSignature = (textBodyWithSignature || '').trim() + '\n\n' + textSignature;
+                }
+                logger.info('Email signature appended successfully', { userId: signatureUserId });
+              } else {
+                logger.warn('Email signature generated but was empty', {
+                  userId: signatureUserId,
+                  settings: JSON.stringify(signatureSettings),
+                });
+              }
+            } else {
+              logger.info('No email signature settings found or signature not configured', {
+                userId: signatureUserId,
+                hasSignatureSettings: !!signatureSettings,
+              });
             }
           }
         } catch (sigError: any) {
-          logger.warn('Failed to load email signature:', sigError);
+          logger.error('Failed to load email signature:', {
+            error: sigError.message,
+            stack: sigError.stack,
+            userId: signatureUserId,
+          });
           // Continue without signature if there's an error
         }
+      } else {
+        logger.warn('No signature userId provided for email', {
+          userId: options.userId,
+          gmailUserId: options.gmailUserId,
+        });
       }
 
       // Build message body - multipart if attachments exist, otherwise simple

@@ -6,8 +6,9 @@ interface SlackHashIconProps {
 }
 
 export const SlackHashIcon: React.FC<SlackHashIconProps> = ({ active = false, size = 20 }) => {
-  // Normal state: muted gray, Active state: white
-  const stroke = active ? '#FFFFFF' : '#9CA3AF';
+  // Use currentColor so parent IconButton controls color/opacity consistently.
+  // Keep `active` for backward compatibility, but prefer CSS inheritance.
+  const stroke = 'currentColor';
 
   return (
     <svg
@@ -16,6 +17,7 @@ export const SlackHashIcon: React.FC<SlackHashIconProps> = ({ active = false, si
       viewBox="0 0 20 20"
       fill="none"
       aria-hidden="true"
+      style={{ color: active ? '#FFFFFF' : undefined }}
     >
       <path
         d="M7 3L5 17"

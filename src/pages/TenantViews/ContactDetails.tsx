@@ -1848,33 +1848,36 @@ const ContactDetails: React.FC = () => {
                   </Tooltip>
                   {/* AI Enhance Icon Button */}
                   <Tooltip title={aiEnhancing ? 'Enhancing...' : 'AI Enhance'}>
-                    <IconButton
-                      size="small"
-                      onClick={handleAIEnhancement}
-                      disabled={aiEnhancing}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        '&:disabled': {
-                          opacity: 0.6
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      {aiEnhancing ? (
-                        <CircularProgress size={16} sx={{ color: 'primary.main' }} />
-                      ) : (
-                        <AutoAwesomeIcon sx={{ fontSize: 20 }} />
-                      )}
-                    </IconButton>
+                    {/* Tooltip won't trigger on disabled buttons; wrap in span per MUI guidance */}
+                    <span style={{ display: 'inline-flex' }}>
+                      <IconButton
+                        size="small"
+                        onClick={handleAIEnhancement}
+                        disabled={aiEnhancing}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          '&:disabled': {
+                            opacity: 0.6
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        {aiEnhancing ? (
+                          <CircularProgress size={16} sx={{ color: 'primary.main' }} />
+                        ) : (
+                          <AutoAwesomeIcon sx={{ fontSize: 20 }} />
+                        )}
+                      </IconButton>
+                    </span>
                   </Tooltip>
                   {/* Add Task Icon Button */}
                   <Tooltip title="Add Task">
@@ -2240,7 +2243,7 @@ const ContactDetails: React.FC = () => {
       <TabPanel value={tabValue} index={0}>
         <Grid container spacing={3}>
           {/* Left Column - Contact Details & Core Info */}
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={8}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* AI Summary */}
               {/* <Card>
@@ -2401,6 +2404,25 @@ const ContactDetails: React.FC = () => {
                   </CardContent>
                 </Card>
               )} */}
+
+              {/* Professional Summary (moved from center column) */}
+              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
+                <Card>
+                  <CardHeader 
+                    title="Professional Summary" 
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  />
+                  <CardContent sx={{ p: 2 }}>
+                    <Typography 
+                      variant="body2" 
+                      color="text.secondary" 
+                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
+                    >
+                      {String(contact.professionalSummary)}
+                    </Typography>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Contact Details (Combined Widget) */}
               <Card>
@@ -3229,218 +3251,8 @@ const ContactDetails: React.FC = () => {
             </Box>
           </Grid>
 
-          {/* Center Column - Contact Intelligence */}
-          <Grid item xs={12} md={5}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Professional Summary (shows only if content exists) */}
-              {contact?.professionalSummary && String(contact.professionalSummary).trim() !== '' && (
-                <Card>
-                  <CardHeader 
-                    title="Professional Summary" 
-                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  />
-                  <CardContent sx={{ p: 2 }}>
-                    <Typography 
-                      variant="body2" 
-                      color="text.secondary" 
-                      sx={{ lineHeight: 1.5, whiteSpace: 'pre-wrap' }}
-                    >
-                      {String(contact.professionalSummary)}
-                    </Typography>
-                  </CardContent>
-                </Card>
-              )}
-
-
-              {/* Contact Intelligence */}
-              {/* Contact Intelligence - Hidden for now */}
-              {/* <Card>
-                <CardHeader 
-                  title="Contact Intelligence" 
-                  action={
-                    <IconButton size="small">
-                      <AutoAwesomeIcon sx={{ fontSize: 16 }} />
-                    </IconButton>
-                  }
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {aiComponentsLoaded ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
-                          AI Insights
-                        </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                          {insights.slice(0, 3).map((insight, index) => (
-                            <Box key={index} sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: 1, 
-                              p: 1, 
-                              borderRadius: 1, 
-                              bgcolor: insight.type === 'success' ? 'success.50' : 
-                                       insight.type === 'warning' ? 'warning.50' : 
-                                       insight.type === 'error' ? 'error.50' : 'info.50',
-                              border: '1px solid',
-                              borderColor: insight.type === 'success' ? 'success.200' : 
-                                          insight.type === 'warning' ? 'warning.200' : 
-                                          insight.type === 'error' ? 'error.200' : 'info.200'
-                            }}>
-                              <Box sx={{ 
-                                width: 8, 
-                                height: 8, 
-                                borderRadius: '50%', 
-                                bgcolor: insight.type === 'success' ? 'success.main' : 
-                                        insight.type === 'warning' ? 'warning.main' : 
-                                        insight.type === 'error' ? 'error.main' : 'info.main' 
-                              }} />
-                              <Typography variant="caption" fontSize="0.75rem">
-                                {insight.message}
-                              </Typography>
-                            </Box>
-                          ))}
-                        </Box>
-                      </Box>
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <Skeleton variant="rectangular" height={24} />
-                      <Skeleton variant="rectangular" height={24} />
-                      <Skeleton variant="rectangular" height={24} />
-                    </Box>
-                  )}
-                </CardContent>
-              </Card> */}
-
-              {/* Key Metrics - Hidden for now */}
-              {/* <Card>
-                <CardHeader 
-                  title="Key Metrics" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  <Grid container spacing={2}>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="primary" fontWeight="bold">
-                          {metrics.totalDealValue}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Total Deal Value
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="primary" fontWeight="bold">
-                          {metrics.activeDeals}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Active Deals
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="success.main" fontWeight="bold">
-                          {metrics.completedTasks}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Completed Tasks
-                        </Typography>
-                      </Box>
-                    </Grid>
-                    <Grid item xs={6}>
-                      <Box sx={{ textAlign: 'center', p: 1 }}>
-                        <Typography variant="h4" color="info.main" fontWeight="bold">
-                          {metrics.totalTasks}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          Total Tasks
-                        </Typography>
-                      </Box>
-                    </Grid>
-                  </Grid>
-
-                  <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
-                    <Typography variant="body2" fontWeight="bold" sx={{ mb: 1 }}>
-                      Task Completion Rate
-                    </Typography>
-                    <Box sx={{ textAlign: 'center', p: 1 }}>
-                      <Typography variant="h6" color="primary" fontWeight="bold">
-                        {metrics.totalTasks > 0 ? Math.round((metrics.completedTasks / metrics.totalTasks) * 100) : 0}%
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {metrics.completedTasks} of {metrics.totalTasks} tasks completed
-                      </Typography>
-                    </Box>
-                  </Box>
-                </CardContent>
-              </Card> */}
-
-              {/* Contact Coach - Hidden for now */}
-              {/* <Card>
-                <CardHeader 
-                  title="Contact Coach" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {aiComponentsLoaded ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Strengthen relationship
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Identify upsell opportunities
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Optimize communication strategy
-                      </Button>
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  )}
-                </CardContent>
-              </Card> */}
-
-              {/* AI Suggestions */}
-              <Card>
-                <CardHeader 
-                  title="Suggested by AI" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {aiComponentsLoaded ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Research contact's company role
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Identify communication preferences
-                      </Button>
-                      <Button variant="outlined" size="small" fullWidth sx={{ justifyContent: 'flex-start' }}>
-                        Find engagement opportunities
-                      </Button>
-                    </Box>
-                  ) : (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  )}
-                </CardContent>
-              </Card>
-            </Box>
-          </Grid>
-
           {/* Right Column - Connections: Company, Location, Opportunities, Job Orders, Active Salespeople */}
-          <Grid item xs={12} md={3}>
+          <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Company */}
               {company && (
