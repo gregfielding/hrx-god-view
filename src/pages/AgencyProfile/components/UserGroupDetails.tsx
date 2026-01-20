@@ -35,11 +35,20 @@ import GroupsIcon from '@mui/icons-material/Groups';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import EmailIcon from '@mui/icons-material/Email';
+import PhoneIcon from '@mui/icons-material/Phone';
+import StarIcon from '@mui/icons-material/Star';
+import InsightsIcon from '@mui/icons-material/Insights';
+import IconButton from '@mui/material/IconButton';
 
 import { db } from '../../../firebase';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
+import FavoriteButton from '../../../components/FavoriteButton';
+import { useFavorites } from '../../../hooks/useFavorites';
+import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
+import { formatOneDecimal } from '../../../utils/scoreSummary';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -66,6 +75,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
+  const { isFavorite, toggleFavorite } = useFavorites('users');
 
   // Check if we're accessing from the top-level usergroups page
   const isFromTopLevel = location.pathname.includes('/usergroups') || location.pathname === '/usergroups';
@@ -295,6 +305,129 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     membersPage * membersRowsPerPage + membersRowsPerPage,
   );
 
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return 'N/A';
+    let date: Date;
+    if (timestamp instanceof Date) {
+      date = timestamp;
+    } else if (typeof timestamp === 'number') {
+      date = new Date(timestamp);
+    } else if (timestamp?.toDate) {
+      date = timestamp.toDate();
+    } else if (timestamp?._seconds) {
+      date = new Date(timestamp._seconds * 1000);
+    } else {
+      return 'N/A';
+    }
+
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    });
+  };
+
+  const getWorkStatusDisplay = (u: any): { label: string; color: 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info'; sx?: any } => {
+    const employeeInProgress = String(u.employeeOnboardStatus || '').toLowerCase() === 'in progress';
+    const contractorInProgress = String(u.contractorOnboardStatus || '').toLowerCase() === 'in progress';
+    if (employeeInProgress || contractorInProgress) {
+      const typeLabel =
+        String(u.onboardingType || '').toLowerCase() === 'contractor' || contractorInProgress
+          ? 'Contractor'
+          : 'Employee';
+      return {
+        label: `Onboarding (${typeLabel})`,
+        color: 'warning',
+        sx: { bgcolor: '#E4572E', color: '#FFFFFF' },
+      };
+    }
+
+    const sec =
+      String(u.tenantIds?.[tenantId]?.securityLevel ?? u.securityLevel ?? '0');
+
+    switch (sec) {
+      case '4':
+        return { label: 'Hired', color: 'success' };
+      case '3':
+        return { label: 'Candidate', color: 'primary' };
+      case '2':
+        return { label: 'Applicant', color: 'info' };
+      case '1':
+        return { label: 'Dismissed', color: 'default' };
+      case '0':
+        return { label: 'Suspended', color: 'error' };
+      default:
+        return { label: sec, color: 'default' };
+    }
+  };
+
+  const renderAiScore = (u: any) => {
+    const score =
+      u?.scoreSummary?.aiScore ??
+      u?.aiJobFitScore ??
+      u?.aiProfileScore;
+    if (score === undefined || score === null || Number.isNaN(score)) {
+      return <Typography variant="body2" color="text.secondary">N/A</Typography>;
+    }
+
+    let color: 'default' | 'success' | 'warning' | 'error' = 'default';
+    if (score >= 80) color = 'success';
+    else if (score >= 60) color = 'warning';
+    else color = 'default';
+
+    return (
+      <Tooltip
+        arrow
+        title={
+          <Box sx={{ p: 0.5 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Score Summary
+            </Typography>
+            <Stack spacing={0.25}>
+              <Typography variant="body2">
+                AI: <strong>{Math.round(score)}</strong>
+              </Typography>
+              <Typography variant="body2">
+                Interview: <strong>{formatOneDecimal(u?.scoreSummary?.interviewAvg)}</strong>/10
+                {u?.scoreSummary?.interviewCount ? ` (${u.scoreSummary.interviewCount})` : ''}
+              </Typography>
+              <Typography variant="body2">
+                Reviews: <strong>{formatOneDecimal(u?.scoreSummary?.reviewAvg)}</strong>/5
+                {u?.scoreSummary?.reviewCount ? ` (${u.scoreSummary.reviewCount})` : ''}
+              </Typography>
+            </Stack>
+          </Box>
+        }
+      >
+        <Chip
+          icon={<InsightsIcon sx={{ fontSize: 16 }} />}
+          label={`${Math.round(score)}`}
+          color={color}
+          size="small"
+          variant={color === 'default' ? 'outlined' : 'filled'}
+          sx={{ minWidth: 96, justifyContent: 'flex-start' }}
+        />
+      </Tooltip>
+    );
+  };
+
+  const getDisplaySkills = (u: any): string[] => {
+    const raw = u?.skills;
+    if (!Array.isArray(raw)) return [];
+    const out: string[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const t = item.trim();
+        if (t) out.push(t);
+      } else if (item && typeof item === 'object') {
+        const t = String((item as any).name || (item as any).canonicalId || '').trim();
+        if (t) out.push(t);
+      }
+      if (out.length >= 8) break; // cap to avoid huge arrays
+    }
+    return out;
+  };
+
   const noop = () => {
     /* intentionally left blank */
   };
@@ -473,83 +606,210 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         </Box>
 
         {activeTab === 'members' && (
-          <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
-            <TableContainer sx={{ maxHeight: 520 }}>
-              <Table size="small" stickyHeader>
+          <>
+            <TableContainer
+              component={Paper}
+              elevation={0}
+              sx={{
+                borderRadius: 2,
+                border: '1px solid #EAEEF4',
+                position: 'relative',
+                display: 'flex',
+                flexDirection: 'column',
+                minHeight: 0,
+                overflowY: 'auto',
+                overflowX: 'auto',
+                width: '100%',
+                px: 2,
+                '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+                '&::-webkit-scrollbar-track': {
+                  background: 'rgba(0, 0, 0, 0.02)',
+                  borderRadius: '4px',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: 'rgba(0, 0, 0, 0.15)',
+                  borderRadius: '4px',
+                  '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+                },
+                scrollbarWidth: 'thin',
+                scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+              }}
+            >
+              <Table size="small" stickyHeader sx={{ width: '100%' }}>
                 <TableHead
                   sx={{
                     position: 'sticky',
                     top: 0,
                     zIndex: 10,
                     backgroundColor: 'background.paper',
-                    '& .MuiTableCell-root': { borderRadius: 0 },
+                    borderRadius: 0,
+                    '& .MuiTableCell-root': {
+                      borderRadius: 0,
+                    },
                   }}
                 >
-                  <TableRow sx={{ height: 40, backgroundColor: 'background.paper' }}>
-                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                      Name
+                  <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
+                    <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Person
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                      Email
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Contact
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                      Phone
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Work Status
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                      View
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Score
                     </TableCell>
-                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                      Remove
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Group Status
                     </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      Skills
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200, borderRadius: 0 }}>
+                      Last Login
+                    </TableCell>
+                    <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={5} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={9} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    paginatedMembers.map((member, idx) => (
-                      <TableRow
-                        key={member.id}
-                        hover
-                        sx={{
-                          height: 56,
-                          bgcolor: idx % 2 === 0 ? 'background.paper' : 'grey.50',
-                        }}
-                      >
-                        <TableCell sx={{ py: 1.25 }}>
-                          {member.firstName} {member.lastName}
-                        </TableCell>
-                        <TableCell sx={{ py: 1.25 }}>{member.email}</TableCell>
-                        <TableCell sx={{ py: 1.25 }}>
-                          {member.phone ? formatPhoneNumber(String(member.phone)) : '-'}
-                        </TableCell>
-                        <TableCell sx={{ py: 1.25 }}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            onClick={() => navigate(`/users/${member.id}`)}
-                            sx={{ borderRadius: '999px', textTransform: 'none' }}
-                          >
-                            View
-                          </Button>
-                        </TableCell>
-                        <TableCell sx={{ py: 1.25 }}>
-                          <Button
-                            size="small"
-                            variant="outlined"
-                            color="error"
-                            onClick={() => handleRemoveMember(member.id)}
-                            sx={{ borderRadius: '999px', textTransform: 'none' }}
-                          >
-                            Remove
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))
+                    paginatedMembers.map((u, idx) => {
+                      const skills = getDisplaySkills(u);
+                      const ws = getWorkStatusDisplay(u);
+                      const groupStatus = groupManagerIds.includes(u.id) ? 'Manager' : 'Member';
+                      return (
+                        <TableRow
+                          key={u.id}
+                          hover
+                          sx={{
+                            cursor: 'pointer',
+                            backgroundColor: idx % 2 === 0 ? 'background.paper' : 'action.hover',
+                            '&:hover': {
+                              backgroundColor: 'action.selected',
+                            },
+                          }}
+                          onClick={() => navigate(`/users/${u.id}`)}
+                        >
+                          <TableCell onClick={(event) => event.stopPropagation()}>
+                            <FavoriteButton
+                              itemId={u.id}
+                              favoriteType="users"
+                              isFavorite={isFavorite}
+                              toggleFavorite={toggleFavorite}
+                              size="small"
+                              tooltipText={{
+                                favorited: 'Remove from favorites',
+                                notFavorited: 'Add to favorites',
+                              }}
+                            />
+                          </TableCell>
+
+                          <TableCell>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                              <Avatar
+                                src={u.avatar}
+                                alt={`${u.firstName || ''} ${u.lastName || ''}`.trim()}
+                                sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}
+                              >
+                                {String(u.firstName || '').charAt(0)}
+                              </Avatar>
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+                                  {String(u.firstName || '').trim()} {String(u.lastName || '').trim()}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                                  #{String(u.id).slice(-6)}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </TableCell>
+
+                          <TableCell>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                                  {u.email || '—'}
+                                </Typography>
+                              </Box>
+                              {(u.phone || u.phoneE164) && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                                  <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                                    {formatPhoneNumber(String(u.phone || u.phoneE164))}
+                                  </Typography>
+                                </Box>
+                              )}
+                            </Box>
+                          </TableCell>
+
+                          <TableCell>
+                            <Chip size="small" label={ws.label} color={ws.color} sx={ws.sx} />
+                          </TableCell>
+
+                          <TableCell>{renderAiScore(u)}</TableCell>
+
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={groupStatus}
+                              variant="outlined"
+                              sx={{ fontWeight: 600 }}
+                            />
+                          </TableCell>
+
+                          <TableCell>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                              {skills.slice(0, 3).map((skill) => (
+                                <Chip
+                                  key={skill}
+                                  label={skill}
+                                  size="small"
+                                  variant="outlined"
+                                  icon={<StarIcon sx={{ fontSize: 14 }} />}
+                                />
+                              ))}
+                              {skills.length === 0 && (
+                                <Typography variant="body2" color="text.secondary">
+                                  —
+                                </Typography>
+                              )}
+                              {skills.length > 3 && (
+                                <Chip size="small" label={`+${skills.length - 3}`} variant="outlined" />
+                              )}
+                            </Box>
+                          </TableCell>
+
+                          <TableCell sx={{ minWidth: 200 }}>
+                            <Typography variant="body2">{formatDate(u.lastLoginAt)}</Typography>
+                          </TableCell>
+
+                          <TableCell onClick={(event) => event.stopPropagation()} sx={{ width: 60 }}>
+                            <Tooltip title="Remove from group" arrow>
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleRemoveMember(u.id)}
+                                  disabled={loading}
+                                  sx={{ color: 'error.main' }}
+                                >
+                                  <DeleteOutlineIcon fontSize="small" />
+                                </IconButton>
+                              </span>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
                   )}
                 </TableBody>
               </Table>
@@ -565,7 +825,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 setMembersPage(0);
               }}
             />
-          </Paper>
+          </>
         )}
 
         {activeTab === 'details' && (
