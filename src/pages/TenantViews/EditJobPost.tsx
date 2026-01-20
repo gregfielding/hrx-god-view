@@ -16,6 +16,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
 } from '@mui/material';
 import { ArrowBack, NavigateNext, Email as EmailIcon, Phone as PhoneIcon, Star as StarIcon, Groups as GroupIcon, Insights as InsightsIcon } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
@@ -30,6 +31,7 @@ import { calculateProfileScore } from '../../utils/applicantScoring';
 import PageHeader from '../../components/PageHeader';
 import StandardTablePagination from '../../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
+import { normalizeScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
 
 const EditJobPost: React.FC = () => {
   const { tenantId } = useAuth();
@@ -55,6 +57,8 @@ const EditJobPost: React.FC = () => {
 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [applicantsSortBy, setApplicantsSortBy] = useState<'interview' | null>(null);
+  const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
 
   useEffect(() => {
     if (postId && tenantId) {
@@ -298,6 +302,7 @@ const EditJobPost: React.FC = () => {
             updatedAt: user.updatedAt,
             createdAt: user.createdAt,
             aiProfileScore,
+            scoreSummary: normalizeScoreSummary(user.scoreSummary),
             userGroupIds: user.userGroupIds || [],
             skills: normalizedSkills,
           };
@@ -430,6 +435,45 @@ const EditJobPost: React.FC = () => {
         variant={color === 'default' ? 'outlined' : 'filled'}
         sx={{ minWidth: 96, justifyContent: 'flex-start' }}
       />
+    );
+  };
+
+  const toMillis = (input: any): number => {
+    if (!input) return -1;
+    if (input instanceof Date) return input.getTime();
+    if (typeof input === 'number') return input;
+    if (typeof input === 'string') {
+      const parsed = Date.parse(input);
+      return Number.isNaN(parsed) ? -1 : parsed;
+    }
+    if (typeof input === 'object') {
+      if (typeof input.toDate === 'function') return input.toDate().getTime();
+      if (typeof input._seconds === 'number') return input._seconds * 1000;
+    }
+    return -1;
+  };
+
+  const handleApplicantsSort = (key: 'interview') => {
+    if (applicantsSortBy === key) {
+      setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+      setPage(0);
+      return;
+    }
+    setApplicantsSortBy(key);
+    setApplicantsSortDirection('desc');
+    setPage(0);
+  };
+
+  const renderInterviewCell = (user: any) => {
+    const lastAt = user?.scoreSummary?.interviewLastAt;
+    const lastScore = user?.scoreSummary?.interviewLastScore10;
+    if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
+    const millis = toMillis(lastAt);
+    if (millis <= 0) return null;
+    return (
+      <Typography variant="body2">
+        {formatDate(new Date(millis))} — {formatOneDecimal(lastScore)}/10
+      </Typography>
     );
   };
 
@@ -656,7 +700,18 @@ const EditJobPost: React.FC = () => {
             ) : (
               <>
                 {(() => {
-                  const paginated = applicantUsers.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
+                  const sorted = (() => {
+                    if (applicantsSortBy !== 'interview') return applicantUsers;
+                    const data = [...applicantUsers];
+                    data.sort((a: any, b: any) => {
+                      const aM = toMillis(a?.scoreSummary?.interviewLastAt);
+                      const bM = toMillis(b?.scoreSummary?.interviewLastAt);
+                      const diff = aM - bM;
+                      return applicantsSortDirection === 'asc' ? diff : -diff;
+                    });
+                    return data;
+                  })();
+                  const paginated = sorted.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
                   return (
                     <>
                       <Paper elevation={0} sx={{ borderRadius: 2, overflow: 'hidden', border: '1px solid #EAEEF4' }}>
@@ -686,6 +741,15 @@ const EditJobPost: React.FC = () => {
                           </TableCell>
                           <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                             Profile Score
+                          </TableCell>
+                          <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                            <TableSortLabel
+                              active={applicantsSortBy === 'interview'}
+                              direction={applicantsSortBy === 'interview' ? applicantsSortDirection : 'desc'}
+                              onClick={() => handleApplicantsSort('interview')}
+                            >
+                              Interview
+                            </TableSortLabel>
                           </TableCell>
                           <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                             Groups
@@ -768,6 +832,7 @@ const EditJobPost: React.FC = () => {
                               />
                             </TableCell>
                             <TableCell>{renderAiScore(user)}</TableCell>
+                            <TableCell>{renderInterviewCell(user)}</TableCell>
                             <TableCell>
                               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                                 {user.userGroupIds.length === 0 && (

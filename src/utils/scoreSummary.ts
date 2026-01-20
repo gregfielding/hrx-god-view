@@ -4,6 +4,8 @@ export type ScoreSummary = {
   interviewAvg?: number;
   interviewCount?: number;
   interviewLastAt?: any;
+  /** Most recent interview score (0..10). Used for list/table rendering. */
+  interviewLastScore10?: number;
   reviewAvg?: number;
   reviewCount?: number;
   reviewLastAt?: any;
@@ -34,6 +36,7 @@ export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
     interviewAvg: toNumberOrUndefined(raw.interviewAvg),
     interviewCount: toNumberOrUndefined(raw.interviewCount),
     interviewLastAt: raw.interviewLastAt,
+    interviewLastScore10: toNumberOrUndefined(raw.interviewLastScore10),
 
     reviewAvg: toNumberOrUndefined(raw.reviewAvg),
     reviewCount: toNumberOrUndefined(raw.reviewCount),

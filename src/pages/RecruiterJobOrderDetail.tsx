@@ -26,6 +26,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -94,6 +95,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
+import { normalizeScoreSummary, formatOneDecimal } from '../utils/scoreSummary';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist from '../components/recruiter/JobOrderChecklist';
@@ -147,6 +149,7 @@ interface Applicant {
   applicationStatus?: string;
   profileScore?: number;
   fitScore?: number | null;
+  scoreSummary?: any;
   // Shift selection (for Gig jobs)
   selectedShifts?: string[];
   shiftAssignments?: Record<string, 'pending' | 'approved' | 'rejected' | 'waitlisted'>;
@@ -165,6 +168,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMenuAnchor, setActionMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
+  const [applicantsSortBy, setApplicantsSortBy] = useState<'interview' | null>(null);
+  const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
   
   // Notify parent of count changes
   useEffect(() => {
@@ -285,6 +290,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             applicationStatus: app.status || 'submitted',
             profileScore,
             fitScore,
+            scoreSummary: normalizeScoreSummary(userData.scoreSummary),
             selectedShifts: app.selectedShifts || [],
             shiftAssignments: app.shiftAssignments || {},
           };
@@ -338,6 +344,55 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleCloseLevelMenu = (applicantUid: string) => {
     setLevelMenuAnchor({ ...levelMenuAnchor, [applicantUid]: null });
+  };
+
+  const toMillis = (input: any): number => {
+    if (!input) return -1;
+    if (input instanceof Date) return input.getTime();
+    if (typeof input === 'number') return input;
+    if (typeof input === 'string') {
+      const parsed = Date.parse(input);
+      return Number.isNaN(parsed) ? -1 : parsed;
+    }
+    if (typeof input === 'object') {
+      if (typeof input.toDate === 'function') return input.toDate().getTime();
+      if (typeof input._seconds === 'number') return input._seconds * 1000;
+    }
+    return -1;
+  };
+
+  const handleApplicantsSort = (key: 'interview') => {
+    if (applicantsSortBy === key) {
+      setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setApplicantsSortBy(key);
+    setApplicantsSortDirection('desc');
+  };
+
+  const sortedApplicants = React.useMemo(() => {
+    if (applicantsSortBy !== 'interview') return applicants;
+    const data = [...applicants];
+    data.sort((a, b) => {
+      const aM = toMillis(a.scoreSummary?.interviewLastAt);
+      const bM = toMillis(b.scoreSummary?.interviewLastAt);
+      const diff = aM - bM;
+      return applicantsSortDirection === 'asc' ? diff : -diff;
+    });
+    return data;
+  }, [applicants, applicantsSortBy, applicantsSortDirection]);
+
+  const renderInterviewCell = (applicant: Applicant) => {
+    const lastAt = applicant.scoreSummary?.interviewLastAt;
+    const lastScore = applicant.scoreSummary?.interviewLastScore10;
+    if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
+    const millis = toMillis(lastAt);
+    if (millis <= 0) return null;
+    return (
+      <Typography variant="body2">
+        {format(new Date(millis), 'MMM d, yyyy')} — {formatOneDecimal(lastScore)}/10
+      </Typography>
+    );
   };
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
@@ -835,13 +890,22 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 <TableCell>Applied</TableCell>
                 <TableCell>Profile</TableCell>
                 <TableCell>Fit</TableCell>
+                <TableCell>
+                  <TableSortLabel
+                    active={applicantsSortBy === 'interview'}
+                    direction={applicantsSortBy === 'interview' ? applicantsSortDirection : 'desc'}
+                    onClick={() => handleApplicantsSort('interview')}
+                  >
+                    Interview
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Level</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {applicants.map((applicant) => (
+              {(applicantsSortBy === 'interview' ? sortedApplicants : applicants).map((applicant) => (
                 <TableRow 
                   key={applicant.uid}
                   hover
@@ -955,6 +1019,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </Tooltip>
                     )}
                   </TableCell>
+                  <TableCell>{renderInterviewCell(applicant)}</TableCell>
                   <TableCell>
                     <Chip 
                       label={applicant.applicationStatus || 'submitted'}

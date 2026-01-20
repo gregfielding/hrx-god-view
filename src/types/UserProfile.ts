@@ -109,6 +109,7 @@ export interface UserProfile {
     interviewAvg?: number; // 0..10 (1 decimal)
     interviewCount?: number;
     interviewLastAt?: any;
+    interviewLastScore10?: number; // 0..10 (most recent interview score)
 
     reviewAvg?: number; // 1..5 (1 decimal)
     reviewCount?: number;

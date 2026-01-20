@@ -258,6 +258,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           'scoreSummary.interviewAvg': interviewAvg ?? null,
           'scoreSummary.interviewCount': interviewCount,
           'scoreSummary.interviewLastAt': serverTimestamp(),
+          'scoreSummary.interviewLastScore10': score,
           ...(qualityScore !== null ? { 'scoreSummary.qualityScore': qualityScore } : {}),
         } as any);
       } catch {

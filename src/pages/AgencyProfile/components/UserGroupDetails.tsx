@@ -83,7 +83,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
-  const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'groupStatus' | 'skills' | 'lastLogin'>('name');
+  const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin'>('name');
   const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
   const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const { isFavorite, toggleFavorite } = useFavorites('users');
@@ -432,6 +432,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       }
       case 'score': {
         cmp = getScoreNumber(a) - getScoreNumber(b);
+        break;
+      }
+      case 'interview': {
+        const aM = toMillis(a?.scoreSummary?.interviewLastAt);
+        const bM = toMillis(b?.scoreSummary?.interviewLastAt);
+        cmp = aM - bM;
         break;
       }
       case 'groupStatus': {
@@ -887,6 +893,15 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       <TableSortLabel
+                        active={membersSortBy === 'interview'}
+                        direction={membersSortBy === 'interview' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('interview')}
+                      >
+                        Interview
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      <TableSortLabel
                         active={membersSortBy === 'groupStatus'}
                         direction={membersSortBy === 'groupStatus' ? membersSortDirection : 'asc'}
                         onClick={() => handleMembersSort('groupStatus')}
@@ -918,7 +933,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={10} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -999,6 +1014,19 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                           </TableCell>
 
                           <TableCell>{renderAiScore(u)}</TableCell>
+
+                          <TableCell>
+                            {(() => {
+                              const lastAt = u?.scoreSummary?.interviewLastAt;
+                              const lastScore = u?.scoreSummary?.interviewLastScore10;
+                              if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
+                              return (
+                                <Typography variant="body2">
+                                  {formatDate(lastAt)} — {formatOneDecimal(lastScore)}/10
+                                </Typography>
+                              );
+                            })()}
+                          </TableCell>
 
                           <TableCell onClick={(event) => event.stopPropagation()}>
                             <Chip

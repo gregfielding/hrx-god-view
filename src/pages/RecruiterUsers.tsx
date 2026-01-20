@@ -148,7 +148,7 @@ const RecruiterUsers: React.FC = () => {
   const [groupFilter, setGroupFilter] = useState<string>(cacheState.groupFilter || 'all');
   const [skillFilter, setSkillFilter] = useState<string>(cacheState.skillFilter || 'all');
   const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'accountCreated'>((cacheState.sortBy as any) || 'accountCreated');
+  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'interview' | 'accountCreated'>((cacheState.sortBy as any) || 'accountCreated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
@@ -190,7 +190,7 @@ const RecruiterUsers: React.FC = () => {
     setPage(0);
   }, [searchTerm, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
 
-  const handleSort = (key: 'name' | 'aiScore' | 'lastLogin') => {
+  const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin') => {
     if (sortBy === key) {
       const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
       setSortDirection(newDirection);
@@ -552,6 +552,10 @@ const RecruiterUsers: React.FC = () => {
             const aScore = a.aiJobFitScore ?? a.aiProfileScore ?? -1;
             const bScore = b.aiJobFitScore ?? b.aiProfileScore ?? -1;
             const diff = (bScore ?? -1) - (aScore ?? -1);
+            return sortDirection === 'desc' ? diff : -diff;
+          }
+          case 'interview': {
+            const diff = getInterviewMillis(b) - getInterviewMillis(a);
             return sortDirection === 'desc' ? diff : -diff;
           }
           default:
@@ -929,6 +933,15 @@ const RecruiterUsers: React.FC = () => {
                   </TableSortLabel>
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                  <TableSortLabel
+                    active={sortBy === 'interview'}
+                    direction={sortBy === 'interview' ? sortDirection : 'desc'}
+                    onClick={() => handleSort('interview')}
+                  >
+                    Interview
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   Groups
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
@@ -1029,6 +1042,18 @@ const RecruiterUsers: React.FC = () => {
                   </TableCell>
                   <TableCell>{renderAiScore(user)}</TableCell>
                   <TableCell>
+                    {(() => {
+                      const lastAt = user.scoreSummary?.interviewLastAt;
+                      const lastScore = user.scoreSummary?.interviewLastScore10;
+                      if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
+                      return (
+                        <Typography variant="body2">
+                          {formatDate(lastAt)} — {formatOneDecimal(lastScore)}/10
+                        </Typography>
+                      );
+                    })()}
+                  </TableCell>
+                  <TableCell>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                       {user.userGroupIds.length === 0 && (
                         <Typography variant="body2" color="text.secondary">
@@ -1126,6 +1151,7 @@ const toMillis = (input: any): number => {
 const getUpdatedMillis = (user: RecruiterUser) => toMillis(user.updatedAt) || toMillis(user.createdAt);
 const getLoginMillis = (user: RecruiterUser) => toMillis(user.lastLoginAt) || toMillis(user.createdAt);
 const getCreatedMillis = (user: RecruiterUser) => toMillis(user.createdAt);
+const getInterviewMillis = (user: RecruiterUser) => toMillis(user.scoreSummary?.interviewLastAt);
 
 export default RecruiterUsers;
 
