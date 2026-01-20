@@ -24,6 +24,8 @@ import { calculateProfileScore } from '../../utils/applicantScoring';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
+import FavoriteButton from '../../components/FavoriteButton';
+import { useFavorites } from '../../hooks/useFavorites';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
@@ -54,6 +56,7 @@ const UserProfilePage = () => {
   const { user, securityLevel, role, tenantId: authTenantId, activeTenant } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { isFavorite, toggleFavorite } = useFavorites('users');
 
   // Initialize profile batcher and flush on navigation
   useEffect(() => {
@@ -1150,6 +1153,23 @@ const UserProfilePage = () => {
                         >
                           {`${firstName} ${lastName}`.trim() || 'User Profile'}
                         </Typography>
+
+                          {canViewAdminContent &&
+                            uid &&
+                            targetUserSecurityLevel &&
+                            !['5', '6', '7'].includes(String(targetUserSecurityLevel)) && (
+                              <FavoriteButton
+                                itemId={uid}
+                                favoriteType="users"
+                                isFavorite={isFavorite}
+                                toggleFavorite={toggleFavorite}
+                                size="small"
+                                tooltipText={{
+                                  favorited: 'Remove from favorites',
+                                  notFavorited: 'Add to favorites',
+                                }}
+                              />
+                            )}
 
                         {canViewAdminContent && (() => {
                           const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
