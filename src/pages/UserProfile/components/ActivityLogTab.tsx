@@ -228,7 +228,7 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
           title="Filters & Search" 
           titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
         />
-        <CardContent sx={{ p: 2 }}>
+        <CardContent sx={{ p: 0 }}>
           <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
             Track user activities, login sessions, profile updates, and system interactions.
           </Typography>
@@ -313,7 +313,7 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
           title={`Activity History (${filteredActivities.length} entries)`}
           titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
         />
-        <CardContent sx={{ p: 2 }}>
+        <CardContent sx={{ p: 0 }}>
           {error && (
             <Alert severity="error" sx={{ mb: 2 }}>
               {error}

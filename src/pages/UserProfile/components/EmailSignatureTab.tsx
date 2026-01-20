@@ -148,7 +148,7 @@ const EmailSignatureTab: React.FC<Props> = ({ uid }) => {
   return (
     <Box sx={{ p: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Card variant="outlined">
-        <CardContent sx={{ px: 3, py: 4 }}>
+        <CardContent sx={{ px: 1, py: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
             <EmailIcon sx={{ mr: 1 }} color="primary" />
             <Typography variant="h6" sx={{ fontWeight: 700 }}>

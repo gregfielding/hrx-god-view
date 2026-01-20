@@ -361,7 +361,7 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
     <Box sx={{ p: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* System Access Card */}
       <Card variant="outlined">
-        <CardContent sx={{ px: 3, py: 4 }}>
+        <CardContent sx={{ px: 1, py: 2 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
             <SecurityIcon sx={{ mr: 1 }} color="primary" />
             <Typography variant="h6" sx={{ fontWeight: 700 }}>System Access</Typography>
@@ -470,7 +470,7 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
               }
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-            <CardContent sx={{ p: 2 }}>
+            <CardContent sx={{ p: 0 }}>
               <Grid container spacing={3}>
                     <Grid item xs={12}>
                       <FormControlLabel
@@ -544,7 +544,7 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
               }
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-            <CardContent sx={{ p: 2 }}>
+            <CardContent sx={{ p: 0 }}>
               <Grid container spacing={3}>
                     <Grid item xs={12}>
                       <Typography variant="subtitle1" gutterBottom>Notification Channels</Typography>
@@ -673,7 +673,7 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
               }
               titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
             />
-            <CardContent sx={{ p: 2 }}>
+            <CardContent sx={{ p: 0 }}>
               <Grid container spacing={3}>
                     <Grid item xs={12}>
                       <Typography variant="subtitle1" gutterBottom>Information Sharing</Typography>
