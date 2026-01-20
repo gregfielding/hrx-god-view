@@ -49,6 +49,8 @@ import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
+import { normalizeScoreSummary } from '../../../utils/scoreSummary';
+import { calculateProfileScore } from '../../../utils/applicantScoring';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -149,7 +151,47 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       const snaps = await Promise.all(
         chunks.map((chunk) => getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk))))
       );
-      const users = snaps.flatMap((s) => s.docs.map((d) => ({ id: d.id, ...d.data() })));
+      const rawUsers = snaps.flatMap((s) => s.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      // Normalize/enrich to match the main Users table fields (so score + status display correctly)
+      const users = rawUsers.map((u: any) => {
+        const tenantData = u?.tenantIds?.[tenantId] || {};
+        const securityLevel = String(tenantData.securityLevel || u.securityLevel || '0');
+
+        const rawSkills = Array.isArray(u.skills)
+          ? u.skills
+          : Array.isArray(tenantData.skills)
+          ? tenantData.skills
+          : [];
+        const normalizedSkills = rawSkills
+          .map((skill: any) => {
+            if (!skill) return null;
+            if (typeof skill === 'string') return skill;
+            if (typeof skill === 'object') {
+              if (typeof skill.label === 'string') return skill.label;
+              if (typeof skill.name === 'string') return skill.name;
+              if (typeof skill.value === 'string') return skill.value;
+            }
+            return null;
+          })
+          .filter((skill: any) => typeof skill === 'string' && skill.trim().length > 0);
+
+        return {
+          ...u,
+          securityLevel,
+          avatar: u.avatar || tenantData.avatar,
+          phone: u.phone || '',
+          scoreSummary: normalizeScoreSummary(u.scoreSummary),
+          aiProfileScore:
+            tenantData.aiProfileScore ??
+            u.aiProfileScore ??
+            u.aiScore ??
+            u.aiProfile?.score ??
+            calculateProfileScore(u),
+          aiJobFitScore: tenantData.aiJobFitScore ?? u.aiJobFitScore,
+          skills: normalizedSkills,
+        };
+      });
 
       // Preserve group order (memberIds)
       const byId = new Map(users.map((u) => [u.id, u]));
@@ -342,8 +384,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       };
     }
 
-    const sec =
-      String(u.tenantIds?.[tenantId]?.securityLevel ?? u.securityLevel ?? '0');
+    const sec = String(u.securityLevel ?? '0');
 
     switch (sec) {
       case '4':
@@ -781,7 +822,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                               {skills.length === 0 && (
                                 <Typography variant="body2" color="text.secondary">
                                   —
-                                </Typography>
+      </Typography>
                               )}
                               {skills.length > 3 && (
                                 <Chip size="small" label={`+${skills.length - 3}`} variant="outlined" />
@@ -835,20 +876,20 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
               <CardContent>
                 <Stack spacing={2}>
                   <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
-                    <TextField
-                      label="Group Title"
-                      value={editForm.title}
-                      onChange={(e) => handleEditChange('title', e.target.value)}
+        <TextField
+          label="Group Title"
+          value={editForm.title}
+          onChange={(e) => handleEditChange('title', e.target.value)}
                       fullWidth
-                    />
-                    <TextField
-                      label="Description"
-                      value={editForm.description}
-                      onChange={(e) => handleEditChange('description', e.target.value)}
+        />
+        <TextField
+          label="Description"
+          value={editForm.description}
+          onChange={(e) => handleEditChange('description', e.target.value)}
                       fullWidth
-                      multiline
-                      minRows={2}
-                    />
+          multiline
+          minRows={2}
+        />
                   </Stack>
                 </Stack>
               </CardContent>
@@ -857,17 +898,17 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
             <Card variant="outlined">
               <CardHeader title="Group managers" titleTypographyProps={{ fontWeight: 800 }} />
               <CardContent>
-                <Autocomplete
-                  multiple
-                  options={agencyUsers}
-                  getOptionLabel={(u) => `${u.firstName} ${u.lastName}`}
-                  value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
-                  onChange={(_, newValue) => handleManagersChange(newValue)}
-                  renderInput={(params) => (
+        <Autocomplete
+          multiple
+          options={agencyUsers}
+          getOptionLabel={(u) => `${u.firstName} ${u.lastName}`}
+          value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
+          onChange={(_, newValue) => handleManagersChange(newValue)}
+          renderInput={(params) => (
                     <TextField {...params} label="Managers" placeholder="Select managers" fullWidth />
-                  )}
-                  renderTags={(value, getTagProps) =>
-                    value.map((option, index) => (
+          )}
+          renderTags={(value, getTagProps) =>
+            value.map((option, index) => (
                       <Chip
                         {...getTagProps({ index })}
                         key={option.id}
@@ -875,9 +916,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                         size="small"
                         sx={{ fontWeight: 600 }}
                       />
-                    ))
-                  }
-                />
+            ))
+          }
+        />
               </CardContent>
             </Card>
           </Stack>
@@ -888,20 +929,20 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         <DialogTitle>Add member</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 1 }}>
-            <Autocomplete
+        <Autocomplete
               options={availableWorkers}
-              getOptionLabel={(w) => `${w.firstName} ${w.lastName}`}
-              value={selectedWorker}
-              onChange={(_, newValue) => setSelectedWorker(newValue)}
+          getOptionLabel={(w) => `${w.firstName} ${w.lastName}`}
+          value={selectedWorker}
+          onChange={(_, newValue) => setSelectedWorker(newValue)}
               renderInput={(params) => <TextField {...params} label="Worker" fullWidth />}
-            />
-          </Box>
+        />
+      </Box>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setAddMemberOpen(false)} disabled={loading} sx={{ textTransform: 'none' }}>
             Cancel
-          </Button>
-          <Button
+                    </Button>
+                    <Button
             variant="contained"
             onClick={handleAddMember}
             disabled={!selectedWorker || loading}
