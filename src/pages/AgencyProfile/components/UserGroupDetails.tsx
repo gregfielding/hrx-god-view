@@ -987,7 +987,14 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
         {activeTab === 'details' && (
           <Stack spacing={2}>
-            <Card variant="outlined">
+            <Card
+              variant="outlined"
+              sx={{
+                p: 1, // reduce card padding by ~16px (theme default is 24px)
+                '& .MuiCardHeader-root': { px: 1, pt: 1, pb: 0.5 },
+                '& .MuiCardContent-root': { p: 1 },
+              }}
+            >
               <CardHeader title="Group details" titleTypographyProps={{ fontWeight: 800 }} />
               <CardContent>
                 <Stack spacing={2}>
@@ -1011,7 +1018,14 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
               </CardContent>
             </Card>
 
-            <Card variant="outlined">
+            <Card
+              variant="outlined"
+              sx={{
+                p: 1, // reduce card padding by ~16px
+                '& .MuiCardHeader-root': { px: 1, pt: 1, pb: 0.5 },
+                '& .MuiCardContent-root': { p: 1 },
+              }}
+            >
               <CardHeader title="Group managers" titleTypographyProps={{ fontWeight: 800 }} />
               <CardContent>
         <Autocomplete
