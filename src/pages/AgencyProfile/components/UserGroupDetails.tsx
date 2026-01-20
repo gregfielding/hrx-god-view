@@ -1000,7 +1000,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
                           <TableCell>{renderAiScore(u)}</TableCell>
 
-                          <TableCell>
+                          <TableCell onClick={(event) => event.stopPropagation()}>
                             <Chip
                               size="small"
                               label={groupStatusChip.label}
@@ -1012,20 +1012,36 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                               anchorEl={groupStatusMenuAnchor[u.id]}
                               open={Boolean(groupStatusMenuAnchor[u.id])}
                               onClose={() => handleCloseGroupStatusMenu(u.id)}
+                              sx={{ zIndex: 2000 }}
                             >
-                              <MenuItem onClick={() => handleChangeGroupStatus(u.id, 'member')}>
+                              <MenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleChangeGroupStatus(u.id, 'member');
+                                }}
+                              >
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                   <PersonIcon fontSize="small" />
                                   Member
                                 </Box>
                               </MenuItem>
-                              <MenuItem onClick={() => handleChangeGroupStatus(u.id, 'preferred')}>
+                              <MenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleChangeGroupStatus(u.id, 'preferred');
+                                }}
+                              >
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                                   <CheckCircleIcon fontSize="small" />
                                   Preferred
                                 </Box>
                               </MenuItem>
-                              <MenuItem onClick={() => handleChangeGroupStatus(u.id, 'not_preferred')}>
+                              <MenuItem
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleChangeGroupStatus(u.id, 'not_preferred');
+                                }}
+                              >
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'error.main' }}>
                                   <BlockIcon fontSize="small" />
                                   Not Preferred
