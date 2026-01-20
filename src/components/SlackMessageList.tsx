@@ -10,6 +10,7 @@ import { SlackChannelMessage } from '../hooks/useSlackChannelThread';
 import { getChannelColor } from '../utils/slackChannelUtils';
 import { useAuth } from '../contexts/AuthContext';
 import { SlackMessageReactionsBar } from './slack/SlackMessageReactionsBar';
+import { replaceSlackEmojiCodes } from '../utils/slackEmoji';
 
 interface SlackMessageListProps {
   messages: SlackChannelMessage[];
@@ -157,6 +158,7 @@ const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, 
         // Use profile picture for outbound messages (messages sent by current user)
         const isOutbound = message.direction === 'outbound';
         const avatarSrc = isOutbound && avatarUrl ? avatarUrl : undefined;
+        const displayText = replaceSlackEmojiCodes(message.text);
 
         return (
           <Box key={message.id} sx={{ display: 'flex', gap: 1.5, mb: 3 }}>
@@ -215,7 +217,7 @@ const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, 
                   },
                 }}
               >
-                {renderTextWithMentions(message.text)}
+                {renderTextWithMentions(displayText)}
               </Box>
               
               {/* Reactions Bar */}

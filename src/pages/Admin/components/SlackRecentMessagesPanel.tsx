@@ -21,6 +21,7 @@ import {
 } from '@mui/material';
 import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
 import { db } from '../../../firebase';
+import { replaceSlackEmojiCodes } from '../../../utils/slackEmoji';
 
 interface SlackMessage {
   id: string;
@@ -137,8 +138,8 @@ const SlackRecentMessagesPanel: React.FC<SlackRecentMessagesPanelProps> = ({ ten
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" noWrap sx={{ maxWidth: 200 }}>
-                      {message.text.substring(0, 50)}
-                      {message.text.length > 50 ? '...' : ''}
+                      {replaceSlackEmojiCodes(message.text).substring(0, 50)}
+                      {replaceSlackEmojiCodes(message.text).length > 50 ? '...' : ''}
                     </Typography>
                   </TableCell>
                   <TableCell>
