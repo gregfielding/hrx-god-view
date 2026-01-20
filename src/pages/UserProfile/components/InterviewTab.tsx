@@ -302,7 +302,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           title="Conduct Interview" 
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         />
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
             Complete the interview form below. All answers will be saved and visible in the interview history.
           </Typography>
@@ -367,7 +367,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           title={`Interview History (${interviews.length})`}
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         />
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           {loading ? (
             <Typography>Loading interviews...</Typography>
           ) : interviews.length === 0 ? (

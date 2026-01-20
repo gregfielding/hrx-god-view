@@ -78,7 +78,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
   return (
     <Box>
       <Card variant="outlined" sx={{ mb: 4, bgcolor: 'background.paper' }}>
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           <BioStep 
             value={bioData} 
             onChange={handleBioChange}
@@ -87,7 +87,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
       </Card>
 
       <Card variant="outlined" sx={{ mb: 4, bgcolor: 'background.paper', borderRadius: 1 }}>
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           <EducationStep 
             value={educationData} 
             onChange={handleEducationChange}
@@ -98,7 +98,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
       </Card>
 
       <Card variant="outlined" sx={{ mb: 4, bgcolor: 'background.paper', borderRadius: 1 }}>
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           <EducationStep 
             value={educationData} 
             onChange={handleEducationChange}
@@ -109,7 +109,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
       </Card>
 
       <Card variant="outlined" sx={{ mb: 4, bgcolor: 'background.paper', borderRadius: 1 }}>
-        <CardContent sx={{ p: { xs: 2, md: 3 } }}>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           <WorkExperienceStep 
             value={workExperienceData} 
             onChange={handleWorkExperienceChange}

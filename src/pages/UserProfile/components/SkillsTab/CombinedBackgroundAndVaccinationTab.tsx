@@ -572,7 +572,7 @@ const CombinedBackgroundAndVaccinationTab = ({ uid }: { uid: string }) => {
           title="E-Verify"
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         />
-        <CardContent>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           {/* Add New Order Form */}
           <Box sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
             <Grid container spacing={2} alignItems="flex-end">
@@ -611,7 +611,7 @@ const CombinedBackgroundAndVaccinationTab = ({ uid }: { uid: string }) => {
           title="Background Checks"
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         />
-        <CardContent>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           {/* Add New Order Form */}
           <Box sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
             <Grid container spacing={2} alignItems="flex-end">
@@ -666,7 +666,7 @@ const CombinedBackgroundAndVaccinationTab = ({ uid }: { uid: string }) => {
           title="Drug Screenings"
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         />
-        <CardContent>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           {/* Add New Order Form */}
           <Box sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
             <Grid container spacing={2} alignItems="flex-end">
@@ -721,7 +721,7 @@ const CombinedBackgroundAndVaccinationTab = ({ uid }: { uid: string }) => {
           title="Additional Screenings"
           titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         />
-        <CardContent>
+        <CardContent sx={{ p: { xs: 0, md: 1 } }}>
           {/* Add New Order Form */}
           <Box sx={{ mb: 3, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
             <Grid container spacing={2} alignItems="flex-end">
