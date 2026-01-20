@@ -609,15 +609,16 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }}
         PaperProps={{
           sx: { 
-            width: { xs: '100%', sm: '90%', md: '40%' },
-            minWidth: { md: '600px' },
-            maxWidth: { md: '800px' },
+            // Universal drawer: make desktop (lg+) 40% wider while keeping md behavior stable
+            width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
+            minWidth: { md: '600px', lg: '840px' },
+            maxWidth: { md: '800px', lg: '1120px' },
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
             // Prevent any width changes on hover
             '&:hover': {
-              width: { xs: '100%', sm: '90%', md: '40%' },
+              width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
             },
             // Prevent pointer events from interfering with hover
             pointerEvents: 'auto',
@@ -672,14 +673,14 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }}
         PaperProps={{
           sx: { 
-            width: { xs: '100%', sm: '90%', md: '40%' },
-            minWidth: { md: '600px' },
-            maxWidth: { md: '800px' },
+            width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
+            minWidth: { md: '600px', lg: '840px' },
+            maxWidth: { md: '800px', lg: '1120px' },
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
             '&:hover': {
-              width: { xs: '100%', sm: '90%', md: '40%' },
+              width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
             },
           },
         }}
@@ -731,15 +732,15 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }}
         PaperProps={{
           sx: { 
-            width: { xs: '100%', sm: '90%', md: '40%' },
-            minWidth: { md: '600px' },
-            maxWidth: { md: '800px' },
+            width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
+            minWidth: { md: '600px', lg: '840px' },
+            maxWidth: { md: '800px', lg: '1120px' },
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
             // Prevent any width changes
             '&:hover': {
-              width: { xs: '100%', sm: '90%', md: '40%' },
+              width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
             },
           },
         }}
