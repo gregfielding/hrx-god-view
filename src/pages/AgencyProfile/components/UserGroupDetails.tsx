@@ -423,7 +423,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         showDivider
       />
 
-      <Box sx={{ px: { xs: 2, md: 3 }, py: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <Box sx={{ px: { xs: 2, md: 3 }, py: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
         {/* Inbox-style section header row: tab buttons (left) + primary action (right) */}
         <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
           <Box sx={{ display: 'flex', gap: 0.75 }}>
@@ -472,107 +472,97 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         </Box>
 
         {activeTab === 'members' && (
-          <Card variant="outlined">
-            <CardHeader
-              title="Members"
-              titleTypographyProps={{ fontWeight: 800 }}
-              subheader={members.length ? `${members.length} member${members.length === 1 ? '' : 's'}` : undefined}
-            />
-            <Divider />
-            <CardContent sx={{ pt: 0 }}>
-              <Paper variant="outlined" sx={{ mt: 2, overflow: 'hidden' }}>
-                <TableContainer sx={{ maxHeight: 520 }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead
-                      sx={{
-                        position: 'sticky',
-                        top: 0,
-                        zIndex: 10,
-                        backgroundColor: 'background.paper',
-                        '& .MuiTableCell-root': { borderRadius: 0 },
-                      }}
-                    >
-                      <TableRow sx={{ height: 40, backgroundColor: 'background.paper' }}>
-                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                          Name
+          <Paper variant="outlined" sx={{ overflow: 'hidden' }}>
+            <TableContainer sx={{ maxHeight: 520 }}>
+              <Table size="small" stickyHeader>
+                <TableHead
+                  sx={{
+                    position: 'sticky',
+                    top: 0,
+                    zIndex: 10,
+                    backgroundColor: 'background.paper',
+                    '& .MuiTableCell-root': { borderRadius: 0 },
+                  }}
+                >
+                  <TableRow sx={{ height: 40, backgroundColor: 'background.paper' }}>
+                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                      Name
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                      Email
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                      Phone
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                      View
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                      Remove
+                    </TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {members.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                        No members in this group.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    paginatedMembers.map((member, idx) => (
+                      <TableRow
+                        key={member.id}
+                        hover
+                        sx={{
+                          height: 56,
+                          bgcolor: idx % 2 === 0 ? 'background.paper' : 'grey.50',
+                        }}
+                      >
+                        <TableCell sx={{ py: 1.25 }}>
+                          {member.firstName} {member.lastName}
                         </TableCell>
-                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                          Email
+                        <TableCell sx={{ py: 1.25 }}>{member.email}</TableCell>
+                        <TableCell sx={{ py: 1.25 }}>{member.phone || '-'} </TableCell>
+                        <TableCell sx={{ py: 1.25 }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => navigate(`/users/${member.id}`)}
+                            sx={{ borderRadius: '999px', textTransform: 'none' }}
+                          >
+                            View
+                          </Button>
                         </TableCell>
-                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                          Phone
-                        </TableCell>
-                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                          View
-                        </TableCell>
-                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
-                          Remove
+                        <TableCell sx={{ py: 1.25 }}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="error"
+                            onClick={() => handleRemoveMember(member.id)}
+                            sx={{ borderRadius: '999px', textTransform: 'none' }}
+                          >
+                            Remove
+                          </Button>
                         </TableCell>
                       </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {members.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
-                            No members in this group.
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        paginatedMembers.map((member, idx) => (
-                          <TableRow
-                            key={member.id}
-                            hover
-                            sx={{
-                              height: 56,
-                              bgcolor: idx % 2 === 0 ? 'background.paper' : 'grey.50',
-                            }}
-                          >
-                            <TableCell sx={{ py: 1.25 }}>
-                              {member.firstName} {member.lastName}
-                            </TableCell>
-                            <TableCell sx={{ py: 1.25 }}>{member.email}</TableCell>
-                            <TableCell sx={{ py: 1.25 }}>{member.phone || '-'}</TableCell>
-                            <TableCell sx={{ py: 1.25 }}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => navigate(`/users/${member.id}`)}
-                                sx={{ borderRadius: '999px', textTransform: 'none' }}
-                              >
-                                View
-                              </Button>
-                            </TableCell>
-                            <TableCell sx={{ py: 1.25 }}>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                color="error"
-                                onClick={() => handleRemoveMember(member.id)}
-                                sx={{ borderRadius: '999px', textTransform: 'none' }}
-                              >
-                                Remove
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
-                      )}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
 
-                <StandardTablePagination
-                  count={members.length}
-                  page={membersPage}
-                  rowsPerPage={membersRowsPerPage}
-                  onPageChange={(_e, newPage) => setMembersPage(newPage)}
-                  onRowsPerPageChange={(e) => {
-                    setMembersRowsPerPage(parseInt(e.target.value, 10));
-                    setMembersPage(0);
-                  }}
-                />
-              </Paper>
-            </CardContent>
-          </Card>
+            <StandardTablePagination
+              count={members.length}
+              page={membersPage}
+              rowsPerPage={membersRowsPerPage}
+              onPageChange={(_e, newPage) => setMembersPage(newPage)}
+              onRowsPerPageChange={(e) => {
+                setMembersRowsPerPage(parseInt(e.target.value, 10));
+                setMembersPage(0);
+              }}
+            />
+          </Paper>
         )}
 
         {activeTab === 'details' && (
