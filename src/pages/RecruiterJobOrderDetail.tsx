@@ -98,7 +98,7 @@ import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/ap
 import { normalizeScoreSummary, formatOneDecimal } from '../utils/scoreSummary';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
-import JobOrderChecklist from '../components/recruiter/JobOrderChecklist';
+import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -2567,6 +2567,17 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const startDate = safeToDate((jobOrder as any).startDate);
   const createdAt = safeToDate((jobOrder as any).createdAt);
 
+  const checklistProgress = getJobOrderChecklistProgress({
+    jobOrder,
+    location,
+    associatedContacts,
+    recruiterUsers,
+    jobPosts: connectedJobPosts,
+    shiftsCount: shifts.length,
+    indeedUrl: (jobOrder as any)?.indeedUrl,
+    craigslistUrl: (jobOrder as any)?.craigslistUrl,
+  });
+
   return (
     <Box sx={{ p: 0 }}>
       <PageHeader
@@ -2766,6 +2777,36 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
                   {jobOrder.jobOrderName || 'Job Order'}
                         </Typography>
+              </Stack>
+
+              {/* Line 4: Checklist progress */}
+              <Stack
+                direction="row"
+                spacing={0.5}
+                sx={{ alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}
+              >
+                <Typography
+                  variant="caption"
+                  sx={{ fontWeight: 700, color: 'rgba(0,0,0,0.55)', mr: 0.75 }}
+                >
+                  Order Setup: {checklistProgress.completed}/{checklistProgress.total}
+                </Typography>
+                {checklistProgress.statuses.map((s) => (
+                  <Tooltip
+                    key={s.id}
+                    title={`${s.label}: ${s.complete ? 'Complete' : 'Missing'}`}
+                    arrow
+                  >
+                    <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <CheckCircleIcon
+                        sx={{
+                          fontSize: 16,
+                          color: s.complete ? 'success.main' : 'grey.300',
+                        }}
+                      />
+                    </Box>
+                  </Tooltip>
+                ))}
               </Stack>
                       </Box>
                   </Box>

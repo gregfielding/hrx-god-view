@@ -49,6 +49,141 @@ interface ChecklistItem {
 
 const normalizedJobTitles = (jobTitlesList as string[]).map((title) => title.toLowerCase());
 
+const isStandardJobTitleValue = (title?: string | null): boolean => {
+  if (!title || typeof title !== 'string') return false;
+  const trimmed = title.trim();
+  if (!trimmed) return false;
+  return normalizedJobTitles.includes(trimmed.toLowerCase());
+};
+
+const isValidUrlValue = (value: string, kind: 'indeed' | 'craigslist'): boolean => {
+  const trimmed = (value || '').trim();
+  if (!trimmed) return false;
+  try {
+    const url = new URL(trimmed);
+    if (!['http:', 'https:'].includes(url.protocol)) return false;
+    const host = url.hostname.toLowerCase();
+    if (kind === 'indeed') return host.includes('indeed.');
+    if (kind === 'craigslist') return host.includes('craigslist.');
+    return false;
+  } catch {
+    return false;
+  }
+};
+
+export function getJobOrderChecklistProgress(input: {
+  jobOrder: JobOrder | null;
+  location?: any;
+  associatedContacts?: any[];
+  recruiterUsers?: Array<{ id: string }>;
+  jobPosts?: JobsBoardPost[];
+  shiftsCount?: number;
+  indeedUrl?: string;
+  craigslistUrl?: string;
+}): {
+  total: number;
+  completed: number;
+  statuses: Array<{ id: string; label: string; complete: boolean }>;
+} {
+  const {
+    jobOrder,
+    location,
+    associatedContacts = [],
+    recruiterUsers = [],
+    jobPosts = [],
+    shiftsCount = 0,
+    indeedUrl,
+    craigslistUrl,
+  } = input;
+
+  // Standard job title
+  const hasStandardJobTitle = (() => {
+    if (!jobOrder) return false;
+
+    // Career jobs: use the single jobTitle field
+    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitleValue((jobOrder as any).jobTitle)) {
+      return true;
+    }
+
+    // Gig jobs: check gigPositions array if present
+    const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle?: string }> | undefined;
+    if (Array.isArray(gigPositions)) {
+      return gigPositions.some((pos) => isStandardJobTitleValue(pos.jobTitle || ''));
+    }
+
+    return false;
+  })();
+
+  // Location/worksite
+  const hasLocation = (() => {
+    if (!jobOrder) return false;
+    const worksiteName = (jobOrder as any).worksiteName;
+    const loadedLocationName = location?.nickname || location?.name;
+    const dealLocations = (jobOrder.deal as any)?.associations?.locations || [];
+    const locationEntry = Array.isArray(dealLocations) && dealLocations.length > 0 ? dealLocations[0] : null;
+    const dealLocationName =
+      typeof locationEntry === 'string'
+        ? ''
+        : (locationEntry?.snapshot?.name ||
+           locationEntry?.snapshot?.nickname ||
+           locationEntry?.name ||
+           '');
+
+    const displayLocationName = worksiteName || loadedLocationName || dealLocationName;
+    return !!displayLocationName;
+  })();
+
+  const hasDealContact = Array.isArray(associatedContacts) && associatedContacts.length > 0;
+
+  const hasRecruiterAssigned =
+    (Array.isArray((jobOrder as any)?.assignedRecruiters) && (jobOrder as any).assignedRecruiters.length > 0) ||
+    (Array.isArray(recruiterUsers) && recruiterUsers.length > 0);
+
+  const hasClientDescription = (() => {
+    if (!jobOrder) return false;
+    const text = (jobOrder as any).jobDescriptionFromClient;
+    if (!text || typeof text !== 'string') return false;
+    return text.trim().length > 0;
+  })();
+
+  const hasJobBoardPost = Array.isArray(jobPosts) && jobPosts.length > 0;
+  const hasAiJobDescription =
+    Array.isArray(jobPosts) &&
+    jobPosts.some((post) => typeof post.jobDescription === 'string' && post.jobDescription.trim().length > 0);
+
+  const hasAutoAddUserGroup =
+    Array.isArray(jobPosts) &&
+    jobPosts.some(
+      (post) =>
+        (Array.isArray(post.autoAddToUserGroups) && post.autoAddToUserGroups.length > 0) ||
+        (typeof (post as any).autoAddToUserGroup === 'string' &&
+          (post as any).autoAddToUserGroup.trim().length > 0)
+    );
+
+  const effectiveIndeedUrl = (indeedUrl ?? (jobOrder as any)?.indeedUrl ?? '').trim();
+  const effectiveCraigslistUrl = (craigslistUrl ?? (jobOrder as any)?.craigslistUrl ?? '').trim();
+  const hasExternalJobPost =
+    isValidUrlValue(effectiveIndeedUrl, 'indeed') || isValidUrlValue(effectiveCraigslistUrl, 'craigslist');
+
+  const hasShiftCreated = shiftsCount > 0;
+
+  const statuses: Array<{ id: string; label: string; complete: boolean }> = [
+    { id: 'worksite', label: 'Worksite location is set', complete: hasLocation },
+    { id: 'dealContact', label: 'Primary deal contact added', complete: hasDealContact },
+    { id: 'recruiterAssigned', label: 'Recruiter assigned', complete: hasRecruiterAssigned },
+    { id: 'jobTitleSelected', label: 'Job title selected', complete: hasStandardJobTitle },
+    { id: 'clientJobDescription', label: 'Client job description added', complete: hasClientDescription },
+    { id: 'jobBoardPost', label: 'Job board posting created', complete: hasJobBoardPost },
+    { id: 'aiJobDescription', label: 'AI job description generated', complete: hasAiJobDescription },
+    { id: 'autoAddUserGroups', label: 'Auto-add user group selected', complete: hasAutoAddUserGroup },
+    { id: 'externalJobBoards', label: 'External job board postings linked', complete: hasExternalJobPost },
+    { id: 'shiftCreated', label: 'Shift created', complete: hasShiftCreated },
+  ];
+
+  const completed = statuses.filter((s) => s.complete).length;
+  return { total: statuses.length, completed, statuses };
+}
+
 const ChecklistRow: React.FC<{ item: ChecklistItem }> = ({ item }) => {
   const isComplete = item.status === 'complete';
 
@@ -169,28 +304,6 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
     setCraigslistUrl(currentCraigslist);
   }, [jobOrder?.id, (jobOrder as any)?.indeedUrl, (jobOrder as any)?.craigslistUrl]);
 
-  const isStandardJobTitle = (title?: string | null): boolean => {
-    if (!title || typeof title !== 'string') return false;
-    const trimmed = title.trim();
-    if (!trimmed) return false;
-    return normalizedJobTitles.includes(trimmed.toLowerCase());
-  };
-
-  const isValidUrl = (value: string, kind: 'indeed' | 'craigslist'): boolean => {
-    const trimmed = (value || '').trim();
-    if (!trimmed) return false;
-    try {
-      const url = new URL(trimmed);
-      if (!['http:', 'https:'].includes(url.protocol)) return false;
-      const host = url.hostname.toLowerCase();
-      if (kind === 'indeed') return host.includes('indeed.');
-      if (kind === 'craigslist') return host.includes('craigslist.');
-      return false;
-    } catch {
-      return false;
-    }
-  };
-
   const handleSaveExternalUrls = async (nextIndeed: string, nextCraigslist: string) => {
     if (!tenantId || !jobOrderId) return;
     setSavingExternal(true);
@@ -222,14 +335,14 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
     if (!jobOrder) return false;
 
     // Career jobs: use the single jobTitle field
-    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitle((jobOrder as any).jobTitle)) {
+    if ((jobOrder as any).jobType !== 'gig' && isStandardJobTitleValue((jobOrder as any).jobTitle)) {
       return true;
     }
 
     // Gig jobs: check gigPositions array if present
     const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle?: string }> | undefined;
     if (Array.isArray(gigPositions)) {
-      return gigPositions.some((pos) => isStandardJobTitle(pos.jobTitle || ''));
+      return gigPositions.some((pos) => isStandardJobTitleValue(pos.jobTitle || ''));
     }
 
     return false;
@@ -287,8 +400,8 @@ const JobOrderChecklist: React.FC<JobOrderChecklistProps> = ({
           (post as any).autoAddToUserGroup.trim().length > 0)
     );
 
-  const hasIndeedUrl = isValidUrl(indeedUrl, 'indeed');
-  const hasCraigslistUrl = isValidUrl(craigslistUrl, 'craigslist');
+  const hasIndeedUrl = isValidUrlValue(indeedUrl, 'indeed');
+  const hasCraigslistUrl = isValidUrlValue(craigslistUrl, 'craigslist');
   const hasExternalJobPost = hasIndeedUrl || hasCraigslistUrl;
 
   const hasShiftCreated = shiftsCount > 0;
