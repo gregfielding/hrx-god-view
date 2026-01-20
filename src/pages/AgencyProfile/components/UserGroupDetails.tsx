@@ -39,6 +39,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { db } from '../../../firebase';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
+import { formatPhoneNumber } from '../../../utils/formatPhone';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -522,7 +523,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                           {member.firstName} {member.lastName}
                         </TableCell>
                         <TableCell sx={{ py: 1.25 }}>{member.email}</TableCell>
-                        <TableCell sx={{ py: 1.25 }}>{member.phone || '-'} </TableCell>
+                        <TableCell sx={{ py: 1.25 }}>
+                          {member.phone ? formatPhoneNumber(String(member.phone)) : '-'}
+                        </TableCell>
                         <TableCell sx={{ py: 1.25 }}>
                           <Button
                             size="small"
