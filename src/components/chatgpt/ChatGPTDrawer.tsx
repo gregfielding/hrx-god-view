@@ -156,9 +156,8 @@ const ChatGPTDrawer: React.FC = () => {
       onClose={closeChatGPT}
       PaperProps={{
         sx: {
-          width: { xs: '100%', sm: '100%', md: '600px' },
+          width: { xs: '100%', sm: '100%', md: '60vw' },
           minWidth: { xs: '100%', md: '600px' },
-          maxWidth: { xs: '100%', md: '600px' },
           height: { xs: '82vh', md: '100vh' },
           maxHeight: { xs: '82vh', md: '100vh' },
           borderRadius: { xs: '24px 24px 0 0', md: 0 },
@@ -167,6 +166,7 @@ const ChatGPTDrawer: React.FC = () => {
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
+          transitionProperty: 'transform',
         },
       }}
       ModalProps={{

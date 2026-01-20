@@ -76,7 +76,8 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
         onClose={onClose}
         PaperProps={{
           sx: {
-            width: { xs: '100%', md: '520px' },
+            width: { xs: '100%', md: '60vw' },
+            minWidth: { md: '600px' },
             height: { xs: '90%', md: '100%' },
             maxHeight: { xs: '90vh', md: '100vh' },
           },
@@ -103,20 +104,15 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
         onClose={onClose}
         PaperProps={{
           sx: {
-            width: { xs: '100%', md: '520px' },
-            minWidth: { md: '520px' },
-            maxWidth: { md: '520px' },
+            width: { xs: '100%', md: '60vw' },
+            minWidth: { md: '600px' },
             height: { xs: '90%', md: '100%' },
             maxHeight: { xs: '90vh', md: '100vh' },
             display: 'flex',
             flexDirection: 'column',
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
-            // Prevent any width changes on hover
-            '&:hover': {
-              width: { xs: '100%', md: '520px' },
-              minWidth: { md: '520px' },
-              maxWidth: { md: '520px' },
-            },
+            // Avoid hover-driven repaints/flicker
+            transitionProperty: 'transform',
             // Prevent pointer events from interfering with hover
             pointerEvents: 'auto',
           },
