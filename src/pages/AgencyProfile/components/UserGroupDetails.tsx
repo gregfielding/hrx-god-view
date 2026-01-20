@@ -12,6 +12,8 @@ import {
   Chip,
   Avatar,
   Tooltip,
+  Menu,
+  MenuItem,
   Table,
   TableBody,
   TableCell,
@@ -30,7 +32,7 @@ import {
   Tab,
   TableSortLabel,
 } from '@mui/material';
-import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query, deleteField } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import GroupsIcon from '@mui/icons-material/Groups';
 import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
@@ -41,6 +43,9 @@ import PhoneIcon from '@mui/icons-material/Phone';
 import StarIcon from '@mui/icons-material/Star';
 import InsightsIcon from '@mui/icons-material/Insights';
 import IconButton from '@mui/material/IconButton';
+import PersonIcon from '@mui/icons-material/Person';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import BlockIcon from '@mui/icons-material/Block';
 
 import { db } from '../../../firebase';
 import PageHeader from '../../../components/PageHeader';
@@ -80,6 +85,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
   const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'groupStatus' | 'skills' | 'lastLogin'>('name');
   const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const { isFavorite, toggleFavorite } = useFavorites('users');
 
   // Check if we're accessing from the top-level usergroups page
@@ -270,12 +276,29 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       const newMemberIds = memberIds.includes(selectedWorker.id)
         ? memberIds
         : [...memberIds, selectedWorker.id];
-      await updateDoc(groupRef, { memberIds: newMemberIds });
+      // Default new members to "member" group status (preferred/member/not_preferred)
+      const updates: any = { memberIds: newMemberIds };
+      if (!memberIds.includes(selectedWorker.id)) {
+        updates[`memberStatusById.${selectedWorker.id}`] = 'member';
+      }
+      await updateDoc(groupRef, updates);
       setMemberIds(newMemberIds);
       await fetchMembersByIds(newMemberIds);
       setSelectedWorker(null);
       setSuccess(true);
       setAddMemberOpen(false);
+      // keep local group state in sync
+      setGroup((prev: any) => {
+        if (!prev) return prev;
+        if (memberIds.includes(selectedWorker.id)) return prev;
+        return {
+          ...prev,
+          memberStatusById: {
+            ...(prev.memberStatusById || {}),
+            [selectedWorker.id]: 'member',
+          },
+        };
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to add member');
     }
@@ -288,10 +311,19 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     try {
       const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
       const newMemberIds = memberIds.filter((id) => id !== userId);
-      await updateDoc(groupRef, { memberIds: newMemberIds });
+      await updateDoc(groupRef, {
+        memberIds: newMemberIds,
+        [`memberStatusById.${userId}`]: deleteField(),
+      });
       setMemberIds(newMemberIds);
       await fetchMembersByIds(newMemberIds);
       setSuccess(true);
+      setGroup((prev: any) => {
+        if (!prev) return prev;
+        const next = { ...(prev.memberStatusById || {}) };
+        delete next[userId];
+        return { ...prev, memberStatusById: next };
+      });
     } catch (err: any) {
       setError(err.message || 'Failed to remove member');
     }
@@ -371,7 +403,19 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     return `${last}|${first}|${String(u?.id || '')}`;
   };
 
-  const getGroupStatusKey = (u: any): number => (groupManagerIds.includes(u?.id) ? 0 : 1); // Manager first
+  type MemberPreferenceStatus = 'preferred' | 'member' | 'not_preferred';
+  const getMemberPreferenceStatus = (u: any): MemberPreferenceStatus => {
+    const raw = group?.memberStatusById?.[u?.id];
+    if (raw === 'preferred' || raw === 'member' || raw === 'not_preferred') return raw;
+    return 'member';
+  };
+  const getGroupStatusKey = (u: any): number => {
+    const status = getMemberPreferenceStatus(u);
+    // Preferred first, then Member, then Not Preferred
+    if (status === 'preferred') return 0;
+    if (status === 'member') return 1;
+    return 2;
+  };
 
   const sortedMembers = [...members].sort((a: any, b: any) => {
     let cmp = 0;
@@ -425,6 +469,46 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     // Match inbox/users behavior: name asc, everything else desc by default
     setMembersSortDirection(key === 'name' ? 'asc' : 'desc');
     setMembersPage(0);
+  };
+
+  const handleOpenGroupStatusMenu = (event: React.MouseEvent<HTMLElement>, userId: string) => {
+    event.stopPropagation();
+    setGroupStatusMenuAnchor((prev) => ({ ...prev, [userId]: event.currentTarget }));
+  };
+  const handleCloseGroupStatusMenu = (userId: string) => {
+    setGroupStatusMenuAnchor((prev) => ({ ...prev, [userId]: null }));
+  };
+
+  const handleChangeGroupStatus = async (userId: string, status: MemberPreferenceStatus) => {
+    if (!tenantId || !groupId) return;
+    try {
+      const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
+      await updateDoc(groupRef, { [`memberStatusById.${userId}`]: status });
+      setGroup((prev: any) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          memberStatusById: {
+            ...(prev.memberStatusById || {}),
+            [userId]: status,
+          },
+        };
+      });
+    } catch (err: any) {
+      setError(err.message || 'Failed to update group status');
+    } finally {
+      handleCloseGroupStatusMenu(userId);
+    }
+  };
+
+  const getGroupStatusChipProps = (status: MemberPreferenceStatus) => {
+    if (status === 'preferred') {
+      return { label: 'Preferred', sx: { bgcolor: '#0057B8', color: '#FFFFFF', fontWeight: 700 } };
+    }
+    if (status === 'not_preferred') {
+      return { label: 'Not Preferred', sx: { bgcolor: '#D14343', color: '#FFFFFF', fontWeight: 700 } };
+    }
+    return { label: 'Member', sx: { fontWeight: 700 } };
   };
 
   const formatDate = (timestamp: any) => {
@@ -842,7 +926,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     paginatedMembers.map((u, idx) => {
                       const skills = getDisplaySkills(u);
                       const ws = getWorkStatusDisplay(u);
-                      const groupStatus = groupManagerIds.includes(u.id) ? 'Manager' : 'Member';
+                      const memberPrefStatus = getMemberPreferenceStatus(u);
+                      const groupStatusChip = getGroupStatusChipProps(memberPrefStatus);
                       return (
                         <TableRow
                           key={u.id}
@@ -918,10 +1003,35 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                           <TableCell>
                             <Chip
                               size="small"
-                              label={groupStatus}
-                              variant="outlined"
-                              sx={{ fontWeight: 600 }}
+                              label={groupStatusChip.label}
+                              variant={memberPrefStatus === 'member' ? 'outlined' : 'filled'}
+                              onClick={(e) => handleOpenGroupStatusMenu(e, u.id)}
+                              sx={{ cursor: 'pointer', ...(groupStatusChip.sx || {}) }}
                             />
+                            <Menu
+                              anchorEl={groupStatusMenuAnchor[u.id]}
+                              open={Boolean(groupStatusMenuAnchor[u.id])}
+                              onClose={() => handleCloseGroupStatusMenu(u.id)}
+                            >
+                              <MenuItem onClick={() => handleChangeGroupStatus(u.id, 'member')}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <PersonIcon fontSize="small" />
+                                  Member
+                                </Box>
+                              </MenuItem>
+                              <MenuItem onClick={() => handleChangeGroupStatus(u.id, 'preferred')}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                  <CheckCircleIcon fontSize="small" />
+                                  Preferred
+                                </Box>
+                              </MenuItem>
+                              <MenuItem onClick={() => handleChangeGroupStatus(u.id, 'not_preferred')}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, color: 'error.main' }}>
+                                  <BlockIcon fontSize="small" />
+                                  Not Preferred
+                                </Box>
+                              </MenuItem>
+                            </Menu>
                           </TableCell>
 
                           <TableCell>
