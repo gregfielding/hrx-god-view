@@ -582,11 +582,11 @@ const getTheme = (mode: 'light' | 'dark') => {
             backgroundColor: mode === 'light' ? '#FFFFFF' : '#111111',
             borderRight: mode === 'light' ? '1px solid rgba(0,0,0,.06)' : '1px solid #2C2C2C',
             boxShadow: 'none',
-            width: '72px',
-            '&:hover': {
-              width: '240px',
-            },
-            transition: 'width 200ms ease-in-out',
+            // IMPORTANT:
+            // Do NOT set global drawer widths or hover widths here.
+            // This theme override applies to ALL MUI Drawers (including right-side drawers),
+            // and hover-based widths will override component-level PaperProps, causing
+            // drawers to "shrink" on mouseover.
             '& .MuiListItemButton-root': {
               borderRadius: 12,
               margin: '4px 8px',
