@@ -98,6 +98,33 @@ export interface UserProfile {
   companionLastActiveAt?: Date; // Last Companion activity timestamp
   careerPathSuggestions?: CareerPathSuggestion[]; // AI-generated career suggestions
 
+  /**
+   * Denormalized score summary for fast rendering (per spec).
+   * Stored on the user doc and updated by interview/review writes.
+   */
+  scoreSummary?: {
+    aiScore?: number; // 0..100
+    aiScoreUpdatedAt?: any;
+
+    interviewAvg?: number; // 0..10 (1 decimal)
+    interviewCount?: number;
+    interviewLastAt?: any;
+
+    reviewAvg?: number; // 1..5 (1 decimal)
+    reviewCount?: number;
+    reviewLastAt?: any;
+
+    responsivenessScore?: number; // 0..100
+    completenessScore?: number; // 0..100
+    qualityScore?: number; // 0..100
+
+    aiWeights?: {
+      completeness: number;
+      responsiveness: number;
+      quality: number;
+    };
+  };
+
   // 🔐 System & Sync
   createdBy: string; // ref ID to admin user who created this worker
   source: 'Manual' | 'Import' | 'Job App' | 'Flex Sign-Up';

@@ -22,14 +22,36 @@ import SlackRecentMessagesPanel from './components/SlackRecentMessagesPanel';
 import SlackTrafficLogsPanel from './components/SlackTrafficLogsPanel';
 
 const SlackAdminPage: React.FC = () => {
-  const { tenantId, user, loading } = useAuth();
+  const { tenantId, user, loading, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const [accessDenied, setAccessDenied] = useState(false);
 
+  // Ensure the object passed into security helpers includes activeTenantId + tenantIds security level.
+  // `useAuth().user` is a Firebase Auth user (doesn't have tenantIds/securityLevel), so without this,
+  // access checks incorrectly fall back to level 1.
+  const userAny = user as any;
+  const userWithTenant = user
+    ? {
+        ...userAny,
+        activeTenantId: userAny.activeTenantId || activeTenant?.id,
+        tenantIds:
+          userAny.tenantIds ||
+          (activeTenant?.id
+            ? {
+                [activeTenant.id]: {
+                  securityLevel: currentClaimsSecurityLevel || securityLevel,
+                },
+              }
+            : {}),
+      }
+    : null;
+
   useEffect(() => {
-    if (!loading && !canUserAccessSlack(user)) {
+    if (!loading && !canUserAccessSlack(userWithTenant as any)) {
       setAccessDenied(true);
+    } else if (!loading) {
+      setAccessDenied(false);
     }
-  }, [loading, user]);
+  }, [loading, userWithTenant]);
 
   if (loading) {
     return (
@@ -39,7 +61,7 @@ const SlackAdminPage: React.FC = () => {
     );
   }
 
-  if (accessDenied || !canUserAccessSlack(user)) {
+  if (accessDenied || !canUserAccessSlack(userWithTenant as any)) {
     return (
       <Box sx={{ p: 3 }}>
         <Alert severity="error" sx={{ mb: 2 }}>
@@ -48,7 +70,7 @@ const SlackAdminPage: React.FC = () => {
             You must have security level 5-7 (Staff Manager, Manager, or Admin) for your active tenant to access Slack integration management.
           </Typography>
           <Typography variant="body2" sx={{ mt: 1 }}>
-            Your current security level: {user ? getSecurityLevelForActiveTenant(user) : 'Unknown'}
+            Your current security level: {userWithTenant ? getSecurityLevelForActiveTenant(userWithTenant as any) : 'Unknown'}
           </Typography>
         </Alert>
       </Box>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack } from '@mui/material';
+import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
 import MessageIcon from '@mui/icons-material/Message';
@@ -9,6 +9,7 @@ import NoteIcon from '@mui/icons-material/Note';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import InsightsIcon from '@mui/icons-material/Insights';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
@@ -21,7 +22,8 @@ import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore } from '../../utils/applicantScoring';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
-import { isOnboardingInProgress } from './utils/onboardingHelpers';
+import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
+import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
@@ -30,6 +32,7 @@ import SkillsOnlyTab from './components/SkillsOnlyTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
 import QualificationsTab from './components/QualificationsTab';
 import InterviewTab from './components/InterviewTab';
+import ScoreTab from './components/ScoreTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
@@ -44,6 +47,7 @@ import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer'
 import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
+import { normalizeScoreSummary, type ScoreSummary } from '../../utils/scoreSummary';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -98,6 +102,8 @@ const UserProfilePage = () => {
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
+  const [scoreSummary, setScoreSummary] = useState<ScoreSummary | undefined>(undefined);
+  const [reviewsCount, setReviewsCount] = useState<number>(0);
   const [createdAt, setCreatedAt] = useState<any>(null);
   const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
@@ -106,17 +112,20 @@ const UserProfilePage = () => {
   const [interviewsCount, setInterviewsCount] = useState<number>(0);
   const [employeeOnboardStatus, setEmployeeOnboardStatus] = useState<string | undefined>();
   const [contractorOnboardStatus, setContractorOnboardStatus] = useState<string | undefined>();
+  const [onboardingCompletionPct, setOnboardingCompletionPct] = useState<number>(0);
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
   const [emailComposeOpen, setEmailComposeOpen] = useState(false);
   const [viewerGmailConnected, setViewerGmailConnected] = useState(false);
   const [smsComposeOpen, setSmsComposeOpen] = useState(false);
   const [viewerHasSmsSender, setViewerHasSmsSender] = useState(false);
+  const [quickReviewStars, setQuickReviewStars] = useState<number | null>(null);
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
   const [showAddUserNoteDialog, setShowAddUserNoteDialog] = useState(false);
   const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
+  const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
 
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
 
@@ -259,6 +268,7 @@ const UserProfilePage = () => {
     const tabs = [
       { label: 'Overview', available: true, count: undefined },
       { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount }, // Hidden for 0-4
+      { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView }, // Hidden for 0-4
       { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
@@ -271,7 +281,15 @@ const UserProfilePage = () => {
       { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
     ];
 
-    const availableTabs = tabs.filter(t => t.available);
+    let availableTabs = tabs.filter(t => t.available);
+    // When onboarding is in progress, force the Onboarding tab to the far-left (first position).
+    if (onboardingInProgress) {
+      const idx = availableTabs.findIndex((t) => t.label === 'Onboarding');
+      if (idx > 0) {
+        const [onboardingTab] = availableTabs.splice(idx, 1);
+        availableTabs = [onboardingTab, ...availableTabs];
+      }
+    }
     console.log('Available tabs:', availableTabs.map(t => t.label));
     return availableTabs;
   };
@@ -302,10 +320,38 @@ const UserProfilePage = () => {
           setJobTitle(tenantData.jobTitle || data.jobTitle || data.primaryJobTitle || '');
           setPhone(data.phone || '');
           setEmail(data.email || '');
-          setCity(data.city || data.address?.city || '');
-          setState(data.state || data.address?.state || '');
+          // City/State: prefer explicit top-level fields, then addressInfo (single source of truth in ProfileOverview),
+          // then legacy address object fallbacks.
+          setCity(data.city || data.addressInfo?.city || data.address?.city || '');
+          setState(data.state || data.addressInfo?.state || data.address?.state || '');
           setLinkedinUrl(data.linkedinUrl || '');
           setCustomerId(effectiveTenantId || null);
+          // Resolve header user groups (ids -> titles)
+          try {
+            const userGroupIds = Array.isArray((data as any)?.userGroupIds) ? (data as any).userGroupIds : [];
+            if (effectiveTenantId && userGroupIds.length > 0) {
+              const groupDocs = await Promise.all(
+                userGroupIds.slice(0, 25).map(async (groupId: string) => {
+                  try {
+                    const gSnap = await getDoc(doc(db, 'tenants', effectiveTenantId, 'userGroups', groupId));
+                    if (!gSnap.exists()) return null;
+                    const g = gSnap.data() as any;
+                    return {
+                      id: groupId,
+                      title: g?.title || g?.name || groupId,
+                    };
+                  } catch {
+                    return { id: groupId, title: groupId };
+                  }
+                })
+              );
+              setHeaderUserGroups(groupDocs.filter(Boolean) as Array<{ id: string; title: string }>);
+            } else {
+              setHeaderUserGroups([]);
+            }
+          } catch {
+            setHeaderUserGroups([]);
+          }
           // Provide sensible defaults so header chips render consistently
           setWorkStatus(tenantData.workStatus || data.workStatus || 'Active');
           setEmploymentType(tenantData.employmentType || data.employmentType || 'Full-Time');
@@ -431,6 +477,8 @@ const UserProfilePage = () => {
           // Calculate profile score
           const score = calculateProfileScore(data);
           setProfileScore(score);
+          // Denormalized score summary (interviews/reviews/AI)
+          setScoreSummary(normalizeScoreSummary((data as any).scoreSummary));
           
           // Set createdAt
           setCreatedAt(data.createdAt || null);
@@ -448,6 +496,7 @@ const UserProfilePage = () => {
     const unsubscribe = onSnapshot(userRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
+        setScoreSummary(normalizeScoreSummary((data as any).scoreSummary));
         // Fetch E-Verify orders
         const eVerifyOrdersArray = Array.isArray(data.eVerifyOrders) ? data.eVerifyOrders : [];
         setEVerifyOrders(eVerifyOrdersArray.map((o: any) => ({
@@ -549,6 +598,16 @@ const UserProfilePage = () => {
         // Load onboarding status
         setEmployeeOnboardStatus(data.employeeOnboardStatus);
         setContractorOnboardStatus(data.contractorOnboardStatus);
+
+        // Compute onboarding completion percentage from onboardingTasks (same logic as OnboardingTab)
+        try {
+          const activeType = getActiveOnboardingType(data.employeeOnboardStatus, data.contractorOnboardStatus);
+          const existingTasks = Array.isArray((data as any).onboardingTasks) ? (data as any).onboardingTasks : [];
+          const initializedTasks = activeType ? initializeOnboardingTasks(activeType, existingTasks) : existingTasks;
+          setOnboardingCompletionPct(getTaskCompletionPercentage(initializedTasks || []));
+        } catch {
+          setOnboardingCompletionPct(0);
+        }
       }
     });
     return () => unsubscribe();
@@ -571,6 +630,15 @@ const UserProfilePage = () => {
           // User Groups count - from user's userGroupIds array
           const userGroupIds = Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : [];
           setUserGroupsCount(userGroupIds.length);
+
+          // Reviews count - from users/{uid}/reviews subcollection (admin-only tab)
+          try {
+            const reviewsRef = collection(db, 'users', uid, 'reviews');
+            const reviewsSnap = await getDocs(reviewsRef);
+            setReviewsCount(reviewsSnap.size);
+          } catch {
+            setReviewsCount(0);
+          }
         }
 
         // Assignments count
@@ -771,6 +839,79 @@ const UserProfilePage = () => {
   const viewerSecurityLevel = parseInt(securityLevel);
   const canViewAdminContent = viewerSecurityLevel >= 5;
   const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+  // Slightly more yellow-orange + used for borders/text. Button gradient is set where needed.
+  const onboardingAccent = '#FF9800';
+  const onboardingAccentGradient = 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)';
+  const onboardingAccentGradientHover = 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)';
+
+  const coerceToDate = (value: any): Date | null => {
+    if (!value) return null;
+    try {
+      if (typeof value?.toDate === 'function') return value.toDate();
+      if (value instanceof Date) return value;
+      if (typeof value === 'string' || typeof value === 'number') {
+        const d = new Date(value);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      if (value?._seconds && typeof value._seconds === 'number') {
+        const d = new Date(value._seconds * 1000);
+        return isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  };
+
+  const formatShortDate = (date: Date) =>
+    date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+  const getSecurityStatusLabel = (lvl?: string) => {
+    switch (lvl) {
+      case '7': return 'Admin';
+      case '6': return 'Manager';
+      case '5': return 'Worker';
+      case '4': return 'Hired';
+      case '3': return 'Flex';
+      case '2': return 'Applicant';
+      case '1': return 'Dismissed';
+      case '0': return 'Suspended';
+      default: return undefined;
+    }
+  };
+
+  const statusLine = (() => {
+    // Onboarding overrides everything else
+    if (onboardingInProgress) {
+      return { text: `Onboarding: ${onboardingCompletionPct}%`, color: onboardingAccent };
+    }
+
+    // Prefer explicit workStatus if it signals a terminal state
+    const ws = (workStatus || '').toLowerCase().trim();
+    if (ws === 'terminated') return { text: 'Dismissed', color: '#D32F2F' };
+    if (ws === 'suspended') return { text: 'Suspended', color: '#D32F2F' };
+
+    const secLabel = getSecurityStatusLabel(targetUserSecurityLevel);
+
+    // If hired, show hire date when available
+    if (targetUserSecurityLevel === '4') {
+      const hireDate = coerceToDate(skillsData?.startDate);
+      return {
+        text: hireDate ? `Hired: ${formatShortDate(hireDate)}` : 'Hired',
+        color: 'rgba(0, 0, 0, 0.55)',
+      };
+    }
+
+    if (secLabel) {
+      return {
+        text: secLabel,
+        color: secLabel === 'Dismissed' || secLabel === 'Suspended' ? '#D32F2F' : 'rgba(0, 0, 0, 0.55)',
+      };
+    }
+
+    if (workStatus) return { text: workStatus, color: 'rgba(0, 0, 0, 0.55)' };
+    return { text: null as any, color: 'rgba(0, 0, 0, 0.55)' };
+  })();
 
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
 
@@ -814,6 +955,7 @@ const UserProfilePage = () => {
           breadcrumbPath={breadcrumbPath}
           isAdminView={isAdminView}
           profileScore={profileScore}
+          scoreSummary={scoreSummary}
           resume={skillsData?.resume || null}
           certifications={skillsData?.certifications || []}
           education={skillsData?.education || []}
@@ -984,23 +1126,47 @@ const UserProfilePage = () => {
                       fontSize: '40px',
                       fontWeight: 600,
                       flexShrink: 0,
+                      border: onboardingInProgress ? `6px solid ${onboardingAccent}` : undefined,
+                      boxSizing: 'border-box',
                     }}
                   >
                     {!avatarUrl && initials}
                   </Avatar>
                   <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 108 }}>
                     {/* Line 1: Name */}
-                    <Typography
-                      variant="h6"
-                      sx={{
-                        fontSize: { xs: '20px', md: '24px' },
-                        fontWeight: 600,
-                        lineHeight: 1.2,
-                        mb: 1,
-                      }}
-                    >
-                      {`${firstName} ${lastName}`.trim() || 'User Profile'}
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
+                      <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                        <Typography
+                          variant="h6"
+                          sx={{
+                            fontSize: { xs: '20px', md: '24px' },
+                            fontWeight: 600,
+                            lineHeight: 1.2,
+                            minWidth: 0,
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {`${firstName} ${lastName}`.trim() || 'User Profile'}
+                        </Typography>
+
+                        {canViewAdminContent && (() => {
+                          const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
+                          if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                          return (
+                            <Chip
+                              icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                              label={`Score ${Math.round(summary)}`}
+                              color="primary"
+                              size="small"
+                              variant="outlined"
+                              sx={{ fontWeight: 700, flexShrink: 0 }}
+                            />
+                          );
+                        })()}
+                      </Stack>
+                    </Box>
                     {/* Line 2: Contact Action Icons Row */}
                     <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" sx={{ mb: 1 }}>
                   {phone && (
@@ -1230,7 +1396,7 @@ const UserProfilePage = () => {
                     </Stack>
                     {/* Line 3: Metadata subtitle */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                      {email && (
+                      {(city || state) && (
                         <Typography
                           component="span"
                           variant="body2"
@@ -1240,24 +1406,8 @@ const UserProfilePage = () => {
                             color: 'rgba(0, 0, 0, 0.55)',
                           }}
                         >
-                          {email}
+                          {[city, state].filter(Boolean).join(', ')}
                         </Typography>
-                      )}
-                      {uid && (
-                        <>
-                          <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
-                          <Typography
-                            component="span"
-                            variant="body2"
-                            sx={{
-                              fontSize: '14px',
-                              fontWeight: 400,
-                              color: 'rgba(0, 0, 0, 0.55)',
-                            }}
-                          >
-                            ID: {uid.slice(0, 8)}
-                          </Typography>
-                        </>
                       )}
                       {createdAt && (() => {
                         try {
@@ -1281,7 +1431,9 @@ const UserProfilePage = () => {
                             });
                             return (
                               <>
-                                <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                                {(city || state) && (
+                                  <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                                )}
                                 <Typography
                                   component="span"
                                   variant="body2"
@@ -1301,7 +1453,7 @@ const UserProfilePage = () => {
                         }
                         return null;
                       })()}
-                      {!email && !uid && !createdAt && jobTitle && (
+                      {!city && !state && !createdAt && jobTitle && (
                         <Typography
                           component="span"
                           variant="body2"
@@ -1315,9 +1467,84 @@ const UserProfilePage = () => {
                         </Typography>
                       )}
                     </Box>
+                    {/* Line 4: User groups (if any) */}
+                    {headerUserGroups.length > 0 && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
+                        {headerUserGroups.map((g, idx) => {
+                          const href = `/usergroups/${g.id}`;
+                          return (
+                            <React.Fragment key={g.id}>
+                              {idx > 0 && (
+                                <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>
+                                  ,
+                                </Typography>
+                              )}
+                              <MUILink
+                                component="button"
+                                onClick={() => navigate(href)}
+                                underline="hover"
+                                sx={{
+                                  fontSize: '14px',
+                                  fontWeight: 500,
+                                  color: '#0057B8',
+                                  cursor: 'pointer',
+                                }}
+                              >
+                                {g.title}
+                              </MUILink>
+                            </React.Fragment>
+                          );
+                        })}
+                      </Box>
+                    )}
+                    {/* Line 5: Status (Onboarding/Hired/Dismissed/etc.) */}
+                    {statusLine?.text && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: statusLine.color,
+                          }}
+                        >
+                          {statusLine.text}
+                        </Typography>
+                      </Box>
+                    )}
+
+                    {/* Score Stack removed (now shown as a single summary score on the name line) */}
                   </Box>
                 </Box>
               </Box>
+            }
+            titleRightActions={
+              canViewAdminContent ? (
+                <Tooltip title="Leave a star review" arrow>
+                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
+                    <Rating
+                      // Show existing review average as filled stars; allow click to open add-review flow.
+                      value={quickReviewStars ?? scoreSummary?.reviewAvg ?? 0}
+                      precision={0.1}
+                      onChange={(_, value) => {
+                        if (!value) return;
+                        setQuickReviewStars(value);
+                        setTabValue('Score');
+                        const pathname = window.location.pathname;
+                        const params = new URLSearchParams(window.location.search);
+                        params.delete('tab');
+                        params.set('openReview', '1');
+                        params.set('stars', String(value));
+                        const search = params.toString();
+                        navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
+                        setTimeout(() => setQuickReviewStars(null), 0);
+                      }}
+                      size="medium"
+                    />
+                  </Box>
+                </Tooltip>
+              ) : null
             }
             subtitle={undefined}
             filters={
@@ -1437,6 +1664,16 @@ const UserProfilePage = () => {
                           px: 1.5,
                           py: 0.75,
                           whiteSpace: 'nowrap',
+                          '&.Mui-disabled': {
+                            backgroundImage: onboardingAccentGradient,
+                            color: '#FFFFFF',
+                            opacity: 1,
+                          },
+                          '&.Mui-disabled:hover': {
+                            backgroundImage: onboardingAccentGradientHover,
+                            color: '#FFFFFF',
+                            opacity: 1,
+                          },
                         }}
                       >
                         Onboarding
@@ -1545,6 +1782,15 @@ const UserProfilePage = () => {
                 return <ProfileOverview uid={uid} onTabChange={(tab: string) => handleTabChange({} as React.SyntheticEvent, tab)} />;
               case 'Interview':
                 return <InterviewTab uid={uid} />;
+              case 'Score':
+                return (
+                  <ScoreTab
+                    uid={uid}
+                    scoreSummary={scoreSummary}
+                    fallbackAiScore={profileScore}
+                    onGoToInterview={() => handleTabChange({} as React.SyntheticEvent, 'Interview')}
+                  />
+                );
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
               case 'Applications':
@@ -1684,11 +1930,13 @@ const UserProfilePage = () => {
                 ...taskData,
                 tenantId: (tenantId || authTenantId || activeTenant?.id) as string,
                 createdBy: user?.uid || '',
+                // Ensure tasks created from a user profile are assigned to the logged-in viewer by default
+                assignedTo: user?.uid || '',
                 associations: {
-                  companies: [],
-                  contacts: [],
-                  deals: [],
-                  salespeople: user?.uid ? [user.uid] : []
+                  ...(taskData?.associations || {}),
+                  // Associate this task to the viewed user record (not a CRM contact).
+                  // Backend accepts arbitrary association keys; this is a lightweight linkage for future filtering/UI.
+                  users: [uid]
                 }
               });
             } catch (error) {
@@ -1700,14 +1948,11 @@ const UserProfilePage = () => {
           prefilledData={{
             assignedTo: user?.uid || '',
             associations: {
-              companies: [],
-              contacts: [],
-              deals: [],
-              salespeople: user?.uid ? [user.uid] : []
+              users: [uid]
             }
           }}
-          contacts={[]}
-          salespeople={[]}
+          // In user context we auto-associate; hide CRM-only pickers.
+          hideCrmAssociations
           currentUserId={user?.uid || ''}
           loading={taskSubmitting}
         />
@@ -1726,10 +1971,13 @@ const UserProfilePage = () => {
               ...taskData,
               tenantId: (tenantId || authTenantId || activeTenant?.id) as string,
               createdBy: user?.uid || '',
+              assignedTo: user?.uid || '',
               status: 'completed',
               completedAt: new Date(),
               associations: {
                 ...taskData.associations,
+                // Associate to the viewed user record (and keep viewer linkage for dashboards)
+                users: uid ? [uid] : [],
                 salespeople: user?.uid ? [user.uid] : []
               }
             });
@@ -1741,6 +1989,10 @@ const UserProfilePage = () => {
           }
         }}
         loading={logActivityLoading}
+        // In user context we auto-associate; hide CRM pickers and default to Recruiting.
+        hideCrmAssociations
+        relatedUser={{ id: uid || '', name: `${firstName} ${lastName}`.trim() || preferredName || 'User' }}
+        defaultQuotaCategory="recruiting"
         salespeople={[]}
         contacts={[]}
         preselectContactsFromProps={false}

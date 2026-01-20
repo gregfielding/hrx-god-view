@@ -42,15 +42,33 @@ const SlackModeSelector: React.FC<SlackModeSelectorProps> = ({
   conversationType,
   onModeChange,
 }) => {
-  const { user } = useAuth();
+  const { user, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const [mode, setMode] = useState<SlackConversationMode>('manual');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Ensure the object passed into security helpers includes activeTenantId + tenantIds security level.
+  const userAny = user as any;
+  const userWithTenant = user
+    ? {
+        ...userAny,
+        activeTenantId: userAny.activeTenantId || activeTenant?.id,
+        tenantIds:
+          userAny.tenantIds ||
+          (activeTenant?.id
+            ? {
+                [activeTenant.id]: {
+                  securityLevel: currentClaimsSecurityLevel || securityLevel,
+                },
+              }
+            : {}),
+      }
+    : null;
+
   // Check if user has permission (securityLevel >= 6 for settings)
-  const canModifySettings = user && getSecurityLevelForActiveTenant(user) >= 6;
-  const canAccessSlack = user && canUserAccessSlack(user);
+  const canModifySettings = !!(userWithTenant && getSecurityLevelForActiveTenant(userWithTenant as any) >= 6);
+  const canAccessSlack = !!(userWithTenant && canUserAccessSlack(userWithTenant as any));
 
   useEffect(() => {
     const loadSettings = async () => {

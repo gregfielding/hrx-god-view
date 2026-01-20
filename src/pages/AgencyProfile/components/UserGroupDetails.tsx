@@ -4,6 +4,14 @@ import {
   Typography,
   TextField,
   Button,
+  Card,
+  CardHeader,
+  CardContent,
+  Divider,
+  Stack,
+  Chip,
+  Avatar,
+  Tooltip,
   Table,
   TableBody,
   TableCell,
@@ -14,13 +22,22 @@ import {
   Snackbar,
   Alert,
   Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
   Tabs,
   Tab,
 } from '@mui/material';
-import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
+import GroupsIcon from '@mui/icons-material/Groups';
+import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 
 import { db } from '../../../firebase';
+import PageHeader from '../../../components/PageHeader';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -31,6 +48,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [group, setGroup] = useState<any>(null);
   const [editForm, setEditForm] = useState({ title: '', description: '' });
   const [allWorkers, setAllWorkers] = useState<any[]>([]);
+  const [membersData, setMembersData] = useState<any[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [selectedWorker, setSelectedWorker] = useState<any>(null);
   const [loading, setLoading] = useState(false);
@@ -42,6 +60,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [tabIndex, setTabIndex] = useState(7); // User Groups tab index
   const [agencyUsers, setAgencyUsers] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
+  const [activeTab, setActiveTab] = useState<'members' | 'details'>('members');
+  const [addMemberOpen, setAddMemberOpen] = useState(false);
 
   // Check if we're accessing from the top-level usergroups page
   const isFromTopLevel = location.pathname.includes('/usergroups') || location.pathname === '/usergroups';
@@ -74,15 +94,56 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
   const fetchAllWorkers = async () => {
     try {
-      const q = collection(db, 'users');
-      const snapshot = await getDocs(q);
+      const qRef = collection(db, 'users');
+      const snapshot = await getDocs(qRef);
       setAllWorkers(
         snapshot.docs
           .map((doc) => ({ id: doc.id, ...doc.data() }))
-          .filter((user: any) => user.role === 'Worker' && user.tenantId === tenantId),
+          // Include any non-internal users belonging to this tenant (workers/applicants/etc.)
+          .filter((user: any) => {
+            const tenantIds = user.tenantIds;
+            const belongsToTenant =
+              user.tenantId === tenantId ||
+              user.activeTenantId === tenantId ||
+              (Array.isArray(tenantIds) && tenantIds.includes(tenantId)) ||
+              (tenantIds && typeof tenantIds === 'object' && !Array.isArray(tenantIds) && tenantId in tenantIds);
+
+            const levelRaw = user.tenantIds?.[tenantId]?.securityLevel ?? user.securityLevel ?? '0';
+            const levelNum = parseInt(String(levelRaw), 10) || 0;
+            const isInternal = levelNum >= 5;
+
+            return belongsToTenant && !isInternal;
+          }),
       );
     } catch (err: any) {
       // ignore for now
+    }
+  };
+
+  const fetchMembersByIds = async (ids: string[]) => {
+    if (!tenantId) return;
+    if (!ids || ids.length === 0) {
+      setMembersData([]);
+      return;
+    }
+    try {
+      const chunks: string[][] = [];
+      for (let i = 0; i < ids.length; i += 10) {
+        chunks.push(ids.slice(i, i + 10));
+      }
+
+      const snaps = await Promise.all(
+        chunks.map((chunk) => getDocs(query(collection(db, 'users'), where(documentId(), 'in', chunk))))
+      );
+      const users = snaps.flatMap((s) => s.docs.map((d) => ({ id: d.id, ...d.data() })));
+
+      // Preserve group order (memberIds)
+      const byId = new Map(users.map((u) => [u.id, u]));
+      const ordered = ids.map((id) => byId.get(id)).filter(Boolean);
+      setMembersData(ordered as any[]);
+    } catch (err) {
+      console.error('Failed to fetch group members:', err);
+      setMembersData([]);
     }
   };
 
@@ -152,8 +213,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         : [...memberIds, selectedWorker.id];
       await updateDoc(groupRef, { memberIds: newMemberIds });
       setMemberIds(newMemberIds);
+      await fetchMembersByIds(newMemberIds);
       setSelectedWorker(null);
       setSuccess(true);
+      setAddMemberOpen(false);
     } catch (err: any) {
       setError(err.message || 'Failed to add member');
     }
@@ -168,6 +231,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       const newMemberIds = memberIds.filter((id) => id !== userId);
       await updateDoc(groupRef, { memberIds: newMemberIds });
       setMemberIds(newMemberIds);
+      await fetchMembersByIds(newMemberIds);
       setSuccess(true);
     } catch (err: any) {
       setError(err.message || 'Failed to remove member');
@@ -215,7 +279,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     setLoading(false);
   };
 
-  const members = allWorkers.filter((w) => memberIds.includes(w.id));
+  useEffect(() => {
+    fetchMembersByIds(memberIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, groupId, memberIds]);
+
+  const members = membersData;
   const availableWorkers = allWorkers.filter((w) => !memberIds.includes(w.id));
 
   const noop = () => {
@@ -226,15 +295,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     <Box sx={{ p: 0, width: '100%' }}>
       {agency && (
         <>
-          {isFromTopLevel ? (
-            // Simplified header for top-level page
-            <Box display="flex" justifyContent="flex-end" mb={2}>
-              <Button variant="outlined" onClick={() => navigate('/usergroups')}>
-                &larr; Back to User Groups
-              </Button>
-            </Box>
-          ) : (
-            // Full header for agency profile page
+          {!isFromTopLevel && (
             <>
               <AgencyProfileHeader
                 uid={tenantId}
@@ -248,7 +309,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 variant="scrollable"
                 scrollButtons="auto"
                 allowScrollButtonsMobile
-                sx={{ mb: 2 }}
+                sx={{ mb: 0 }}
               >
                 <Tab label="Overview" />
                 <Tab label="Modules" />
@@ -265,134 +326,265 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <Tab label="AI Settings" />
                 <Tab label="Activity Logs" />
               </Tabs>
-              <Box display="flex" justifyContent="flex-end" mb={2}>
-                <Button variant="outlined" onClick={() => navigate(`/tenants/${tenantId}?tab=6`)}>
-                  &larr; Back to User Groups
-                </Button>
-              </Box>
             </>
           )}
         </>
       )}
-      <Typography variant="h6" gutterBottom>
-        Group Details
-      </Typography>
-      <Box display="flex" gap={2} mb={2}>
-        <TextField
-          label="Group Title"
-          value={editForm.title}
-          onChange={(e) => handleEditChange('title', e.target.value)}
-          sx={{ flex: 1 }}
-        />
-        <TextField
-          label="Description"
-          value={editForm.description}
-          onChange={(e) => handleEditChange('description', e.target.value)}
-          sx={{ flex: 2 }}
-          multiline
-          minRows={2}
-        />
-      </Box>
-      <Box mb={2}>
-        <Autocomplete
-          multiple
-          options={agencyUsers}
-          getOptionLabel={(u) => `${u.firstName} ${u.lastName}`}
-          value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
-          onChange={(_, newValue) => handleManagersChange(newValue)}
-          renderInput={(params) => (
-            <TextField {...params} label="Group Managers" placeholder="Select managers" fullWidth />
-          )}
-          renderTags={(value, getTagProps) =>
-            value.map((option, index) => (
-              <Button variant="outlined" {...getTagProps({ index })} key={option.id} sx={{ mr: 1 }}>
-                {option.firstName} {option.lastName}
-              </Button>
-            ))
-          }
-        />
-      </Box>
-      <Box mb={2}>
-        <Button
-          variant="contained"
-          onClick={handleEditSave}
-          disabled={loading || !editForm.title || !editForm.description}
+
+      <PageHeader
+        title={
+          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
+            <Avatar
+              sx={{
+                width: 72,
+                height: 72,
+                bgcolor: 'primary.main',
+                color: '#fff',
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              <GroupsIcon />
+            </Avatar>
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography
+                variant="h6"
+                sx={{
+                  fontSize: { xs: '20px', md: '24px' },
+                  fontWeight: 700,
+                  lineHeight: 1.2,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {editForm.title || group?.title || 'User Group'}
+              </Typography>
+              <Typography
+                variant="body2"
+                sx={{
+                  fontSize: '14px',
+                  color: 'rgba(0, 0, 0, 0.55)',
+                  mt: 0.75,
+                }}
+              >
+                {editForm.description || group?.description || '—'}
+              </Typography>
+              <Stack direction="row" spacing={1} sx={{ mt: 1, flexWrap: 'wrap' }}>
+                <Chip label={`Members: ${memberIds.length}`} size="small" variant="outlined" />
+                <Chip label={`Managers: ${groupManagerIds.length}`} size="small" variant="outlined" />
+              </Stack>
+            </Box>
+          </Box>
+        }
+        titleRightActions={
+          <Stack direction="row" spacing={1.25} alignItems="center" sx={{ justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
+            <Button
+              variant="outlined"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => (isFromTopLevel ? navigate('/usergroups') : navigate(`/tenants/${tenantId}?tab=6`))}
+              sx={{ borderRadius: '999px', textTransform: 'none' }}
+            >
+              Back
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<SaveOutlinedIcon />}
+              onClick={handleEditSave}
+              disabled={loading || !editForm.title || !editForm.description}
+              sx={{ borderRadius: '999px', textTransform: 'none' }}
+            >
+              Save
+            </Button>
+            <Tooltip title={members.length > 0 ? 'Remove all members before deleting this group' : 'Delete group'} arrow>
+              <span>
+                <Button
+                  variant="contained"
+                  color="error"
+                  startIcon={<DeleteOutlineIcon />}
+                  onClick={handleDeleteGroup}
+                  disabled={loading || members.length > 0}
+                  sx={{ borderRadius: '999px', textTransform: 'none' }}
+                >
+                  Delete
+                </Button>
+              </span>
+            </Tooltip>
+          </Stack>
+        }
+        showDivider
+      />
+
+      <Box sx={{ px: { xs: 2, md: 3 }, py: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Tabs
+          value={activeTab}
+          onChange={(_, v) => setActiveTab(v)}
+          sx={{ minHeight: 'auto' }}
         >
-          Save
-        </Button>
+          <Tab value="members" label="Members" />
+          <Tab value="details" label="Details" />
+        </Tabs>
+
+        {activeTab === 'members' && (
+          <Card variant="outlined">
+            <CardHeader
+              title="Members"
+              titleTypographyProps={{ fontWeight: 800 }}
+              subheader={members.length ? `${members.length} member${members.length === 1 ? '' : 's'}` : undefined}
+              action={
+                <Button
+                  variant="contained"
+                  onClick={() => setAddMemberOpen(true)}
+                  disabled={loading || availableWorkers.length === 0}
+                  sx={{ borderRadius: '999px', textTransform: 'none' }}
+                >
+                  Add Member
+                </Button>
+              }
+            />
+            <Divider />
+            <CardContent sx={{ pt: 0 }}>
+              <TableContainer component={Paper} variant="outlined" sx={{ mt: 2 }}>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Name</TableCell>
+                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Email</TableCell>
+                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Phone</TableCell>
+                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>View</TableCell>
+                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Remove</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {members.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={5} sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
+                          No members in this group.
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      members.map((member) => (
+                        <TableRow key={member.id} hover>
+                          <TableCell>
+                            {member.firstName} {member.lastName}
+                          </TableCell>
+                          <TableCell>{member.email}</TableCell>
+                          <TableCell>{member.phone || '-'}</TableCell>
+                          <TableCell>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              onClick={() => navigate(`/users/${member.id}`)}
+                              sx={{ borderRadius: '999px', textTransform: 'none' }}
+                            >
+                              View
+                            </Button>
+                          </TableCell>
+                          <TableCell>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="error"
+                              onClick={() => handleRemoveMember(member.id)}
+                              sx={{ borderRadius: '999px', textTransform: 'none' }}
+                            >
+                              Remove
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeTab === 'details' && (
+          <Stack spacing={2}>
+            <Card variant="outlined">
+              <CardHeader title="Group details" titleTypographyProps={{ fontWeight: 800 }} />
+              <CardContent>
+                <Stack spacing={2}>
+                  <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                    <TextField
+                      label="Group Title"
+                      value={editForm.title}
+                      onChange={(e) => handleEditChange('title', e.target.value)}
+                      fullWidth
+                    />
+                    <TextField
+                      label="Description"
+                      value={editForm.description}
+                      onChange={(e) => handleEditChange('description', e.target.value)}
+                      fullWidth
+                      multiline
+                      minRows={2}
+                    />
+                  </Stack>
+                </Stack>
+              </CardContent>
+            </Card>
+
+            <Card variant="outlined">
+              <CardHeader title="Group managers" titleTypographyProps={{ fontWeight: 800 }} />
+              <CardContent>
+                <Autocomplete
+                  multiple
+                  options={agencyUsers}
+                  getOptionLabel={(u) => `${u.firstName} ${u.lastName}`}
+                  value={agencyUsers.filter((u) => groupManagerIds.includes(u.id))}
+                  onChange={(_, newValue) => handleManagersChange(newValue)}
+                  renderInput={(params) => (
+                    <TextField {...params} label="Managers" placeholder="Select managers" fullWidth />
+                  )}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option, index) => (
+                      <Chip
+                        {...getTagProps({ index })}
+                        key={option.id}
+                        label={`${option.firstName} ${option.lastName}`}
+                        size="small"
+                        sx={{ fontWeight: 600 }}
+                      />
+                    ))
+                  }
+                />
+              </CardContent>
+            </Card>
+          </Stack>
+        )}
       </Box>
-      <Box display="flex" gap={2} mb={2}>
-        <Autocomplete
-          options={allWorkers}
-          getOptionLabel={(w) => `${w.firstName} ${w.lastName}`}
-          value={selectedWorker}
-          onChange={(_, newValue) => setSelectedWorker(newValue)}
-          renderInput={(params) => <TextField {...params} label="Add Worker to Group" fullWidth />}
-          sx={{ flex: 2 }}
-        />
-        <Button variant="contained" onClick={handleAddMember} disabled={!selectedWorker || loading}>
-          Add
-        </Button>
-      </Box>
-      <Typography variant="h6" gutterBottom>
-        Group Members
-      </Typography>
-      <TableContainer component={Paper}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Name</TableCell>
-              <TableCell>Email</TableCell>
-              <TableCell>Phone</TableCell>
-              <TableCell>View</TableCell>
-              <TableCell>Remove</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {members.length === 0 ? (
-              <TableRow>
-                <TableCell colSpan={5}>No members in this group.</TableCell>
-              </TableRow>
-            ) : (
-              members.map((member) => (
-                <TableRow key={member.id}>
-                  <TableCell>
-                    {member.firstName} {member.lastName}
-                  </TableCell>
-                  <TableCell>{member.email}</TableCell>
-                  <TableCell>{member.phone || '-'}</TableCell>
-                  <TableCell>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      onClick={() => navigate(`/users/${member.id}`)}
-                    >
-                      View
-                    </Button>
-                  </TableCell>
-                  <TableCell>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color="error"
-                      onClick={() => handleRemoveMember(member.id)}
-                    >
-                      Remove
-                    </Button>
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
-      {members.length === 0 && (
-        <Box display="flex" justifyContent="flex-end" mt={2}>
-          <Button variant="contained" color="error" onClick={handleDeleteGroup} disabled={loading}>
-            Delete Group
+
+      <Dialog open={addMemberOpen} onClose={() => setAddMemberOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Add member</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mt: 1 }}>
+            <Autocomplete
+              options={availableWorkers}
+              getOptionLabel={(w) => `${w.firstName} ${w.lastName}`}
+              value={selectedWorker}
+              onChange={(_, newValue) => setSelectedWorker(newValue)}
+              renderInput={(params) => <TextField {...params} label="Worker" fullWidth />}
+            />
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddMemberOpen(false)} disabled={loading} sx={{ textTransform: 'none' }}>
+            Cancel
           </Button>
-        </Box>
-      )}
+          <Button
+            variant="contained"
+            onClick={handleAddMember}
+            disabled={!selectedWorker || loading}
+            sx={{ borderRadius: '999px', textTransform: 'none' }}
+          >
+            Add
+          </Button>
+        </DialogActions>
+      </Dialog>
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError('')}>
         <Alert severity="error" onClose={() => setError('')} sx={{ width: '100%' }}>
           {error}

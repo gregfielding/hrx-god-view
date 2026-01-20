@@ -46,6 +46,12 @@ interface CreateTaskDialogProps {
   salespeople?: any[];
   contacts?: any[];
   currentUserId?: string;
+  /**
+   * When true, hides CRM-only association pickers (Company Contacts / Salespeople).
+   * Useful for creating tasks from a User profile where the task should auto-associate
+   * to the user + the logged-in viewer instead of CRM entities.
+   */
+  hideCrmAssociations?: boolean;
 }
 
   const CreateTaskDialog: React.FC<CreateTaskDialogProps> = ({
@@ -56,7 +62,8 @@ interface CreateTaskDialogProps {
     loading = false,
     salespeople = [],
     contacts = [],
-    currentUserId = ''
+    currentUserId = '',
+    hideCrmAssociations = false
   }) => {
           // REMOVED: Excessive logging causing re-renders
   const [formData, setFormData] = useState({
@@ -529,87 +536,91 @@ interface CreateTaskDialogProps {
             </FormControl>
           </Grid>
 
-          {/* Company Contacts */}
-          <Grid item xs={12}>
-            <Autocomplete
-              multiple
-              options={contacts as any[]}
-              getOptionLabel={(option: any) => option?.fullName || option?.name || option?.email || ''}
-              value={(contacts || []).filter((c: any) => (formData.associations?.contacts || []).includes(c.id)) as any[]}
-              onChange={(_, newValue: any[]) => {
-                handleAssociationChange('contacts', newValue.map(v => v.id));
-              }}
-              renderTags={(value, getTagProps) =>
-                value.map((option: any, index: number) => (
-                  <Tooltip key={option.id} title={`Click to view ${option.fullName || option.name || option.email || option.id}'s contact details`} arrow>
-                    <Chip 
-                      {...getTagProps({ index })} 
-                      label={option.fullName || option.name || option.email || option.id} 
-                      size="small"
-                      clickable
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open(`/contacts/${option.id}`, '_blank');
-                      }}
-                      sx={{ 
-                        cursor: 'pointer',
-                        '&:hover': { 
-                          backgroundColor: 'primary.light',
-                          color: 'primary.contrastText'
-                        }
-                      }}
-                    />
-                  </Tooltip>
-                ))
-              }
-              renderInput={(params) => (
-                <TextField {...params} label="Company Contacts" placeholder="Select contacts" />
-              )}
-              disablePortal
-              fullWidth
-            />
-          </Grid>
+          {!hideCrmAssociations && (
+            <>
+              {/* Company Contacts */}
+              <Grid item xs={12}>
+                <Autocomplete
+                  multiple
+                  options={contacts as any[]}
+                  getOptionLabel={(option: any) => option?.fullName || option?.name || option?.email || ''}
+                  value={(contacts || []).filter((c: any) => (formData.associations?.contacts || []).includes(c.id)) as any[]}
+                  onChange={(_, newValue: any[]) => {
+                    handleAssociationChange('contacts', newValue.map(v => v.id));
+                  }}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option: any, index: number) => (
+                      <Tooltip key={option.id} title={`Click to view ${option.fullName || option.name || option.email || option.id}'s contact details`} arrow>
+                        <Chip 
+                          {...getTagProps({ index })} 
+                          label={option.fullName || option.name || option.email || option.id} 
+                          size="small"
+                          clickable
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(`/contacts/${option.id}`, '_blank');
+                          }}
+                          sx={{ 
+                            cursor: 'pointer',
+                            '&:hover': { 
+                              backgroundColor: 'primary.light',
+                              color: 'primary.contrastText'
+                            }
+                          }}
+                        />
+                      </Tooltip>
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField {...params} label="Company Contacts" placeholder="Select contacts" />
+                  )}
+                  disablePortal
+                  fullWidth
+                />
+              </Grid>
 
-          {/* Salespeople */}
-          <Grid item xs={12}>
-            <Autocomplete
-              multiple
-              options={salespeople as any[]}
-              getOptionLabel={(option: any) => option?.displayName || option?.fullName || option?.name || option?.email || ''}
-              value={(salespeople || []).filter((s: any) => (formData.associations?.salespeople || []).includes(s.id)) as any[]}
-              onChange={(_, newValue: any[]) => {
-                handleAssociationChange('salespeople', newValue.map(v => v.id));
-              }}
-              renderTags={(value, getTagProps) =>
-                value.map((option: any, index: number) => (
-                  <Tooltip key={option.id} title={`Click to search for ${option.displayName || option.fullName || option.name || option.email || option.id} in contacts`} arrow>
-                    <Chip 
-                      {...getTagProps({ index })} 
-                      label={option.displayName || option.fullName || option.name || option.email || option.id} 
-                      size="small"
-                      clickable
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.open(`/crm/contacts?search=${encodeURIComponent(option.email || option.displayName || option.fullName || option.name)}`, '_blank');
-                      }}
-                      sx={{ 
-                        cursor: 'pointer',
-                        '&:hover': { 
-                          backgroundColor: 'primary.light',
-                          color: 'primary.contrastText'
-                        }
-                      }}
-                    />
-                  </Tooltip>
-                ))
-              }
-              renderInput={(params) => (
-                <TextField {...params} label="Salespeople" placeholder="Select salespeople" />
-              )}
-              disablePortal
-              fullWidth
-            />
-          </Grid>
+              {/* Salespeople */}
+              <Grid item xs={12}>
+                <Autocomplete
+                  multiple
+                  options={salespeople as any[]}
+                  getOptionLabel={(option: any) => option?.displayName || option?.fullName || option?.name || option?.email || ''}
+                  value={(salespeople || []).filter((s: any) => (formData.associations?.salespeople || []).includes(s.id)) as any[]}
+                  onChange={(_, newValue: any[]) => {
+                    handleAssociationChange('salespeople', newValue.map(v => v.id));
+                  }}
+                  renderTags={(value, getTagProps) =>
+                    value.map((option: any, index: number) => (
+                      <Tooltip key={option.id} title={`Click to search for ${option.displayName || option.fullName || option.name || option.email || option.id} in contacts`} arrow>
+                        <Chip 
+                          {...getTagProps({ index })} 
+                          label={option.displayName || option.fullName || option.name || option.email || option.id} 
+                          size="small"
+                          clickable
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.open(`/crm/contacts?search=${encodeURIComponent(option.email || option.displayName || option.fullName || option.name)}`, '_blank');
+                          }}
+                          sx={{ 
+                            cursor: 'pointer',
+                            '&:hover': { 
+                              backgroundColor: 'primary.light',
+                              color: 'primary.contrastText'
+                            }
+                          }}
+                        />
+                      </Tooltip>
+                    ))
+                  }
+                  renderInput={(params) => (
+                    <TextField {...params} label="Salespeople" placeholder="Select salespeople" />
+                  )}
+                  disablePortal
+                  fullWidth
+                />
+              </Grid>
+            </>
+          )}
 
           {/* Task Type Specific Fields */}
           {formData.type === 'scheduled_meeting_virtual' ? (

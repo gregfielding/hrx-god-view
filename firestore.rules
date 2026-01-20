@@ -191,6 +191,42 @@ service cloud.firestore {
         allow read, write: if isHRX();
         allow read, write: if isTenantAdmin(resource.data.tenantId);
       }
+
+      // --- INTERVIEWS (internal scoring) ---
+      match /interviews/{interviewId} {
+        // Internal team (securityLevel >= 5) can read/write; user can read their own.
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if isAuthenticated() && (
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+      }
+
+      // --- REVIEWS (star ratings) ---
+      match /reviews/{reviewId} {
+        // Internal team (securityLevel >= 5) can read/write; user can read their own (optional).
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if isAuthenticated() && (
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+      }
     }
 
     // --- TENANTS (Unified Agencies and Customers) ---
@@ -1717,31 +1753,22 @@ service cloud.firestore {
     }
     
     // Check if user has at least the specified security level for the tenant
+    // NOTE: Firestore Rules do not support JS-style if statements; use expressions + ternaries.
     function hasSecurityLevel(tenantId, minLevel) {
-      // HRX always has access
-      if (isHRX()) {
-        return true;
-      }
-      
       let user = getUser();
-      
-      // Check tenant-specific security level first
-      if (user.tenantIds != null && 
-          tenantId in user.tenantIds && 
-          user.tenantIds[tenantId].securityLevel != null) {
-        let tenantLevel = user.tenantIds[tenantId].securityLevel;
-        // Handle both string and number formats
-        let levelNum = tenantLevel is string ? int(tenantLevel) : tenantLevel;
-        return levelNum >= minLevel;
-      }
-      
-      // Fallback to root security level
-      if (user.securityLevel != null) {
-        let levelNum = user.securityLevel is string ? int(user.securityLevel) : user.securityLevel;
-        return levelNum >= minLevel;
-      }
-      
-      return false;
+      let tenantLevel = (user.tenantIds != null &&
+        user.tenantIds is map &&
+        tenantId in user.tenantIds &&
+        user.tenantIds[tenantId].securityLevel != null)
+          ? (user.tenantIds[tenantId].securityLevel is string ? int(user.tenantIds[tenantId].securityLevel) : user.tenantIds[tenantId].securityLevel)
+          : null;
+      let rootLevel = (user.securityLevel != null)
+        ? (user.securityLevel is string ? int(user.securityLevel) : user.securityLevel)
+        : null;
+        
+      return isHRX() ||
+        (tenantLevel != null && tenantLevel >= minLevel) ||
+        (rootLevel != null && rootLevel >= minLevel);
     }
   }
 }

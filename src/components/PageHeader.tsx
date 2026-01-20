@@ -12,6 +12,7 @@ import { Divider } from '@mui/material';
 interface PageHeaderProps {
   title: string | React.ReactNode; // Can be string or custom React element (e.g., with avatar)
   subtitle?: string | React.ReactNode; // Can be string or custom React element (e.g., metadata line)
+  titleRightActions?: React.ReactNode; // Optional: actions rendered on the title row (record-style pages)
   filters?: React.ReactNode;     // Left side: filter chips, toggles, etc.
   rightActions?: React.ReactNode; // Right side: search + primary CTA
   showDivider?: boolean;          // Default: true
@@ -20,6 +21,7 @@ interface PageHeaderProps {
 const PageHeader: React.FC<PageHeaderProps> = ({
   title,
   subtitle,
+  titleRightActions,
   filters,
   rightActions,
   showDivider = true,
@@ -37,24 +39,50 @@ const PageHeader: React.FC<PageHeaderProps> = ({
       }}
     >
       {/* Title and Subtitle */}
-      <Box sx={{ mb: subtitle ? 1 : 2 }}> {/* 8px if subtitle, 16px if not */}
-        {typeof title === 'string' ? (
-          <Typography
-            variant="h6"
-            sx={{
-              fontSize: { xs: '20px', md: '24px' },
-              fontWeight: 600,
-              lineHeight: 1.2,
-              mb: subtitle ? 1 : 0, // 8px if subtitle exists
-            }}
-          >
-            {title}
-          </Typography>
-        ) : (
-          <Box sx={{ mb: subtitle ? 1 : 0 }}>
-            {title}
+      <Box sx={{ mb: subtitle ? 1 : 2 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            alignItems: { xs: 'stretch', md: 'flex-start' },
+            justifyContent: { xs: 'flex-start', md: 'space-between' },
+            gap: { xs: 1.5, md: 2 },
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            {typeof title === 'string' ? (
+              <Typography
+                variant="h6"
+                sx={{
+                  fontSize: { xs: '20px', md: '24px' },
+                  fontWeight: 600,
+                  lineHeight: 1.2,
+                  mb: subtitle ? 1 : 0,
+                }}
+              >
+                {title}
+              </Typography>
+            ) : (
+              <Box sx={{ mb: subtitle ? 1 : 0 }}>
+                {title}
+              </Box>
+            )}
           </Box>
-        )}
+
+          {titleRightActions && (
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: { xs: 'flex-start', md: 'flex-end' },
+                alignItems: 'center',
+                gap: 1.5,
+                flexShrink: 0,
+              }}
+            >
+              {titleRightActions}
+            </Box>
+          )}
+        </Box>
         {subtitle && (
           typeof subtitle === 'string' ? (
             <Typography

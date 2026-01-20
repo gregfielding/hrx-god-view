@@ -161,6 +161,7 @@ export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDe
 export { updateCompanyLocationMirrorCallable, batchUpdateCompanyLocationMirrorsCallable } from './companyLocationUpdateOptimized';
 export { updateCompanyPipelineTotalsCallable, batchUpdateCompanyPipelineTotalsCallable } from './pipelineTotalsOptimized';
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
+export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

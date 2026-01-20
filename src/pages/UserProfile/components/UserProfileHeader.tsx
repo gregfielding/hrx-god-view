@@ -21,6 +21,7 @@ import PersonIcon from '@mui/icons-material/Person';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import PublicIcon from '@mui/icons-material/Public';
 import NavigateNextIcon from '@mui/icons-material/NavigateNext';
+import InsightsIcon from '@mui/icons-material/Insights';
 
 import { storage, db } from '../../../firebase'; // adjust path
 import { getScoreColor, getScoreLabel } from '../../../utils/applicantScoring';
@@ -40,6 +41,7 @@ import ComplianceStatusChips from './ComplianceStatusChips';
 import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
 import CompactActionGrid from './CompactActionGrid';
+import type { ScoreSummary } from '../../../utils/scoreSummary';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
@@ -76,6 +78,7 @@ interface UserProfileHeaderProps {
   breadcrumbPath?: Array<{ label: string; href?: string }>;
   isAdminView?: boolean; // True if viewer is admin (security >= 5)
   profileScore?: number; // Profile completeness score (0-100)
+  scoreSummary?: ScoreSummary;
   // New props for document access and additional data
   resume?: {
     fileName: string;
@@ -159,6 +162,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   breadcrumbPath = [],
   isAdminView = false,
   profileScore,
+  scoreSummary,
   resume,
   certifications = [],
   workEligibility,
@@ -702,11 +706,11 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       fontSize: '0.75rem',
                       py: 0.5,
                       px: 1.5,
-                      backgroundColor: '#ff6b35', // Orange-red
+                      backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
                       color: '#ffffff', // White text
                       fontWeight: 600,
                       '&:hover': {
-                        backgroundColor: '#e55a2b', // Darker orange-red on hover
+                        backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
                       },
                     }}
                   >
@@ -743,24 +747,41 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 
         {/* Mobile: Name and Details */}
         <Box sx={{ mb: 2 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-            <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              {`${firstName} ${lastName}`}
-              {preferredName && preferredName !== firstName && ` (${preferredName})`}
-            </Typography>
-            {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
-              <FavoriteButton
-                itemId={uid}
-                favoriteType="users"
-                isFavorite={isFavorite}
-                toggleFavorite={toggleFavorite}
-                size="small"
-                tooltipText={{
-                  favorited: 'Remove from favorites',
-                  notFavorited: 'Add to favorites',
-                }}
-              />
-            )}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+              <Typography variant="h5" sx={{ fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {`${firstName} ${lastName}`}
+                {preferredName && preferredName !== firstName && ` (${preferredName})`}
+              </Typography>
+
+              {isAdminView && (() => {
+                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
+                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                return (
+                  <Chip
+                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                    label={`Score ${Math.round(summary)}`}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontWeight: 700, flexShrink: 0 }}
+                  />
+                );
+              })()}
+
+              {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+                <FavoriteButton
+                  itemId={uid}
+                  favoriteType="users"
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  size="small"
+                  tooltipText={{
+                    favorited: 'Remove from favorites',
+                    notFavorited: 'Add to favorites',
+                  }}
+                />
+              )}
+            </Box>
           </Box>
           {Boolean(jobTitle) && (
             <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: 1 }}>
@@ -1139,6 +1160,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             </Box>
           )}
 
+          {/* Score stack removed (now shown as a single summary score on the name line) */}
+
         </Box>
       </Box>
 
@@ -1238,25 +1261,45 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 
         {/* Column B: Name & Primary Info (flex 1) */}
         <Box flex={1} sx={{ minWidth: 0 }}>
-          {/* Name with Favorite Button */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.25 }}>
-            <Typography variant="h5" sx={{ fontWeight: 700, fontSize: '1.5rem', lineHeight: 1.2 }}>
-              {`${firstName} ${lastName}`}
-              {preferredName && preferredName !== firstName && ` (${preferredName})`}
-            </Typography>
-            {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
-              <FavoriteButton
-                itemId={uid}
-                favoriteType="users"
-                isFavorite={isFavorite}
-                toggleFavorite={toggleFavorite}
-                size="small"
-                tooltipText={{
-                  favorited: 'Remove from favorites',
-                  notFavorited: 'Add to favorites',
-                }}
-              />
-            )}
+          {/* Name with Favorite Button + Summary Score */}
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.25 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+              <Typography
+                variant="h5"
+                sx={{ fontWeight: 700, fontSize: '1.5rem', lineHeight: 1.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
+                {`${firstName} ${lastName}`}
+                {preferredName && preferredName !== firstName && ` (${preferredName})`}
+              </Typography>
+
+              {isAdminView && (() => {
+                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
+                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                return (
+                  <Chip
+                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                    label={`Score ${Math.round(summary)}`}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontWeight: 700, flexShrink: 0 }}
+                  />
+                );
+              })()}
+
+              {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
+                <FavoriteButton
+                  itemId={uid}
+                  favoriteType="users"
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  size="small"
+                  tooltipText={{
+                    favorited: 'Remove from favorites',
+                    notFavorited: 'Add to favorites',
+                  }}
+                />
+              )}
+            </Box>
           </Box>
           
           {/* City, State - One Line */}
@@ -1657,6 +1700,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               <CompactProfileQualityBar score={profileScore} />
             </Box>
           )}
+
+          {/* Score stack removed (now shown as a single summary score on the name line) */}
         </Box>
         
         {/* Column C: Right-aligned buttons - Same row as avatar */}
@@ -1681,11 +1726,11 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 onClick={() => setShowCancelOnboardingDialog(true)}
                 sx={{
                   px: 2,
-                  backgroundColor: '#ff6b35', // Orange-red
+                  backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
                   color: '#ffffff', // White text
                   fontWeight: 600,
                   '&:hover': {
-                    backgroundColor: '#e55a2b', // Darker orange-red on hover
+                    backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
                   },
                 }}
               >

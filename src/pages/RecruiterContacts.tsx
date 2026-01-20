@@ -84,6 +84,8 @@ const RecruiterContacts: React.FC = () => {
   
   const headerSearch = outletCtx?.search ?? '';
   const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
+  const setHeaderSearch = outletCtx?.setSearch ?? (() => {});
+  const setHeaderShowFavoritesOnly = outletCtx?.setShowFavoritesOnly ?? (() => {});
   
   // State - initialize from cache
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -660,14 +662,14 @@ const RecruiterContacts: React.FC = () => {
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
               <InboxSearchBar
                 value={headerSearch}
-                onChange={() => {}}
-                onSearch={() => {}}
+                onChange={setHeaderSearch}
+                onSearch={setHeaderSearch}
                 placeholder="Search contacts..."
               />
               <FavoritesFilter
                 favoriteType="contacts"
                 showFavoritesOnly={headerShowFavoritesOnly}
-                onToggle={() => {}}
+                onToggle={setHeaderShowFavoritesOnly}
               />
               <Button
                 variant="contained"

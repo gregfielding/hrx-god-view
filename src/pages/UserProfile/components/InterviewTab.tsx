@@ -29,7 +29,7 @@ import {
   Schedule as ScheduleIcon,
   Person as PersonIcon,
 } from '@mui/icons-material';
-import { doc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, getDoc, updateDoc } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -43,12 +43,12 @@ interface InterviewQuestion {
 
 interface Interview {
   id: string;
-  submittedBy: string;
-  submittedById: string;
-  timestamp: Date;
+  createdByName: string;
+  createdByUid: string;
+  createdAt: Date;
   questions: InterviewQuestion[];
   notes?: string;
-  score?: number;
+  score10?: number;
 }
 
 interface InterviewTabProps {
@@ -112,16 +112,46 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
     setLoading(true);
     try {
       const interviewsRef = collection(db, 'users', uid, 'interviews');
-      const q = query(interviewsRef, orderBy('timestamp', 'desc'));
-      const querySnapshot = await getDocs(q);
+      // New schema uses createdAt; legacy uses timestamp. Prefer createdAt ordering,
+      // but fall back to timestamp if needed (e.g. index/rules/schema differences).
+      let querySnapshot;
+      try {
+        querySnapshot = await getDocs(query(interviewsRef, orderBy('createdAt', 'desc')));
+      } catch {
+        querySnapshot = await getDocs(query(interviewsRef, orderBy('timestamp', 'desc')));
+      }
       
       const interviewsData: Interview[] = [];
       querySnapshot.forEach((doc) => {
         const data = doc.data();
+        const createdAt: Date =
+          data.createdAt?.toDate?.() ||
+          data.timestamp?.toDate?.() ||
+          new Date();
+        const createdByName: string =
+          data.createdByName ||
+          data.submittedBy ||
+          data.createdBy ||
+          'Unknown';
+        const createdByUid: string =
+          data.createdByUid ||
+          data.submittedById ||
+          '';
+        const score10: number | undefined =
+          typeof data.score10 === 'number'
+            ? data.score10
+            : typeof data.score === 'number'
+            ? data.score
+            : undefined;
+
         interviewsData.push({
           id: doc.id,
-          ...data,
-          timestamp: data.timestamp?.toDate() || new Date(),
+          createdByName,
+          createdByUid,
+          createdAt,
+          questions: Array.isArray(data.questions) ? data.questions : [],
+          notes: data.notes,
+          score10,
         } as Interview);
       });
       
@@ -161,21 +191,78 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
 
     setLoading(true);
     try {
+      const createdByName = submitterName || currentUser?.displayName || currentUser?.email || 'Unknown';
       const interviewData = {
-        submittedBy: submitterName || currentUser?.displayName || currentUser?.email || 'Unknown',
+        // Legacy fields (keep for backwards compatibility + rules)
+        submittedBy: createdByName,
         submittedById: currentUser?.uid || '',
         timestamp: serverTimestamp(),
+        score: score,
+
+        // New schema (per spec)
+        createdAt: serverTimestamp(),
+        createdByUid: currentUser?.uid || '',
+        createdByName,
+        // optional future links
+        jobId: null,
+        assignmentId: null,
+        companyId: null,
         questions: questions.map(q => ({
           id: q.id,
           question: q.question,
           answer: q.answer,
           type: q.type,
         })),
-        score: score,
+        notes: '',
+        score10: score,
+        isArchived: false,
       };
 
       const interviewsRef = collection(db, 'users', uid, 'interviews');
       await addDoc(interviewsRef, interviewData);
+
+      // Update denormalized scoreSummary on the user doc (MVP: interviews only)
+      try {
+        const snap = await getDocs(query(interviewsRef));
+        const scored = snap.docs
+          .map((d) => d.data() as any)
+          .filter((d) => d && d.isArchived !== true)
+          .map((d) => (typeof d.score10 === 'number' ? d.score10 : typeof d.score === 'number' ? d.score : null))
+          .filter((n): n is number => typeof n === 'number');
+        const interviewCount = scored.length;
+        const interviewAvg = interviewCount
+          ? Math.round(((scored.reduce((a, b) => a + b, 0) / interviewCount) * 10)) / 10
+          : undefined;
+        // Also compute qualityScore so header "Score" reflects interviews + reviews.
+        let qualityScore: number | null = null;
+        try {
+          const userSnap = await getDoc(doc(db, 'users', uid));
+          const ss = (userSnap.data() as any)?.scoreSummary || {};
+          const reviewAvg = typeof ss?.reviewAvg === 'number' ? ss.reviewAvg : null;
+          const hasInterview = typeof interviewAvg === 'number' && Number.isFinite(interviewAvg);
+          const hasReview = typeof reviewAvg === 'number' && Number.isFinite(reviewAvg);
+          if (hasInterview || hasReview) {
+            const interviewScore100 = hasInterview ? (interviewAvg! / 10) * 100 : 0;
+            const reviewScore100 = hasReview ? ((reviewAvg! - 1) / 4) * 100 : 0;
+            const iw = hasInterview && hasReview ? 0.5 : hasInterview ? 1 : 0;
+            const rw = hasInterview && hasReview ? 0.5 : hasReview ? 1 : 0;
+            const raw = interviewScore100 * iw + reviewScore100 * rw;
+            qualityScore = Math.round(Math.max(0, Math.min(100, raw)));
+          }
+        } catch {
+          // non-fatal
+        }
+
+        // NOTE: use dot-path updates to avoid overwriting other scoreSummary fields (e.g. reviews)
+        await updateDoc(doc(db, 'users', uid), {
+          'scoreSummary.interviewAvg': interviewAvg ?? null,
+          'scoreSummary.interviewCount': interviewCount,
+          'scoreSummary.interviewLastAt': serverTimestamp(),
+          ...(qualityScore !== null ? { 'scoreSummary.qualityScore': qualityScore } : {}),
+        } as any);
+      } catch {
+        // non-fatal
+      }
 
       // Reset form
       setQuestions(defaultQuestions.map(q => ({ ...q })));
@@ -186,9 +273,11 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
 
       setSuccessMessage('Interview submitted successfully');
       setShowSuccess(true);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error submitting interview:', error);
-      setSuccessMessage('Error submitting interview');
+      const code = error?.code ? String(error.code) : '';
+      const msg = error?.message ? String(error.message) : '';
+      setSuccessMessage(`Error submitting interview${code ? ` (${code})` : ''}${msg ? `: ${msg}` : ''}`);
       setShowSuccess(true);
     } finally {
       setLoading(false);
@@ -312,7 +401,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                         <Box display="flex" alignItems="center" gap={1}>
                           <ScheduleIcon fontSize="small" color="action" />
                           <Typography variant="body2">
-                            {formatDate(interview.timestamp)}
+                            {formatDate(interview.createdAt)}
                           </Typography>
                         </Box>
                       </TableCell>
@@ -320,13 +409,13 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                         <Box display="flex" alignItems="center" gap={1}>
                           <PersonIcon fontSize="small" color="action" />
                           <Typography variant="body2" fontWeight="medium">
-                            {interview.submittedBy}
+                            {interview.createdByName}
                           </Typography>
                         </Box>
                       </TableCell>
                       <TableCell>
                         <Typography variant="body2" fontWeight={600} color="primary">
-                          {interview.score !== undefined ? `${interview.score}/10` : 'N/A'}
+                          {interview.score10 !== undefined ? `${interview.score10}/10` : 'N/A'}
                         </Typography>
                       </TableCell>
                     </TableRow>
@@ -356,7 +445,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
               <Box display="flex" justifyContent="space-between" alignItems="center">
                 <Typography variant="h6">Interview Details</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {formatDate(viewInterviewDialog.interview.timestamp)}
+                  {formatDate(viewInterviewDialog.interview.createdAt)}
                 </Typography>
               </Box>
             </DialogTitle>
@@ -365,7 +454,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <PersonIcon fontSize="small" color="action" />
                   <Typography variant="body2" fontWeight="medium">
-                    Conducted by: {viewInterviewDialog.interview.submittedBy}
+                    Conducted by: {viewInterviewDialog.interview.createdByName}
                   </Typography>
                 </Box>
                 <Divider />
@@ -387,7 +476,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                 ))}
                 
                 {/* Display Score in Dialog */}
-                {viewInterviewDialog.interview.score !== undefined && (
+                {viewInterviewDialog.interview.score10 !== undefined && (
                   <>
                     <Divider sx={{ my: 2 }} />
                     <Box>
@@ -395,7 +484,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                         Applicant Score
                       </Typography>
                       <Typography variant="h5" color="primary" fontWeight={700}>
-                        {viewInterviewDialog.interview.score}/10
+                        {viewInterviewDialog.interview.score10}/10
                       </Typography>
                     </Box>
                   </>

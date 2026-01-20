@@ -21,7 +21,7 @@ interface UseUnifiedInboxMessagesOptions {
 }
 
 export function useUnifiedInboxMessages(options: UseUnifiedInboxMessagesOptions = {}) {
-  const { user, activeTenant } = useAuth();
+  const { user, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
   const { filters = {}, limitPerChannel = 50 } = options;
   
   const [messages, setMessages] = useState<UnifiedMessage[]>([]);
@@ -29,7 +29,24 @@ export function useUnifiedInboxMessages(options: UseUnifiedInboxMessagesOptions 
   const [error, setError] = useState<string | null>(null);
 
   const tenantId = activeTenant?.id || (user as any)?.activeTenantId || '';
-  const canAccessSlack = canUserAccessSlack(user);
+  // Ensure the object passed into security helpers includes activeTenantId + tenantIds security level.
+  const userAny = user as any;
+  const userWithTenant = user
+    ? {
+        ...userAny,
+        activeTenantId: userAny.activeTenantId || activeTenant?.id,
+        tenantIds:
+          userAny.tenantIds ||
+          (activeTenant?.id
+            ? {
+                [activeTenant.id]: {
+                  securityLevel: currentClaimsSecurityLevel || securityLevel,
+                },
+              }
+            : {}),
+      }
+    : null;
+  const canAccessSlack = canUserAccessSlack(userWithTenant as any);
 
   useEffect(() => {
     console.log('[useUnifiedInboxMessages] useEffect triggered', { 

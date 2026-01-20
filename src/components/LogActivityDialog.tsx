@@ -44,6 +44,18 @@ interface LogActivityDialogProps {
   tenantId?: string;
   dealId?: string;
   dealName?: string;
+  /**
+   * When true, hides CRM-only association pickers (Company Contacts / Salespeople).
+   * Useful when logging an activity from a User profile.
+   */
+  hideCrmAssociations?: boolean;
+  /**
+   * When set, the activity will be auto-associated to this user record (via associations.users)
+   * and the dialog will show a hint chip/label.
+   */
+  relatedUser?: { id: string; name?: string };
+  /** Default quotaCategory to use when the dialog opens (e.g., 'recruiting' from user profile). */
+  defaultQuotaCategory?: string;
 }
 
   const LogActivityDialog: React.FC<LogActivityDialogProps> = ({
@@ -57,7 +69,10 @@ interface LogActivityDialogProps {
   currentUserId = '',
   tenantId = '',
   dealId,
-  dealName
+  dealName,
+  hideCrmAssociations = false,
+  relatedUser,
+  defaultQuotaCategory
 }) => {
       // REMOVED: Excessive logging causing re-renders
     
@@ -98,7 +113,8 @@ interface LogActivityDialogProps {
       companies: [],
       contacts: [],
       deals: dealId ? [dealId] : [],
-      salespeople: currentUserId ? [currentUserId] : []
+      salespeople: currentUserId ? [currentUserId] : [],
+      users: relatedUser?.id ? [relatedUser.id] : []
     }
   });
 
@@ -119,6 +135,11 @@ interface LogActivityDialogProps {
       if (currentUserId) {
         updates.salespeople = [currentUserId];
       }
+
+      // In user-context, associate to the viewed user record
+      if (relatedUser?.id) {
+        updates.users = [relatedUser.id];
+      }
       
       if (Object.keys(updates).length > 0) {
         setFormData(prev => ({
@@ -129,8 +150,13 @@ interface LogActivityDialogProps {
           }
         }));
       }
+
+      // Default quota category on open (e.g. recruiting from user profile)
+      if (defaultQuotaCategory) {
+        setFormData(prev => ({ ...prev, quotaCategory: defaultQuotaCategory }));
+      }
     }
-  }, [open, contacts, currentUserId]);
+  }, [open, contacts, currentUserId, relatedUser?.id, defaultQuotaCategory]);
 
   const handleInputChange = (field: string, value: any) => {
     setFormData(prev => ({ ...prev, [field]: value }));
@@ -203,7 +229,8 @@ interface LogActivityDialogProps {
       companies: toIdArray(formData.associations?.companies),
       contacts: toIdArray(formData.associations?.contacts),
       deals: toIdArray(formData.associations?.deals),
-      salespeople: toIdArray(formData.associations?.salespeople)
+      salespeople: toIdArray(formData.associations?.salespeople),
+      users: toIdArray((formData.associations as any)?.users)
     };
 
     const taskData = {
@@ -243,7 +270,8 @@ interface LogActivityDialogProps {
         companies: [],
         contacts: [],
         deals: dealId ? [dealId] : [],
-        salespeople: currentUserId ? [currentUserId] : []
+        salespeople: currentUserId ? [currentUserId] : [],
+        users: relatedUser?.id ? [relatedUser.id] : []
       }
     });
     setErrors({});
@@ -269,6 +297,19 @@ interface LogActivityDialogProps {
       
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+          {(relatedUser?.id || currentUserId) && (
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              {currentUserId && <Chip size="small" label="Logged by: You" />}
+              {relatedUser?.id && (
+                <Chip
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  label={`User: ${relatedUser?.name || relatedUser.id}`}
+                />
+              )}
+            </Box>
+          )}
           {dealName && (
             <Alert severity="info" sx={{ mb: 2 }}>
               Logging activity for deal: <strong>{dealName}</strong>
@@ -345,6 +386,7 @@ interface LogActivityDialogProps {
             >
               <MenuItem value="business_generating">Business Generating</MenuItem>
               <MenuItem value="relationship_building">Relationship Building</MenuItem>
+              <MenuItem value="recruiting">Recruiting</MenuItem>
               <MenuItem value="administrative">Administrative</MenuItem>
               <MenuItem value="research">Research</MenuItem>
               <MenuItem value="proposal">Proposal</MenuItem>
@@ -352,55 +394,59 @@ interface LogActivityDialogProps {
             </Select>
           </FormControl>
 
-          {/* Company Contacts */}
-          <Autocomplete
-            multiple
-            options={contacts as any[]}
-            getOptionLabel={(option: any) => option?.fullName || option?.name || option?.email || ''}
-            value={(contacts || []).filter((c: any) => 
-              (formData.associations?.contacts || []).some((contactId: any) => 
-                typeof contactId === 'string' ? contactId === c.id : contactId?.id === c.id
-              )
-            ) as any[]}
-            onChange={(_, newValue: any[]) => {
-              handleAssociationChange('contacts', newValue.map(v => v.id));
-            }}
-            renderTags={(value, getTagProps) =>
-              value.map((option: any, index: number) => (
-                <Chip {...getTagProps({ index })} key={option.id} label={option.fullName || option.name || option.email || option.id} size="small" />
-              ))
-            }
-            renderInput={(params) => (
-              <TextField {...params} label="Company Contacts" placeholder="Select contacts" />
-            )}
-            disablePortal
-            fullWidth
-          />
+          {!hideCrmAssociations && (
+            <>
+              {/* Company Contacts */}
+              <Autocomplete
+                multiple
+                options={contacts as any[]}
+                getOptionLabel={(option: any) => option?.fullName || option?.name || option?.email || ''}
+                value={(contacts || []).filter((c: any) => 
+                  (formData.associations?.contacts || []).some((contactId: any) => 
+                    typeof contactId === 'string' ? contactId === c.id : contactId?.id === c.id
+                  )
+                ) as any[]}
+                onChange={(_, newValue: any[]) => {
+                  handleAssociationChange('contacts', newValue.map(v => v.id));
+                }}
+                renderTags={(value, getTagProps) =>
+                  value.map((option: any, index: number) => (
+                    <Chip {...getTagProps({ index })} key={option.id} label={option.fullName || option.name || option.email || option.id} size="small" />
+                  ))
+                }
+                renderInput={(params) => (
+                  <TextField {...params} label="Company Contacts" placeholder="Select contacts" />
+                )}
+                disablePortal
+                fullWidth
+              />
 
-          {/* Salespeople */}
-          <Autocomplete
-            multiple
-            options={allSalespeople as any[]}
-            getOptionLabel={(option: any) => option?.displayName || option?.fullName || option?.name || option?.email || ''}
-            value={(allSalespeople || []).filter((s: any) => 
-              (formData.associations?.salespeople || []).some((salespersonId: any) => 
-                typeof salespersonId === 'string' ? salespersonId === s.id : salespersonId?.id === s.id
-              )
-            ) as any[]}
-            onChange={(_, newValue: any[]) => {
-              handleAssociationChange('salespeople', newValue.map(v => v.id));
-            }}
-            renderTags={(value, getTagProps) =>
-              value.map((option: any, index: number) => (
-                <Chip {...getTagProps({ index })} key={option.id} label={option.displayName || option.fullName || option.name || option.email || option.id} size="small" />
-              ))
-            }
-            renderInput={(params) => (
-              <TextField {...params} label="Salespeople" placeholder="Select salespeople" />
-            )}
-            disablePortal
-            fullWidth
-          />
+              {/* Salespeople */}
+              <Autocomplete
+                multiple
+                options={allSalespeople as any[]}
+                getOptionLabel={(option: any) => option?.displayName || option?.fullName || option?.name || option?.email || ''}
+                value={(allSalespeople || []).filter((s: any) => 
+                  (formData.associations?.salespeople || []).some((salespersonId: any) => 
+                    typeof salespersonId === 'string' ? salespersonId === s.id : salespersonId?.id === s.id
+                  )
+                ) as any[]}
+                onChange={(_, newValue: any[]) => {
+                  handleAssociationChange('salespeople', newValue.map(v => v.id));
+                }}
+                renderTags={(value, getTagProps) =>
+                  value.map((option: any, index: number) => (
+                    <Chip {...getTagProps({ index })} key={option.id} label={option.displayName || option.fullName || option.name || option.email || option.id} size="small" />
+                  ))
+                }
+                renderInput={(params) => (
+                  <TextField {...params} label="Salespeople" placeholder="Select salespeople" />
+                )}
+                disablePortal
+                fullWidth
+              />
+            </>
+          )}
 
           {/* Notes */}
           <TextField

@@ -734,8 +734,8 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
 
       {/* Email Signature Section - Only for users with security level 5-7 */}
       {(() => {
-        const viewerLevel = parseInt(securityLevel || '0', 10);
-        return viewerLevel >= 5 && viewerLevel <= 7;
+        const targetUserLevel = parseInt(systemAccess.securityLevel || '0', 10);
+        return targetUserLevel >= 5 && targetUserLevel <= 7;
       })() && (
         <EmailSignatureTab uid={uid} />
       )}

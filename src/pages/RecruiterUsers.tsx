@@ -12,6 +12,7 @@ import {
   MenuItem,
   Paper,
   Select,
+  Stack,
   Table,
   TableBody,
   TableCell,
@@ -20,6 +21,7 @@ import {
   TableRow,
   TableSortLabel,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
@@ -46,6 +48,8 @@ import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
+import { normalizeScoreSummary, formatOneDecimal } from '../utils/scoreSummary';
+import type { ScoreSummary } from '../utils/scoreSummary';
 
 type SecurityLevel =
   | '0'
@@ -63,6 +67,10 @@ interface RecruiterUser {
   phone?: string;
   avatar?: string;
   securityLevel: string;
+  employeeOnboardStatus?: string;
+  contractorOnboardStatus?: string;
+  onboardingType?: string;
+  scoreSummary?: ScoreSummary;
   state?: string;
   lastLoginAt?: any;
   updatedAt?: any;
@@ -285,6 +293,10 @@ const RecruiterUsers: React.FC = () => {
           phone: userData.phone || '',
           avatar: userData.avatar || tenantData.avatar,
           securityLevel: String(securityLevel),
+          employeeOnboardStatus: userData.employeeOnboardStatus,
+          contractorOnboardStatus: userData.contractorOnboardStatus,
+          onboardingType: userData.onboardingType,
+          scoreSummary: normalizeScoreSummary(userData.scoreSummary),
           lastLoginAt: userData.lastLoginAt,
           updatedAt: userData.updatedAt,
           createdAt: userData.createdAt,
@@ -367,6 +379,38 @@ const RecruiterUsers: React.FC = () => {
     }
   };
 
+  const getWorkStatusDisplay = (u: RecruiterUser): { label: string; color: 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info'; sx?: any } => {
+    const employeeInProgress = String(u.employeeOnboardStatus || '').toLowerCase() === 'in progress';
+    const contractorInProgress = String(u.contractorOnboardStatus || '').toLowerCase() === 'in progress';
+    if (employeeInProgress || contractorInProgress) {
+      const typeLabel =
+        String(u.onboardingType || '').toLowerCase() === 'contractor' || contractorInProgress
+          ? 'Contractor'
+          : 'Employee';
+      return {
+        label: `Onboarding (${typeLabel})`,
+        color: 'warning',
+        sx: { bgcolor: '#E4572E', color: '#FFFFFF' },
+      };
+    }
+
+    // Fall back to security-level-based lifecycle label
+    switch (u.securityLevel) {
+      case '4':
+        return { label: 'Hired', color: 'success' };
+      case '3':
+        return { label: 'Candidate', color: 'primary' };
+      case '2':
+        return { label: 'Applicant', color: 'info' };
+      case '1':
+        return { label: 'Dismissed', color: 'default' };
+      case '0':
+        return { label: 'Suspended', color: 'error' };
+      default:
+        return { label: u.securityLevel, color: 'default' };
+    }
+  };
+
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
     let date: Date;
@@ -390,7 +434,10 @@ const RecruiterUsers: React.FC = () => {
   };
 
   const renderAiScore = (user: RecruiterUser) => {
-    const score = user.aiJobFitScore ?? user.aiProfileScore;
+    const score =
+      user.scoreSummary?.aiScore ??
+      user.aiJobFitScore ??
+      user.aiProfileScore;
     if (score === undefined || score === null || Number.isNaN(score)) {
       return <Typography variant="body2" color="text.secondary">N/A</Typography>;
     }
@@ -401,14 +448,38 @@ const RecruiterUsers: React.FC = () => {
     else color = 'default';
 
     return (
-      <Chip
-        icon={<InsightsIcon sx={{ fontSize: 16 }} />}
-        label={`${Math.round(score)}`}
-        color={color}
-        size="small"
-        variant={color === 'default' ? 'outlined' : 'filled'}
-        sx={{ minWidth: 96, justifyContent: 'flex-start' }}
-      />
+      <Tooltip
+        arrow
+        title={
+          <Box sx={{ p: 0.5 }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Score Summary
+            </Typography>
+            <Stack spacing={0.25}>
+              <Typography variant="body2">
+                AI: <strong>{Math.round(score)}</strong>
+              </Typography>
+              <Typography variant="body2">
+                Interview: <strong>{formatOneDecimal(user.scoreSummary?.interviewAvg)}</strong>/10
+                {user.scoreSummary?.interviewCount ? ` (${user.scoreSummary.interviewCount})` : ''}
+              </Typography>
+              <Typography variant="body2">
+                Reviews: <strong>{formatOneDecimal(user.scoreSummary?.reviewAvg)}</strong>/5
+                {user.scoreSummary?.reviewCount ? ` (${user.scoreSummary.reviewCount})` : ''}
+              </Typography>
+            </Stack>
+          </Box>
+        }
+      >
+        <Chip
+          icon={<InsightsIcon sx={{ fontSize: 16 }} />}
+          label={`${Math.round(score)}`}
+          color={color}
+          size="small"
+          variant={color === 'default' ? 'outlined' : 'filled'}
+          sx={{ minWidth: 96, justifyContent: 'flex-start' }}
+        />
+      </Tooltip>
     );
   };
 
@@ -846,7 +917,7 @@ const RecruiterUsers: React.FC = () => {
                   Contact
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  Role
+                  Work Status
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   <TableSortLabel
@@ -944,11 +1015,17 @@ const RecruiterUsers: React.FC = () => {
                     </Box>
                   </TableCell>
                   <TableCell>
-                    <Chip
-                      size="small"
-                      label={getSecurityLevelLabel(user.securityLevel)}
-                      color={getSecurityLevelColor(user.securityLevel)}
-                    />
+                    {(() => {
+                      const ws = getWorkStatusDisplay(user);
+                      return (
+                        <Chip
+                          size="small"
+                          label={ws.label}
+                          color={ws.color}
+                          sx={ws.sx}
+                        />
+                      );
+                    })()}
                   </TableCell>
                   <TableCell>{renderAiScore(user)}</TableCell>
                   <TableCell>
