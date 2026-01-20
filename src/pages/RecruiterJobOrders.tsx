@@ -50,6 +50,7 @@ import { JobOrder } from '../types/Phase1Types';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
+import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -330,6 +331,66 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     const endIndex = startIndex + rowsPerPage;
     return filteredJobOrders.slice(startIndex, endIndex);
   }, [filteredJobOrders, page, rowsPerPage]);
+
+  const [jobPostsByJobOrderId, setJobPostsByJobOrderId] = useState<Record<string, any[]>>({});
+
+  // Load jobs board posts for currently visible job orders (chunked to respect Firestore 'in' limits)
+  useEffect(() => {
+    if (!tenantId) return;
+    const ids = paginatedJobOrders.map((jo) => jo.id).filter(Boolean);
+    const missing = ids.filter((id) => jobPostsByJobOrderId[id] === undefined);
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+
+    const fetchPostsForVisibleOrders = async () => {
+      try {
+        const postsRef = collection(db, 'tenants', tenantId, 'job_postings');
+        const chunks: string[][] = [];
+        for (let i = 0; i < missing.length; i += 10) chunks.push(missing.slice(i, i + 10));
+
+        const results: any[][] = await Promise.all(
+          chunks.map(async (chunk) => {
+            const q = query(postsRef, where('jobOrderId', 'in', chunk));
+            const snap = await getDocs(q);
+            return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+          })
+        );
+
+        const allPosts = results.flat() as any[];
+        const nextMap: Record<string, any[]> = {};
+        // initialize all missing to empty arrays
+        missing.forEach((id) => {
+          nextMap[id] = [];
+        });
+        allPosts.forEach((post: any) => {
+          const joId = post.jobOrderId as string | undefined;
+          if (!joId) return;
+          if (!nextMap[joId]) nextMap[joId] = [];
+          nextMap[joId].push(post);
+        });
+
+        if (cancelled) return;
+        setJobPostsByJobOrderId((prev) => ({ ...prev, ...nextMap }));
+      } catch (err) {
+        // Silent fail: checklist progress will be best-effort without job post data.
+        if (cancelled) return;
+        setJobPostsByJobOrderId((prev) => {
+          const next = { ...prev };
+          missing.forEach((id) => {
+            if (next[id] === undefined) next[id] = [];
+          });
+          return next;
+        });
+      }
+    };
+
+    fetchPostsForVisibleOrders();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, paginatedJobOrders]);
 
   // Reset page when filtered results change
   useEffect(() => {
@@ -697,9 +758,48 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2">
-                        {jobOrder.jobTitle || 'No Job Title'}
-                      </Typography>
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+                        <Typography variant="body2">
+                          {jobOrder.jobTitle || 'No Job Title'}
+                        </Typography>
+                        {(() => {
+                          const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
+                          const associatedContacts =
+                            (jobOrder as any)?.deal?.associations?.contacts ||
+                            (jobOrder as any)?.deal?.associations?.contactsIds ||
+                            [];
+                          const locationObj = jobOrder.locationName
+                            ? { name: jobOrder.locationName }
+                            : undefined;
+                          const shiftsCount = Number(
+                            (jobOrder as any)?.shiftsCount ??
+                              (jobOrder as any)?.shiftCount ??
+                              (jobOrder as any)?.shifts?.length ??
+                              0
+                          );
+
+                          const progress = getJobOrderChecklistProgress({
+                            jobOrder: jobOrder as any,
+                            location: locationObj,
+                            associatedContacts: Array.isArray(associatedContacts) ? associatedContacts : [],
+                            recruiterUsers: [],
+                            jobPosts: jobPosts as any[],
+                            shiftsCount,
+                            indeedUrl: (jobOrder as any)?.indeedUrl,
+                            craigslistUrl: (jobOrder as any)?.craigslistUrl,
+                          });
+
+                          return (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{ lineHeight: 1.2 }}
+                            >
+                              Order Setup: {progress.completed}/{progress.total}
+                            </Typography>
+                          );
+                        })()}
+                      </Box>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
