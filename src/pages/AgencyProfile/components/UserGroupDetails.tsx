@@ -28,6 +28,7 @@ import {
   DialogActions,
   Tabs,
   Tab,
+  TableSortLabel,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -77,6 +78,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
+  const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'groupStatus' | 'skills' | 'lastLogin'>('name');
+  const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
   const { isFavorite, toggleFavorite } = useFavorites('users');
 
   // Check if we're accessing from the top-level usergroups page
@@ -342,10 +345,87 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
   const members = membersData;
   const availableWorkers = allWorkers.filter((w) => !memberIds.includes(w.id));
-  const paginatedMembers = members.slice(
+  const toMillis = (input: any): number => {
+    if (!input) return 0;
+    if (input instanceof Date) return input.getTime();
+    if (typeof input === 'number') return input;
+    if (typeof input === 'string') {
+      const parsed = Date.parse(input);
+      return Number.isNaN(parsed) ? 0 : parsed;
+    }
+    if (typeof input === 'object') {
+      if (typeof input.toDate === 'function') return input.toDate().getTime();
+      if (typeof input._seconds === 'number') return input._seconds * 1000;
+    }
+    return 0;
+  };
+
+  const getScoreNumber = (u: any): number => {
+    const score = u?.scoreSummary?.aiScore ?? u?.aiJobFitScore ?? u?.aiProfileScore;
+    return typeof score === 'number' && !Number.isNaN(score) ? score : -1;
+  };
+
+  const getNameKey = (u: any): string => {
+    const first = String(u?.firstName || '').trim().toLowerCase();
+    const last = String(u?.lastName || '').trim().toLowerCase();
+    return `${last}|${first}|${String(u?.id || '')}`;
+  };
+
+  const getGroupStatusKey = (u: any): number => (groupManagerIds.includes(u?.id) ? 0 : 1); // Manager first
+
+  const sortedMembers = [...members].sort((a: any, b: any) => {
+    let cmp = 0;
+    switch (membersSortBy) {
+      case 'name': {
+        cmp = getNameKey(a).localeCompare(getNameKey(b));
+        break;
+      }
+      case 'workStatus': {
+        const aWs = getWorkStatusDisplay(a).label.toLowerCase();
+        const bWs = getWorkStatusDisplay(b).label.toLowerCase();
+        cmp = aWs.localeCompare(bWs);
+        break;
+      }
+      case 'score': {
+        cmp = getScoreNumber(a) - getScoreNumber(b);
+        break;
+      }
+      case 'groupStatus': {
+        cmp = getGroupStatusKey(a) - getGroupStatusKey(b);
+        break;
+      }
+      case 'skills': {
+        const aCount = getDisplaySkills(a).length;
+        const bCount = getDisplaySkills(b).length;
+        cmp = aCount - bCount;
+        break;
+      }
+      case 'lastLogin': {
+        cmp = toMillis(a?.lastLoginAt) - toMillis(b?.lastLoginAt);
+        break;
+      }
+      default:
+        cmp = 0;
+    }
+    return membersSortDirection === 'asc' ? cmp : -cmp;
+  });
+
+  const paginatedMembers = sortedMembers.slice(
     membersPage * membersRowsPerPage,
     membersPage * membersRowsPerPage + membersRowsPerPage,
   );
+
+  const handleMembersSort = (key: typeof membersSortBy) => {
+    if (membersSortBy === key) {
+      setMembersSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      setMembersPage(0);
+      return;
+    }
+    setMembersSortBy(key);
+    // Match inbox/users behavior: name asc, everything else desc by default
+    setMembersSortDirection(key === 'name' ? 'asc' : 'desc');
+    setMembersPage(0);
+  };
 
   const formatDate = (timestamp: any) => {
     if (!timestamp) return 'N/A';
@@ -692,25 +772,61 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                   <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
                     <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Person
+                      <TableSortLabel
+                        active={membersSortBy === 'name'}
+                        direction={membersSortBy === 'name' ? membersSortDirection : 'asc'}
+                        onClick={() => handleMembersSort('name')}
+                      >
+                        Person
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       Contact
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Work Status
+                      <TableSortLabel
+                        active={membersSortBy === 'workStatus'}
+                        direction={membersSortBy === 'workStatus' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('workStatus')}
+                      >
+                        Work Status
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Score
+                      <TableSortLabel
+                        active={membersSortBy === 'score'}
+                        direction={membersSortBy === 'score' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('score')}
+                      >
+                        Score
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Group Status
+                      <TableSortLabel
+                        active={membersSortBy === 'groupStatus'}
+                        direction={membersSortBy === 'groupStatus' ? membersSortDirection : 'asc'}
+                        onClick={() => handleMembersSort('groupStatus')}
+                      >
+                        Group Status
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                      Skills
+                      <TableSortLabel
+                        active={membersSortBy === 'skills'}
+                        direction={membersSortBy === 'skills' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('skills')}
+                      >
+                        Skills
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200, borderRadius: 0 }}>
-                      Last Login
+                      <TableSortLabel
+                        active={membersSortBy === 'lastLogin'}
+                        direction={membersSortBy === 'lastLogin' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('lastLogin')}
+                      >
+                        Last Login
+                      </TableSortLabel>
                     </TableCell>
                     <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
                   </TableRow>
