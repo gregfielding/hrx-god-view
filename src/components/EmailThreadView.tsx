@@ -609,10 +609,9 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }}
         PaperProps={{
           sx: { 
-            // Universal drawer: make desktop (lg+) 40% wider while keeping md behavior stable
-            width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
-            minWidth: { md: '600px', lg: '840px' },
-            maxWidth: { md: '800px', lg: '1120px' },
+            // Universal drawer: 60vw on desktop
+            width: { xs: '100%', sm: '90%', md: '60vw' },
+            minWidth: { md: '600px' },
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
@@ -671,9 +670,8 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }}
         PaperProps={{
           sx: { 
-            width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
-            minWidth: { md: '600px', lg: '840px' },
-            maxWidth: { md: '800px', lg: '1120px' },
+            width: { xs: '100%', sm: '90%', md: '60vw' },
+            minWidth: { md: '600px' },
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
@@ -728,9 +726,8 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }}
         PaperProps={{
           sx: { 
-            width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
-            minWidth: { md: '600px', lg: '840px' },
-            maxWidth: { md: '800px', lg: '1120px' },
+            width: { xs: '100%', sm: '90%', md: '60vw' },
+            minWidth: { md: '600px' },
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
