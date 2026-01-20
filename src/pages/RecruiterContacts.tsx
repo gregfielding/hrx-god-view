@@ -128,6 +128,8 @@ const RecruiterContacts: React.FC = () => {
     companyId: '',
     locationId: '',
   });
+  const [companyLocations, setCompanyLocations] = useState<any[]>([]);
+  const [loadingLocations, setLoadingLocations] = useState(false);
   const [contactError, setContactError] = useState<string | null>(null);
   const [contactSuccess, setContactSuccess] = useState(false);
 
@@ -150,6 +152,50 @@ const RecruiterContacts: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [headerSearch]);
+
+  // Load company locations when creating a contact (depends on selected company)
+  useEffect(() => {
+    if (!showAddContactDialog) return;
+    if (!tenantId) return;
+
+    const companyId = contactForm.companyId?.trim();
+    if (!companyId) {
+      setCompanyLocations([]);
+      setLoadingLocations(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoadingLocations(true);
+    setCompanyLocations([]);
+
+    (async () => {
+      const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations');
+      const q = query(locationsRef);
+      const snap = await getDocs(q);
+
+      const locations = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      locations.sort((a: any, b: any) => {
+        const an = String(a.nickname || a.name || '').toLowerCase();
+        const bn = String(b.nickname || b.name || '').toLowerCase();
+        return an.localeCompare(bn);
+      });
+
+      if (!cancelled) setCompanyLocations(locations);
+    })()
+      .catch((err) => {
+        console.error('Error loading company locations:', err);
+        if (!cancelled) setCompanyLocations([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingLocations(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showAddContactDialog, tenantId, contactForm.companyId]);
 
   // Update cache when filters change
   useEffect(() => {
@@ -566,6 +612,11 @@ const RecruiterContacts: React.FC = () => {
     setContactError(null);
 
     try {
+      const selectedLocation =
+        contactForm.companyId && contactForm.locationId
+          ? companyLocations.find((l) => l.id === contactForm.locationId)
+          : null;
+
       const contactData: any = {
         firstName: contactForm.firstName,
         lastName: contactForm.lastName,
@@ -581,6 +632,7 @@ const RecruiterContacts: React.FC = () => {
         tags: contactForm.tags,
         companyId: contactForm.companyId || '',
         locationId: contactForm.locationId || '',
+        locationName: selectedLocation ? (selectedLocation.nickname || selectedLocation.name || '') : '',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -1052,6 +1104,8 @@ const RecruiterContacts: React.FC = () => {
                   value={contactForm.companyId ? companies.find(c => c.id === contactForm.companyId) || null : null}
                   onChange={(_, newValue) => {
                     handleContactFormChange('companyId', newValue?.id || '');
+                    // Company change invalidates location selection
+                    handleContactFormChange('locationId', '');
                   }}
                   disabled={savingContact}
                   renderInput={(params) => (
@@ -1059,6 +1113,39 @@ const RecruiterContacts: React.FC = () => {
                       {...params}
                       label="Company"
                       placeholder="Select a company"
+                    />
+                  )}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <Autocomplete
+                  size="small"
+                  options={companyLocations}
+                  getOptionLabel={(option: any) => option.nickname || option.name || 'Unnamed Location'}
+                  value={
+                    contactForm.locationId
+                      ? companyLocations.find((l) => l.id === contactForm.locationId) || null
+                      : null
+                  }
+                  onChange={(_, newValue) => {
+                    handleContactFormChange('locationId', newValue?.id || '');
+                  }}
+                  disabled={savingContact || loadingLocations || !contactForm.companyId}
+                  noOptionsText={
+                    !contactForm.companyId ? 'Select a company first' : 'No locations available for this company'
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Company Location"
+                      placeholder={!contactForm.companyId ? 'Select a company first' : 'Select a location'}
+                      helperText={
+                        loadingLocations
+                          ? 'Loading locations...'
+                          : !contactForm.companyId
+                            ? 'Select a company to choose a location'
+                            : undefined
+                      }
                     />
                   )}
                 />
