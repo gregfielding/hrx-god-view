@@ -38,6 +38,7 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 
 import { db } from '../../../firebase';
 import PageHeader from '../../../components/PageHeader';
+import StandardTablePagination from '../../../components/StandardTablePagination';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -62,6 +63,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'members' | 'details'>('members');
   const [addMemberOpen, setAddMemberOpen] = useState(false);
+  const [membersPage, setMembersPage] = useState(0);
+  const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
 
   // Check if we're accessing from the top-level usergroups page
   const isFromTopLevel = location.pathname.includes('/usergroups') || location.pathname === '/usergroups';
@@ -286,6 +289,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
   const members = membersData;
   const availableWorkers = allWorkers.filter((w) => !memberIds.includes(w.id));
+  const paginatedMembers = members.slice(
+    membersPage * membersRowsPerPage,
+    membersPage * membersRowsPerPage + membersRowsPerPage,
+  );
 
   const noop = () => {
     /* intentionally left blank */
@@ -417,14 +424,52 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       />
 
       <Box sx={{ px: { xs: 2, md: 3 }, py: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <Tabs
-          value={activeTab}
-          onChange={(_, v) => setActiveTab(v)}
-          sx={{ minHeight: 'auto' }}
-        >
-          <Tab value="members" label="Members" />
-          <Tab value="details" label="Details" />
-        </Tabs>
+        {/* Inbox-style section header row: tab buttons (left) + primary action (right) */}
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+          <Box sx={{ display: 'flex', gap: 0.75 }}>
+            {([
+              { id: 'members' as const, label: 'Members' },
+              { id: 'details' as const, label: 'Details' },
+            ]).map((t) => {
+              const isActive = activeTab === t.id;
+              return (
+                <Button
+                  key={t.id}
+                  onClick={() => setActiveTab(t.id)}
+                  variant="text"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '14px',
+                    fontWeight: isActive ? 600 : 500,
+                    color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                    bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                    px: 2,
+                    py: 0.75,
+                    minWidth: 'auto',
+                    whiteSpace: 'nowrap',
+                    '&:hover': {
+                      bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                    },
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+          </Box>
+
+          {activeTab === 'members' && (
+            <Button
+              variant="contained"
+              onClick={() => setAddMemberOpen(true)}
+              disabled={loading || availableWorkers.length === 0}
+              sx={{ borderRadius: '999px', textTransform: 'none' }}
+            >
+              Add Member
+            </Button>
+          )}
+        </Box>
 
         {activeTab === 'members' && (
           <Card variant="outlined">
@@ -432,72 +477,100 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
               title="Members"
               titleTypographyProps={{ fontWeight: 800 }}
               subheader={members.length ? `${members.length} member${members.length === 1 ? '' : 's'}` : undefined}
-              action={
-                <Button
-                  variant="contained"
-                  onClick={() => setAddMemberOpen(true)}
-                  disabled={loading || availableWorkers.length === 0}
-                  sx={{ borderRadius: '999px', textTransform: 'none' }}
-                >
-                  Add Member
-                </Button>
-              }
             />
             <Divider />
             <CardContent sx={{ pt: 0 }}>
-              <TableContainer component={Paper} variant="outlined" sx={{ mt: 2 }}>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Name</TableCell>
-                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Email</TableCell>
-                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Phone</TableCell>
-                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>View</TableCell>
-                      <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem' }}>Remove</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {members.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={5} sx={{ color: 'text.secondary', fontStyle: 'italic' }}>
-                          No members in this group.
+              <Paper variant="outlined" sx={{ mt: 2, overflow: 'hidden' }}>
+                <TableContainer sx={{ maxHeight: 520 }}>
+                  <Table size="small" stickyHeader>
+                    <TableHead
+                      sx={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 10,
+                        backgroundColor: 'background.paper',
+                        '& .MuiTableCell-root': { borderRadius: 0 },
+                      }}
+                    >
+                      <TableRow sx={{ height: 40, backgroundColor: 'background.paper' }}>
+                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                          Name
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                          Email
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                          Phone
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                          View
+                        </TableCell>
+                        <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', fontSize: '0.75rem', py: 1.25 }}>
+                          Remove
                         </TableCell>
                       </TableRow>
-                    ) : (
-                      members.map((member) => (
-                        <TableRow key={member.id} hover>
-                          <TableCell>
-                            {member.firstName} {member.lastName}
-                          </TableCell>
-                          <TableCell>{member.email}</TableCell>
-                          <TableCell>{member.phone || '-'}</TableCell>
-                          <TableCell>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              onClick={() => navigate(`/users/${member.id}`)}
-                              sx={{ borderRadius: '999px', textTransform: 'none' }}
-                            >
-                              View
-                            </Button>
-                          </TableCell>
-                          <TableCell>
-                            <Button
-                              size="small"
-                              variant="outlined"
-                              color="error"
-                              onClick={() => handleRemoveMember(member.id)}
-                              sx={{ borderRadius: '999px', textTransform: 'none' }}
-                            >
-                              Remove
-                            </Button>
+                    </TableHead>
+                    <TableBody>
+                      {members.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                            No members in this group.
                           </TableCell>
                         </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                      ) : (
+                        paginatedMembers.map((member, idx) => (
+                          <TableRow
+                            key={member.id}
+                            hover
+                            sx={{
+                              height: 56,
+                              bgcolor: idx % 2 === 0 ? 'background.paper' : 'grey.50',
+                            }}
+                          >
+                            <TableCell sx={{ py: 1.25 }}>
+                              {member.firstName} {member.lastName}
+                            </TableCell>
+                            <TableCell sx={{ py: 1.25 }}>{member.email}</TableCell>
+                            <TableCell sx={{ py: 1.25 }}>{member.phone || '-'}</TableCell>
+                            <TableCell sx={{ py: 1.25 }}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                onClick={() => navigate(`/users/${member.id}`)}
+                                sx={{ borderRadius: '999px', textTransform: 'none' }}
+                              >
+                                View
+                              </Button>
+                            </TableCell>
+                            <TableCell sx={{ py: 1.25 }}>
+                              <Button
+                                size="small"
+                                variant="outlined"
+                                color="error"
+                                onClick={() => handleRemoveMember(member.id)}
+                                sx={{ borderRadius: '999px', textTransform: 'none' }}
+                              >
+                                Remove
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+
+                <StandardTablePagination
+                  count={members.length}
+                  page={membersPage}
+                  rowsPerPage={membersRowsPerPage}
+                  onPageChange={(_e, newPage) => setMembersPage(newPage)}
+                  onRowsPerPageChange={(e) => {
+                    setMembersRowsPerPage(parseInt(e.target.value, 10));
+                    setMembersPage(0);
+                  }}
+                />
+              </Paper>
             </CardContent>
           </Card>
         )}
