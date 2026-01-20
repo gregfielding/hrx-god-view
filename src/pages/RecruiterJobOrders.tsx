@@ -95,6 +95,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const [companyFilter, setCompanyFilter] = useState<string>('all');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const firstLoadRef = useRef(true);
 
   const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
@@ -117,6 +118,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     if (!tenantId) return;
     
     setLoading(true);
+    setLoadError(null);
     try {
       // Use the tenant-scoped job_orders collection
       const baseRef = collection(db, p.jobOrders(tenantId));
@@ -124,27 +126,16 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       // Load a reasonable number of job orders for client-side filtering and pagination
       const effectivePageSize = 500; // Load enough for filtering/pagination
 
-      const constraints: any[] = [
-        orderBy(sortField, sortDirection),
-        limit(effectivePageSize)
-      ];
-
-      // Add status filter if selected
-      if (statusFilter) {
-        constraints.push(where('status', '==', statusFilter));
-      }
-
       let docsToMap: Array<{ id: string; data: () => any }> = [];
 
-      // "My Orders" filter: include both modern and legacy schemas.
-      // - Modern: assignedRecruiters: string[] (uids)
-      // - Legacy: recruiterId: string (uid)
-      // Because Firestore can't OR these, we run both queries and merge results.
+      // "My Orders" should be rock-solid and NOT depend on composite indexes.
+      // We intentionally avoid orderBy() and avoid combining where() clauses that would require indexes.
+      // Sorting + status/company/search filtering is handled client-side below.
       if (effectiveOnlyMyOrders && user?.uid) {
         const uid = user.uid;
 
-        const qAssigned = query(baseRef, ...constraints, where('assignedRecruiters', 'array-contains', uid));
-        const qLegacy = query(baseRef, ...constraints, where('recruiterId', '==', uid));
+        const qAssigned = query(baseRef, where('assignedRecruiters', 'array-contains', uid), limit(effectivePageSize));
+        const qLegacy = query(baseRef, where('recruiterId', '==', uid), limit(effectivePageSize));
 
         const [snapAssigned, snapLegacy] = await Promise.all([getDocs(qAssigned), getDocs(qLegacy)]);
 
@@ -153,6 +144,17 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         snapLegacy.docs.forEach((d) => byId.set(d.id, d as any));
         docsToMap = Array.from(byId.values());
       } else {
+        const constraints: any[] = [];
+
+        // Add status filter if selected (kept server-side for non-My Orders views)
+        if (statusFilter) {
+          constraints.push(where('status', '==', statusFilter));
+        }
+
+        // Keep server-side ordering for general listing; if an index is missing Firestore will surface an error.
+        constraints.push(orderBy(sortField, sortDirection));
+        constraints.push(limit(effectivePageSize));
+
         const jobOrderQuery = query(baseRef, ...constraints);
         const snap = await getDocs(jobOrderQuery);
         docsToMap = snap.docs as any;
@@ -251,6 +253,12 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       firstLoadRef.current = false;
     } catch (error) {
       console.error('❌ RecruiterJobOrders: Error fetching job orders:', error);
+      const err = error as any;
+      const msg =
+        err?.code === 'failed-precondition'
+          ? 'Job Orders query requires a Firestore index. We can add the index, but this tab should still work; please refresh.'
+          : err?.message || 'Failed to load job orders.';
+      setLoadError(msg);
     } finally {
       setLoading(false);
     }
@@ -494,6 +502,12 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         </FormControl>
         </Box>
       </Box>
+
+      {loadError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {loadError}
+        </Alert>
+      )}
 
       {/* Job Orders Table */}
       {loading && jobOrders.length === 0 ? (
