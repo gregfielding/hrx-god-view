@@ -616,10 +616,8 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
-            // Prevent any width changes on hover
-            '&:hover': {
-              width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
-            },
+            // Avoid hover-driven repaints/flicker: only animate the slide transform, not sizing.
+            transitionProperty: 'transform',
             // Prevent pointer events from interfering with hover
             pointerEvents: 'auto',
           },
@@ -679,9 +677,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
-            '&:hover': {
-              width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
-            },
+            transitionProperty: 'transform',
           },
         }}
         hideBackdrop={isMobile}
@@ -738,10 +734,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
             height: '100vh',
             zIndex: 1300,
             boxShadow: '-4px 0 20px rgba(0, 0, 0, 0.15)',
-            // Prevent any width changes
-            '&:hover': {
-              width: { xs: '100%', sm: '90%', md: '40%', lg: '56%' },
-            },
+            transitionProperty: 'transform',
           },
         }}
         sx={{
