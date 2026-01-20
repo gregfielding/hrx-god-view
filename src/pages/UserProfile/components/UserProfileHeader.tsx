@@ -754,20 +754,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 {preferredName && preferredName !== firstName && ` (${preferredName})`}
               </Typography>
 
-              {isAdminView && (() => {
-                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
-                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
-                return (
-                  <Chip
-                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                    label={`Score ${Math.round(summary)}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontWeight: 700, flexShrink: 0 }}
-                  />
-                );
-              })()}
-
               {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
                 <FavoriteButton
                   itemId={uid}
@@ -781,6 +767,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   }}
                 />
               )}
+
+              {isAdminView && (() => {
+                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
+                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                return (
+                  <Chip
+                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                    label={`Score ${Math.round(summary)}`}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontWeight: 700, flexShrink: 0 }}
+                  />
+                );
+              })()}
             </Box>
           </Box>
           {Boolean(jobTitle) && (
@@ -1272,20 +1272,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 {preferredName && preferredName !== firstName && ` (${preferredName})`}
               </Typography>
 
-              {isAdminView && (() => {
-                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
-                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
-                return (
-                  <Chip
-                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                    label={`Score ${Math.round(summary)}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontWeight: 700, flexShrink: 0 }}
-                  />
-                );
-              })()}
-
               {canViewAdminContent && isAdminView && securityLevel && !['5', '6', '7'].includes(String(securityLevel)) && (
                 <FavoriteButton
                   itemId={uid}
@@ -1299,6 +1285,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   }}
                 />
               )}
+
+              {isAdminView && (() => {
+                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
+                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                return (
+                  <Chip
+                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                    label={`Score ${Math.round(summary)}`}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontWeight: 700, flexShrink: 0 }}
+                  />
+                );
+              })()}
             </Box>
           </Box>
           
