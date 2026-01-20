@@ -421,6 +421,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
             </Tooltip>
           </Stack>
         }
+        showDivider={false}
       />
 
       <Box sx={{ px: { xs: 2, md: 3 }, py: 0, display: 'flex', flexDirection: 'column', gap: 1 }}>
