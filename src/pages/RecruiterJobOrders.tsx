@@ -134,16 +134,32 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         constraints.push(where('status', '==', statusFilter));
       }
 
-      // "My Orders" filter: only show job orders assigned to the logged-in user.
+      let docsToMap: Array<{ id: string; data: () => any }> = [];
+
+      // "My Orders" filter: include both modern and legacy schemas.
+      // - Modern: assignedRecruiters: string[] (uids)
+      // - Legacy: recruiterId: string (uid)
+      // Because Firestore can't OR these, we run both queries and merge results.
       if (effectiveOnlyMyOrders && user?.uid) {
-        constraints.push(where('assignedRecruiters', 'array-contains', user.uid));
+        const uid = user.uid;
+
+        const qAssigned = query(baseRef, ...constraints, where('assignedRecruiters', 'array-contains', uid));
+        const qLegacy = query(baseRef, ...constraints, where('recruiterId', '==', uid));
+
+        const [snapAssigned, snapLegacy] = await Promise.all([getDocs(qAssigned), getDocs(qLegacy)]);
+
+        const byId = new Map<string, { id: string; data: () => any }>();
+        snapAssigned.docs.forEach((d) => byId.set(d.id, d as any));
+        snapLegacy.docs.forEach((d) => byId.set(d.id, d as any));
+        docsToMap = Array.from(byId.values());
+      } else {
+        const jobOrderQuery = query(baseRef, ...constraints);
+        const snap = await getDocs(jobOrderQuery);
+        docsToMap = snap.docs as any;
       }
 
-      const jobOrderQuery = query(baseRef, ...constraints);
-      const snap = await getDocs(jobOrderQuery);
-
       const newJobOrders: JobOrderWithDetails[] = await Promise.all(
-        snap.docs.map(async (jobOrderDoc) => {
+        docsToMap.map(async (jobOrderDoc) => {
           const data = jobOrderDoc.data() as JobOrder;
           
           // Derive job title from flat field or gig position
