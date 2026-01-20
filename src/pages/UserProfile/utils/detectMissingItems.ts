@@ -96,21 +96,6 @@ export const detectMissingItems = (
   // Note: This might need to check a specific document collection
   // For now, we'll use workEligibility boolean as proxy
   
-  // Missing Emergency Contact
-  if (!profileData.emergencyContact || 
-      !profileData.emergencyContact.name || 
-      !profileData.emergencyContact.phone) {
-    items.push({
-      id: 'missing_emergency_contact',
-      type: 'error',
-      message: 'Missing Emergency Contact',
-      action: onTabChange ? {
-        label: 'Add Contact',
-        onClick: () => onTabChange('Overview'),
-      } : undefined,
-    });
-  }
-
   // Missing Date of Birth (required for eligibility)
   // Check if dateOfBirth is valid and present
   if (!hasValidDateOfBirth(profileData.dateOfBirth)) {

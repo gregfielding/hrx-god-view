@@ -878,23 +878,6 @@ const transportOptions: Array<{
                 {/* Missing Items Alerts for Basic Identity */}
                 {!isEditingBasicIdentity && (
                   <Box sx={{ mb: 2 }}>
-                    {(!form.emergencyContact?.name || !form.emergencyContact?.phone) && (
-                      <Alert 
-                        severity="error" 
-                        sx={{ mb: 1 }}
-                        action={
-                          <Button 
-                            size="small" 
-                            onClick={() => setIsEditingBasicIdentity(true)}
-                            color="inherit"
-                          >
-                            Add
-                          </Button>
-                        }
-                      >
-                        Missing Emergency Contact
-                      </Alert>
-                    )}
                     {!hasValidDateOfBirth(form.dateOfBirth) && (
                       <Alert 
                         severity="warning" 

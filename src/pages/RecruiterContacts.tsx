@@ -82,10 +82,19 @@ const RecruiterContacts: React.FC = () => {
     },
   });
   
-  const headerSearch = outletCtx?.search ?? '';
-  const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
-  const setHeaderSearch = outletCtx?.setSearch ?? (() => {});
-  const setHeaderShowFavoritesOnly = outletCtx?.setShowFavoritesOnly ?? (() => {});
+  // `RecruiterContacts` is used both within `RecruiterDashboard` (with outlet context)
+  // AND as a standalone route at `/contacts` (no outlet context). Provide local fallbacks
+  // so the search field is always editable.
+  const [localSearch, setLocalSearch] = useState('');
+  const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
+
+  const headerSearch = outletCtx ? outletCtx.search : localSearch;
+  const headerShowFavoritesOnly = outletCtx ? outletCtx.showFavoritesOnly : localShowFavoritesOnly;
+  const setHeaderSearch = outletCtx ? outletCtx.setSearch : setLocalSearch;
+  const setHeaderShowFavoritesOnly = outletCtx ? outletCtx.setShowFavoritesOnly : setLocalShowFavoritesOnly;
+
+  // Only start searching after 3+ characters. Anything shorter behaves like "no search".
+  const effectiveSearch = headerSearch.trim().length >= 3 ? headerSearch.trim() : '';
   
   // State - initialize from cache
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -151,7 +160,7 @@ const RecruiterContacts: React.FC = () => {
       loadContacts(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [headerSearch]);
+  }, [effectiveSearch]);
 
   // Load company locations when creating a contact (depends on selected company)
   useEffect(() => {
@@ -244,8 +253,8 @@ const RecruiterContacts: React.FC = () => {
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       
       // If searching, fetch ALL contacts and filter client-side (like CRM does)
-      if (headerSearch.trim()) {
-        const searchLower = headerSearch.toLowerCase().trim();
+      if (effectiveSearch) {
+        const searchLower = effectiveSearch.toLowerCase();
         
         // Query ALL contacts without limit for comprehensive search
         const q = query(contactsRef, orderBy('createdAt', 'desc'));
@@ -299,16 +308,14 @@ const RecruiterContacts: React.FC = () => {
           
           // Filter client-side for substring matching
           const filteredData = contactsData.filter((contact) => {
-            const fullName = (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
+            const firstName = (contact.firstName || '').toLowerCase();
+            const lastName = (contact.lastName || '').toLowerCase();
             const email = (contact.email || '').toLowerCase();
-            const phone = (contact.phone || '').toLowerCase();
-            const title = (contact.title || '').toLowerCase();
             const companyName = (contact.companyName || '').toLowerCase();
             
-            return fullName.includes(searchLower) ||
+            return firstName.includes(searchLower) ||
+                   lastName.includes(searchLower) ||
                    email.includes(searchLower) ||
-                   phone.includes(searchLower) ||
-                   title.includes(searchLower) ||
                    companyName.includes(searchLower);
           });
           
@@ -475,19 +482,17 @@ const RecruiterContacts: React.FC = () => {
     }
     
     // Apply search filter
-    if (headerSearch.trim()) {
-      const searchLower = headerSearch.toLowerCase().trim();
+    if (effectiveSearch) {
+      const searchLower = effectiveSearch.toLowerCase();
       filtered = filtered.filter(contact => {
-        const fullName = (contact.fullName || `${contact.firstName} ${contact.lastName}` || '').toLowerCase();
+        const firstName = (contact.firstName || '').toLowerCase();
+        const lastName = (contact.lastName || '').toLowerCase();
         const email = (contact.email || '').toLowerCase();
-        const phone = (contact.phone || '').toLowerCase();
-        const title = (contact.title || '').toLowerCase();
         const companyName = (contact.companyName || '').toLowerCase();
         
-        return fullName.includes(searchLower) ||
+        return firstName.includes(searchLower) ||
+               lastName.includes(searchLower) ||
                email.includes(searchLower) ||
-               phone.includes(searchLower) ||
-               title.includes(searchLower) ||
                companyName.includes(searchLower);
       });
     }
@@ -527,7 +532,7 @@ const RecruiterContacts: React.FC = () => {
     });
     
     return filtered;
-  }, [contacts, headerSearch, sortField, sortDirection, companyFilter, roleFilter, statusFilter, stateFilter, headerShowFavoritesOnly, isFavorite, companies, favorites]);
+  }, [contacts, effectiveSearch, sortField, sortDirection, companyFilter, roleFilter, statusFilter, stateFilter, headerShowFavoritesOnly, isFavorite, companies, favorites]);
 
   const paginatedContacts = useMemo(() => {
     const start = page * rowsPerPage;
