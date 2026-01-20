@@ -551,6 +551,7 @@ const UserProfilePage = () => {
         })));
 
         setSkillsData({
+          bio: data.professionalBio || data.bio || data.summary || '',
           primaryJobTitle: data.primaryJobTitle || '',
           certifications: data.certifications || [],
           skills: data.skills || [],
@@ -917,6 +918,104 @@ const UserProfilePage = () => {
   })();
 
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
+
+  const toStringList = (raw: any, opts?: { limit?: number; mapper?: (v: any) => string | null }) => {
+    const limit = opts?.limit ?? 12;
+    const mapper = opts?.mapper ?? ((v: any) => (typeof v === 'string' ? v : null));
+    if (!Array.isArray(raw)) return [];
+    const out: string[] = [];
+    for (const item of raw) {
+      const s = mapper(item);
+      const trimmed = s ? String(s).trim() : '';
+      if (trimmed) out.push(trimmed);
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+
+  const quickBio = String((skillsData as any)?.bio || '').trim();
+  const quickSkills = toStringList((skillsData as any)?.skills, {
+    limit: 20,
+    mapper: (v) => {
+      if (!v) return null;
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object') return v.label || v.name || v.value || v.canonicalId || null;
+      return null;
+    },
+  });
+  const quickCerts = toStringList((skillsData as any)?.certifications, {
+    limit: 12,
+    mapper: (v) => {
+      if (!v) return null;
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object') return v.name || v.fileName || null;
+      return null;
+    },
+  });
+  const quickEducation = (() => {
+    const edu = toStringList((skillsData as any)?.education, {
+      limit: 8,
+      mapper: (v) => {
+        if (!v) return null;
+        if (typeof v === 'string') return v;
+        if (typeof v === 'object') return v.degree || v.program || v.school || null;
+        return null;
+      },
+    });
+    const level = String((skillsData as any)?.educationLevel || '').trim();
+    return edu.length ? edu : level ? [level] : [];
+  })();
+  const quickWork = toStringList((skillsData as any)?.workExperience, {
+    limit: 8,
+    mapper: (v) => {
+      if (!v) return null;
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object') {
+        const title = v.jobTitle || v.title || '';
+        const employer = v.employer || v.company || '';
+        const combined = [title, employer].filter(Boolean).join(' — ');
+        return combined || null;
+      }
+      return null;
+    },
+  });
+  const quickLangs = toStringList((skillsData as any)?.languages, {
+    limit: 12,
+    mapper: (v) => {
+      if (!v) return null;
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object') return v.language || v.name || null;
+      return null;
+    },
+  });
+
+  const renderQuickChip = (label: string, content: string) => (
+    <Tooltip
+      arrow
+      enterDelay={250}
+      title={
+        <Box sx={{ p: 1, maxWidth: 420, whiteSpace: 'pre-wrap' }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+            {label}
+          </Typography>
+          <Typography variant="body2" sx={{ color: 'rgba(0,0,0,0.75)' }}>
+            {content || '—'}
+          </Typography>
+        </Box>
+      }
+    >
+      <Chip
+        size="small"
+        label={label}
+        variant="outlined"
+        sx={{
+          fontWeight: 700,
+          cursor: 'help',
+          opacity: content ? 1 : 0.5,
+        }}
+      />
+    </Tooltip>
+  );
 
   return (
     <Box className="user-profile-page" sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -1533,6 +1632,16 @@ const UserProfilePage = () => {
                         </Typography>
                       </Box>
                     )}
+
+                    {/* Line 6: Quick profile detail chips (hover for tooltip) */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                      {renderQuickChip('Bio', quickBio)}
+                      {renderQuickChip('Skills', quickSkills.join('\n'))}
+                      {renderQuickChip('Certifications', quickCerts.join('\n'))}
+                      {renderQuickChip('Education', quickEducation.join('\n'))}
+                      {renderQuickChip('Work Experience', quickWork.join('\n'))}
+                      {renderQuickChip('Languages', quickLangs.join('\n'))}
+                    </Box>
 
                     {/* Score Stack removed (now shown as a single summary score on the name line) */}
                   </Box>
