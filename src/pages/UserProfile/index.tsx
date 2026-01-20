@@ -49,7 +49,7 @@ import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer'
 import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
-import { normalizeScoreSummary, type ScoreSummary } from '../../utils/scoreSummary';
+import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -919,6 +919,24 @@ const UserProfilePage = () => {
 
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
 
+  const interviewLine = (() => {
+    const lastAt = coerceToDate(scoreSummary?.interviewLastAt);
+    const lastScore = scoreSummary?.interviewLastScore10;
+    const hasInterview =
+      !!lastAt &&
+      typeof lastScore === 'number' &&
+      !Number.isNaN(lastScore);
+
+    if (!hasInterview) {
+      return { text: 'Not Interviewed', color: '#D32F2F' };
+    }
+
+    return {
+      text: `Interviewed: ${formatShortDate(lastAt)} — ${formatOneDecimal(lastScore)}/10`,
+      color: 'rgba(0, 0, 0, 0.55)',
+    };
+  })();
+
   const toStringList = (raw: any, opts?: { limit?: number; mapper?: (v: any) => string | null }) => {
     const limit = opts?.limit ?? 12;
     const mapper = opts?.mapper ?? ((v: any) => (typeof v === 'string' ? v : null));
@@ -1617,8 +1635,28 @@ const UserProfilePage = () => {
                       </Box>
                     )}
                     {/* Line 5: Status (Onboarding/Hired/Dismissed/etc.) */}
-                    {statusLine?.text && (
+                    {(statusLine?.text || interviewLine?.text) && (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
+                        {interviewLine?.text && (
+                          <>
+                            <Typography
+                              component="span"
+                              variant="body2"
+                              sx={{
+                                fontSize: '14px',
+                                fontWeight: 600,
+                                color: interviewLine.color,
+                              }}
+                            >
+                              {interviewLine.text}
+                            </Typography>
+                            {statusLine?.text && (
+                              <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>
+                                •
+                              </Typography>
+                            )}
+                          </>
+                        )}
                         <Typography
                           component="span"
                           variant="body2"
