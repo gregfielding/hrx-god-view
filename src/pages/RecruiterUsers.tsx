@@ -57,6 +57,8 @@ type SecurityLevel =
   | '2'
   | '3'
   | '4'
+  | 'active_employee'
+  | 'active_contractor'
   | 'all';
 
 interface RecruiterUser {
@@ -498,8 +500,31 @@ const RecruiterUsers: React.FC = () => {
           return false;
         }
 
-        if (securityLevelFilter !== 'all' && user.securityLevel !== securityLevelFilter) {
-          return false;
+        if (securityLevelFilter !== 'all') {
+          const onboardingType = String(user.onboardingType || '').toLowerCase();
+          const employeeStatus = String(user.employeeOnboardStatus || '').toLowerCase();
+          const contractorStatus = String(user.contractorOnboardStatus || '').toLowerCase();
+
+          const isEmployee =
+            onboardingType === 'employee' ||
+            employeeStatus === 'in progress' ||
+            employeeStatus === 'completed';
+          const isContractor =
+            onboardingType === 'contractor' ||
+            contractorStatus === 'in progress' ||
+            contractorStatus === 'completed';
+
+          const isActiveEmployee = user.securityLevel === '4' && isEmployee;
+          const isActiveContractor = user.securityLevel === '4' && isContractor;
+
+          if (securityLevelFilter === 'active_employee') {
+            if (!isActiveEmployee) return false;
+          } else if (securityLevelFilter === 'active_contractor') {
+            if (!isActiveContractor) return false;
+          } else if (user.securityLevel !== securityLevelFilter) {
+            // Back-compat: allow older cached values like "4"
+            return false;
+          }
         }
 
         if (groupFilter !== 'all' && !user.userGroupIds.includes(groupFilter)) {
@@ -677,9 +702,9 @@ const RecruiterUsers: React.FC = () => {
         >
           <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
             <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
-              <InputLabel sx={{ fontSize: '0.875rem' }}>Role</InputLabel>
+              <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
               <Select
-                label="Role"
+                label="Status"
                 value={securityLevelFilter}
                 onChange={(event: SelectChangeEvent<SecurityLevel>) => {
                   const newFilter = event.target.value as SecurityLevel;
@@ -693,8 +718,9 @@ const RecruiterUsers: React.FC = () => {
                   fontSize: '0.875rem',
                 }}
               >
-                <MenuItem value="all">All Roles</MenuItem>
-                <MenuItem value="4">Staff</MenuItem>
+                <MenuItem value="all">All Statuses</MenuItem>
+                <MenuItem value="active_contractor">Active Contractors</MenuItem>
+                <MenuItem value="active_employee">Active Employees</MenuItem>
                 <MenuItem value="3">Candidate</MenuItem>
                 <MenuItem value="2">Applicant</MenuItem>
                 <MenuItem value="1">Dismissed</MenuItem>
