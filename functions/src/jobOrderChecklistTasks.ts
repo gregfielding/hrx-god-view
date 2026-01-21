@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { createSafeFirestoreTrigger, SafeFunctionUtils, CostTracker } from './utils/safeFunctionTemplate';
 import { logger } from './utils/logger';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -62,6 +63,15 @@ function getAssignees(jobOrder: any): string[] {
 
 function taskDocId(jobOrderId: string, itemId: ChecklistItemId, assigneeId: string): string {
   return `jobOrder_${jobOrderId}__setup_${itemId}__assignee_${assigneeId}`;
+}
+
+function sanitizeAssigneeId(value: any): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Firestore doc IDs cannot contain forward slashes
+  if (trimmed.includes('/')) return null;
+  return trimmed;
 }
 
 async function loadJobPosts(tenantId: string, jobOrderId: string): Promise<any[]> {
@@ -175,9 +185,11 @@ async function upsertChecklistTasksForAssignees(opts: {
   const taskPrefix = `Order Setup: ${jobOrderName}${jobOrderNumber ? ` (${jobOrderNumber})` : ''}`;
 
   for (const assigneeId of assigneeIds) {
+    const safeAssigneeId = sanitizeAssigneeId(assigneeId);
+    if (!safeAssigneeId) continue;
     for (const item of CHECKLIST_ITEMS) {
       const complete = !!statuses[item.id];
-      const id = taskDocId(jobOrderId, item.id, assigneeId);
+      const id = taskDocId(jobOrderId, item.id, safeAssigneeId);
       const ref = tasksRef.doc(id);
       const base = {
         title: `${taskPrefix} — ${item.label}`,
@@ -188,7 +200,7 @@ async function upsertChecklistTasksForAssignees(opts: {
         classification: 'todo',
         scheduledDate,
         dueDate: scheduledDate,
-        assignedTo: assigneeId,
+        assignedTo: safeAssigneeId,
         createdBy: 'system',
         createdByName: 'System',
         tenantId,
@@ -197,6 +209,9 @@ async function upsertChecklistTasksForAssignees(opts: {
         tags: ['job_order_setup', jobOrderId, item.id],
         systemManaged: true,
         systemSource: 'job_order_checklist',
+        sourceType: 'recruiting',
+        sourceId: jobOrderId,
+        sourceName: jobOrderName,
         jobOrderId,
         checklistItemId: item.id,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -222,8 +237,10 @@ async function upsertChecklistTasksForAssignees(opts: {
 
   // Cleanup tasks for removed assignees (best-effort delete)
   for (const assigneeId of cleanupAssigneeIds) {
+    const safeAssigneeId = sanitizeAssigneeId(assigneeId);
+    if (!safeAssigneeId) continue;
     for (const item of CHECKLIST_ITEMS) {
-      const id = taskDocId(jobOrderId, item.id, assigneeId);
+      const id = taskDocId(jobOrderId, item.id, safeAssigneeId);
       batch.delete(tasksRef.doc(id));
     }
   }
@@ -296,6 +313,21 @@ const safeTrigger = createSafeFirestoreTrigger(async (event) => {
 export const jobOrderChecklistTasksOnJobOrderWrite = safeTrigger.onDocumentUpdated(
   'tenants/{tenantId}/job_orders/{jobOrderId}'
 );
+
+export const jobOrderChecklistTasksOnJobOrderCreated = createSafeFirestoreTrigger(async (event) => {
+  const tenantId = event?.params?.tenantId as string | undefined;
+  const jobOrderId = event?.params?.jobOrderId as string | undefined;
+  if (!tenantId || !jobOrderId) return;
+  try {
+    await syncForJobOrder(tenantId, jobOrderId, false, null, event?.data?.data?.());
+  } catch (err) {
+    logger.warn('Failed to sync checklist tasks on job order create', {
+      context: 'jobOrderChecklistTasks',
+      extra: { tenantId, jobOrderId },
+      error: err,
+    });
+  }
+}).onDocumentCreated('tenants/{tenantId}/job_orders/{jobOrderId}');
 
 async function syncFromJobPostingEvent(event: any) {
   const tenantId = event?.params?.tenantId as string | undefined;
@@ -382,3 +414,39 @@ export const jobOrderChecklistTasksOnShiftDeleted = createSafeFirestoreTrigger(a
   }
 }).onDocumentDeleted('tenants/{tenantId}/job_orders/{jobOrderId}/shifts/{shiftId}');
 
+/**
+ * Callable: backfill checklist tasks for "My Job Orders" for the caller.
+ * This solves the gap where existing job orders won't trigger until they change.
+ */
+export const backfillMyJobOrderChecklistTasks = onCall({ cors: true, region: 'us-central1', timeoutSeconds: 240 }, async (request) => {
+  SafeFunctionUtils.resetCounters();
+  CostTracker.reset();
+
+  const tenantId = (request.data?.tenantId || '').toString();
+  const userId = (request.data?.userId || request.auth?.uid || '').toString();
+
+  if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required');
+  if (!userId) throw new HttpsError('unauthenticated', 'userId is required');
+
+  // Basic auth check: must be the caller
+  if (request.auth?.uid && request.auth.uid !== userId) {
+    throw new HttpsError('permission-denied', 'Cannot backfill tasks for another user');
+  }
+
+  const jobOrdersRef = db.collection('tenants').doc(tenantId).collection('job_orders');
+  const [snapAssigned, snapLegacy] = await Promise.all([
+    jobOrdersRef.where('assignedRecruiters', 'array-contains', userId).limit(500).get(),
+    jobOrdersRef.where('recruiterId', '==', userId).limit(500).get(),
+  ]);
+  const ids = Array.from(new Set([...snapAssigned.docs.map((d) => d.id), ...snapLegacy.docs.map((d) => d.id)]));
+
+  let synced = 0;
+  for (const jobOrderId of ids) {
+    SafeFunctionUtils.checkSafetyLimits();
+    CostTracker.trackOperation('backfillJobOrder', 0.001);
+    await syncForJobOrder(tenantId, jobOrderId, false);
+    synced++;
+  }
+
+  return { success: true, jobOrders: ids.length, synced };
+});

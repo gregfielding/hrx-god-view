@@ -40,12 +40,14 @@ import { scrapeIndeedJobs } from './scrapeIndeedJobs';
 import { addJobTitle } from './addJobTitle';
 export {
   jobOrderChecklistTasksOnJobOrderWrite,
+  jobOrderChecklistTasksOnJobOrderCreated,
   jobOrderChecklistTasksOnJobPostingCreated,
   jobOrderChecklistTasksOnJobPostingUpdated,
   jobOrderChecklistTasksOnJobPostingDeleted,
   jobOrderChecklistTasksOnShiftCreated,
   jobOrderChecklistTasksOnShiftUpdated,
   jobOrderChecklistTasksOnShiftDeleted,
+  backfillMyJobOrderChecklistTasks,
 } from './jobOrderChecklistTasks';
 
 import { linkContactsToCompanies } from './linkContactsToCompanies';

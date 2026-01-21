@@ -54,8 +54,9 @@ export function useMyTasks(options: UseMyTasksOptions = {}): UseMyTasksResult {
     setError(null);
 
     try {
-      // Build Firestore query
+      // Build Firestore queries (support both legacy `crm_tasks` and newer `tasks`)
       const tasksRef = collection(db, 'tenants', effectiveTenantId, 'tasks');
+      const crmTasksRef = collection(db, 'tenants', effectiveTenantId, 'crm_tasks');
       
       // Base query: tasks assigned to current user
       // Note: Firestore requires a composite index for multiple orderBy clauses
@@ -95,102 +96,115 @@ export function useMyTasks(options: UseMyTasksOptions = {}): UseMyTasksResult {
         // For now, we'll filter in memory
       }
 
-      // Subscribe to real-time updates
-      const unsubscribe = onSnapshot(
+      const normalizeTask = (docId: string, data: any): UnifiedTask => {
+        return {
+          id: docId,
+          ...data,
+          snoozedUntil: data.snoozedUntil || undefined,
+          sourceType: data.sourceType || 'other',
+          sourceId: data.sourceId || undefined,
+          sourceName: data.sourceName || undefined,
+        } as UnifiedTask;
+      };
+
+      const applyInMemoryFilters = (incoming: UnifiedTask[]): UnifiedTask[] => {
+        let allTasks = incoming;
+
+        // Filter out completed tasks if not included
+        if (!includeCompleted) {
+          allTasks = allTasks.filter((t) => t.status !== 'completed');
+        }
+
+        // Snooze handling
+        allTasks = allTasks.filter((task) => {
+          if (!task.snoozedUntil) return true;
+          const snoozeDate = parseISO(task.snoozedUntil);
+          return !isFuture(snoozeDate);
+        });
+
+        // Text search
+        if (filters.search) {
+          const searchLower = filters.search.toLowerCase();
+          allTasks = allTasks.filter((task) => {
+            const matchesTitle = task.title?.toLowerCase().includes(searchLower);
+            const matchesDescription = task.description?.toLowerCase().includes(searchLower);
+            return !!(matchesTitle || matchesDescription);
+          });
+        }
+
+        // sourceId (in-memory)
+        if (filters.sourceId) {
+          allTasks = allTasks.filter((task) => {
+            const id = filters.sourceId as string;
+            return (
+              task.sourceId === id ||
+              task.associations?.deals?.includes(id) ||
+              task.associations?.contacts?.includes(id) ||
+              task.associations?.companies?.includes(id)
+            );
+          });
+        }
+
+        // due window
+        if (filters.dueWindow) {
+          const now = new Date();
+          const today = startOfDay(now);
+          const nextWeek = addDays(today, 7);
+          const nextMonth = addDays(today, 30);
+
+          allTasks = allTasks.filter((task) => {
+            if (!task.dueDate && !task.scheduledDate) return false;
+            const dueDate = task.dueDate ? parseISO(task.dueDate) : parseISO(task.scheduledDate);
+            switch (filters.dueWindow) {
+              case 'overdue':
+                return isPast(dueDate) && !isToday(dueDate);
+              case 'today':
+                return isToday(dueDate);
+              case 'this_week':
+                return isFuture(dueDate) && dueDate <= nextWeek;
+              case 'next_week':
+                return dueDate > nextWeek && dueDate <= addDays(nextWeek, 7);
+              case 'this_month':
+                return dueDate <= nextMonth;
+              case 'all':
+              default:
+                return true;
+            }
+          });
+        }
+
+        // Apply limit if specified
+        if (limit && allTasks.length > limit) {
+          allTasks = allTasks.slice(0, limit);
+        }
+
+        return allTasks;
+      };
+
+      let latestTasks: UnifiedTask[] = [];
+      let latestCrmTasks: UnifiedTask[] = [];
+
+      const pushMerged = () => {
+        const mergedMap = new Map<string, UnifiedTask>();
+        // Prefer `tasks` collection when IDs overlap
+        latestCrmTasks.forEach((t) => mergedMap.set(`crm:${t.id}`, t));
+        latestTasks.forEach((t) => mergedMap.set(`tasks:${t.id}`, t));
+
+        const merged = Array.from(mergedMap.values());
+        const filtered = applyInMemoryFilters(merged).sort((a, b) => {
+          const aKey = a.scheduledDate || a.dueDate || '';
+          const bKey = b.scheduledDate || b.dueDate || '';
+          return aKey.localeCompare(bKey);
+        });
+        setTasks(filtered);
+        setLoading(false);
+      };
+
+      const unsubTasks = onSnapshot(
         q,
         (snapshot) => {
-          const allTasks: UnifiedTask[] = [];
-          
-          snapshot.forEach((doc) => {
-            const data = doc.data();
-            const task: UnifiedTask = {
-              id: doc.id,
-              ...data,
-              // Ensure snoozedUntil is properly typed
-              snoozedUntil: data.snoozedUntil || undefined,
-              sourceType: data.sourceType || 'other',
-              sourceId: data.sourceId || undefined,
-              sourceName: data.sourceName || undefined,
-            } as UnifiedTask;
-
-            // Filter out completed tasks if not included
-            if (!includeCompleted && task.status === 'completed') {
-              return;
-            }
-
-            // Filter by snooze status
-            if (task.snoozedUntil) {
-              const snoozeDate = parseISO(task.snoozedUntil);
-              if (isFuture(snoozeDate)) {
-                // Task is still snoozed, include it in snoozed group but not active groups
-                allTasks.push(task);
-                return;
-              }
-            }
-
-            // Apply text search filter
-            if (filters.search) {
-              const searchLower = filters.search.toLowerCase();
-              const matchesTitle = task.title?.toLowerCase().includes(searchLower);
-              const matchesDescription = task.description?.toLowerCase().includes(searchLower);
-              if (!matchesTitle && !matchesDescription) {
-                return;
-              }
-            }
-
-            // Filter by sourceId if specified
-            if (filters.sourceId) {
-              const hasSourceMatch = 
-                task.sourceId === filters.sourceId ||
-                task.associations?.deals?.includes(filters.sourceId) ||
-                task.associations?.contacts?.includes(filters.sourceId) ||
-                task.associations?.companies?.includes(filters.sourceId);
-              if (!hasSourceMatch) {
-                return;
-              }
-            }
-
-            allTasks.push(task);
-          });
-
-          // Apply due window filter
-          let filteredTasks = allTasks;
-          if (filters.dueWindow) {
-            const now = new Date();
-            const today = startOfDay(now);
-            const nextWeek = addDays(today, 7);
-            const nextMonth = addDays(today, 30);
-
-            filteredTasks = allTasks.filter((task) => {
-              if (!task.dueDate && !task.scheduledDate) return false;
-              
-              const dueDate = task.dueDate ? parseISO(task.dueDate) : parseISO(task.scheduledDate);
-              
-              switch (filters.dueWindow) {
-                case 'overdue':
-                  return isPast(dueDate) && !isToday(dueDate);
-                case 'today':
-                  return isToday(dueDate);
-                case 'this_week':
-                  return isFuture(dueDate) && dueDate <= nextWeek;
-                case 'next_week':
-                  return dueDate > nextWeek && dueDate <= addDays(nextWeek, 7);
-                case 'this_month':
-                  return dueDate <= nextMonth;
-                case 'all':
-                default:
-                  return true;
-              }
-            });
-          }
-
-          // Apply limit if specified
-          if (limit && filteredTasks.length > limit) {
-            filteredTasks = filteredTasks.slice(0, limit);
-          }
-
-          setTasks(filteredTasks);
-          setLoading(false);
+          latestTasks = snapshot.docs.map((d) => normalizeTask(d.id, d.data()));
+          pushMerged();
         },
         (err) => {
           console.error('Error fetching tasks:', err);
@@ -199,7 +213,25 @@ export function useMyTasks(options: UseMyTasksOptions = {}): UseMyTasksResult {
         }
       );
 
-      return () => unsubscribe();
+      // CRM tasks: do in-memory filters (schemas vary)
+      const crmQ = query(crmTasksRef, where('assignedTo', '==', user.uid));
+      const unsubCrm = onSnapshot(
+        crmQ,
+        (snapshot) => {
+          latestCrmTasks = snapshot.docs.map((d) => normalizeTask(d.id, d.data()));
+          pushMerged();
+        },
+        (err) => {
+          console.error('Error fetching crm_tasks:', err);
+          setError(err);
+          setLoading(false);
+        }
+      );
+
+      return () => {
+        unsubTasks();
+        unsubCrm();
+      };
     } catch (err) {
       console.error('Error setting up task subscription:', err);
       setError(err as Error);
