@@ -115,8 +115,10 @@ export async function generateMenuItems(
   // HRX user status (isHRXUser) gives access to switch tenants, but doesn't force HRX menu
   const isHRX = activeTenantId === 'TgDJ4sIaC7x2n5cPs3rW';
   
-  // Use Firestore security level as fallback when claims security level is not available
-  const effectiveSecurityLevel = currentSecurityLevel || activeTenantData?.securityLevel;
+  // Get effective security level - prioritize tenant-specific over global
+  // First check tenant-specific security level from activeTenantData
+  // Then check currentSecurityLevel (which may be claims-based or global)
+  const effectiveSecurityLevel = activeTenantData?.securityLevel || currentSecurityLevel;
   // REMOVED: Excessive logging causing re-renders
   // REMOVED: Excessive logging causing re-renders
 
@@ -128,21 +130,23 @@ export async function generateMenuItems(
     // Add basic menu items that don't require specific roles (for users without claims)
     // ChatGPT moved to top bar navigation - removed from sidebar
 
-    // Inbox - available to all users (email-only per decoupling spec)
-    menuItems.push({
-      text: 'Inbox',
-      to: '/inbox',
-      icon: 'inbox',
-      // Available to all security levels
-    });
+    // Inbox - only for security levels 5-7 (internal team)
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+      menuItems.push({
+        text: 'Inbox',
+        to: '/inbox',
+        icon: 'inbox',
+      });
+    }
 
-    // Text Messages - available to all users (SMS-only per decoupling spec)
-    menuItems.push({
-      text: 'Text Messages',
-      to: '/text-messages',
-      icon: 'sms',
-      // Available to all security levels
-    });
+    // Text Messages - only for security levels 5-7 (internal team)
+    if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
+      menuItems.push({
+        text: 'Text Messages',
+        to: '/text-messages',
+        icon: 'sms',
+      });
+    }
 
     // Slack Channels removed - now combined with Mentions in top bar
 

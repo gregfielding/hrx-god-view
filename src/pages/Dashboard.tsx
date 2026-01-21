@@ -160,11 +160,11 @@ const Dashboard: React.FC = () => {
               {(
               [
                 { label: 'My Job Orders', onClick: () => navigate('/recruiter/my-orders'), kind: 'candidates' as const },
-                { label: 'Tasks', onClick: () => navigate('/crm?tab=tasks'), kind: 'tasks' as const },
-                { label: 'Calendar', onClick: () => navigate('/calendar'), kind: 'crm' as const },
-                { label: 'Add Company', onClick: () => navigate('/crm?tab=companies'), kind: 'crm' as const },
-                { label: 'Open Tasks', onClick: () => navigate('/crm?tab=tasks'), kind: 'tasks' as const },
-                { label: 'Open CRM', onClick: () => navigate('/crm'), kind: 'crm' as const },
+                { label: 'My Tasks', onClick: () => navigate('/tasks'), kind: 'tasks' as const },
+                { label: 'My Calendar', onClick: () => navigate('/calendar'), kind: 'crm' as const },
+                { label: 'Users', onClick: () => navigate('/recruiter/users'), kind: 'candidates' as const },
+                { label: 'Contacts', onClick: () => navigate('/contacts'), kind: 'crm' as const },
+                { label: 'Companies', onClick: () => navigate('/companies'), kind: 'crm' as const },
               ] as const
             ).map((b) => {
               const kindStyles =

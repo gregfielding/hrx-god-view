@@ -806,15 +806,41 @@ const Layout: React.FC = React.memo(function Layout() {
     generateBaseMenu();
   }, [userAccessRole, activeTenant, flexModuleEnabled, recruiterModuleEnabled, customersModuleEnabled, jobsBoardModuleEnabled, crmModuleEnabled, staffingModuleEnabled, isHRX, currentClaimsRole, claimsRoles, jobsBoardEnabled, currentClaimsSecurityLevel]);
 
+  // Get effective security level - prioritize tenant-specific over global
+  const getEffectiveSecurityLevel = useMemo(() => {
+    // First check claims (most authoritative)
+    if (currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) {
+      return currentClaimsSecurityLevel;
+    }
+    // Then check tenant-specific security level
+    if (activeTenant?.id && tenantIds && typeof tenantIds === 'object' && !Array.isArray(tenantIds)) {
+      const tenantRole = tenantIds[activeTenant.id] as any;
+      if (tenantRole && typeof tenantRole === 'object' && tenantRole.securityLevel) {
+        const tenantSecLevel = String(tenantRole.securityLevel);
+        if (['5', '6', '7'].includes(tenantSecLevel)) {
+          return tenantSecLevel;
+        }
+      }
+    }
+    // Fallback to global security level
+    return securityLevel;
+  }, [currentClaimsSecurityLevel, activeTenant?.id, tenantIds, securityLevel]);
+
   // Filter menu items based on user flags without regenerating the entire menu
   const filteredMenuItems = useMemo(() => {
+    // Get effective security level for filtering
+    const secLevel = getEffectiveSecurityLevel;
+    const isLowLevel = secLevel && ['0', '1', '2', '3', '4'].includes(String(secLevel));
+    
     return menuItems.filter((mi) => {
       if (mi.text === 'Sales CRM' && !crmSalesEnabled) return false;
       if (mi.text === 'Recruiter' && !recruiterEnabled) return false;
       if (mi.text === 'Jobs Board' && !jobsBoardEnabled) return false;
+      // Hide "Jobs Board" from menu items if user is low level (0-4) - it's shown as a shortcut instead
+      if (mi.text === 'Jobs Board' && isLowLevel) return false;
       return true;
     });
-  }, [menuItems, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled]);
+  }, [menuItems, crmSalesEnabled, recruiterEnabled, jobsBoardEnabled, getEffectiveSecurityLevel]);
 
   const menuItemsWithIcons = filteredMenuItems.map(item => {
     const iconMap: Record<string, React.ReactNode> = {
@@ -896,10 +922,16 @@ const Layout: React.FC = React.memo(function Layout() {
   const safeDevRole = allowedRoles.includes(devRole) ? devRole : '';
   const safeDevSecurityLevel = allowedSecurityLevels.includes(devSecurityLevel) ? devSecurityLevel : '';
 
+  // Check if user has admin level (5, 6, or 7) for top bar items
+  const hasAdminLevel = useMemo(() => {
+    const secLevel = getEffectiveSecurityLevel;
+    return !!(secLevel && ['5', '6', '7'].includes(String(secLevel)));
+  }, [getEffectiveSecurityLevel]);
+
   // Google status context should wrap any component that calls useGoogleStatus (Dashboard, GoogleConnectionChip, CRM, etc.)
   const effectiveGoogleTenantId = activeTenant?.id || tenantId || '';
-  const secLevelForGoogle = currentClaimsSecurityLevel || securityLevel;
-  const hasAdminLevelForGoogle = !!(secLevelForGoogle && ['5', '6', '7'].includes(secLevelForGoogle));
+  const secLevelForGoogle = getEffectiveSecurityLevel;
+  const hasAdminLevelForGoogle = !!(secLevelForGoogle && ['5', '6', '7'].includes(String(secLevelForGoogle)));
   const shouldProvideGoogleStatus =
     hasAdminLevelForGoogle &&
     !!effectiveGoogleTenantId &&
@@ -1545,8 +1577,7 @@ const Layout: React.FC = React.memo(function Layout() {
               )}
               
               {/* # Slack & Mentions Icon - Only for security levels 5-7 */}
-              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
-                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
+              {hasAdminLevel && (
                 <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
                   <IconButton
                     onClick={() => navigate('/slack')}
@@ -1582,8 +1613,7 @@ const Layout: React.FC = React.memo(function Layout() {
               )}
               
               {/* Tasks Icon - Only for security levels 5-7 */}
-              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
-                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
+              {hasAdminLevel && (
                 <Tooltip title="Tasks">
                   <IconButton
                     onClick={() => navigate('/tasks')}
@@ -1602,8 +1632,7 @@ const Layout: React.FC = React.memo(function Layout() {
               )}
               
               {/* Calendar Icon - Only for security levels 5-7 */}
-              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
-                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
+              {hasAdminLevel && (
                 <Tooltip title="Calendar">
                   <IconButton
                     onClick={() => navigate('/calendar')}
@@ -1622,8 +1651,7 @@ const Layout: React.FC = React.memo(function Layout() {
               )}
               
               {/* ChatGPT Icon - Only for security levels 5-7 */}
-              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
-                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
+              {hasAdminLevel && (
                 <Tooltip title="ChatGPT">
                   <IconButton
                     onClick={() => openChatGPT()}
@@ -1641,8 +1669,8 @@ const Layout: React.FC = React.memo(function Layout() {
                 </Tooltip>
               )}
               
-              {/* Direct Messenger Icon */}
-              {user && (
+              {/* Direct Messenger Icon - Only for security levels 5-7 */}
+              {user && hasAdminLevel && (
                 <MessengerIconButton />
               )}
               

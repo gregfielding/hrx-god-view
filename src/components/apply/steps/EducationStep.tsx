@@ -34,6 +34,7 @@ type Props = {
   jobId?: string;
   jobPosting?: any;
   showOnly?: 'education' | 'certifications' | 'both';
+  onRequiredCertsStatusChange?: (hasMissing: boolean) => void;
 };
 
 const degreeTypes = [
@@ -82,7 +83,7 @@ const allCertificationOptions = Array.from(new Set([...certificationOptions, ...
 // Generate years from 1970 to 2026 for date picker
 const yearOptions = Array.from({ length: 57 }, (_, i) => 2026 - i);
 
-const EducationStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting, showOnly = 'both' }) => {
+const EducationStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting, showOnly = 'both', onRequiredCertsStatusChange }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   
@@ -186,6 +187,14 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
   const allRequiredCertificationsAdded = useMemo(() => {
     return requiredCertifications.length > 0 && missingRequiredCertifications.length === 0;
   }, [requiredCertifications.length, missingRequiredCertifications.length]);
+
+  // Notify parent when required certs status changes (for button text)
+  React.useEffect(() => {
+    if (onRequiredCertsStatusChange && showOnly === 'certifications') {
+      const hasMissing = requiredCertifications.length > 0 && missingRequiredCertifications.length > 0;
+      onRequiredCertsStatusChange(hasMissing);
+    }
+  }, [requiredCertifications.length, missingRequiredCertifications.length, onRequiredCertsStatusChange, showOnly]);
 
   const handleQuickAddEducation = (degree: string, e?: React.MouseEvent) => {
     e?.preventDefault();
@@ -564,6 +573,78 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       {/* Certifications Section */}
       {(showOnly === 'both' || showOnly === 'certifications') && (
       <Box sx={{ mb: 2.5 }}>
+        {/* Required Certifications Section - Show at top when showOnly === 'certifications' */}
+        {showOnly === 'certifications' && requiredCertifications.length > 0 && (
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
+              🔑 Required Certifications
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              This job requires you to have the following certification{requiredCertifications.length === 1 ? '' : 's'}:
+            </Typography>
+            
+            <Box 
+              sx={{ 
+                p: 2.5, 
+                bgcolor: allRequiredCertificationsAdded ? 'success.50' : 'warning.50',
+                borderRadius: 1,
+                border: '1px solid',
+                borderColor: allRequiredCertificationsAdded ? 'success.main' : 'warning.main'
+              }}
+            >
+              {allRequiredCertificationsAdded && (
+                <Alert 
+                  severity="success" 
+                  sx={{ 
+                    mb: 2,
+                    '& .MuiAlert-message': {
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1
+                    }
+                  }}
+                >
+                  ✓ Great! You've uploaded all required certifications.
+                </Alert>
+              )}
+              
+              <Stack direction="row" flexWrap="wrap" gap={1}>
+                {requiredCertifications.map((reqCert: string) => {
+                  const hasCertification = !missingRequiredCertifications.includes(reqCert);
+                  return (
+                    <Chip
+                      key={reqCert}
+                      label={hasCertification ? `✓ ${reqCert}` : reqCert}
+                      onClick={() => !hasCertification && handleQuickAddCertification(reqCert)}
+                      color={hasCertification ? 'success' : 'default'}
+                      variant={hasCertification ? 'filled' : 'outlined'}
+                      sx={{
+                        fontWeight: hasCertification ? 600 : 500,
+                        cursor: hasCertification ? 'default' : 'pointer',
+                        height: 40,
+                        fontSize: '0.95rem',
+                        transition: 'all 0.2s ease',
+                        '&:hover': hasCertification ? {} : {
+                          bgcolor: 'warning.main',
+                          color: 'white',
+                          borderColor: 'warning.main',
+                          transform: 'scale(1.02)'
+                        }
+                      }}
+                    />
+                  );
+                })}
+              </Stack>
+              
+              {!allRequiredCertificationsAdded && (
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                  Please upload the required certification{requiredCertifications.length === 1 ? '' : 's'} above to continue, or click "Skip for Now" to proceed without them.
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        )}
+
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           ✅ Certifications
         </Typography>

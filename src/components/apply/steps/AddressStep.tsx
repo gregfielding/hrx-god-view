@@ -120,6 +120,8 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
         addressComplete: !!(updatedData.street && updatedData.city && updatedData.state && updatedData.zip)
       });
 
+      // Clear any previous errors since we have a verified address
+      setAddressError(null);
       onChange(updatedData);
     } catch (error: any) {
       console.error('❌ Error processing place selection:', error);
@@ -194,7 +196,15 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
                     id="apply-street-address"
                     name="street-address"
                     autoComplete="off"
-                    helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Please select an address from the dropdown suggestions')}
+                    helperText={
+                      addressError 
+                        ? addressError 
+                        : value.homeLat && value.homeLng 
+                          ? '✓ Address verified' 
+                          : geocodingAddress 
+                            ? 'Validating address...' 
+                            : 'Please select an address from the dropdown suggestions'
+                    }
                     error={!!addressError}
                   />
                 </Autocomplete>
@@ -236,7 +246,15 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
                     }
                   }}
                   id="apply-street-address"
-                  helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Enter a valid street address')}
+                  helperText={
+                    addressError 
+                      ? addressError 
+                      : value.homeLat && value.homeLng 
+                        ? '✓ Address verified' 
+                        : geocodingAddress 
+                          ? 'Validating address...' 
+                          : 'Enter a valid street address'
+                  }
                   error={!!addressError}
                 />
               )}
@@ -251,6 +269,11 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
             </Grid>
             {value.homeLat !== undefined && value.homeLng !== undefined && (
               <>
+                <Grid item xs={12}>
+                  <Alert severity="success" sx={{ mb: 2 }}>
+                    ✓ Address verified and geocoded. You can proceed to the next step.
+                  </Alert>
+                </Grid>
                 <Grid item xs={12} md={6}>
                   <TextField 
                     fullWidth 
@@ -346,7 +369,15 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
                         }
                       }}
                       id="apply-street-address"
-                      helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Please select an address from the dropdown suggestions')}
+                      helperText={
+                        addressError 
+                          ? addressError 
+                          : value.homeLat && value.homeLng 
+                            ? '✓ Address verified' 
+                            : geocodingAddress 
+                              ? 'Validating address...' 
+                              : 'Please select an address from the dropdown suggestions'
+                      }
                       error={!!addressError}
                     />
                   </Autocomplete>
@@ -388,7 +419,15 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
                       }
                     }}
                     id="apply-street-address"
-                    helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Enter a valid street address')}
+                    helperText={
+                      addressError 
+                        ? addressError 
+                        : value.homeLat && value.homeLng 
+                          ? '✓ Address verified' 
+                          : geocodingAddress 
+                            ? 'Validating address...' 
+                            : 'Enter a valid street address'
+                    }
                     error={!!addressError}
                   />
                 )}
@@ -403,6 +442,11 @@ const AddressStep: React.FC<Props> = ({ value, onChange }) => {
               </Grid>
               {value.homeLat !== undefined && value.homeLng !== undefined && (
                 <>
+                  <Grid item xs={12}>
+                    <Alert severity="success" sx={{ mb: 2 }}>
+                      ✓ Address verified and geocoded. You can proceed to the next step.
+                    </Alert>
+                  </Grid>
                   <Grid item xs={12} md={6}>
                     <TextField 
                       fullWidth 

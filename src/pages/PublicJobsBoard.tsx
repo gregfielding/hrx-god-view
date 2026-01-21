@@ -1007,8 +1007,80 @@ const PublicJobsBoard: React.FC = () => {
 
 
   const handleApply = async (job: PublicJobPosting) => {
-    // Navigate to job posting detail page - user can apply from there
-    navigate(`/c1/jobs-board/${job.id}`);
+    if (!user) {
+      // Not logged in - navigate to login/signup
+      navigate(`/apply/${job.tenantId}/${job.id}?returnTo=/c1/jobs-board/${job.id}`);
+      return;
+    }
+    
+    try {
+      // Check if user has existing application data
+      const { hasExistingApplicationData, getMissingRequiredCertifications, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
+      
+      const hasExistingData = await hasExistingApplicationData(user.uid);
+      
+      if (hasExistingData) {
+        // Check if job requires certifications user doesn't have
+        const missingCerts = await getMissingRequiredCertifications(user.uid, job);
+        
+        if (missingCerts.length === 0) {
+          // User has all required certs - submit directly
+          // For gig jobs, use selectedJobShifts if available
+          const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
+            ? selectedJobShifts.map((s: any) => s.id || s)
+            : [];
+          
+          const result = await submitQuickApplication(
+            user.uid,
+            job.tenantId,
+            job.id,
+            job,
+            shiftsToUse,
+            `/c1/jobs-board/${job.id}`
+          );
+          
+          if (result.success) {
+            // Success - redirect back to jobs board and close dialog
+            handleCloseDialog();
+            const tenantSlug = job.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1'; // Default to c1 for now
+            navigate(`/${tenantSlug}/jobs-board`);
+            return;
+          } else {
+            // Error - show alert and navigate to wizard
+            alert(result.error || 'Failed to submit application. Please try again.');
+            navigate(`/apply/${job.tenantId}/${job.id}`);
+            return;
+          }
+        } else {
+          // Missing certs - navigate to wizard starting at certifications step
+          // For gig jobs, include shifts in query params
+          const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
+            ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
+            : [];
+          const shiftsParam = shiftsToUse.length > 0 ? `&shifts=${shiftsToUse.join(',')}` : '';
+          navigate(`/apply/${job.tenantId}/${job.id}?step=7${shiftsParam}`);
+          handleCloseDialog(); // Close dialog when navigating
+          return;
+        }
+      } else {
+        // First time applicant - navigate to full wizard
+        const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
+          ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
+          : [];
+        const shiftsParam = shiftsToUse.length > 0 ? `?shifts=${shiftsToUse.join(',')}` : '';
+        navigate(`/apply/${job.tenantId}/${job.id}${shiftsParam}`);
+        handleCloseDialog(); // Close dialog when navigating
+        return;
+      }
+    } catch (error) {
+      console.error('Error in handleApply:', error);
+      // Fallback to wizard on error
+      const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
+        ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
+        : [];
+      const shiftsParam = shiftsToUse.length > 0 ? `?shifts=${shiftsToUse.join(',')}` : '';
+      navigate(`/apply/${job.tenantId}/${job.id}${shiftsParam}`);
+    }
   };
 
   const handleCardClick = (job: PublicJobPosting) => {

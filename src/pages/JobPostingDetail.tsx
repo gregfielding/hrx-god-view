@@ -524,7 +524,7 @@ const JobPostingDetail: React.FC = () => {
     }
   };
 
-  const handleApply = () => {
+  const handleApply = async () => {
     // Validation for Gig jobs with dynamic shifts
     if (posting?.jobType === 'gig' && posting?.usesDynamicShifts && dynamicShifts.length > 0 && selectedShifts.length === 0) {
       alert('Please select at least one shift before applying.');
@@ -534,8 +534,68 @@ const JobPostingDetail: React.FC = () => {
     if (!user) {
       // Redirect to login/signup with return URL
       navigate(`/apply/${posting.tenantId}/${postId}?returnTo=/c1/jobs-board/${postId}`);
-    } else {
-      // Navigate to application wizard with selected shifts
+      return;
+    }
+    
+    try {
+      // Check if user has existing application data
+      const { hasExistingApplicationData, getMissingRequiredCertifications, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
+      
+      const hasExistingData = await hasExistingApplicationData(user.uid);
+      
+      if (hasExistingData) {
+        // Check if job requires certifications user doesn't have
+        const missingCerts = await getMissingRequiredCertifications(user.uid, posting);
+        
+        if (missingCerts.length === 0) {
+          // User has all required certs - submit directly
+          const queryParams = selectedShifts.length > 0 
+            ? `?shifts=${selectedShifts.join(',')}`
+            : '';
+          const returnTo = queryParams ? `/c1/jobs-board/${postId}${queryParams}` : `/c1/jobs-board/${postId}`;
+          
+          const result = await submitQuickApplication(
+            user.uid,
+            posting.tenantId,
+            postId!,
+            posting,
+            selectedShifts,
+            returnTo
+          );
+          
+          if (result.success) {
+            // Success - redirect back to jobs board
+            const tenantSlug = posting.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1'; // Default to c1 for now
+            navigate(`/${tenantSlug}/jobs-board`);
+            return;
+          } else {
+            // Error - show alert and navigate to wizard
+            alert(result.error || 'Failed to submit application. Please try again.');
+            const queryParams = selectedShifts.length > 0 
+              ? `?shifts=${selectedShifts.join(',')}`
+              : '';
+            navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+            return;
+          }
+        } else {
+          // Missing certs - navigate to wizard starting at certifications step
+          const queryParams = selectedShifts.length > 0 
+            ? `?shifts=${selectedShifts.join(',')}&step=7`
+            : '?step=7';
+          navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+          return;
+        }
+      } else {
+        // First time applicant - navigate to full wizard
+        const queryParams = selectedShifts.length > 0 
+          ? `?shifts=${selectedShifts.join(',')}`
+          : '';
+        navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
+        return;
+      }
+    } catch (error) {
+      console.error('Error in handleApply:', error);
+      // Fallback to wizard on error
       const queryParams = selectedShifts.length > 0 
         ? `?shifts=${selectedShifts.join(',')}`
         : '';
