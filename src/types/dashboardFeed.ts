@@ -4,7 +4,13 @@
  * Unified feed item types for the Dashboard activity stream.
  */
 
-export type FeedSourceType = 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention';
+export type FeedSourceType =
+  | 'email'
+  | 'slack_dm'
+  | 'slack_channel'
+  | 'calendar'
+  | 'mention'
+  | 'notification';
 
 // Mention-specific metadata types
 export type MentionOrigin = 'slack' | 'hrx';
@@ -70,12 +76,13 @@ export interface DashboardFeedItem {
         }>;
   // linking info for Drawer
   drawerScope: {
-    scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention';
+    scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention' | 'notification';
     threadId?: string;
     channelId?: string;
     dmUserId?: string;
     eventId?: string; // For calendar events
     dateKey?: string; // For calendar events, e.g., YYYY-MM-DD
+    route?: string; // For internal notifications that navigate
   };
 }
 

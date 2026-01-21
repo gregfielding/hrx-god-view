@@ -38,6 +38,7 @@ import MessageIcon from '@mui/icons-material/Message';
 import TagIcon from '@mui/icons-material/Tag';
 import EventIcon from '@mui/icons-material/Event';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
+import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import PersonIcon from '@mui/icons-material/Person';
@@ -87,6 +88,11 @@ const SOURCE_META: Record<
     label: 'Mention',
     color: '#9c27b0',
   },
+  notification: {
+    icon: <NotificationsActiveIcon fontSize="small" />,
+    label: 'Notification',
+    color: '#0f766e',
+  },
 };
 
 interface DashboardFeedProps {
@@ -131,7 +137,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
       setSourceFilter(['mention']);
     } else if (sourceParam) {
       // Support other source types if needed
-      const validSource = ['email', 'slack_dm', 'slack_channel', 'calendar', 'mention'].includes(sourceParam);
+      const validSource = ['email', 'slack_dm', 'slack_channel', 'calendar', 'mention', 'notification'].includes(sourceParam);
       if (validSource) {
         setSourceFilter([sourceParam as DashboardFeedItem['sourceType']]);
       }
@@ -325,6 +331,17 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
         navigate(`/calendar?date=${dateKey}`);
       } else {
         navigate('/calendar');
+      }
+      return;
+    }
+
+    // Internal notifications navigate to their route (if provided)
+    if (item.sourceType === 'notification' && item.drawerScope.scopeType === 'notification') {
+      const route = item.drawerScope.route;
+      if (typeof route === 'string' && route.trim().length > 0) {
+        navigate(route);
+      } else {
+        console.warn('Notification feed item missing route', item);
       }
       return;
     }

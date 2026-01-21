@@ -161,6 +161,14 @@ export function useDashboardFeed(
   const [mentionsLoading, setMentionsLoading] = useState(true);
   const [mentionsError, setMentionsError] = useState<string | null>(null);
 
+  // ---------------------------------------------------------------------------
+  // Internal Notifications Feed Items
+  // Subscribe to notification feed items from dashboardFeed collection.
+  // ---------------------------------------------------------------------------
+  const [notificationFeedItems, setNotificationFeedItems] = useState<DashboardFeedItem[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(true);
+  const [notificationsError, setNotificationsError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!canAccessSlack || !tenantId || !userId) {
       setSlackChannelMessages([]);
@@ -299,6 +307,63 @@ export function useDashboardFeed(
       console.log('[Mentions Feed] Cleaning up snapshot listener');
       unsub();
     };
+  }, [userId, limit]);
+
+  // Fetch internal notification feed items
+  useEffect(() => {
+    if (!userId) {
+      setNotificationFeedItems([]);
+      setNotificationsLoading(false);
+      setNotificationsError(null);
+      return;
+    }
+
+    setNotificationsLoading(true);
+    setNotificationsError(null);
+
+    const qy = query(
+      collection(db, 'dashboardFeed'),
+      where('userId', '==', userId),
+      where('sourceType', '==', 'notification'),
+      orderBy('timestamp', 'desc'),
+      fbLimit(limit),
+    );
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        try {
+          const items: DashboardFeedItem[] = snap.docs.map((d) => {
+            const data = d.data() as any;
+            return {
+              id: d.id,
+              sourceType: 'notification' as const,
+              sourceId: data.sourceId || d.id,
+              messageId: data.messageId,
+              title: data.title || 'Notification',
+              snippet: data.snippet || '',
+              fromLabel: data.fromLabel || 'HRX',
+              avatarUrl: data.avatarUrl,
+              isUnread: data.isUnread !== false,
+              isMuted: data.isMuted === true,
+              timestamp: data.timestamp || (data.createdAt?.toMillis?.() || Date.now()),
+              drawerScope: data.drawerScope || { scopeType: 'notification', route: data.route },
+            } as DashboardFeedItem;
+          });
+          setNotificationFeedItems(items);
+          setNotificationsLoading(false);
+        } catch (err: any) {
+          setNotificationsError(err?.message || 'Failed to load notifications');
+          setNotificationsLoading(false);
+        }
+      },
+      (err) => {
+        setNotificationsError(err?.message || 'Failed to load notifications');
+        setNotificationsLoading(false);
+      },
+    );
+
+    return () => unsub();
   }, [userId, limit]);
 
   // Fetch email threads
@@ -620,6 +685,11 @@ export function useDashboardFeed(
       allItems.push(item);
     });
 
+    // Add internal notification feed items
+    notificationFeedItems.forEach((item) => {
+      allItems.push(item);
+    });
+
     // Sort by timestamp (newest first)
     const sorted = allItems.sort((a, b) => b.timestamp - a.timestamp);
 
@@ -636,6 +706,7 @@ export function useDashboardFeed(
     calendarEvents,
     calendars,
     mentionFeedItems,
+    notificationFeedItems,
     feedPosts,
     authorCache,
     tenantId,
@@ -653,6 +724,7 @@ export function useDashboardFeed(
                   (canAccessCalendar && calendarsLoading) ||
                   (canAccessCalendar && calendarEventsLoading) ||
                   mentionsLoading ||
+                  notificationsLoading ||
                   feedPostsLoading;
 
   // Combined error state
@@ -663,6 +735,7 @@ export function useDashboardFeed(
                 (canAccessCalendar && calendarsError?.message) ||
                 (canAccessCalendar && calendarEventsError?.message) ||
                 mentionsError ||
+                notificationsError ||
                 feedPostsError ||
                 null;
 

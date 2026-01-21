@@ -51,6 +51,13 @@ export {
   backfillChecklistTasksForTenantAdmins,
 } from './jobOrderChecklistTasks';
 
+// Dashboard internal notifications (recruiter signals)
+export {
+  recruiterNotificationOnJobOrderAssigned,
+  recruiterNotificationOnJobOrderApplicationCreated,
+  recruiterNotificationOnTenantApplicationCreated,
+} from './recruiterDashboardNotifications';
+
 import { linkContactsToCompanies } from './linkContactsToCompanies';
 import { linkCRMEntities } from './linkCRMEntities';
 import { triggerAINoteReview, triggerAINoteReviewHttp } from './triggerAINoteReview';
