@@ -169,6 +169,14 @@ export function useDashboardFeed(
   const [notificationsLoading, setNotificationsLoading] = useState(true);
   const [notificationsError, setNotificationsError] = useState<string | null>(null);
 
+  // ---------------------------------------------------------------------------
+  // Task Feed Items
+  // Subscribe to task feed items from dashboardFeed collection.
+  // ---------------------------------------------------------------------------
+  const [taskFeedItems, setTaskFeedItems] = useState<DashboardFeedItem[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!canAccessSlack || !tenantId || !userId) {
       setSlackChannelMessages([]);
@@ -360,6 +368,63 @@ export function useDashboardFeed(
       (err) => {
         setNotificationsError(err?.message || 'Failed to load notifications');
         setNotificationsLoading(false);
+      },
+    );
+
+    return () => unsub();
+  }, [userId, limit]);
+
+  // Fetch task feed items
+  useEffect(() => {
+    if (!userId) {
+      setTaskFeedItems([]);
+      setTasksLoading(false);
+      setTasksError(null);
+      return;
+    }
+
+    setTasksLoading(true);
+    setTasksError(null);
+
+    const qy = query(
+      collection(db, 'dashboardFeed'),
+      where('userId', '==', userId),
+      where('sourceType', '==', 'task'),
+      orderBy('timestamp', 'desc'),
+      fbLimit(limit),
+    );
+
+    const unsub = onSnapshot(
+      qy,
+      (snap) => {
+        try {
+          const items: DashboardFeedItem[] = snap.docs.map((d) => {
+            const data = d.data() as any;
+            return {
+              id: d.id,
+              sourceType: 'task' as const,
+              sourceId: data.sourceId || d.id,
+              messageId: data.messageId,
+              title: data.title || 'Task',
+              snippet: data.snippet || '',
+              fromLabel: data.fromLabel || 'HRX',
+              avatarUrl: data.avatarUrl,
+              isUnread: data.isUnread !== false,
+              isMuted: data.isMuted === true,
+              timestamp: data.timestamp || (data.createdAt?.toMillis?.() || Date.now()),
+              drawerScope: data.drawerScope || { scopeType: 'task', route: '/tasks', taskId: data.extra?.taskId },
+            } as DashboardFeedItem;
+          });
+          setTaskFeedItems(items);
+          setTasksLoading(false);
+        } catch (err: any) {
+          setTasksError(err?.message || 'Failed to load tasks');
+          setTasksLoading(false);
+        }
+      },
+      (err) => {
+        setTasksError(err?.message || 'Failed to load tasks');
+        setTasksLoading(false);
       },
     );
 
@@ -690,6 +755,11 @@ export function useDashboardFeed(
       allItems.push(item);
     });
 
+    // Add task feed items
+    taskFeedItems.forEach((item) => {
+      allItems.push(item);
+    });
+
     // Sort by timestamp (newest first)
     const sorted = allItems.sort((a, b) => b.timestamp - a.timestamp);
 
@@ -707,6 +777,7 @@ export function useDashboardFeed(
     calendars,
     mentionFeedItems,
     notificationFeedItems,
+    taskFeedItems,
     feedPosts,
     authorCache,
     tenantId,
@@ -725,6 +796,7 @@ export function useDashboardFeed(
                   (canAccessCalendar && calendarEventsLoading) ||
                   mentionsLoading ||
                   notificationsLoading ||
+                  tasksLoading ||
                   feedPostsLoading;
 
   // Combined error state
@@ -736,6 +808,7 @@ export function useDashboardFeed(
                 (canAccessCalendar && calendarEventsError?.message) ||
                 mentionsError ||
                 notificationsError ||
+                tasksError ||
                 feedPostsError ||
                 null;
 

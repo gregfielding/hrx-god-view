@@ -62,6 +62,8 @@ import {
   Delete as DeleteIcon,
   CloudUpload as UploadIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
+  AddTask as AddTaskIcon,
   Add as AddIcon,
   CalendarMonth as CalendarIcon,
   Visibility as VisibilityIcon,
@@ -99,6 +101,9 @@ import { normalizeScoreSummary, formatOneDecimal } from '../utils/scoreSummary';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import CreateTaskDialog from '../components/CreateTaskDialog';
+import LogActivityDialog from '../components/LogActivityDialog';
+import AddJobOrderNoteDialog from '../components/recruiter/AddJobOrderNoteDialog';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -1877,6 +1882,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
   const [isEditingJobOrderDetails, setIsEditingJobOrderDetails] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
+  const [logActivityLoading, setLogActivityLoading] = useState(false);
 
   // Helper functions (defined before useEffect that uses them)
   const loadCompanyData = useCallback(async (companyId: string) => {
@@ -2807,6 +2817,77 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     </Box>
                   </Tooltip>
                 ))}
+              </Stack>
+
+              {/* Line 5: Icon row (Add Note, Add Task, Log Activity) */}
+              <Stack
+                direction="row"
+                spacing={1}
+                sx={{ alignItems: 'center', mt: 1.5 }}
+              >
+                <Tooltip title="Add Note">
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowAddNoteDialog(true)}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <NoteIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Add Task">
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowCreateTaskDialog(true)}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <AddTaskIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Log Activity">
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowLogActivityDialog(true)}
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    <CheckCircleIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
               </Stack>
                       </Box>
                   </Box>
@@ -3817,6 +3898,90 @@ const RecruiterJobOrderDetail: React.FC = () => {
           Job posting URL copied to clipboard!
         </Alert>
       </Snackbar>
+
+      {/* Add Note Dialog */}
+      {jobOrderId && tenantId && (
+        <AddJobOrderNoteDialog
+          open={showAddNoteDialog}
+          onClose={() => setShowAddNoteDialog(false)}
+          jobOrderId={jobOrderId}
+          jobOrderName={jobOrder?.jobOrderName || 'Job Order'}
+          tenantId={tenantId}
+          onNoteAdded={() => {
+            // Optionally refresh notes tab or show success message
+          }}
+        />
+      )}
+
+      {/* Create Task Dialog */}
+      {showCreateTaskDialog && jobOrderId && tenantId && user && (
+        <CreateTaskDialog
+          open={showCreateTaskDialog}
+          onClose={() => setShowCreateTaskDialog(false)}
+          onSubmit={async (taskData) => {
+            if (taskSubmitting) return;
+            setTaskSubmitting(true);
+            try {
+              // Import TaskService dynamically to avoid circular dependencies
+              const { TaskService } = await import('../utils/taskService');
+              const taskService = TaskService.getInstance();
+              
+              await taskService.createTask({
+                ...taskData,
+                tenantId,
+                createdBy: user.uid,
+                assignedTo: user.uid, // Default to current user
+                associations: taskData?.associations || {},
+                sourceType: 'recruiting',
+                sourceId: jobOrderId,
+                sourceName: jobOrder?.jobOrderName || 'Job Order',
+                jobOrderId: jobOrderId,
+              });
+              setShowCreateTaskDialog(false);
+            } catch (error) {
+              console.error('Error creating task:', error);
+            } finally {
+              setTaskSubmitting(false);
+            }
+          }}
+          hideCrmAssociations
+        />
+      )}
+
+      {/* Log Activity Dialog */}
+      {showLogActivityDialog && jobOrderId && tenantId && user && (
+        <LogActivityDialog
+          open={showLogActivityDialog}
+          onClose={() => setShowLogActivityDialog(false)}
+          onSubmit={async (taskData) => {
+            setLogActivityLoading(true);
+            try {
+              const { TaskService } = await import('../utils/taskService');
+              const taskService = TaskService.getInstance();
+              await taskService.createTask({
+                ...taskData,
+                tenantId,
+                createdBy: user.uid,
+                assignedTo: user.uid,
+                status: 'completed',
+                completedAt: new Date(),
+                associations: taskData.associations || {},
+                sourceType: 'recruiting',
+                sourceId: jobOrderId,
+                sourceName: jobOrder?.jobOrderName || 'Job Order',
+                jobOrderId: jobOrderId,
+              });
+              setShowLogActivityDialog(false);
+            } catch (error) {
+              console.error('Error logging activity:', error);
+            } finally {
+              setLogActivityLoading(false);
+            }
+          }}
+          loading={logActivityLoading}
+          hideCrmAssociations
+        />
+      )}
      
     </Box>
   );

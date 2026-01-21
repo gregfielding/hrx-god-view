@@ -10,7 +10,8 @@ export type FeedSourceType =
   | 'slack_channel'
   | 'calendar'
   | 'mention'
-  | 'notification';
+  | 'notification'
+  | 'task';
 
 // Mention-specific metadata types
 export type MentionOrigin = 'slack' | 'hrx';
@@ -76,13 +77,14 @@ export interface DashboardFeedItem {
         }>;
   // linking info for Drawer
   drawerScope: {
-    scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention' | 'notification';
+    scopeType: 'email' | 'slack_dm' | 'slack_channel' | 'calendar' | 'mention' | 'notification' | 'task';
     threadId?: string;
     channelId?: string;
     dmUserId?: string;
     eventId?: string; // For calendar events
     dateKey?: string; // For calendar events, e.g., YYYY-MM-DD
     route?: string; // For internal notifications that navigate
+    taskId?: string; // For task feed items
   };
 }
 

@@ -39,6 +39,7 @@ import TagIcon from '@mui/icons-material/Tag';
 import EventIcon from '@mui/icons-material/Event';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
+import AssignmentIcon from '@mui/icons-material/Assignment';
 import PushPinIcon from '@mui/icons-material/PushPin';
 import PushPinOutlinedIcon from '@mui/icons-material/PushPinOutlined';
 import PersonIcon from '@mui/icons-material/Person';
@@ -93,6 +94,11 @@ const SOURCE_META: Record<
     label: 'Notification',
     color: '#0f766e',
   },
+  task: {
+    icon: <AssignmentIcon fontSize="small" />,
+    label: 'Task',
+    color: '#f59e0b',
+  },
 };
 
 interface DashboardFeedProps {
@@ -137,7 +143,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
       setSourceFilter(['mention']);
     } else if (sourceParam) {
       // Support other source types if needed
-      const validSource = ['email', 'slack_dm', 'slack_channel', 'calendar', 'mention', 'notification'].includes(sourceParam);
+      const validSource = ['email', 'slack_dm', 'slack_channel', 'calendar', 'mention', 'notification', 'task'].includes(sourceParam);
       if (validSource) {
         setSourceFilter([sourceParam as DashboardFeedItem['sourceType']]);
       }
@@ -335,6 +341,12 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
       return;
     }
 
+    // Task items navigate to /tasks page
+    if (item.sourceType === 'task' && item.drawerScope.scopeType === 'task') {
+      navigate('/tasks');
+      return;
+    }
+
     // Internal notifications navigate to their route (if provided)
     if (item.sourceType === 'notification' && item.drawerScope.scopeType === 'notification') {
       const route = item.drawerScope.route;
@@ -418,6 +430,8 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
             minHeight: 0,
             display: 'flex',
             flexDirection: 'column',
+            maxHeight: 'calc(150vh - 120px)',
+            paddingBottom: '16px',
           }}
         >
         <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0, overflowY: 'auto', pb: 2 }}>
@@ -634,7 +648,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
   }
 
   return (
-    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+    <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <Paper
         elevation={0}
         sx={{
@@ -642,9 +656,10 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
           border: '1px solid #EAEEF4',
           overflow: 'hidden',
           flex: 1,
-          minHeight: 0,
           display: 'flex',
           flexDirection: 'column',
+          maxHeight: 'calc(150vh - 120px)',
+          paddingBottom: '16px',
         }}
       >
         {/* Feed v2: Filter bar (chips + date range + source + search) */}
@@ -705,7 +720,19 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                 setSourceFilter(e.target.value as typeof sourceFilter);
                 setVisibleCount(60);
               }}
-              renderValue={(selected) => (selected.length === 0 ? 'All Sources' : selected.join(', '))}
+              renderValue={(selected) => {
+                if (selected.length === 0) return 'All Sources';
+                const labelByValue: Partial<Record<DashboardFeedItem['sourceType'], string>> = {
+                  email: 'Email',
+                  slack_dm: 'DMs',
+                  slack_channel: 'Slack Channels',
+                  calendar: 'Calendar',
+                  mention: 'Mentions',
+                  notification: 'System',
+                  task: 'Tasks',
+                };
+                return selected.map((v) => labelByValue[v] || v).join(', ');
+              }}
               sx={{
                 height: 40,
                 borderRadius: '999px',
@@ -718,6 +745,8 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                 { value: 'slack_channel', label: 'Slack Channels' },
                 { value: 'calendar', label: 'Calendar' },
                 { value: 'mention', label: 'Mentions' },
+                { value: 'notification', label: 'System' },
+                { value: 'task', label: 'Tasks' },
               ] as Array<{ value: DashboardFeedItem['sourceType']; label: string }>).map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>
                   <Checkbox checked={sourceFilter.indexOf(opt.value) > -1} />

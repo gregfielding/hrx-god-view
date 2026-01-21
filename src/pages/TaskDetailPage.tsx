@@ -43,18 +43,22 @@ const TaskDetailPage: React.FC = () => {
 
     const loadTask = async () => {
       try {
+        // Unified Tasks merges `tasks` + `crm_tasks`, so deep links should work for both.
         const taskRef = doc(db, 'tenants', effectiveTenantId, 'tasks', taskId);
         const taskSnap = await getDoc(taskRef);
+        const taskSnapFinal = taskSnap.exists()
+          ? taskSnap
+          : await getDoc(doc(db, 'tenants', effectiveTenantId, 'crm_tasks', taskId));
 
-        if (!taskSnap.exists()) {
+        if (!taskSnapFinal.exists()) {
           setError(new Error('Task not found'));
           setLoading(false);
           return;
         }
 
-        const taskData = taskSnap.data();
+        const taskData = taskSnapFinal.data();
         setTask({
-          id: taskSnap.id,
+          id: taskSnapFinal.id,
           ...taskData,
         } as UnifiedTask);
       } catch (err) {

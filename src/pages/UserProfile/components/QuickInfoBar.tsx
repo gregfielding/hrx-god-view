@@ -142,7 +142,14 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
             {(yearsExperience || educationLevel) && (
               <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
                 {yearsExperience && (
-                  <Tooltip title="Years of Experience">
+                  <Tooltip 
+                    title="Years of Experience"
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
+                  >
                     <Chip
                       size="small"
                       icon={<WorkHistoryIcon sx={{ fontSize: 14 }} />}
@@ -157,7 +164,14 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                   </Tooltip>
                 )}
                 {educationLevel && (
-                  <Tooltip title="Highest Education Level">
+                  <Tooltip 
+                    title="Highest Education Level"
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
+                  >
                     <Chip
                       size="small"
                       icon={<SchoolIcon sx={{ fontSize: 14 }} />}
@@ -200,7 +214,14 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                   />
                 ))}
                 {primarySkills.length > 5 && (
-                  <Tooltip title={`${primarySkills.length - 5} more skills`}>
+                  <Tooltip 
+                    title={`${primarySkills.length - 5} more skills`}
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
+                  >
                     <Chip
                       size="small"
                       label={`+${primarySkills.length - 5}`}
@@ -302,7 +323,7 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
           </Typography>
           <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 0.5 }}>
             {profileScore !== undefined && (
-              <Tooltip 
+              <Tooltip
                 title={
                   profileScore >= 80 
                     ? `Score ${profileScore} = Very competitive candidate. Profile is complete and ready for placement.`
@@ -312,6 +333,11 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                     ? `Score ${profileScore} = Needs resume update. Missing key information.`
                     : `Score ${profileScore} = Missing key info. Profile requires significant completion.`
                 }
+                componentsProps={{
+                  tooltip: {
+                    sx: { color: 'white' }
+                  }
+                }}
               >
                 <Chip
                   size="small"
@@ -337,7 +363,14 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
               </Tooltip>
             )}
             {certificationsCount > 0 && (
-              <Tooltip title="Number of certifications and licenses on file">
+              <Tooltip 
+                title="Number of certifications and licenses on file"
+                componentsProps={{
+                  tooltip: {
+                    sx: { color: 'white' }
+                  }
+                }}
+              >
                 <Chip
                   size="small"
                   label={
@@ -362,7 +395,14 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
               </Tooltip>
             )}
             {activeApplicationsCount > 0 && (
-              <Tooltip title="Number of active job applications">
+              <Tooltip 
+                title="Number of active job applications"
+                componentsProps={{
+                  tooltip: {
+                    sx: { color: 'white' }
+                  }
+                }}
+              >
                 <Chip
                   size="small"
                   label={

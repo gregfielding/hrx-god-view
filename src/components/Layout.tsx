@@ -1339,7 +1339,8 @@ const Layout: React.FC = React.memo(function Layout() {
           flexGrow: 1,
           display: 'flex',
           flexDirection: 'column',
-          height: '100vh',
+          minHeight: '150vh',
+          maxHeight: '150vh',
           overflow: 'hidden',
           '--drawer-width': `${drawerWidth}px`,
           transition: (theme) =>
@@ -1543,42 +1544,46 @@ const Layout: React.FC = React.memo(function Layout() {
                 </Tooltip>
               )}
               
-              {/* # Slack & Mentions Icon - Always visible, badge shows when there are unread mentions */}
-              <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
-                <IconButton
-                  onClick={() => navigate('/slack')}
-                  sx={{
-                    backgroundColor: 'transparent !important',
-                    color: location.pathname.startsWith('/slack') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
-                    '& svg': {
-                      fill: 'currentColor',
-                      stroke: 'currentColor',
-                    },
-                    '&:hover': { 
+              {/* # Slack & Mentions Icon - Only for security levels 5-7 */}
+              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
+                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
+                <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
+                  <IconButton
+                    onClick={() => navigate('/slack')}
+                    sx={{
                       backgroundColor: 'transparent !important',
-                      color: '#FFFFFF',
+                      color: location.pathname.startsWith('/slack') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
                       '& svg': {
                         fill: 'currentColor',
                         stroke: 'currentColor',
                       },
-                    },
-                  }}
-                >
-                  <Badge 
-                    badgeContent={mentionsUnreadCount > 99 ? '99+' : mentionsUnreadCount} 
-                    color="secondary"
-                    invisible={mentionsUnreadCount === 0}
+                      '&:hover': { 
+                        backgroundColor: 'transparent !important',
+                        color: '#FFFFFF',
+                        '& svg': {
+                          fill: 'currentColor',
+                          stroke: 'currentColor',
+                        },
+                      },
+                    }}
                   >
-                    <SlackHashIcon 
-                      active={location.pathname.startsWith('/slack')} 
-                      size={20}
-                    />
-                  </Badge>
-                </IconButton>
-              </Tooltip>
+                    <Badge 
+                      badgeContent={mentionsUnreadCount > 99 ? '99+' : mentionsUnreadCount} 
+                      color="secondary"
+                      invisible={mentionsUnreadCount === 0}
+                    >
+                      <SlackHashIcon 
+                        active={location.pathname.startsWith('/slack')} 
+                        size={20}
+                      />
+                    </Badge>
+                  </IconButton>
+                </Tooltip>
+              )}
               
               {/* Tasks Icon - Only for security levels 5-7 */}
-              {currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel) && (
+              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
+                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
                 <Tooltip title="Tasks">
                   <IconButton
                     onClick={() => navigate('/tasks')}
@@ -1597,7 +1602,8 @@ const Layout: React.FC = React.memo(function Layout() {
               )}
               
               {/* Calendar Icon - Only for security levels 5-7 */}
-              {currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel) && (
+              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
+                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
                 <Tooltip title="Calendar">
                   <IconButton
                     onClick={() => navigate('/calendar')}
@@ -1616,7 +1622,8 @@ const Layout: React.FC = React.memo(function Layout() {
               )}
               
               {/* ChatGPT Icon - Only for security levels 5-7 */}
-              {currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel) && (
+              {((currentClaimsSecurityLevel && ['5', '6', '7'].includes(currentClaimsSecurityLevel)) || 
+                (securityLevel && ['5', '6', '7'].includes(securityLevel))) && (
                 <Tooltip title="ChatGPT">
                   <IconButton
                     onClick={() => openChatGPT()}

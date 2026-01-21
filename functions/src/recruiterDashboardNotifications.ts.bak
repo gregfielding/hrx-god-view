@@ -115,136 +115,21 @@ async function notifyTaskAssigned(args: {
 
   const title = 'New Task Assigned';
   const taskTitle = isTruthyString(task?.title) ? task.title.trim() : 'Task';
-  const snippet = `"${taskTitle}" was assigned to you.`;
+  const snippet = `“${taskTitle}” was assigned to you.`;
+  const route = `/task/${taskId}`;
   const sourceId = `task:${tenantId}:${taskCollection}:${taskId}`;
 
-  const now = admin.firestore.Timestamp.now();
-  const id = cleanId(`task:${tenantId}:${taskCollection}:${taskId}:${assignedTo}:${eventKey}`);
-  
-  const doc = {
+  const id = cleanId(`notif:taskAssigned:${tenantId}:${taskCollection}:${taskId}:${assignedTo}:${eventKey}`);
+  await writeDashboardNotification({
     id,
     userId: assignedTo,
     tenantId,
-    sourceType: 'task' as const,
-    sourceId,
     title,
     snippet,
-    fromLabel: 'HRX',
-    avatarUrl: null,
-    isUnread: true,
-    isMuted: false,
-    timestamp: now.toMillis(),
-    drawerScope: {
-      scopeType: 'task' as const,
-      route: '/tasks',
-      taskId,
-    },
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    route,
+    sourceId,
     extra: { kind: 'task_assigned', taskId, taskCollection },
-  };
-
-  await db.collection('dashboardFeed').doc(id).set(doc, { merge: true });
-}
-
-/**
- * Create an interview task for a recruiter when a new application is received.
- */
-async function createInterviewTaskForRecruiter(args: {
-  tenantId: string;
-  recruiterId: string;
-  applicationId: string;
-  jobOrderId: string;
-  candidateName: string;
-  jobTitle: string;
-}): Promise<string | null> {
-  const { tenantId, recruiterId, applicationId, jobOrderId, candidateName, jobTitle } = args;
-  
-  if (!tenantId || !recruiterId || !applicationId || !jobOrderId) {
-    return null;
-  }
-
-  try {
-    // Get recruiter name for assignedToName
-    let recruiterName = 'Unknown User';
-    try {
-      const recruiterDoc = await db.collection('users').doc(recruiterId).get();
-      if (recruiterDoc.exists) {
-        const recruiterData = recruiterDoc.data();
-        const firstName = recruiterData?.firstName || '';
-        const lastName = recruiterData?.lastName || '';
-        recruiterName = `${firstName} ${lastName}`.trim() || recruiterName;
-      }
-    } catch (err) {
-      // Best effort - use default name
-    }
-
-    // Create deterministic task ID to avoid duplicates
-    const taskId = `interview:${tenantId}:${jobOrderId}:${applicationId}:${recruiterId}`;
-    const taskRef = db.collection('tenants').doc(tenantId).collection('tasks').doc(taskId);
-
-    // Check if task already exists
-    const existingTask = await taskRef.get();
-    if (existingTask.exists) {
-      // Task already exists, return the existing ID
-      return taskId;
-    }
-
-    const now = admin.firestore.Timestamp.now();
-    const taskData = {
-      title: `Complete Interview: ${candidateName} - ${jobTitle}`,
-      description: `Schedule and complete interview with ${candidateName} for ${jobTitle}.`,
-      type: 'custom',
-      priority: 'medium',
-      status: 'upcoming',
-      classification: 'todo',
-      scheduledDate: null,
-      dueDate: null,
-      assignedTo: recruiterId,
-      assignedToName: recruiterName,
-      associations: {
-        contacts: [],
-        deals: [],
-        companies: [],
-      },
-      notes: '',
-      category: null,
-      quotaCategory: null,
-      estimatedDuration: 30,
-      aiSuggested: false,
-      aiPrompt: '',
-      aiReason: '',
-      aiConfidence: null,
-      aiContext: null,
-      aiInsights: [],
-      googleCalendarEventId: null,
-      googleTaskId: null,
-      lastGoogleSync: null,
-      syncStatus: 'pending',
-      tags: [],
-      relatedToName: '',
-      tenantId,
-      createdBy: 'system',
-      createdByName: 'System',
-      sourceType: 'recruiting',
-      sourceId: jobOrderId,
-      sourceName: jobTitle,
-      jobOrderId,
-      applicationId,
-      systemManaged: false,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await taskRef.set(taskData);
-    return taskId;
-  } catch (error) {
-    await logger.error('Failed to create interview task', {
-      context: 'createInterviewTaskForRecruiter',
-      error: error instanceof Error ? error.message : String(error),
-      extra: { tenantId, recruiterId, applicationId, jobOrderId },
-    });
-    return null;
-  }
+  });
 }
 
 /**
@@ -359,24 +244,9 @@ export const recruiterNotificationOnJobOrderApplicationCreated = createSafeFires
   });
 
   await batch.commit();
-
-  // Create interview tasks for each assigned recruiter
-  const taskPromises = assignees.map((uid) =>
-    createInterviewTaskForRecruiter({
-      tenantId,
-      recruiterId: uid,
-      applicationId,
-      jobOrderId,
-      candidateName,
-      jobTitle,
-    })
-  );
-  const taskIds = await Promise.all(taskPromises);
-  const createdTaskIds = taskIds.filter((id): id is string => id !== null);
-
-  await logger.info('Created application notifications and interview tasks (job order subcollection)', {
+  await logger.info('Created application notifications (job order subcollection)', {
     context: 'recruiterNotificationOnJobOrderApplicationCreated',
-    extra: { tenantId, jobOrderId, applicationId, assigneesCount: assignees.length, tasksCreated: createdTaskIds.length },
+    extra: { tenantId, jobOrderId, applicationId, assigneesCount: assignees.length },
   });
 }).onDocumentCreated('tenants/{tenantId}/job_orders/{jobOrderId}/applications/{applicationId}');
 
@@ -433,24 +303,9 @@ export const recruiterNotificationOnTenantApplicationCreated = createSafeFiresto
   });
 
   await batch.commit();
-
-  // Create interview tasks for each assigned recruiter
-  const taskPromises = assignees.map((uid) =>
-    createInterviewTaskForRecruiter({
-      tenantId,
-      recruiterId: uid,
-      applicationId,
-      jobOrderId,
-      candidateName,
-      jobTitle,
-    })
-  );
-  const taskIds = await Promise.all(taskPromises);
-  const createdTaskIds = taskIds.filter((id): id is string => id !== null);
-
-  await logger.info('Created application notifications and interview tasks (tenant applications)', {
+  await logger.info('Created application notifications (tenant applications)', {
     context: 'recruiterNotificationOnTenantApplicationCreated',
-    extra: { tenantId, jobOrderId, applicationId, assigneesCount: assignees.length, tasksCreated: createdTaskIds.length },
+    extra: { tenantId, jobOrderId, applicationId, assigneesCount: assignees.length },
   });
 }).onDocumentCreated('tenants/{tenantId}/applications/{applicationId}');
 

@@ -56,6 +56,10 @@ export {
   recruiterNotificationOnJobOrderAssigned,
   recruiterNotificationOnJobOrderApplicationCreated,
   recruiterNotificationOnTenantApplicationCreated,
+  recruiterNotificationOnTaskCreated,
+  recruiterNotificationOnTaskUpdated,
+  recruiterNotificationOnCrmTaskCreated,
+  recruiterNotificationOnCrmTaskUpdated,
 } from './recruiterDashboardNotifications';
 
 import { linkContactsToCompanies } from './linkContactsToCompanies';

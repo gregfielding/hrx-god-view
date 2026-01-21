@@ -1055,7 +1055,14 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   />
                 ))}
                 {primarySkills.length > 5 && (
-                  <Tooltip title={`${primarySkills.length - 5} more skills`}>
+                  <Tooltip 
+                    title={`${primarySkills.length - 5} more skills`}
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
+                  >
                     <Chip
                       label={`+${primarySkills.length - 5}`}
                       size="small"
@@ -1600,7 +1607,14 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   />
                 ))}
                 {primarySkills.length > 5 && (
-                  <Tooltip title={`${primarySkills.length - 5} more skills`}>
+                  <Tooltip 
+                    title={`${primarySkills.length - 5} more skills`}
+                    componentsProps={{
+                      tooltip: {
+                        sx: { color: 'white' }
+                      }
+                    }}
+                  >
                     <Chip
                       label={`+${primarySkills.length - 5}`}
                       size="small"

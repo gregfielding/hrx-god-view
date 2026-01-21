@@ -1013,10 +1013,10 @@ const UserProfilePage = () => {
       enterDelay={250}
       title={
         <Box sx={{ p: 1, maxWidth: 420, whiteSpace: 'pre-wrap' }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5, color: 'white' }}>
             {label}
           </Typography>
-          <Typography variant="body2" sx={{ color: 'rgba(0,0,0,0.75)' }}>
+          <Typography variant="body2" sx={{ color: 'white' }}>
             {content || '—'}
           </Typography>
         </Box>

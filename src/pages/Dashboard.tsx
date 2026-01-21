@@ -146,7 +146,8 @@ const Dashboard: React.FC = () => {
 
   return (
     <Box sx={{ 
-      height: '100%', 
+      minHeight: '150vh',
+      maxHeight: '150vh',
       display: 'flex', 
       flexDirection: 'column',
       // On mobile and tablet, allow the page to scroll naturally
@@ -203,7 +204,6 @@ const Dashboard: React.FC = () => {
 
       <Box sx={{ 
         flex: 1, 
-        minHeight: 0, 
         overflow: (isMobile || isTablet) ? 'auto' : 'hidden', 
         px: { xs: 2, md: 3 }, 
         pb: { xs: 2, md: 2 },
@@ -242,8 +242,7 @@ const Dashboard: React.FC = () => {
           sx={{
             display: 'flex',
             gap: 2,
-            height: (isMobile || isTablet) ? 'auto' : '100%',
-            minHeight: (isMobile || isTablet) ? 'auto' : 0,
+            flex: 1,
             flexDirection: isMobile || isTablet ? 'column' : 'row',
           }}
         >
@@ -252,8 +251,10 @@ const Dashboard: React.FC = () => {
             <Box sx={{ 
               width: '100%', 
               flex: isMobile || isTablet ? 'none' : '0 0 66.666%', 
-              minHeight: (isMobile || isTablet) ? 'auto' : 0, 
-              overflow: (isMobile || isTablet) ? 'visible' : 'hidden' 
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: (isMobile || isTablet) ? 'visible' : 'hidden',
+              pb: 2, // 16px bottom padding
             }}>
               <DashboardFeed
                 onOpenEmailDrawer={handleOpenEmailDrawer}
@@ -270,17 +271,22 @@ const Dashboard: React.FC = () => {
               sx={{
                 width: '100%',
                 flex: isTablet ? 'none' : 1,
-                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
                 overflow: 'hidden',
+                pb: 2, // 16px bottom padding
               }}
             >
-              <Box sx={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: isTablet ? 'row' : 'column', gap: 2 }}>
+              <Box sx={{ flex: 1, display: 'flex', flexDirection: isTablet ? 'row' : 'column', gap: 2, minHeight: 0 }}>
                 {/* Calendar */}
                 <Box
                   sx={{
                     flex: isTablet ? 1 : '0 0 calc(36% - 8px)', // desktop: calendar is 36% height (gap accounted for)
-                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
                     overflow: 'hidden',
+                    maxHeight: '400px',
+                    minHeight: 0,
                   }}
                 >
                   {googleStatus.calendar.connected ? (
@@ -335,11 +341,21 @@ const Dashboard: React.FC = () => {
                 <Box
                   sx={{
                     flex: isTablet ? 1 : '0 0 calc(64% - 8px)', // desktop: remaining height (gap accounted for)
-                    minHeight: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
                     overflow: 'hidden',
+                    minHeight: 0,
                   }}
                 >
-                  <Card sx={{ height: '100%', display: 'flex', padding: '16px', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
+                  <Card sx={{ 
+                    flex: 1, 
+                    display: 'flex', 
+                    padding: '16px', 
+                    flexDirection: 'column', 
+                    borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px`,
+                    maxHeight: 'calc(150vh - 504px)',
+                    paddingBottom: '16px',
+                  }}>
                     <CardHeader
                       title="To-Dos"
                       action={
@@ -422,7 +438,13 @@ const Dashboard: React.FC = () => {
           {/* Mobile: To-Dos panel */}
           {isMobile && mobileTab === 'todos' && (
             <Box sx={{ width: '100%', minHeight: 'auto', overflow: 'visible', mb: 2 }}>
-              <Card sx={{ display: 'flex', flexDirection: 'column', borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px` }}>
+              <Card sx={{ 
+                display: 'flex', 
+                flexDirection: 'column', 
+                borderRadius: `${DASHBOARD_WIDGET.outerRadiusPx}px`,
+                maxHeight: 'calc(150vh - 504px)',
+                paddingBottom: '16px',
+              }}>
                 <CardHeader
                   title="To-Dos"
                   action={
