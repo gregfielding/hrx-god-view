@@ -450,3 +450,69 @@ export const backfillMyJobOrderChecklistTasks = onCall({ cors: true, region: 'us
 
   return { success: true, jobOrders: ids.length, synced };
 });
+
+/**
+ * Callable (admin-only): backfill checklist tasks for all tenant users with securityLevel 5-7.
+ * This is intended for one-off catchup after enabling checklist→tasks.
+ */
+export const backfillChecklistTasksForTenantAdmins = onCall(
+  { cors: true, region: 'us-central1', timeoutSeconds: 540, memory: '512MiB' },
+  async (request) => {
+    SafeFunctionUtils.resetCounters();
+    CostTracker.reset();
+
+    const tenantId = (request.data?.tenantId || '').toString();
+    const callerId = request.auth?.uid || '';
+    if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId is required');
+    if (!callerId) throw new HttpsError('unauthenticated', 'Authentication required');
+
+    // Must be tenant admin (securityLevel 5-7) in this tenant
+    const callerSnap = await db.collection('users').doc(callerId).get();
+    const callerData = callerSnap.data() || {};
+    const callerTenant = (callerData as any)?.tenantIds?.[tenantId] || {};
+    const callerLevel = parseInt(String(callerTenant.securityLevel || (callerData as any).securityLevel || '0'), 10);
+    if (!(callerLevel >= 5 && callerLevel <= 7)) {
+      throw new HttpsError('permission-denied', 'Admin permissions required');
+    }
+
+    const usersRef = db.collection('users');
+    const q = usersRef.where(`tenantIds.${tenantId}.securityLevel`, 'in', ['5', '6', '7']).limit(300);
+    const userSnaps = await q.get();
+
+    let admins = 0;
+    let totalJobOrders = 0;
+    let syncedJobOrders = 0;
+
+    for (const userDoc of userSnaps.docs) {
+      SafeFunctionUtils.checkSafetyLimits();
+      CostTracker.trackOperation('backfillAdminUser', 0.001);
+
+      const userId = userDoc.id;
+      admins++;
+
+      const jobOrdersRef = db.collection('tenants').doc(tenantId).collection('job_orders');
+      const [snapAssigned, snapLegacy] = await Promise.all([
+        jobOrdersRef.where('assignedRecruiters', 'array-contains', userId).limit(300).get(),
+        jobOrdersRef.where('recruiterId', '==', userId).limit(300).get(),
+      ]);
+      const ids = Array.from(new Set([...snapAssigned.docs.map((d) => d.id), ...snapLegacy.docs.map((d) => d.id)]));
+      totalJobOrders += ids.length;
+
+      for (const jobOrderId of ids) {
+        SafeFunctionUtils.checkSafetyLimits();
+        CostTracker.trackOperation('backfillAdminJobOrder', 0.001);
+        await syncForJobOrder(tenantId, jobOrderId, false);
+        syncedJobOrders++;
+      }
+    }
+
+    return {
+      success: true,
+      tenantId,
+      admins,
+      totalJobOrders,
+      syncedJobOrders,
+      cost: CostTracker.getCostSummary(),
+    };
+  }
+);

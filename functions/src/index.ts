@@ -48,6 +48,7 @@ export {
   jobOrderChecklistTasksOnShiftUpdated,
   jobOrderChecklistTasksOnShiftDeleted,
   backfillMyJobOrderChecklistTasks,
+  backfillChecklistTasksForTenantAdmins,
 } from './jobOrderChecklistTasks';
 
 import { linkContactsToCompanies } from './linkContactsToCompanies';

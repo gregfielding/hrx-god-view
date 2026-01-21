@@ -41,9 +41,10 @@ import UnifiedTaskCard from '../components/UnifiedTaskCard';
 import UnifiedTaskCreateModal from '../components/UnifiedTaskCreateModal';
 import UnifiedTaskFilters from '../components/UnifiedTaskFilters';
 import UnifiedTaskSnoozeDialog from '../components/UnifiedTaskSnoozeDialog';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 const UnifiedTasksPage: React.FC = () => {
-  const { user } = useAuth();
+  const { user, activeTenant, securityLevel } = useAuth();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
@@ -51,6 +52,8 @@ const UnifiedTasksPage: React.FC = () => {
   const [snoozeTask, setSnoozeTask] = useState<UnifiedTask | null>(null);
   const [showSnoozeDialog, setShowSnoozeDialog] = useState(false);
   const [completingTaskId, setCompletingTaskId] = useState<string | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
+  const [backfillMsg, setBackfillMsg] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   const taskFilters = useTaskFilters();
@@ -78,6 +81,31 @@ const UnifiedTasksPage: React.FC = () => {
     includeCompleted: showCompleted,
   });
   const mutations = useTaskMutations();
+
+  const canRunBackfill = (() => {
+    const lvl = parseInt(String(securityLevel || '0'), 10);
+    return lvl >= 5 && !!activeTenant?.id;
+  })();
+
+  const runChecklistBackfill = async () => {
+    if (!activeTenant?.id || !user?.uid) return;
+    setBackfillBusy(true);
+    setBackfillMsg(null);
+    try {
+      const fn = httpsCallable(getFunctions(undefined, 'us-central1'), 'backfillChecklistTasksForTenantAdmins');
+      const res: any = await fn({ tenantId: activeTenant.id });
+      const data = res?.data || {};
+      setBackfillMsg(
+        `Backfill complete: ${data.syncedJobOrders || 0} job orders across ${data.admins || 0} admins`
+      );
+      // Force refresh to pick up new tasks
+      refresh();
+    } catch (err: any) {
+      setBackfillMsg(err?.message || 'Backfill failed');
+    } finally {
+      setBackfillBusy(false);
+    }
+  };
 
   const handleCompleteTask = async (task: UnifiedTask) => {
     setCompletingTaskId(task.id);
@@ -215,6 +243,17 @@ const UnifiedTasksPage: React.FC = () => {
         subtitle="All your tasks in one place"
         filters={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {canRunBackfill && (
+              <Button
+                variant="outlined"
+                size="small"
+                disabled={backfillBusy}
+                onClick={runChecklistBackfill}
+                sx={{ flexShrink: 0 }}
+              >
+                {backfillBusy ? 'Backfilling…' : 'Backfill checklist tasks'}
+              </Button>
+            )}
             <Button
               variant={taskFilters.hasActiveFilters ? 'contained' : 'outlined'}
               startIcon={<FilterListIcon />}
@@ -237,6 +276,11 @@ const UnifiedTasksPage: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            {backfillMsg && (
+              <Typography variant="caption" color="text.secondary" sx={{ maxWidth: 360 }}>
+                {backfillMsg}
+              </Typography>
+            )}
             <TextField
               inputRef={searchInputRef}
               placeholder="Search tasks... (Press 'N' to add)"
