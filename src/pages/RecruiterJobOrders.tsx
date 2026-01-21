@@ -753,14 +753,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {jobOrder.jobOrderName}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
-                        <Typography variant="body2">
-                          {jobOrder.jobTitle || 'No Job Title'}
+                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                          {jobOrder.jobOrderName}
                         </Typography>
                         {(() => {
                           const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
@@ -768,9 +763,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                             (jobOrder as any)?.deal?.associations?.contacts ||
                             (jobOrder as any)?.deal?.associations?.contactsIds ||
                             [];
-                          const locationObj = jobOrder.locationName
-                            ? { name: jobOrder.locationName }
-                            : undefined;
+                          const locationObj = jobOrder.locationName ? { name: jobOrder.locationName } : undefined;
                           const shiftsCount = Number(
                             (jobOrder as any)?.shiftsCount ??
                               (jobOrder as any)?.shiftCount ??
@@ -790,16 +783,15 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                           });
 
                           return (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ lineHeight: 1.2 }}
-                            >
+                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
                               Order Setup: {progress.completed}/{progress.total}
                             </Typography>
                           );
                         })()}
                       </Box>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">{jobOrder.jobTitle || 'No Job Title'}</Typography>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
