@@ -95,6 +95,27 @@ async function hasAnyShift(tenantId: string, jobOrderId: string): Promise<boolea
   return !snap.empty;
 }
 
+// Bulk-safe variants: do NOT use SafeFunctionUtils.checkSafetyLimits/safeQuery,
+// because its built-in rate limiter will throw inside tight loops and produce 429s.
+async function loadJobPostsBulk(tenantId: string, jobOrderId: string): Promise<any[]> {
+  CostTracker.trackOperation('loadJobPostsBulk', 0.001);
+  const ref = db.collection('tenants').doc(tenantId).collection('job_postings');
+  const snap = await ref.where('jobOrderId', '==', jobOrderId).limit(50).get();
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
+}
+
+async function hasAnyShiftBulk(tenantId: string, jobOrderId: string): Promise<boolean> {
+  CostTracker.trackOperation('hasAnyShiftBulk', 0.001);
+  const ref = db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('job_orders')
+    .doc(jobOrderId)
+    .collection('shifts');
+  const snap = await ref.limit(1).get();
+  return !snap.empty;
+}
+
 function computeChecklistStatuses(jobOrder: any, jobPosts: any[], hasShiftCreated: boolean): Record<ChecklistItemId, boolean> {
   const worksiteName = jobOrder?.worksiteName || jobOrder?.deal?.worksiteName;
   const hasLocation =
@@ -248,6 +269,88 @@ async function upsertChecklistTasksForAssignees(opts: {
   await batch.commit();
 }
 
+async function upsertChecklistTasksForAssigneesBulk(opts: {
+  tenantId: string;
+  jobOrderId: string;
+  jobOrder: any;
+  assigneeIds: string[];
+  cleanupAssigneeIds?: string[];
+  jobPosts: any[];
+  shiftCreated: boolean;
+}): Promise<void> {
+  const { tenantId, jobOrderId, jobOrder, assigneeIds, cleanupAssigneeIds = [], jobPosts, shiftCreated } = opts;
+
+  CostTracker.trackOperation('syncChecklistTasksBulk', 0.002);
+
+  const now = new Date();
+  const scheduledDate = toIsoDate(now);
+  const statuses = computeChecklistStatuses(jobOrder, jobPosts, shiftCreated);
+
+  const tasksRef = db.collection('tenants').doc(tenantId).collection('tasks');
+  const batch = db.batch();
+
+  const jobOrderNumber = jobOrder?.jobOrderNumber ? `#${jobOrder.jobOrderNumber}` : '';
+  const jobOrderName = jobOrder?.jobOrderName || jobOrder?.title || 'Job Order';
+  const taskPrefix = `Order Setup: ${jobOrderName}${jobOrderNumber ? ` (${jobOrderNumber})` : ''}`;
+
+  for (const assigneeId of assigneeIds) {
+    const safeAssigneeId = sanitizeAssigneeId(assigneeId);
+    if (!safeAssigneeId) continue;
+    for (const item of CHECKLIST_ITEMS) {
+      const complete = !!statuses[item.id];
+      const id = taskDocId(jobOrderId, item.id, safeAssigneeId);
+      const ref = tasksRef.doc(id);
+      const base = {
+        title: `${taskPrefix} — ${item.label}`,
+        description: `System-managed checklist task for job order ${jobOrderId}.`,
+        type: 'admin',
+        priority: 'medium',
+        status: complete ? 'completed' : 'upcoming',
+        classification: 'todo',
+        scheduledDate,
+        dueDate: scheduledDate,
+        assignedTo: safeAssigneeId,
+        createdBy: 'system',
+        createdByName: 'System',
+        tenantId,
+        category: 'admin',
+        quotaCategory: 'recruiting',
+        tags: ['job_order_setup', jobOrderId, item.id],
+        systemManaged: true,
+        systemSource: 'job_order_checklist',
+        sourceType: 'recruiting',
+        sourceId: jobOrderId,
+        sourceName: jobOrderName,
+        jobOrderId,
+        checklistItemId: item.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      } as any;
+
+      base.completedAt = complete ? admin.firestore.FieldValue.serverTimestamp() : null;
+
+      batch.set(
+        ref,
+        {
+          ...base,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  }
+
+  for (const assigneeId of cleanupAssigneeIds) {
+    const safeAssigneeId = sanitizeAssigneeId(assigneeId);
+    if (!safeAssigneeId) continue;
+    for (const item of CHECKLIST_ITEMS) {
+      const id = taskDocId(jobOrderId, item.id, safeAssigneeId);
+      batch.delete(tasksRef.doc(id));
+    }
+  }
+
+  await batch.commit();
+}
+
 async function syncForJobOrder(tenantId: string, jobOrderId: string, cleanupRemovedAssignees?: boolean, before?: any, after?: any) {
   const snap = after
     ? { exists: true, data: () => after }
@@ -274,6 +377,41 @@ async function syncForJobOrder(tenantId: string, jobOrderId: string, cleanupRemo
     jobOrder,
     assigneeIds: assignees,
     cleanupAssigneeIds: cleanupAssignees,
+  });
+}
+
+async function syncForJobOrderBulk(tenantId: string, jobOrderId: string, cleanupRemovedAssignees?: boolean, before?: any, after?: any) {
+  const snap = after
+    ? { exists: true, data: () => after }
+    : await db.collection('tenants').doc(tenantId).collection('job_orders').doc(jobOrderId).get();
+  if (!snap.exists) return;
+
+  const jobOrder = snap.data() as any;
+  const assignees = getAssignees(jobOrder);
+  if (assignees.length === 0) return;
+
+  const cleanupAssignees: string[] = [];
+  if (cleanupRemovedAssignees && before && after) {
+    const beforeAssignees = getAssignees(before);
+    const afterAssignees = getAssignees(after);
+    beforeAssignees.forEach((a) => {
+      if (!afterAssignees.includes(a)) cleanupAssignees.push(a);
+    });
+  }
+
+  const [jobPosts, shiftCreated] = await Promise.all([
+    loadJobPostsBulk(tenantId, jobOrderId),
+    hasAnyShiftBulk(tenantId, jobOrderId),
+  ]);
+
+  await upsertChecklistTasksForAssigneesBulk({
+    tenantId,
+    jobOrderId,
+    jobOrder,
+    assigneeIds: assignees,
+    cleanupAssigneeIds: cleanupAssignees,
+    jobPosts,
+    shiftCreated,
   });
 }
 
@@ -442,9 +580,8 @@ export const backfillMyJobOrderChecklistTasks = onCall({ cors: true, region: 'us
 
   let synced = 0;
   for (const jobOrderId of ids) {
-    SafeFunctionUtils.checkSafetyLimits();
     CostTracker.trackOperation('backfillJobOrder', 0.001);
-    await syncForJobOrder(tenantId, jobOrderId, false);
+    await syncForJobOrderBulk(tenantId, jobOrderId, false);
     synced++;
   }
 
@@ -484,7 +621,6 @@ export const backfillChecklistTasksForTenantAdmins = onCall(
     let syncedJobOrders = 0;
 
     for (const userDoc of userSnaps.docs) {
-      SafeFunctionUtils.checkSafetyLimits();
       CostTracker.trackOperation('backfillAdminUser', 0.001);
 
       const userId = userDoc.id;
@@ -499,9 +635,8 @@ export const backfillChecklistTasksForTenantAdmins = onCall(
       totalJobOrders += ids.length;
 
       for (const jobOrderId of ids) {
-        SafeFunctionUtils.checkSafetyLimits();
         CostTracker.trackOperation('backfillAdminJobOrder', 0.001);
-        await syncForJobOrder(tenantId, jobOrderId, false);
+        await syncForJobOrderBulk(tenantId, jobOrderId, false);
         syncedJobOrders++;
       }
     }
