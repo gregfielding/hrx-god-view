@@ -38,6 +38,15 @@ import { discoverCompanyUrls } from './discoverCompanyUrls';
 import { getSalespeople } from './getSalespeople';
 import { scrapeIndeedJobs } from './scrapeIndeedJobs';
 import { addJobTitle } from './addJobTitle';
+export {
+  jobOrderChecklistTasksOnJobOrderWrite,
+  jobOrderChecklistTasksOnJobPostingCreated,
+  jobOrderChecklistTasksOnJobPostingUpdated,
+  jobOrderChecklistTasksOnJobPostingDeleted,
+  jobOrderChecklistTasksOnShiftCreated,
+  jobOrderChecklistTasksOnShiftUpdated,
+  jobOrderChecklistTasksOnShiftDeleted,
+} from './jobOrderChecklistTasks';
 
 import { linkContactsToCompanies } from './linkContactsToCompanies';
 import { linkCRMEntities } from './linkCRMEntities';
