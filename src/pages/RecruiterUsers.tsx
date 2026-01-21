@@ -32,7 +32,7 @@ import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { collection, getDocs, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData } from 'firebase/firestore';
+import { collection, getDocs, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData, documentId } from 'firebase/firestore';
 import { SelectChangeEvent } from '@mui/material/Select';
 
 import FavoriteButton from '../components/FavoriteButton';
@@ -91,7 +91,7 @@ interface TenantUserGroup {
 
 const RecruiterUsers: React.FC = () => {
   const navigate = useNavigate();
-  const { activeTenant } = useAuth();
+  const { activeTenant, user } = useAuth();
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
   const [localSearch, setLocalSearch] = useState('');
   const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
@@ -105,6 +105,7 @@ const RecruiterUsers: React.FC = () => {
   const { cacheState, updateCache } = usePageCache({
     pageKey: 'users',
     defaultState: {
+      usersScope: 'all',
       securityLevelFilter: 'all',
       groupFilter: 'all',
       skillFilter: 'all',
@@ -139,6 +140,10 @@ const RecruiterUsers: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [usersScope, setUsersScope] = useState<'all' | 'my'>(
+    cacheState.usersScope === 'my' ? 'my' : 'all'
+  );
   
   // Pagination state
   const [lastVisibleDoc, setLastVisibleDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -173,11 +178,12 @@ const RecruiterUsers: React.FC = () => {
     setLastVisibleDoc(null);
     setHasMore(true);
     loadUsers(activeTenant.id, true);
-  }, [activeTenant?.id, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
+  }, [activeTenant?.id, usersScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
 
   // Update cache when filters change
   useEffect(() => {
     updateCache({
+      usersScope,
       securityLevelFilter,
       groupFilter,
       skillFilter,
@@ -185,12 +191,12 @@ const RecruiterUsers: React.FC = () => {
       sortBy,
       sortDirection,
     });
-  }, [securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, sortDirection, updateCache]);
+  }, [usersScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, sortDirection, updateCache]);
 
   // Reset client pagination when filters/search change
   useEffect(() => {
     setPage(0);
-  }, [searchTerm, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
+  }, [searchTerm, usersScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
 
   const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin') => {
     if (sortBy === key) {
@@ -230,45 +236,21 @@ const RecruiterUsers: React.FC = () => {
 
     try {
       const usersRef = collection(db, 'users');
-      
-      // Build base query
-      let q = query(
-        usersRef,
-        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
-      );
 
-      // Add ordering for pagination (required for startAfter)
-      q = query(q, orderBy('createdAt', 'desc'));
-      
-      // When search or filters are active, load more aggressively (up to 500 users)
-      // This ensures search/filters query the full collection
-      const hasActiveFilters = searchTerm || 
-        securityLevelFilter !== 'all' || 
-        groupFilter !== 'all' || 
-        skillFilter !== 'all' || 
-        stateFilter !== 'all';
-      
-      const effectivePageSize = hasActiveFilters ? 500 : PAGE_SIZE;
-      
-      // Add limit
-      q = query(q, limit(effectivePageSize));
-      
-      // If loading more, start after last document
-      if (!isInitialLoad && lastVisibleDoc) {
-        q = query(q, startAfter(lastVisibleDoc));
-      }
+      const chunk = <T,>(arr: T[], size: number): T[][] => {
+        const out: T[][] = [];
+        for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+        return out;
+      };
 
-      const snapshot = await getDocs(q);
-      
-      // Track last document for pagination
-      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-      setLastVisibleDoc(lastDoc || null);
-      setHasMore(snapshot.docs.length === effectivePageSize);
-
-      const data: RecruiterUser[] = snapshot.docs.map((userDoc) => {
+      const mapUserDocToRecruiterUser = (userDoc: any): RecruiterUser | null => {
         const userData = userDoc.data() as any;
-        const tenantData = userData.tenantIds?.[tenantId] || {};
+        const tenantData = userData.tenantIds?.[tenantId] || null;
+        if (!tenantData) return null;
+
         const securityLevel = tenantData.securityLevel || userData.securityLevel || '0';
+        if (!['0', '1', '2', '3', '4'].includes(String(securityLevel))) return null;
+
         const rawSkills = Array.isArray(userData.skills)
           ? userData.skills
           : Array.isArray(tenantData.skills)
@@ -313,7 +295,178 @@ const RecruiterUsers: React.FC = () => {
           skills: normalizedSkills,
           state: userData.state || userData.address?.state || '',
         };
-      });
+      };
+
+      const extractUserId = (data: any): string | null => {
+        if (!data || typeof data !== 'object') return null;
+        const candidate =
+          data.userId ||
+          data.candidateId ||
+          data.applicantId ||
+          data.workerId ||
+          data.employeeId ||
+          data.uid ||
+          data.userUID ||
+          null;
+        return typeof candidate === 'string' && candidate.trim() ? candidate : null;
+      };
+
+      if (usersScope === 'my') {
+        const uid = user?.uid;
+        if (!uid) {
+          setUsers([]);
+          setLastVisibleDoc(null);
+          setHasMore(false);
+          return;
+        }
+
+        // My Job Orders: assignedRecruiters contains me OR legacy recruiterId == me
+        const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
+        const [snapAssigned, snapLegacy] = await Promise.all([
+          getDocs(query(jobOrdersRef, where('assignedRecruiters', 'array-contains', uid), limit(500))),
+          getDocs(query(jobOrdersRef, where('recruiterId', '==', uid), limit(500))),
+        ]);
+        const jobOrderIds = Array.from(
+          new Set([...snapAssigned.docs.map((d) => d.id), ...snapLegacy.docs.map((d) => d.id)])
+        );
+
+        if (jobOrderIds.length === 0) {
+          setUsers([]);
+          setLastVisibleDoc(null);
+          setHasMore(false);
+          return;
+        }
+
+        const idSet = new Set<string>();
+        const chunks = chunk(jobOrderIds, 10);
+
+        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+        const jobApplicationsRef = collection(db, 'tenants', tenantId, 'job_applications');
+        const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+
+        await Promise.all(
+          chunks.map(async (ids) => {
+            try {
+              const snap = await getDocs(query(applicationsRef, where('jobOrderId', 'in', ids)));
+              snap.docs.forEach((d) => {
+                const id = extractUserId(d.data());
+                if (id) idSet.add(id);
+              });
+            } catch {
+              // ignore
+            }
+          })
+        );
+
+        await Promise.all(
+          chunks.map(async (ids) => {
+            try {
+              const snap = await getDocs(query(jobApplicationsRef, where('jobOrderId', 'in', ids)));
+              snap.docs.forEach((d) => {
+                const id = extractUserId(d.data());
+                if (id) idSet.add(id);
+              });
+            } catch {
+              // ignore
+            }
+          })
+        );
+
+        await Promise.all(
+          chunks.map(async (ids) => {
+            try {
+              const snap = await getDocs(query(assignmentsRef, where('jobOrderId', 'in', ids)));
+              snap.docs.forEach((d) => {
+                const id = extractUserId(d.data());
+                if (id) idSet.add(id);
+              });
+            } catch {
+              // ignore
+            }
+          })
+        );
+
+        // Phase2 job-linked applications path: tenants/{tenantId}/job_orders/{jobOrderId}/applications
+        await Promise.all(
+          jobOrderIds.map(async (jobOrderId) => {
+            try {
+              const subRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications');
+              const snap = await getDocs(subRef);
+              snap.docs.forEach((d) => {
+                const id = extractUserId(d.data());
+                if (id) idSet.add(id);
+              });
+            } catch {
+              // ignore
+            }
+          })
+        );
+
+        const myUserIds = Array.from(idSet);
+        if (myUserIds.length === 0) {
+          setUsers([]);
+          setLastVisibleDoc(null);
+          setHasMore(false);
+          return;
+        }
+
+        const userIdChunks = chunk(myUserIds, 10);
+        const userDocs = (
+          await Promise.all(
+            userIdChunks.map(async (ids) => {
+              const snap = await getDocs(query(usersRef, where(documentId(), 'in', ids)));
+              return snap.docs;
+            })
+          )
+        ).flat();
+
+        const mapped = userDocs
+          .map((d) => mapUserDocToRecruiterUser(d))
+          .filter((u): u is RecruiterUser => !!u);
+
+        setUsers(mapped);
+        setLastVisibleDoc(null);
+        setHasMore(false);
+        return;
+      }
+      
+      // Build base query
+      let q = query(
+        usersRef,
+        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
+      );
+
+      // Add ordering for pagination (required for startAfter)
+      q = query(q, orderBy('createdAt', 'desc'));
+      
+      // When search or filters are active, load more aggressively (up to 500 users)
+      // This ensures search/filters query the full collection
+      const hasActiveFilters = searchTerm || 
+        securityLevelFilter !== 'all' || 
+        groupFilter !== 'all' || 
+        skillFilter !== 'all' || 
+        stateFilter !== 'all';
+      
+      const effectivePageSize = hasActiveFilters ? 500 : PAGE_SIZE;
+      
+      // Add limit
+      q = query(q, limit(effectivePageSize));
+      
+      // If loading more, start after last document
+      if (!isInitialLoad && lastVisibleDoc) {
+        q = query(q, startAfter(lastVisibleDoc));
+      }
+
+      const snapshot = await getDocs(q);
+      
+      // Track last document for pagination
+      const lastDoc = snapshot.docs[snapshot.docs.length - 1];
+      setLastVisibleDoc(lastDoc || null);
+      setHasMore(snapshot.docs.length === effectivePageSize);
+
+      const data: RecruiterUser[] = snapshot.docs
+        .map((userDoc) => mapUserDocToRecruiterUser(userDoc))
+        .filter((u): u is RecruiterUser => !!u);
       
       // If initial load, replace users; if loading more, append (dedupe by id)
       setUsers((prev) => {
@@ -336,6 +489,7 @@ const RecruiterUsers: React.FC = () => {
   
   // Load more users when clicking "Load More"
   const loadMoreUsers = () => {
+    if (usersScope === 'my') return;
     if (!activeTenant?.id || loadingMore || !hasMore) return;
     loadUsers(activeTenant.id, false);
   };
@@ -701,6 +855,40 @@ const RecruiterUsers: React.FC = () => {
           }}
         >
           <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+            <Box sx={{ display: 'flex', gap: 0.5, mr: 0.5 }}>
+              {[
+                { label: 'All Users', value: 'all' as const },
+                { label: 'My Users', value: 'my' as const },
+              ].map((t) => {
+                const isActive = usersScope === t.value;
+                return (
+                  <Button
+                    key={t.value}
+                    onClick={() => {
+                      setUsersScope(t.value);
+                      updateCache({ usersScope: t.value });
+                    }}
+                    variant="text"
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '999px',
+                      fontSize: '14px',
+                      fontWeight: isActive ? 500 : 400,
+                      color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                      bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                      px: 1.5,
+                      py: 0.75,
+                      minWidth: 'auto',
+                      '&:hover': {
+                        bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                      },
+                    }}
+                  >
+                    {t.label}
+                  </Button>
+                );
+              })}
+            </Box>
             <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
               <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
               <Select
