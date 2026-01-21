@@ -17,6 +17,7 @@ import {
   MenuItem,
   Tooltip,
   Stack,
+  Link,
 } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
@@ -35,6 +36,7 @@ import {
 import { UnifiedTask } from '../types/UnifiedTask';
 import { format, parseISO, isPast, isToday } from 'date-fns';
 import { formatDateForDisplay } from '../utils/dateUtils';
+import { Link as RouterLink } from 'react-router-dom';
 
 interface UnifiedTaskCardProps {
   task: UnifiedTask;
@@ -44,6 +46,11 @@ interface UnifiedTaskCardProps {
   onDelete: () => void;
   onView: () => void;
   onSnoozeClick?: (task: UnifiedTask) => void; // Optional callback to open snooze dialog
+  associationLookups?: {
+    deals?: Record<string, string>;
+    contacts?: Record<string, string>;
+    companies?: Record<string, string>;
+  };
 }
 
 const UnifiedTaskCard: React.FC<UnifiedTaskCardProps> = ({
@@ -54,6 +61,7 @@ const UnifiedTaskCard: React.FC<UnifiedTaskCardProps> = ({
   onEdit,
   onDelete,
   onView,
+  associationLookups,
 }) => {
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
 
@@ -119,6 +127,92 @@ const UnifiedTaskCard: React.FC<UnifiedTaskCardProps> = ({
   const sourceLabel = getSourceLabel(task);
   const dueDateDisplay = getDueDateDisplay();
   const isCompleted = task.status === 'completed';
+
+  const assoc: any = (task as any).associations || {};
+  const dealIds: string[] = Array.isArray(assoc?.deals) ? assoc.deals.filter((x: any) => typeof x === 'string') : [];
+  const contactIds: string[] = Array.isArray(assoc?.contacts) ? assoc.contacts.filter((x: any) => typeof x === 'string') : [];
+  const companyIds: string[] = Array.isArray(assoc?.companies) ? assoc.companies.filter((x: any) => typeof x === 'string') : [];
+
+  // Also include the singular relatedTo association if present
+  if (assoc?.relatedTo?.type && typeof assoc.relatedTo.id === 'string') {
+    if (assoc.relatedTo.type === 'deal' && !dealIds.includes(assoc.relatedTo.id)) dealIds.push(assoc.relatedTo.id);
+    if (assoc.relatedTo.type === 'contact' && !contactIds.includes(assoc.relatedTo.id)) contactIds.push(assoc.relatedTo.id);
+    if (assoc.relatedTo.type === 'company' && !companyIds.includes(assoc.relatedTo.id)) companyIds.push(assoc.relatedTo.id);
+  }
+
+  const shortId = (id: string) => (id.length <= 8 ? id : `${id.slice(0, 6)}…`);
+
+  const renderLinksLine = (
+    label: string,
+    icon: React.ReactNode,
+    ids: string[],
+    kind: 'deal' | 'contact' | 'company'
+  ) => {
+    if (!ids.length) return null;
+    const MAX = 8;
+    const shown = ids.slice(0, MAX);
+    const remaining = ids.length - shown.length;
+
+    const getName = (id: string) => {
+      const map =
+        kind === 'deal'
+          ? associationLookups?.deals
+          : kind === 'contact'
+          ? associationLookups?.contacts
+          : associationLookups?.companies;
+      const fromMap = map?.[id];
+      if (fromMap) return fromMap;
+      // Use optimized relatedToName when it matches the singular association
+      if (assoc?.relatedToName && assoc?.relatedTo?.id === id) return String(assoc.relatedToName);
+      return `${label} ${shortId(id)}`;
+    };
+
+    const toFor = (id: string) => {
+      if (kind === 'deal') return `/crm/deals/${id}`;
+      if (kind === 'contact') return `/contacts/${id}`;
+      return `/companies/${id}`;
+    };
+
+    const remainingNames = remaining
+      ? ids.slice(MAX).map((id) => getName(id)).filter(Boolean).join(', ')
+      : '';
+
+    return (
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.secondary' }}>{icon}</Box>
+        <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0, fontWeight: 600 }}>
+          {label}:
+        </Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', minWidth: 0 }}>
+          {shown.map((id, idx) => (
+            <React.Fragment key={id}>
+              <Link
+                component={RouterLink}
+                to={toFor(id)}
+                underline="hover"
+                onClick={(e) => e.stopPropagation()}
+                sx={{ fontWeight: 600 }}
+              >
+                {getName(id)}
+              </Link>
+              {idx < shown.length - 1 && (
+                <Typography variant="body2" color="text.secondary">
+                  ,
+                </Typography>
+              )}
+            </React.Fragment>
+          ))}
+          {remaining > 0 && (
+            <Tooltip title={remainingNames || `${remaining} more`} arrow>
+              <Typography variant="body2" color="text.secondary" sx={{ cursor: 'help' }}>
+                (+{remaining} more)
+              </Typography>
+            </Tooltip>
+          )}
+        </Box>
+      </Box>
+    );
+  };
 
   return (
     <Card
@@ -241,44 +335,18 @@ const UnifiedTaskCard: React.FC<UnifiedTaskCardProps> = ({
                   sx={{ fontSize: '0.7rem' }}
                 />
               )}
-
-              {/* Linked Objects */}
-              {task.associations?.deals && task.associations.deals.length > 0 && (
-                <Tooltip title={`Linked to ${task.associations.deals.length} deal(s)`}>
-                  <Chip
-                    icon={<AttachMoneyIcon />}
-                    label={`${task.associations.deals.length} deal${task.associations.deals.length > 1 ? 's' : ''}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: '0.7rem' }}
-                  />
-                </Tooltip>
-              )}
-
-              {task.associations?.contacts && task.associations.contacts.length > 0 && (
-                <Tooltip title={`Linked to ${task.associations.contacts.length} contact(s)`}>
-                  <Chip
-                    icon={<PersonIcon />}
-                    label={`${task.associations.contacts.length} contact${task.associations.contacts.length > 1 ? 's' : ''}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: '0.7rem' }}
-                  />
-                </Tooltip>
-              )}
-
-              {task.associations?.companies && task.associations.companies.length > 0 && (
-                <Tooltip title={`Linked to ${task.associations.companies.length} company/companies`}>
-                  <Chip
-                    icon={<BusinessIcon />}
-                    label={`${task.associations.companies.length} company${task.associations.companies.length > 1 ? 'ies' : ''}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontSize: '0.7rem' }}
-                  />
-                </Tooltip>
-              )}
             </Stack>
+
+            {/* Linked Objects (expanded) */}
+            {(dealIds.length > 0 || contactIds.length > 0 || companyIds.length > 0) && (
+              <Box sx={{ mt: 1 }}>
+                <Stack spacing={0.5}>
+                  {renderLinksLine('Deal', <AttachMoneyIcon fontSize="small" />, dealIds, 'deal')}
+                  {renderLinksLine('Contacts', <PersonIcon fontSize="small" />, contactIds, 'contact')}
+                  {renderLinksLine('Company', <BusinessIcon fontSize="small" />, companyIds, 'company')}
+                </Stack>
+              </Box>
+            )}
           </Box>
         </Box>
       </CardContent>

@@ -42,10 +42,12 @@ import UnifiedTaskCard from '../components/UnifiedTaskCard';
 import UnifiedTaskCreateModal from '../components/UnifiedTaskCreateModal';
 import UnifiedTaskFilters from '../components/UnifiedTaskFilters';
 import UnifiedTaskSnoozeDialog from '../components/UnifiedTaskSnoozeDialog';
+import { db } from '../firebase';
+import { collection, documentId, getDocs, query, where } from 'firebase/firestore';
 
 const UnifiedTasksPage: React.FC = () => {
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, activeTenant } = useAuth();
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
@@ -80,6 +82,103 @@ const UnifiedTasksPage: React.FC = () => {
     includeCompleted: showCompleted,
   });
   const mutations = useTaskMutations();
+
+  // --- Linked object lookups (Deal/Contact/Company names) for richer task cards ---
+  const [associationLookups, setAssociationLookups] = useState<{
+    deals: Record<string, string>;
+    contacts: Record<string, string>;
+    companies: Record<string, string>;
+  }>({ deals: {}, contacts: {}, companies: {} });
+
+  useEffect(() => {
+    const allTasks: UnifiedTask[] = Array.isArray(groupedTasks)
+      ? groupedTasks.flatMap((g: any) => (g?.tasks as UnifiedTask[]) || [])
+      : (Object.values((groupedTasks as any) || {}) as UnifiedTask[][]).flat();
+
+    const tenantId = activeTenant?.id || allTasks.find((t) => t?.tenantId)?.tenantId;
+    if (!tenantId) return;
+
+    const dealIds = new Set<string>();
+    const contactIds = new Set<string>();
+    const companyIds = new Set<string>();
+
+    for (const t of allTasks) {
+      const assoc: any = (t as any)?.associations;
+      if (Array.isArray(assoc?.deals)) assoc.deals.forEach((id: any) => typeof id === 'string' && dealIds.add(id));
+      if (Array.isArray(assoc?.contacts)) assoc.contacts.forEach((id: any) => typeof id === 'string' && contactIds.add(id));
+      if (Array.isArray(assoc?.companies)) assoc.companies.forEach((id: any) => typeof id === 'string' && companyIds.add(id));
+
+      // Also support the singular optimized "relatedTo" link if present
+      if (assoc?.relatedTo?.type && typeof assoc.relatedTo.id === 'string') {
+        if (assoc.relatedTo.type === 'deal') dealIds.add(assoc.relatedTo.id);
+        if (assoc.relatedTo.type === 'contact') contactIds.add(assoc.relatedTo.id);
+        if (assoc.relatedTo.type === 'company') companyIds.add(assoc.relatedTo.id);
+      }
+    }
+
+    const chunk = <T,>(arr: T[], size: number) => {
+      const out: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    };
+
+    const buildName = (docData: any, kind: 'deal' | 'contact' | 'company') => {
+      if (!docData) return '';
+      if (kind === 'company') return String(docData.companyName || docData.name || docData.displayName || '').trim();
+      if (kind === 'deal') return String(docData.name || docData.title || docData.dealName || '').trim();
+      // contact
+      const full =
+        docData.fullName ||
+        docData.name ||
+        (docData.firstName || docData.lastName ? `${docData.firstName || ''} ${docData.lastName || ''}`.trim() : '');
+      return String(full || '').trim();
+    };
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const MAX_IN = 10; // Firestore 'in' clause limit
+
+        const fetchMap = async (colPath: string, ids: string[], kind: 'deal' | 'contact' | 'company') => {
+          const out: Record<string, string> = {};
+          if (!ids.length) return out;
+          const ref = collection(db, colPath);
+          const chunks = chunk(ids, MAX_IN);
+          const snaps = await Promise.all(
+            chunks.map((c) => getDocs(query(ref, where(documentId(), 'in', c))))
+          );
+          for (const s of snaps) {
+            s.docs.forEach((d) => {
+              const nm = buildName(d.data(), kind);
+              if (nm) out[d.id] = nm;
+            });
+          }
+          return out;
+        };
+
+        const [deals, contacts, companies] = await Promise.all([
+          fetchMap(`tenants/${tenantId}/crm_deals`, Array.from(dealIds), 'deal'),
+          fetchMap(`tenants/${tenantId}/crm_contacts`, Array.from(contactIds), 'contact'),
+          fetchMap(`tenants/${tenantId}/crm_companies`, Array.from(companyIds), 'company'),
+        ]);
+
+        if (cancelled) return;
+
+        setAssociationLookups((prev) => ({
+          deals: { ...prev.deals, ...deals },
+          contacts: { ...prev.contacts, ...contacts },
+          companies: { ...prev.companies, ...companies },
+        }));
+      } catch (e) {
+        // Soft-fail: cards will fall back to IDs / relatedToName if present
+        console.warn('Failed to load task association names:', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTenant?.id, groupedTasks]);
 
   const handleCompleteTask = async (task: UnifiedTask) => {
     setCompletingTaskId(task.id);
@@ -218,6 +317,7 @@ const UnifiedTasksPage: React.FC = () => {
                     onEdit={() => handleTaskClick(task)}
                     onDelete={() => handleDeleteTask(task.id)}
                     onView={() => handleTaskClick(task)}
+                    associationLookups={associationLookups}
                   />
                 </Box>
               </Fade>
