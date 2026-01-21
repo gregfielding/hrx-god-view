@@ -67,6 +67,7 @@ interface MessageDrawerProps {
   onSend?: (result: { success: boolean; dispatchedChannels?: Channel[]; messageLogIds?: string[] }) => void;
   onMessageSent?: (optimisticMessageId?: string) => void; // Callback after message is sent (for thread replies)
   onOptimisticMessage?: (message: any) => void; // Callback to add optimistic message before sending
+  variant?: 'drawer' | 'inline'; // Render as drawer or inline form
 }
 
 interface SenderOption {
@@ -92,6 +93,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   onSend,
   onMessageSent,
   onOptimisticMessage,
+  variant = 'drawer',
 }) => {
   const { user, activeTenant } = useAuth();
   const effectiveTenantId = tenantId || activeTenant?.id || '';
@@ -939,25 +941,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
     ? internalRecipients[0].name
     : `${internalRecipients.length} Recipients`;
 
-  return (
-    <Drawer
-      anchor="right"
-      open={open}
-      onClose={onClose}
-      PaperProps={{
-        sx: {
-          width: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
-          maxWidth: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
-          minWidth: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
-          boxSizing: 'border-box',
-        },
-      }}
-      ModalProps={{
-        keepMounted: false, // Prevent width recalculation on mount
-      }}
-    >
-      <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* Header */}
+  const formContent = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: variant === 'inline' ? 'auto' : '100%' }}>
+      {/* Header - only show in drawer variant */}
+      {variant === 'drawer' && (
         <Box sx={{ p: 3, borderBottom: 1, borderColor: 'divider' }}>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <Typography variant="h6" component="h2">
@@ -968,9 +955,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
             </IconButton>
           </Box>
         </Box>
+      )}
 
-        {/* Content */}
-        <Box sx={{ flex: 1, overflow: 'auto', p: 3 }}>
+      {/* Content */}
+      <Box sx={{ flex: variant === 'inline' ? 'none' : 1, overflow: 'auto', p: variant === 'inline' ? 2 : 3 }}>
           <Stack spacing={3}>
             {/* Sender Selection */}
             {loadingSenders ? (
@@ -1328,23 +1316,48 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           </Stack>
         </Box>
 
-        {/* Footer Actions */}
-        <Box sx={{ p: 3, borderTop: 1, borderColor: 'divider' }}>
-          <Stack direction="row" spacing={2} justifyContent="flex-end">
-            <Button onClick={onClose} disabled={loading}>
-              Cancel
-            </Button>
-            <Button
-              variant="contained"
-              onClick={handleSend}
-              disabled={loading || channels.length === 0}
-              startIcon={loading ? <CircularProgress size={20} /> : <SendIcon />}
-            >
-              {loading ? 'Sending...' : 'Send'}
-            </Button>
-          </Stack>
-        </Box>
+      {/* Footer Actions */}
+      <Box sx={{ p: variant === 'inline' ? 2 : 3, borderTop: 1, borderColor: 'divider' }}>
+        <Stack direction="row" spacing={2} justifyContent="flex-end">
+          <Button onClick={onClose} disabled={loading}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSend}
+            disabled={loading || channels.length === 0}
+            startIcon={loading ? <CircularProgress size={20} /> : <SendIcon />}
+          >
+            {loading ? 'Sending...' : 'Send'}
+          </Button>
+        </Stack>
       </Box>
+    </Box>
+  );
+
+  if (variant === 'inline') {
+    if (!open) return null;
+    return formContent;
+  }
+
+  return (
+    <Drawer
+      anchor="right"
+      open={open}
+      onClose={onClose}
+      PaperProps={{
+        sx: {
+          width: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
+          maxWidth: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
+          minWidth: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
+          boxSizing: 'border-box',
+        },
+      }}
+      ModalProps={{
+        keepMounted: false, // Prevent width recalculation on mount
+      }}
+    >
+      {formContent}
     </Drawer>
   );
 };

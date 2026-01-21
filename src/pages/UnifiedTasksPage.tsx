@@ -42,6 +42,7 @@ import UnifiedTaskCard from '../components/UnifiedTaskCard';
 import UnifiedTaskCreateModal from '../components/UnifiedTaskCreateModal';
 import UnifiedTaskFilters from '../components/UnifiedTaskFilters';
 import UnifiedTaskSnoozeDialog from '../components/UnifiedTaskSnoozeDialog';
+import TaskDetailsDialog from '../components/TaskDetailsDialog';
 import { db } from '../firebase';
 import { collection, documentId, getDocs, query, where } from 'firebase/firestore';
 
@@ -525,16 +526,19 @@ const UnifiedTasksPage: React.FC = () => {
         />
       )}
 
-      {/* Edit Task Modal */}
+      {/* Edit Task Dialog - using TaskDetailsDialog like dashboard widget */}
       {selectedTask && (
-        <UnifiedTaskCreateModal
+        <TaskDetailsDialog
           open={!!selectedTask}
           onClose={() => setSelectedTask(null)}
-          task={selectedTask}
-          onSuccess={() => {
+          task={selectedTask as any}
+          onTaskUpdated={async (taskId: string) => {
+            // Refresh tasks after update
+            await refresh();
             setSelectedTask(null);
-            refresh();
           }}
+          salespersonId={selectedTask.assignedTo || user?.uid || ''}
+          tenantId={activeTenant?.id || ''}
         />
       )}
 

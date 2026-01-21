@@ -254,6 +254,8 @@ const UserInboxPage: React.FC = () => {
   const [swipeStates, setSwipeStates] = useState<Map<string, { startX: number; startY: number; currentX: number; currentY: number; isSwiping: boolean; direction: 'left' | 'right' | null }>>(new Map());
 
   // Real-time email threads (use when not searching)
+  // Increase limit when starred filter is active to ensure all starred threads are loaded
+  const realtimeLimit = activeFilter === 'starred' ? 1000 : 200;
   const { 
     threads: realtimeThreads, 
     loading: realtimeLoading, 
@@ -264,6 +266,7 @@ const UserInboxPage: React.FC = () => {
     userId: user?.uid || '',
     userEmail: user?.email,
     status: activeFilter === 'trash' ? 'deleted' : 'active',
+    limit: realtimeLimit,
     enabled: !isBackendSearch && !!user?.uid && !!effectiveTenantId,
   });
 
@@ -622,10 +625,12 @@ const UserInboxPage: React.FC = () => {
         'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
       // Build query params based on filter
+      // Increase limit when starred filter is active to ensure all starred threads are loaded
+      const apiLimit = activeFilter === 'starred' ? '1000' : '200';
       const params = new URLSearchParams({
         tenantId: effectiveTenantId,
         userId: user.uid,
-        limit: '200',
+        limit: apiLimit,
       });
 
       // Keep server-side scope aligned with realtime listener:

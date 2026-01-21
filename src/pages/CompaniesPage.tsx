@@ -304,12 +304,9 @@ const CompaniesPage: React.FC = () => {
         setCompaniesHasMore(false);
         setCompaniesLastDoc(null);
       } else {
-        // No search query - use pagination
-        let q: any = query(companiesRef, orderBy('companyName', 'asc'), limit(companiesPageSize));
-        
-        if (startDoc) {
-          q = query(companiesRef, orderBy('companyName', 'asc'), startAfter(startDoc), limit(companiesPageSize));
-        }
+        // No search query - load ALL companies for proper pagination
+        // This allows the pagination component to show the correct total count
+        let q: any = query(companiesRef, orderBy('companyName', 'asc'));
         
         if (filterByUser && currentUser?.uid) {
           q = query(q, where('accountOwnerId', '==', currentUser.uid));
@@ -328,8 +325,9 @@ const CompaniesPage: React.FC = () => {
           }
         }
         
-        setCompaniesLastDoc(snapshot.docs[snapshot.docs.length - 1] || null);
-        setCompaniesHasMore(snapshot.docs.length === companiesPageSize);
+        // No more pagination needed since we loaded all companies
+        setCompaniesLastDoc(null);
+        setCompaniesHasMore(false);
       }
     } catch (error: any) {
       console.error('Error loading companies:', error);

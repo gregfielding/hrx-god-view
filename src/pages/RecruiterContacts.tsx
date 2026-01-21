@@ -263,7 +263,10 @@ const RecruiterContacts: React.FC = () => {
         if (!snapshot.empty) {
           const contactsData: Contact[] = [];
           
-          // Process all contacts
+          // First pass: collect all contact data and unique company/location IDs
+          const companyIds = new Set<string>();
+          const locationKeys = new Set<string>(); // Format: "companyId:locationId"
+          
           for (const contactDoc of snapshot.docs) {
             const contactData = {
               id: contactDoc.id,
@@ -275,35 +278,73 @@ const RecruiterContacts: React.FC = () => {
               contactData.fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim();
             }
             
-            // Load company name if companyId exists
             if (contactData.companyId) {
-              try {
-                const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId);
-                const companySnap = await getDoc(companyRef);
-                if (companySnap.exists()) {
-                  const companyData = companySnap.data();
-                  contactData.companyName = companyData.companyName || companyData.name;
-                }
-              } catch (error) {
-                console.warn(`Error loading company for contact ${contactData.id}:`, error);
-              }
-            }
-            
-            // Load location name if locationId exists
-            if (contactData.locationId && contactData.companyId) {
-              try {
-                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId, 'locations', contactData.locationId);
-                const locationSnap = await getDoc(locationRef);
-                if (locationSnap.exists()) {
-                  const locationData = locationSnap.data();
-                  contactData.locationName = locationData.name || locationData.nickname;
-                }
-              } catch (error) {
-                console.warn(`Error loading location for contact ${contactData.id}:`, error);
+              companyIds.add(contactData.companyId);
+              if (contactData.locationId) {
+                locationKeys.add(`${contactData.companyId}:${contactData.locationId}`);
               }
             }
             
             contactsData.push(contactData);
+          }
+          
+          // Batch load all companies at once
+          const companyMap = new Map<string, any>();
+          if (companyIds.size > 0) {
+            const companyPromises = Array.from(companyIds).map(async (companyId) => {
+              try {
+                const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+                const companySnap = await getDoc(companyRef);
+                if (companySnap.exists()) {
+                  const companyData = companySnap.data();
+                  companyMap.set(companyId, {
+                    companyName: companyData.companyName || companyData.name
+                  });
+                }
+              } catch (error) {
+                console.warn(`Error loading company ${companyId}:`, error);
+              }
+            });
+            await Promise.all(companyPromises);
+          }
+          
+          // Batch load all locations at once
+          const locationMap = new Map<string, any>();
+          if (locationKeys.size > 0) {
+            const locationPromises = Array.from(locationKeys).map(async (key) => {
+              const [companyId, locationId] = key.split(':');
+              try {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
+                const locationSnap = await getDoc(locationRef);
+                if (locationSnap.exists()) {
+                  const locationData = locationSnap.data();
+                  locationMap.set(key, {
+                    locationName: locationData.name || locationData.nickname
+                  });
+                }
+              } catch (error) {
+                console.warn(`Error loading location ${key}:`, error);
+              }
+            });
+            await Promise.all(locationPromises);
+          }
+          
+          // Second pass: enrich contacts with company and location names
+          for (const contactData of contactsData) {
+            if (contactData.companyId) {
+              const companyInfo = companyMap.get(contactData.companyId);
+              if (companyInfo) {
+                contactData.companyName = companyInfo.companyName;
+              }
+              
+              if (contactData.locationId) {
+                const locationKey = `${contactData.companyId}:${contactData.locationId}`;
+                const locationInfo = locationMap.get(locationKey);
+                if (locationInfo) {
+                  contactData.locationName = locationInfo.locationName;
+                }
+              }
+            }
           }
           
           // Filter client-side for substring matching
@@ -347,18 +388,17 @@ const RecruiterContacts: React.FC = () => {
           setContactsHasMore(false);
         }
       } else {
-        // No search - use normal pagination
-        const constraints: any[] = [orderBy('createdAt', 'desc'), limit(contactsPageSize)];
-        
-        if (contactsLastDoc && append) {
-          constraints.push(startAfter(contactsLastDoc));
-        }
-        
-        const q = query(contactsRef, ...constraints);
+        // No search - load ALL contacts for proper pagination
+        // This allows the pagination component to show the correct total count
+        const q = query(contactsRef, orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
         
         if (!snapshot.empty) {
           const contactsData: Contact[] = [];
+          
+          // First pass: collect all contact data and unique company/location IDs
+          const companyIds = new Set<string>();
+          const locationKeys = new Set<string>(); // Format: "companyId:locationId"
           
           for (const contactDoc of snapshot.docs) {
             const contactData = {
@@ -371,40 +411,79 @@ const RecruiterContacts: React.FC = () => {
               contactData.fullName = `${contactData.firstName || ''} ${contactData.lastName || ''}`.trim();
             }
             
-            // Load company name if companyId exists
             if (contactData.companyId) {
-              try {
-                const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId);
-                const companySnap = await getDoc(companyRef);
-                if (companySnap.exists()) {
-                  const companyData = companySnap.data();
-                  contactData.companyName = companyData.companyName || companyData.name;
-                }
-              } catch (error) {
-                console.warn(`Error loading company for contact ${contactData.id}:`, error);
-              }
-            }
-            
-            // Load location name if locationId exists
-            if (contactData.locationId && contactData.companyId) {
-              try {
-                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', contactData.companyId, 'locations', contactData.locationId);
-                const locationSnap = await getDoc(locationRef);
-                if (locationSnap.exists()) {
-                  const locationData = locationSnap.data();
-                  contactData.locationName = locationData.name || locationData.nickname;
-                }
-              } catch (error) {
-                console.warn(`Error loading location for contact ${contactData.id}:`, error);
+              companyIds.add(contactData.companyId);
+              if (contactData.locationId) {
+                locationKeys.add(`${contactData.companyId}:${contactData.locationId}`);
               }
             }
             
             contactsData.push(contactData);
           }
           
+          // Batch load all companies at once
+          const companyMap = new Map<string, any>();
+          if (companyIds.size > 0) {
+            const companyPromises = Array.from(companyIds).map(async (companyId) => {
+              try {
+                const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+                const companySnap = await getDoc(companyRef);
+                if (companySnap.exists()) {
+                  const companyData = companySnap.data();
+                  companyMap.set(companyId, {
+                    companyName: companyData.companyName || companyData.name
+                  });
+                }
+              } catch (error) {
+                console.warn(`Error loading company ${companyId}:`, error);
+              }
+            });
+            await Promise.all(companyPromises);
+          }
+          
+          // Batch load all locations at once
+          const locationMap = new Map<string, any>();
+          if (locationKeys.size > 0) {
+            const locationPromises = Array.from(locationKeys).map(async (key) => {
+              const [companyId, locationId] = key.split(':');
+              try {
+                const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations', locationId);
+                const locationSnap = await getDoc(locationRef);
+                if (locationSnap.exists()) {
+                  const locationData = locationSnap.data();
+                  locationMap.set(key, {
+                    locationName: locationData.name || locationData.nickname
+                  });
+                }
+              } catch (error) {
+                console.warn(`Error loading location ${key}:`, error);
+              }
+            });
+            await Promise.all(locationPromises);
+          }
+          
+          // Second pass: enrich contacts with company and location names
+          for (const contactData of contactsData) {
+            if (contactData.companyId) {
+              const companyInfo = companyMap.get(contactData.companyId);
+              if (companyInfo) {
+                contactData.companyName = companyInfo.companyName;
+              }
+              
+              if (contactData.locationId) {
+                const locationKey = `${contactData.companyId}:${contactData.locationId}`;
+                const locationInfo = locationMap.get(locationKey);
+                if (locationInfo) {
+                  contactData.locationName = locationInfo.locationName;
+                }
+              }
+            }
+          }
+          
           setContacts(prev => append ? [...prev, ...contactsData] : contactsData);
-          setContactsLastDoc(snapshot.docs[snapshot.docs.length - 1]);
-          setContactsHasMore(snapshot.size === contactsPageSize);
+          // No more pagination needed since we loaded all contacts
+          setContactsLastDoc(null);
+          setContactsHasMore(false);
         } else {
           if (!append) {
             setContacts([]);

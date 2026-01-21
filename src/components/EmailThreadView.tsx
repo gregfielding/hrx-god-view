@@ -1190,7 +1190,24 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
             )}
           </Box>
 
-          {/* Attachment tray (thread-level) */}
+          {/* Inline Reply Form */}
+          {replyDrawerOpen && thread && (
+            <Box sx={{ borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+              <MessageDrawer
+                open={true}
+                onClose={() => setReplyDrawerOpen(false)}
+                recipients={getRecipients()}
+                defaultChannels={['email']}
+                defaultSubject={`Re: ${thread.subject}`}
+                threadId={threadId}
+                onMessageSent={(optimisticMessageId) => handleReplySent(optimisticMessageId)}
+                onOptimisticMessage={addOptimisticMessage}
+                variant="inline"
+              />
+            </Box>
+          )}
+
+          {/* Attachment tray (thread-level) - positioned above Reply/Forward buttons */}
           {threadAttachments.length > 0 && (
             <Box
               sx={{
@@ -1307,6 +1324,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                 startIcon={<ReplyIcon />}
                 onClick={handleReply}
                 sx={{ flex: 1 }}
+                disabled={replyDrawerOpen}
               >
                 Reply
               </Button>
@@ -1322,20 +1340,6 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
           </Box>
         </Box>
       </Drawer>
-
-      {/* Reply Drawer */}
-      {thread && (
-        <MessageDrawer
-          open={replyDrawerOpen}
-          onClose={() => setReplyDrawerOpen(false)}
-          recipients={getRecipients()}
-          defaultChannels={['email']}
-          defaultSubject={`Re: ${thread.subject}`}
-          threadId={threadId}
-          onMessageSent={(optimisticMessageId) => handleReplySent(optimisticMessageId)}
-          onOptimisticMessage={addOptimisticMessage}
-        />
-      )}
 
       {/* Forward Drawer */}
       {thread && (
