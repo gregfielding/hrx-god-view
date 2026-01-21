@@ -721,8 +721,8 @@ const RecruiterUsers: React.FC = () => {
                 <MenuItem value="all">All Statuses</MenuItem>
                 <MenuItem value="active_contractor">Active Contractors</MenuItem>
                 <MenuItem value="active_employee">Active Employees</MenuItem>
-                <MenuItem value="3">Candidate</MenuItem>
-                <MenuItem value="2">Applicant</MenuItem>
+                <MenuItem value="3">Candidates</MenuItem>
+                <MenuItem value="2">Applicants</MenuItem>
                 <MenuItem value="1">Dismissed</MenuItem>
                 <MenuItem value="0">Suspended</MenuItem>
               </Select>
