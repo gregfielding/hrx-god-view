@@ -907,30 +907,58 @@ export const getGmailMailboxCounts = onCall(
       };
     };
 
+    // IMPORTANT:
+    // Gmail category labels (CATEGORY_PROMOTIONS, etc.) can remain on messages even after archiving,
+    // so `labels.get(...).threadsUnread` for those categories can drift from what Gmail/Mimestream show
+    // inside the Inbox. To match Gmail/Mimestream "Inbox tab" semantics, we compute category unread as:
+    //   UNREAD threads with labels: INBOX + CATEGORY_*
+    const fetchUnreadThreadsInInboxForCategory = async (categoryLabelId: string) => {
+      const res = await gmail.users.threads.list({
+        userId: 'me',
+        labelIds: ['INBOX', categoryLabelId],
+        q: 'is:unread',
+        maxResults: 1,
+      });
+      return Number((res.data as any)?.resultSizeEstimate || 0);
+    };
+
+    const fetchUnreadThreadsForLabel = async (labelId: string) => {
+      const res = await gmail.users.threads.list({
+        userId: 'me',
+        labelIds: [labelId],
+        q: 'is:unread',
+        maxResults: 1,
+        // For SPAM, Gmail treats it like a system mailbox, not Inbox.
+        includeSpamTrash: labelId === 'SPAM' ? true : undefined,
+      } as any);
+      return Number((res.data as any)?.resultSizeEstimate || 0);
+    };
+
     // Gmail system label IDs:
     // - INBOX
     // - CATEGORY_PERSONAL / SOCIAL / PROMOTIONS / UPDATES / FORUMS
     // - SPAM / STARRED / SENT
-    const [
-      inbox,
-      personal,
-      social,
-      promotions,
-      updates,
-      forums,
-      spam,
-      starred,
-      sent,
-    ] = await Promise.all([
+    const [inbox, spamLabel, starredLabel, sentLabel] = await Promise.all([
       fetchLabel('INBOX'),
-      fetchLabel('CATEGORY_PERSONAL'),
-      fetchLabel('CATEGORY_SOCIAL'),
-      fetchLabel('CATEGORY_PROMOTIONS'),
-      fetchLabel('CATEGORY_UPDATES'),
-      fetchLabel('CATEGORY_FORUMS'),
       fetchLabel('SPAM'),
       fetchLabel('STARRED'),
       fetchLabel('SENT'),
+    ]);
+
+    const [
+      primaryUnreadInInbox,
+      socialUnreadInInbox,
+      promotionsUnreadInInbox,
+      updatesUnreadInInbox,
+      forumsUnreadInInbox,
+      spamUnread,
+    ] = await Promise.all([
+      fetchUnreadThreadsInInboxForCategory('CATEGORY_PERSONAL'),
+      fetchUnreadThreadsInInboxForCategory('CATEGORY_SOCIAL'),
+      fetchUnreadThreadsInInboxForCategory('CATEGORY_PROMOTIONS'),
+      fetchUnreadThreadsInInboxForCategory('CATEGORY_UPDATES'),
+      fetchUnreadThreadsInInboxForCategory('CATEGORY_FORUMS'),
+      fetchUnreadThreadsForLabel('SPAM'),
     ]);
 
     const counts = {
@@ -939,14 +967,17 @@ export const getGmailMailboxCounts = onCall(
         threadsUnread: inbox.threadsUnread,
         messagesUnread: inbox.messagesUnread,
       },
-      primary: { threadsTotal: personal.threadsTotal, threadsUnread: personal.threadsUnread },
-      social: { threadsTotal: social.threadsTotal, threadsUnread: social.threadsUnread },
-      promotions: { threadsTotal: promotions.threadsTotal, threadsUnread: promotions.threadsUnread },
-      updates: { threadsTotal: updates.threadsTotal, threadsUnread: updates.threadsUnread },
-      forums: { threadsTotal: forums.threadsTotal, threadsUnread: forums.threadsUnread },
-      spam: { threadsTotal: spam.threadsTotal, threadsUnread: spam.threadsUnread },
-      starred: { threadsTotal: starred.threadsTotal, threadsUnread: starred.threadsUnread },
-      sent: { threadsTotal: sent.threadsTotal, threadsUnread: sent.threadsUnread },
+      // Category counts = unread threads *within Inbox* (matches Gmail tab/Mimestream semantics)
+      primary: { threadsTotal: 0, threadsUnread: primaryUnreadInInbox },
+      social: { threadsTotal: 0, threadsUnread: socialUnreadInInbox },
+      promotions: { threadsTotal: 0, threadsUnread: promotionsUnreadInInbox },
+      updates: { threadsTotal: 0, threadsUnread: updatesUnreadInInbox },
+      forums: { threadsTotal: 0, threadsUnread: forumsUnreadInInbox },
+      // Spam is its own mailbox (not an Inbox tab)
+      spam: { threadsTotal: spamLabel.threadsTotal, threadsUnread: spamUnread },
+      // Not currently used for pills, but keep for completeness
+      starred: { threadsTotal: starredLabel.threadsTotal, threadsUnread: starredLabel.threadsUnread },
+      sent: { threadsTotal: sentLabel.threadsTotal, threadsUnread: sentLabel.threadsUnread },
     };
 
     await userRef.set(
