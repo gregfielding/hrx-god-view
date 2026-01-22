@@ -10968,6 +10968,7 @@ export {
   disconnectGmail,
   getGmailUnreadInboxCount,
   getGmailMailboxCounts,
+  getGmailMessageAttachments,
   testGmailEmailCapture,
   testGmailTokenValidity,
   scheduledGmailMonitoring,

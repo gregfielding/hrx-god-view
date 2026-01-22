@@ -6,6 +6,7 @@ import { google } from 'googleapis';
 import { logger } from './utils/logger';
 import { logMessage } from './messaging/messageLogging';
 import { findOrCreateEmailThread, addMessageToThread } from './messaging/emailThreading';
+import { getStorage } from 'firebase-admin/storage';
 
 
 const db = getFirestore();
@@ -41,6 +42,30 @@ function decodeGmailBody(data?: string): string {
     // Best effort: return empty to fall back to snippet
     return '';
   }
+}
+
+function safeFilename(input: string): string {
+  return (input || 'attachment')
+    .replace(/[^\w.\-() ]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120);
+}
+
+function collectAllParts(payload: any, out: any[] = []): any[] {
+  if (!payload) return out;
+  out.push(payload);
+  const parts: any[] = Array.isArray(payload.parts) ? payload.parts : [];
+  for (const part of parts) {
+    collectAllParts(part, out);
+  }
+  return out;
+}
+
+function headerValue(headers: Array<{ name?: string; value?: string }> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const found = headers.find((h) => String(h.name || '').toLowerCase() === name.toLowerCase());
+  return found?.value;
 }
 
 /**
@@ -933,6 +958,187 @@ export const getGmailMailboxCounts = onCall(
     );
 
     return { success: true, counts, cached: false };
+  }
+);
+
+/**
+ * Fetch Gmail attachments (including inline CID images) for a specific Gmail message.
+ * We persist them to Firebase Storage and return signed URLs for rendering/downloading.
+ *
+ * This is used by the email thread view to display inline images and attachments.
+ */
+export const getGmailMessageAttachments = onCall(
+  { cors: true, memory: '512MiB', concurrency: 10 },
+  async (request) => {
+    const { userId, tenantId, gmailMessageId, threadId, maxAgeMs = 10 * 60 * 1000 } = request.data || {};
+    if (!userId || !tenantId || !gmailMessageId) {
+      throw new Error('Missing required fields: userId, tenantId, gmailMessageId');
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData: any = userDoc.data() || {};
+    const gmailTokens = userData?.gmailTokens;
+    if (!gmailTokens?.access_token) {
+      return { success: false, connected: false, attachments: [] };
+    }
+
+    oauth2Client.setCredentials(gmailTokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    // Load message payload to discover attachments + inline images
+    const messageRes = await gmail.users.messages.get({
+      userId: 'me',
+      id: gmailMessageId,
+      format: 'full',
+    });
+    const messageData = messageRes.data as any;
+    const payload = messageData?.payload;
+
+    const parts = collectAllParts(payload, []);
+
+    type AttachmentOut = {
+      id: string;
+      name: string;
+      contentType: string;
+      size: number;
+      storagePath: string;
+      downloadUrl: string;
+      contentId?: string;
+      disposition?: 'inline' | 'attachment';
+    };
+
+    const bucket = getStorage().bucket();
+    const out: AttachmentOut[] = [];
+
+    for (const part of parts) {
+      const attachmentId = part?.body?.attachmentId;
+      if (!attachmentId) continue;
+
+      const mimeType = String(part?.mimeType || 'application/octet-stream');
+      const filenameRaw = String(part?.filename || '');
+      const filename = safeFilename(filenameRaw || `attachment-${attachmentId}`);
+      const size = Number(part?.body?.size || 0);
+
+      const headers = Array.isArray(part?.headers) ? part.headers : [];
+      const contentIdRaw = headerValue(headers, 'Content-ID') || headerValue(headers, 'Content-Id');
+      const contentId = contentIdRaw ? contentIdRaw.replace(/[<>]/g, '').trim() : undefined;
+      const dispRaw = (headerValue(headers, 'Content-Disposition') || '').toLowerCase();
+      const disposition: 'inline' | 'attachment' | undefined =
+        dispRaw.startsWith('inline') ? 'inline' : dispRaw.startsWith('attachment') ? 'attachment' : undefined;
+
+      const storagePath = `tenants/${tenantId}/gmailAttachments/${gmailMessageId}/${attachmentId}-${filename}`;
+      const file = bucket.file(storagePath);
+
+      // Cache: if file exists and is recent, reuse it (avoid re-downloading from Gmail)
+      try {
+        const [exists] = await file.exists();
+        if (exists) {
+          const [meta] = await file.getMetadata().catch(() => [null as any]);
+          const updated = meta?.updated ? new Date(meta.updated).getTime() : null;
+          if (updated && Date.now() - updated <= Number(maxAgeMs)) {
+            const [signedUrl] = await file.getSignedUrl({
+              action: 'read',
+              expires: Date.now() + 60 * 60 * 1000,
+            });
+            out.push({
+              id: attachmentId,
+              name: filenameRaw || filename,
+              contentType: mimeType,
+              size,
+              storagePath,
+              downloadUrl: signedUrl,
+              contentId,
+              disposition,
+            });
+            continue;
+          }
+        }
+      } catch {
+        // ignore cache errors; fall through to fetch
+      }
+
+      const attRes = await gmail.users.messages.attachments.get({
+        userId: 'me',
+        messageId: gmailMessageId,
+        id: attachmentId,
+      });
+
+      const dataStr: string = String((attRes.data as any)?.data || '');
+      const normalized = dataStr.replace(/-/g, '+').replace(/_/g, '/');
+      const buffer = Buffer.from(normalized, 'base64');
+
+      await file.save(buffer, {
+        contentType: mimeType,
+        resumable: false,
+        metadata: {
+          cacheControl: 'private, max-age=3600',
+        },
+      });
+
+      const [signedUrl] = await file.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 60 * 60 * 1000,
+      });
+
+      out.push({
+        id: attachmentId,
+        name: filenameRaw || filename,
+        contentType: mimeType,
+        size,
+        storagePath,
+        downloadUrl: signedUrl,
+        contentId,
+        disposition,
+      });
+    }
+
+    // Best-effort: persist onto our thread message doc so the UI can render without repeated calls
+    if (threadId && out.length > 0) {
+      try {
+        const messagesSnap = await db
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('emailThreads')
+          .doc(String(threadId))
+          .collection('messages')
+          .where('gmailMessageId', '==', gmailMessageId)
+          .limit(1)
+          .get();
+
+        if (!messagesSnap.empty) {
+          await messagesSnap.docs[0].ref.set(
+            {
+              attachments: out.map((a) => ({
+                id: a.id,
+                name: a.name,
+                contentType: a.contentType,
+                size: a.size,
+                storagePath: a.storagePath,
+                downloadUrl: a.downloadUrl,
+                contentId: a.contentId,
+                disposition: a.disposition,
+              })),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+        }
+      } catch (err: any) {
+        logger.warn('Failed to persist Gmail attachments onto message doc', {
+          tenantId,
+          threadId,
+          gmailMessageId,
+          error: err?.message,
+        });
+      }
+    }
+
+    return { success: true, attachments: out };
   }
 );
 

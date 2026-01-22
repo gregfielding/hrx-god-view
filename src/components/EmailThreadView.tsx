@@ -39,6 +39,8 @@ import { isImageAttachment, isPdfAttachment, formatFileSize, getFileIcon, downlo
 import ImageIcon from '@mui/icons-material/Image';
 import PictureAsPdfIcon from '@mui/icons-material/PictureAsPdf';
 import { useAuth } from '../contexts/AuthContext';
+import { functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
 import ContactHoverCard, { ParticipantContact } from './ContactHoverCard';
 import { fetchEmailThreadCached, peekEmailThread } from '../utils/emailThreadCache';
@@ -64,10 +66,13 @@ interface EmailAttachment {
   size: number;
   storagePath: string;
   downloadUrl?: string;
+  contentId?: string;
+  disposition?: 'inline' | 'attachment';
 }
 
 interface EmailMessage {
   id: string;
+  gmailMessageId?: string;
   direction: 'inbound' | 'outbound';
   from: string;
   fromUserId?: string;
@@ -122,6 +127,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   const loadingRef = useRef<string | null>(null); // Track which threadId is currently loading
   const [optimisticMessages, setOptimisticMessages] = useState<Map<string, EmailMessage>>(new Map());
   const [showAllRecipients, setShowAllRecipients] = useState(false);
+  const requestedAssetsRef = useRef<Set<string>>(new Set()); // gmailMessageIds requested for attachment/image resolution
 
   const threadAttachments = useMemo(() => {
     if (!thread?.messages || thread.messages.length === 0) return [];
@@ -137,6 +143,55 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     }
     return all;
   }, [thread?.messages]);
+
+  const resolveCidImages = useCallback((html: string, attachments?: EmailAttachment[]): string => {
+    if (!html) return html;
+    const atts = attachments || [];
+    if (atts.length === 0) return html;
+    // Map contentId -> downloadUrl for inline images
+    const map = new Map<string, string>();
+    for (const a of atts) {
+      if (a.contentId && a.downloadUrl) {
+        map.set(a.contentId.replace(/[<>]/g, '').trim(), a.downloadUrl);
+      }
+    }
+    if (map.size === 0) return html;
+
+    return html.replace(/src=(["'])cid:([^"']+)\1/gi, (match, quote, cid) => {
+      const key = String(cid || '').replace(/[<>]/g, '').trim();
+      const url = map.get(key);
+      if (!url) return match;
+      return `src=${quote}${url}${quote}`;
+    });
+  }, []);
+
+  const maybeLoadGmailAssetsForMessage = useCallback(
+    async (msg: EmailMessage) => {
+      const gmailMessageId = (msg as any).gmailMessageId;
+      if (!gmailMessageId || !user?.uid) return;
+      if (requestedAssetsRef.current.has(gmailMessageId)) return;
+
+      const html = msg.bodyHtml || '';
+      const hasCidImages = /cid:/i.test(html);
+      const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
+      if (!hasCidImages && hasAttachments) return;
+
+      requestedAssetsRef.current.add(gmailMessageId);
+      try {
+        const getAssets = httpsCallable(functions, 'getGmailMessageAttachments');
+        await getAssets({
+          userId: user.uid,
+          tenantId,
+          threadId,
+          gmailMessageId,
+        });
+        // Attachments will be merged into the message doc server-side; realtime will refresh UI.
+      } catch {
+        // best-effort only
+      }
+    },
+    [tenantId, threadId, user?.uid]
+  );
   
   // Real-time messages for the thread
   const { messages: realtimeMessages, loading: messagesLoading } = useThreadMessagesRealtime(
@@ -1066,10 +1121,17 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                           scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
                         }}
                       >
-                        <EmailBodyRenderer
-                          html={message.bodyHtml || ''}
-                          plainText={message.bodyPlain || message.bodySnippet || ''}
-                        />
+                        {(() => {
+                          // Best-effort: load Gmail inline assets (cid images / attachments) when needed
+                          void maybeLoadGmailAssetsForMessage(message);
+                          const resolvedHtml = resolveCidImages(message.bodyHtml || '', message.attachments);
+                          return (
+                            <EmailBodyRenderer
+                              html={resolvedHtml}
+                              plainText={message.bodyPlain || message.bodySnippet || ''}
+                            />
+                          );
+                        })()}
                       </Box>
                       {message.attachments && message.attachments.length > 0 && (
                         <Box sx={{ mt: 2 }}>
