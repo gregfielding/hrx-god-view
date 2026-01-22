@@ -684,11 +684,19 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
 
           {/* Contact Information */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1 }}>
-            {/* Name with Favorite Star */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.25 }}>
+            {/* Name + Contact Type + Favorite Star */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 0.25, flexWrap: 'wrap' }}>
               <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary', fontSize: '1.75rem' }}>
                 {getDisplayName()}
               </Typography>
+              {contact.contactType && (
+                <Chip
+                  label={contact.contactType}
+                  size="small"
+                  color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
+                  sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+                />
+              )}
               {toggleFavorite && (
                 <FavoriteButton
                   itemId={contact.id}
@@ -1285,11 +1293,19 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
       <Box sx={{ display: { xs: 'block', md: 'none' } }}>
         {/* Contact Information */}
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {/* Name with Favorite Star */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {/* Name + Contact Type + Favorite Star */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             <Typography variant="h5" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
               {getDisplayName()}
             </Typography>
+            {contact.contactType && (
+              <Chip
+                label={contact.contactType}
+                size="small"
+                color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
+                sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+              />
+            )}
             {toggleFavorite && (
               <FavoriteButton
                 itemId={contact.id}
