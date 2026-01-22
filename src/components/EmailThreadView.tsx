@@ -148,21 +148,74 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     if (!html) return html;
     const atts = attachments || [];
     if (atts.length === 0) return html;
+    
     // Map contentId -> downloadUrl for inline images
+    // Build map with multiple key formats for flexible matching
     const map = new Map<string, string>();
     for (const a of atts) {
       if (a.contentId && a.downloadUrl) {
-        map.set(a.contentId.replace(/[<>]/g, '').trim(), a.downloadUrl);
+        // Normalize contentId: remove angle brackets and trim
+        const normalized = a.contentId.replace(/[<>]/g, '').trim();
+        // Store with normalized key
+        map.set(normalized, a.downloadUrl);
+        // Also store with original (in case it's already normalized)
+        map.set(a.contentId.trim(), a.downloadUrl);
+        // Store lowercase version for case-insensitive matching
+        map.set(normalized.toLowerCase(), a.downloadUrl);
       }
     }
     if (map.size === 0) return html;
 
-    return html.replace(/src=(["'])cid:([^"']+)\1/gi, (match, quote, cid) => {
+    // Replace cid: references in various formats
+    // Match: src="cid:..." or src='cid:...' or src=cid:...
+    let resolved = html.replace(/src=(["']?)cid:([^"'\s>]+)\1?/gi, (match, quote, cid) => {
       const key = String(cid || '').replace(/[<>]/g, '').trim();
-      const url = map.get(key);
-      if (!url) return match;
-      return `src=${quote}${url}${quote}`;
+      // Try exact match first
+      let url = map.get(key);
+      if (!url) {
+        // Try case-insensitive match
+        url = map.get(key.toLowerCase());
+      }
+      if (!url) {
+        // Try matching just the filename part (before @)
+        const filenamePart = key.split('@')[0];
+        if (filenamePart) {
+          for (const [mapKey, mapUrl] of map.entries()) {
+            if (mapKey.split('@')[0] === filenamePart) {
+              url = mapUrl;
+              break;
+            }
+          }
+        }
+      }
+      if (!url) {
+        // No match found, return original
+        return match;
+      }
+      // Use the quote style from the original match, or default to double quote
+      const quoteChar = quote || '"';
+      return `src=${quoteChar}${url}${quoteChar}`;
     });
+    
+    // Also handle background-image: url(cid:...) patterns
+    resolved = resolved.replace(/background-image:\s*url\(["']?cid:([^"')]+)["']?\)/gi, (match, cid) => {
+      const key = String(cid || '').replace(/[<>]/g, '').trim();
+      let url = map.get(key) || map.get(key.toLowerCase());
+      if (!url) {
+        const filenamePart = key.split('@')[0];
+        if (filenamePart) {
+          for (const [mapKey, mapUrl] of map.entries()) {
+            if (mapKey.split('@')[0] === filenamePart) {
+              url = mapUrl;
+              break;
+            }
+          }
+        }
+      }
+      return url ? `background-image: url("${url}")` : match;
+    });
+    
+    return resolved;
   }, []);
 
   const maybeLoadGmailAssetsForMessage = useCallback(
@@ -174,7 +227,12 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
       const html = msg.bodyHtml || '';
       const hasCidImages = /cid:/i.test(html);
       const hasAttachments = Array.isArray(msg.attachments) && msg.attachments.length > 0;
-      if (!hasCidImages && hasAttachments) return;
+      const hasAttachmentIds = hasAttachments && msg.attachments!.some(a => a.id && !a.downloadUrl);
+      
+      // Load assets if:
+      // 1. HTML contains cid: references (inline images), OR
+      // 2. We have attachments but they don't have download URLs yet
+      if (!hasCidImages && !hasAttachmentIds) return;
 
       requestedAssetsRef.current.add(gmailMessageId);
       try {
@@ -186,8 +244,10 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
           gmailMessageId,
         });
         // Attachments will be merged into the message doc server-side; realtime will refresh UI.
-      } catch {
-        // best-effort only
+      } catch (err) {
+        console.warn('Failed to load Gmail assets for message', gmailMessageId, err);
+        // best-effort only - remove from requested set so we can retry later
+        requestedAssetsRef.current.delete(gmailMessageId);
       }
     },
     [tenantId, threadId, user?.uid]
@@ -371,6 +431,20 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
       });
     }
   }, [realtimeMessages, thread?.id]);
+
+  // Proactively load Gmail assets (attachments/inline images) for all messages when thread loads
+  useEffect(() => {
+    if (!open || !thread?.messages || thread.messages.length === 0) return;
+    
+    // Load assets for all messages that have gmailMessageId
+    for (const msg of thread.messages) {
+      const gmailMessageId = (msg as any).gmailMessageId;
+      if (gmailMessageId) {
+        // Fire and forget - don't block UI
+        void maybeLoadGmailAssetsForMessage(msg);
+      }
+    }
+  }, [open, thread?.messages, maybeLoadGmailAssetsForMessage]);
 
   // Auto-open reply drawer if requested
   useEffect(() => {
