@@ -817,6 +817,125 @@ export const getGmailUnreadInboxCount = onCall(
   }
 );
 
+/**
+ * Get Gmail mailbox counts for common labels/categories (thread totals + unread).
+ * Used for Inbox category badge counts and Primary-only unread sidebar badge.
+ *
+ * Cached on the user doc to avoid rate limits.
+ */
+export const getGmailMailboxCounts = onCall(
+  { cors: true, memory: '256MiB', concurrency: 20 },
+  async (request) => {
+    const { userId, maxAgeMs = 25000 } = request.data || {};
+    if (!userId) {
+      throw new Error('Missing required field: userId');
+    }
+
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    if (!userDoc.exists) {
+      throw new Error('User not found');
+    }
+
+    const userData: any = userDoc.data() || {};
+    const cached = userData.gmailMailboxCounts;
+    const cachedAt = userData.gmailMailboxCountsUpdatedAt;
+
+    const cachedAtMs =
+      cachedAt && typeof cachedAt.toMillis === 'function'
+        ? cachedAt.toMillis()
+        : cachedAt instanceof Date
+          ? cachedAt.getTime()
+          : typeof cachedAt === 'number'
+            ? cachedAt
+            : null;
+
+    if (cached && cachedAtMs && Date.now() - cachedAtMs <= Number(maxAgeMs)) {
+      return { success: true, counts: cached, cached: true };
+    }
+
+    const gmailTokens = userData?.gmailTokens;
+    if (!gmailTokens?.access_token) {
+      const empty = {
+        inbox: { threadsTotal: 0, threadsUnread: 0, messagesUnread: 0 },
+        primary: { threadsTotal: 0, threadsUnread: 0 },
+        social: { threadsTotal: 0, threadsUnread: 0 },
+        promotions: { threadsTotal: 0, threadsUnread: 0 },
+        updates: { threadsTotal: 0, threadsUnread: 0 },
+        forums: { threadsTotal: 0, threadsUnread: 0 },
+        spam: { threadsTotal: 0, threadsUnread: 0 },
+        starred: { threadsTotal: 0, threadsUnread: 0 },
+        sent: { threadsTotal: 0, threadsUnread: 0 },
+      };
+      return { success: true, counts: empty, connected: false };
+    }
+
+    oauth2Client.setCredentials(gmailTokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+    const fetchLabel = async (id: string) => {
+      const res = await gmail.users.labels.get({ userId: 'me', id });
+      return {
+        threadsTotal: Number(res.data.threadsTotal || 0),
+        threadsUnread: Number(res.data.threadsUnread || 0),
+        messagesUnread: Number(res.data.messagesUnread || 0),
+      };
+    };
+
+    // Gmail system label IDs:
+    // - INBOX
+    // - CATEGORY_PERSONAL / SOCIAL / PROMOTIONS / UPDATES / FORUMS
+    // - SPAM / STARRED / SENT
+    const [
+      inbox,
+      personal,
+      social,
+      promotions,
+      updates,
+      forums,
+      spam,
+      starred,
+      sent,
+    ] = await Promise.all([
+      fetchLabel('INBOX'),
+      fetchLabel('CATEGORY_PERSONAL'),
+      fetchLabel('CATEGORY_SOCIAL'),
+      fetchLabel('CATEGORY_PROMOTIONS'),
+      fetchLabel('CATEGORY_UPDATES'),
+      fetchLabel('CATEGORY_FORUMS'),
+      fetchLabel('SPAM'),
+      fetchLabel('STARRED'),
+      fetchLabel('SENT'),
+    ]);
+
+    const counts = {
+      inbox: {
+        threadsTotal: inbox.threadsTotal,
+        threadsUnread: inbox.threadsUnread,
+        messagesUnread: inbox.messagesUnread,
+      },
+      primary: { threadsTotal: personal.threadsTotal, threadsUnread: personal.threadsUnread },
+      social: { threadsTotal: social.threadsTotal, threadsUnread: social.threadsUnread },
+      promotions: { threadsTotal: promotions.threadsTotal, threadsUnread: promotions.threadsUnread },
+      updates: { threadsTotal: updates.threadsTotal, threadsUnread: updates.threadsUnread },
+      forums: { threadsTotal: forums.threadsTotal, threadsUnread: forums.threadsUnread },
+      spam: { threadsTotal: spam.threadsTotal, threadsUnread: spam.threadsUnread },
+      starred: { threadsTotal: starred.threadsTotal, threadsUnread: starred.threadsUnread },
+      sent: { threadsTotal: sent.threadsTotal, threadsUnread: sent.threadsUnread },
+    };
+
+    await userRef.set(
+      {
+        gmailMailboxCounts: counts,
+        gmailMailboxCountsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    return { success: true, counts, cached: false };
+  }
+);
+
 // Add caching for Gmail status to reduce database calls
 const gmailStatusCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_DURATION = 30 * 1000; // 30 seconds cache

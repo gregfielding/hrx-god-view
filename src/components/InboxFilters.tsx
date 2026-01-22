@@ -46,6 +46,7 @@ interface InboxFiltersProps {
   onFilterChange: (filter: InboxFilter) => void;
   unreadCount?: number;
   starredCount?: number;
+  mailboxCounts?: Partial<Record<InboxFilter, number>>; // Badge counts for mailbox/category buttons (Gmail-sourced)
   showCategories?: boolean; // Show Gmail categories (Primary/Social/Promotions/Updates/Forums/Spam)
   orientation?: 'vertical' | 'horizontal'; // Layout orientation
   unreadOnly?: boolean; // Contextual unread toggle within the selected mailbox
@@ -57,6 +58,7 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
   onFilterChange,
   unreadCount = 0,
   starredCount = 0,
+  mailboxCounts,
   showCategories = false,
   orientation = 'vertical',
   unreadOnly = false,
@@ -173,6 +175,21 @@ const InboxFilters: React.FC<InboxFiltersProps> = ({
                 }}
               >
                 {filter.label}
+                {typeof mailboxCounts?.[filter.id] === 'number' && mailboxCounts![filter.id]! > 0 && (
+                  <Chip
+                    label={mailboxCounts![filter.id]! > 99 ? '99+' : mailboxCounts![filter.id]!}
+                    size="small"
+                    sx={{
+                      ml: 0.75,
+                      height: '18px',
+                      fontSize: '0.65rem',
+                      fontWeight: 600,
+                      bgcolor: activeFilter === filter.id ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.1)',
+                      color: activeFilter === filter.id ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                      '& .MuiChip-label': { px: 0.5 },
+                    }}
+                  />
+                )}
               </Button>
             ))}
 

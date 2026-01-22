@@ -316,14 +316,15 @@ const Layout: React.FC = React.memo(function Layout() {
 
     const loadUnreadCount = async () => {
       try {
-        // Preferred semantics: match Gmail's unread INBOX message count
+        // Preferred semantics: match Gmail's unread count for Primary only (CATEGORY_PERSONAL)
         const { functions } = await import('../firebase');
         const { httpsCallable } = await import('firebase/functions');
-        const getUnread = httpsCallable(functions, 'getGmailUnreadInboxCount');
-        const result = await getUnread({ userId: user.uid });
+        const getCounts = httpsCallable(functions, 'getGmailMailboxCounts');
+        const result = await getCounts({ userId: user.uid });
         const data = result.data as any;
-        if (data?.success && typeof data.unreadCount === 'number') {
-          setInboxUnreadCount(data.unreadCount > 99 ? 99 : data.unreadCount);
+        const primaryUnread = Number(data?.counts?.primary?.threadsUnread || 0);
+        if (data?.success && Number.isFinite(primaryUnread)) {
+          setInboxUnreadCount(primaryUnread > 99 ? 99 : primaryUnread);
           return;
         }
         // Fallback: if callable fails, keep old behavior via REST thread count
@@ -331,7 +332,7 @@ const Layout: React.FC = React.memo(function Layout() {
           process.env.REACT_APP_FUNCTIONS_URL ||
           'https://us-central1-hrx1-d3beb.cloudfunctions.net';
         const response = await fetch(
-          `${API_BASE_URL}/listEmailThreadsApi?tenantId=${encodeURIComponent(activeTenant.id)}&userId=${encodeURIComponent(user.uid)}&unreadOnly=true&limit=100`
+          `${API_BASE_URL}/listEmailThreadsApi?tenantId=${encodeURIComponent(activeTenant.id)}&userId=${encodeURIComponent(user.uid)}&category=primary&unreadOnly=true&limit=200`
         );
         if (response.ok) {
           const fallback = await response.json().catch(() => ({}));

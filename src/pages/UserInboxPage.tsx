@@ -209,6 +209,43 @@ const UserInboxPage: React.FC = () => {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
 
+  // Gmail-sourced mailbox badge counts (match Gmail semantics)
+  const [gmailMailboxCounts, setGmailMailboxCounts] = useState<Partial<Record<InboxFilter, number>>>({});
+
+  // Load Gmail mailbox counts for badges (Primary/Social/Promotions/Updates/Forums/Spam)
+  useEffect(() => {
+    if (!user?.uid) {
+      setGmailMailboxCounts({});
+      return;
+    }
+
+    const loadCounts = async () => {
+      try {
+        const getCounts = httpsCallable(functions, 'getGmailMailboxCounts');
+        const result = await getCounts({ userId: user.uid });
+        const data = result.data as any;
+        const counts = data?.counts;
+        if (!data?.success || !counts) return;
+
+        // Show unread thread counts per mailbox to mirror Gmail label semantics.
+        setGmailMailboxCounts({
+          primary: Number(counts.primary?.threadsUnread || 0),
+          social: Number(counts.social?.threadsUnread || 0),
+          promotions: Number(counts.promotions?.threadsUnread || 0),
+          updates: Number(counts.updates?.threadsUnread || 0),
+          forums: Number(counts.forums?.threadsUnread || 0),
+          spam: Number(counts.spam?.threadsUnread || 0),
+        });
+      } catch {
+        // Non-critical: leave badges empty if Gmail is unavailable.
+      }
+    };
+
+    loadCounts();
+    const interval = setInterval(loadCounts, 30000);
+    return () => clearInterval(interval);
+  }, [user?.uid]);
+
   const handleMailboxFilterChange = (filter: InboxFilter) => {
     setActiveFilter(filter);
     // Unread is contextual within a mailbox; reset when switching mailbox views.
@@ -1829,6 +1866,7 @@ const UserInboxPage: React.FC = () => {
               onFilterChange={handleMailboxFilterChange}
               unreadCount={unreadCount}
               starredCount={starredCount}
+              mailboxCounts={gmailMailboxCounts}
               showCategories={true}
               orientation="horizontal"
               unreadOnly={showUnreadOnly}
