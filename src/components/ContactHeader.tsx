@@ -64,6 +64,7 @@ interface ContactHeaderProps {
     facebookUrl?: string;
     instagramUrl?: string;
     website?: string;
+    websiteUrl?: string;
     contactType?: string;
     inferredSeniority?: string;
     lastEnrichedAt?: any;
@@ -385,6 +386,10 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
   };
 
   const engagement = getEngagementLevel();
+
+  // Prefer canonical `website` but tolerate `websiteUrl` (some CRM/enrichment payloads use this key).
+  const websiteUrl = (contact.website || contact.websiteUrl || '').trim();
+  const hasWebsite = !!websiteUrl;
 
   return (
     <Box sx={{ 
@@ -845,6 +850,68 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                   </IconButton>
                 </Tooltip>
               )}
+
+              {/* Website (right after LinkedIn per spec) */}
+              {hasWebsite && (
+                <Tooltip title={`Visit ${websiteUrl}`}>
+                  <IconButton
+                    size="small"
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                    onClick={() => {
+                      let url = websiteUrl;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }}
+                  >
+                    <LanguageIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
+
+              {/* Website (right after LinkedIn per spec) */}
+              {hasWebsite && (
+                <Tooltip title={`Visit ${websiteUrl}`}>
+                  <IconButton
+                    size="small"
+                    sx={{ 
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                      },
+                      transition: 'all 0.2s ease'
+                    }}
+                    onClick={() => {
+                      let url = websiteUrl;
+                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                        url = 'https://' + url;
+                      }
+                      window.open(url, '_blank');
+                    }}
+                  >
+                    <LanguageIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
               
               {contact.twitterUrl && (
                 <Tooltip title="View Twitter Profile">
@@ -942,37 +1009,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                 </Tooltip>
               )}
               
-              {contact.website && (
-                <Tooltip title={`Visit ${contact.website}`}>
-                  <IconButton
-                    size="small"
-                    sx={{ 
-                      p: 1,
-                      color: contact.website ? 'primary.main' : 'text.disabled',
-                      bgcolor: contact.website ? 'action.hover' : 'transparent',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: contact.website ? 'primary.dark' : 'text.disabled',
-                        bgcolor: contact.website ? 'primary.light' : 'transparent',
-                        transform: contact.website ? 'translateY(-1px)' : 'none',
-                        boxShadow: contact.website ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                    onClick={() => {
-                      if (contact.website) {
-                        let url = contact.website;
-                        if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                          url = 'https://' + url;
-                        }
-                        window.open(url, '_blank');
-                      }
-                    }}
-                  >
-                    <LanguageIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-              )}
+              {/* Website icon moved up to right after LinkedIn */}
             </Box>
 
             {/* Contact Type, Engagement, and Seniority - Modern Badge Design */}
@@ -1504,37 +1541,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
               </Tooltip>
             )}
             
-            {contact.website && (
-              <Tooltip title={`Visit ${contact.website}`}>
-                <IconButton
-                  size="small"
-                  sx={{ 
-                    p: 1,
-                    color: contact.website ? 'primary.main' : 'text.disabled',
-                    bgcolor: contact.website ? 'action.hover' : 'transparent',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: contact.website ? 'primary.dark' : 'text.disabled',
-                      bgcolor: contact.website ? 'primary.light' : 'transparent',
-                      transform: contact.website ? 'translateY(-1px)' : 'none',
-                      boxShadow: contact.website ? '0 2px 4px rgba(0,0,0,0.1)' : 'none'
-                    },
-                    transition: 'all 0.2s ease'
-                  }}
-                  onClick={() => {
-                    if (contact.website) {
-                      let url = contact.website;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }
-                  }}
-                >
-                  <LanguageIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-              </Tooltip>
-            )}
+            {/* Website icon moved up to right after LinkedIn */}
           </Box>
 
           {/* Contact Type, Engagement, and Seniority - Modern Badge Design */}
