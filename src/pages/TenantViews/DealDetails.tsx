@@ -90,7 +90,7 @@ import ManageContactsDialog from '../../components/ManageContactsDialog';
 import ManageLocationDialog from '../../components/ManageLocationDialog';
 import NextStepsWidget from '../../components/NextStepsWidget';
 import GenerateJobOrderButton from '../../components/GenerateJobOrderButton';
-import { BreadcrumbNav } from '../../components/BreadcrumbNav';
+import PageHeader from '../../components/PageHeader';
 
 interface DealData {
   id: string;
@@ -1699,8 +1699,17 @@ const DealDetails: React.FC = () => {
 
 
 
+  const dealTabs = [
+    { label: 'Dashboard', icon: <DashboardIcon fontSize="small" />, index: 0 },
+    { label: 'Stages', icon: <StairsIcon fontSize="small" />, index: 1 },
+    { label: 'Notes', icon: <NotesIcon fontSize="small" />, index: 2 },
+    { label: 'Activity', icon: <TimelineIcon fontSize="small" />, index: 3 },
+    { label: 'Draft Job Order', icon: <WorkIcon fontSize="small" />, index: 4 },
+    { label: 'Contracts', icon: <DescriptionIcon fontSize="small" />, index: 5 },
+  ];
+
   return (
-    <Box sx={{ p: 0 }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <style>
         {`
           @keyframes pulse {
@@ -1714,456 +1723,354 @@ const DealDetails: React.FC = () => {
           }
         `}
       </style>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'CRM', href: '/crm' },
-            { label: 'Opportunities', onClick: () => navigate('/crm?tab=opportunities') },
-            { label: deal?.name || 'Deal' },
-          ]}
-        />
-      </Box>
-
-      {/* Enhanced Header - Persistent Deal Information */}
-      <Box sx={{ mb: 3 }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
-            {/* Deal Logo/Avatar */}
-            <Box sx={{ position: 'relative' }}>
+      <PageHeader
+        title={
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
               <Avatar
-                src={company?.logo}
-                alt={company?.companyName || company?.name || 'Deal'}
-                sx={{ 
-                  width: 128, 
-                  height: 128,
-                  bgcolor: 'primary.main',
-                  fontSize: '2rem',
-                  fontWeight: 'bold'
+                src={company?.logo || undefined}
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: company?.logo ? 'transparent' : 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 600,
+                  flexShrink: 0,
                 }}
               >
-                {(company?.companyName || company?.name || 'D').charAt(0).toUpperCase()}
+                {(company?.companyName || company?.name || deal.name || 'D').charAt(0).toUpperCase()}
               </Avatar>
-            </Box>
 
-            {/* Deal Information */}
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                <Typography variant="h4" sx={{ fontWeight: 'bold', color: 'text.primary' }}>
-                  {deal.name}
-                </Typography>
-                <IconButton size="small" aria-label="Edit deal name" onClick={handleStartEditDealName} sx={{ mt: 0.5 }}>
-                  <EditIcon fontSize="small" />
-                </IconButton>
-              </Box>
-              
-              {/* Deal Value Range and Est Close Date */}
-              <Box sx={{ mt: 0, display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
-                {(() => {
-                  const revenueRange = calculateExpectedRevenueRange();
-                  return revenueRange.hasData ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <DealIcon sx={{ fontSize: 18, color: 'success.main' }} />
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        ${revenueRange.min.toLocaleString()} – ${revenueRange.max.toLocaleString()}
-                      </Typography>
-                    </Box>
-                  ) : null;
-                })()}
-                
-                {/* Est Close Date */}
-                {(() => {
-                  const qualData = stageData?.qualification;
-                  const expectedCloseDate = qualData?.expectedCloseDate;
-                  return expectedCloseDate ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                      <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Est. Close:</Typography>
-                      <Typography variant="body2" color="text.primary">
-                        {new Date(expectedCloseDate + 'T00:00:00').toLocaleDateString()}
-                      </Typography>
-                    </Box>
-                  ) : null;
-                })()}
-              </Box>
-
-              {/* Deal Stats */}
-              <Box 
-                className="deal-stats-box"
-                sx={{ 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  gap: 2, 
-                  mt: 0, 
-                  marginTop: 0,
-                  '&.deal-stats-box': {
-                    marginTop: '0 !important'
-                  }
+              <Box
+                sx={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: 108,
                 }}
               >
-                {/* Stage */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, marginTop: 0.25, marginBottom: 0.25 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Stage:</Typography>
-                  <StageChip stage={deal.stage} size="small" useCustomColors={true} />
-                </Box>
-
-                {/* Status */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, marginTop: 0.25, marginBottom: 0.25 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Status:</Typography>
-                  <StatusChip 
-                    status={getCurrentStatus()} 
-                    onStatusChange={handleStatusChange}
-                  />
-                </Box>
-
-
-                {/* Owner */}
-                {deal.owner && (
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Owner:</Typography>
-                    <Typography variant="body2" color="text.primary">{deal.owner}</Typography>
-                  </Box>
-                )}
-              </Box>
-
-              {/* Status Change Information */}
-              {deal?.dealStatusUpdated && getCurrentStatus() !== 'open' && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
-                    Status changed to {deal.dealStatusUpdated.toStatus} by {deal.dealStatusUpdated.changedBy.displayName} on {new Date(deal.dealStatusUpdated.changedAt).toLocaleDateString()}
-                  </Typography>
-                </Box>
-              )}
-
-              {/* Company and Location */}
-              {company && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0 }}>
-                  <BusinessIcon fontSize="small" color="primary" />
-                  <Typography 
-                    variant="body2" 
-                    color="primary"
-                    sx={{ cursor: 'pointer', textDecoration: 'underline', '&:hover': { color: 'primary.dark' } }}
-                    onClick={() => navigate(`/crm/companies/${company.id}`)}
+                {/* Line 1: Deal name */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
                   >
-                    {company.companyName || company.name}
+                    {deal.name}
                   </Typography>
+                  <IconButton size="small" aria-label="Edit deal name" onClick={handleStartEditDealName}>
+                    <EditIcon fontSize="small" />
+                  </IconButton>
+                </Box>
+
+                {/* Line 2: Icon Row (Record Spec) */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', mb: 0.5 }}>
+                  <Tooltip title="Open Sales Coach">
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        if (deal && tenantId) {
+                          openChatGPT({
+                            type: 'sales_coach',
+                            entityType: 'deal',
+                            entityId: deal.id,
+                            entityName: deal.name || 'Deal',
+                            tenantId: tenantId,
+                            associations: {
+                              companies: company ? [company] : [],
+                              contacts: associatedContacts,
+                              deals: [deal],
+                              salespeople: associatedSalespeople,
+                              locations: (deal as any)?.associations?.locations || [],
+                            },
+                          });
+                        }
+                      }}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <RocketLaunchIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowCreateTaskDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Add Note">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <NotesIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Log Activity">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowLogActivityDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <CheckCircleIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                </Box>
+
+                {/* Line 3: Company / Location */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                  {company && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          color: 'rgb(74, 144, 226)',
+                          cursor: 'pointer',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                        onClick={() => navigate(`/crm/companies/${company.id}`)}
+                      >
+                        {company.companyName || company.name}
+                      </Typography>
+                    </Box>
+                  )}
+
                   {(() => {
                     const locations = (deal as any)?.associations?.locations || [];
-                    if (!Array.isArray(locations) || locations.length === 0) return null;
+                    if (!company || !Array.isArray(locations) || locations.length === 0) return null;
                     const locEntry: any = locations.find((l: any) => typeof l === 'object') || locations[0];
                     const locationId = typeof locEntry === 'string' ? locEntry : locEntry.id;
                     const assocName = typeof locEntry === 'string' ? '' : (locEntry.snapshot?.name || locEntry.name || '');
                     const displayName = assocName || locationData?.name || locationData?.nickname || '';
                     if (!locationId || !displayName) return null;
                     return (
-                      <>
-                        <Typography variant="body2" color="text.secondary">/</Typography>
-                        <Typography 
-                          variant="body2" 
-                          color="primary"
-                          sx={{ 
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.35)' }}>
+                          /
+                        </Typography>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontSize: '14px',
+                            fontWeight: 600,
+                            color: 'rgb(74, 144, 226)',
                             cursor: 'pointer',
-                            textDecoration: 'underline',
-                            '&:hover': { color: 'primary.dark' }
+                            '&:hover': { textDecoration: 'underline' },
                           }}
                           onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
                         >
                           {displayName}
                         </Typography>
-                      </>
+                      </Box>
                     );
                   })()}
                 </Box>
-              )}
 
-              {/* Associated Contacts inline */}
-              {Array.isArray(associatedContacts) && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                  <GroupIcon fontSize="small" color="primary" />
-                  {/* <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500, mr: 0.25 }}>Contacts:</Typography> */}
-                  {associatedContacts.length > 0 ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                      {associatedContacts.slice(0, 10).map((contact: any, index: number) => (
-                        <Box key={contact.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <MUILink
-                            underline="hover"
-                            color="primary"
-                            href={`/contacts/${contact.id}`}
-                            onClick={(e) => { e.preventDefault(); navigate(`/contacts/${contact.id}`); }}
-                          >
-                            <Typography variant="body2" color="primary">
-                              {(contact.fullName || contact.name || 'Contact')}
-                            </Typography>
-                          </MUILink>
-                          {index < Math.min(associatedContacts.length, 10) - 1 && (
-                            <Typography variant="body2" color="text.secondary">•</Typography>
-                          )}
-                        </Box>
-                      ))}
-                      {/* {associatedContacts.length > 3 && (
-                        <Typography variant="body2" color="text.secondary">+{associatedContacts.length - 5} more</Typography>
-                      )} */}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">None</Typography>
-                  )}
-                </Box>
-              )}
+                {/* Line 4: Stage / Status / Health */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      Stage:
+                    </Typography>
+                    <StageChip stage={deal.stage} size="small" useCustomColors={true} />
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
+                      Status:
+                    </Typography>
+                    <StatusChip status={getCurrentStatus()} onStatusChange={handleStatusChange} />
+                  </Box>
 
-              {/* Associated Salespeople inline */}
-              {Array.isArray(associatedSalespeople) && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.25, flexWrap: 'wrap' }}>
-                  <PersonIcon fontSize="small" color="primary" />
-                  {associatedSalespeople.length > 0 ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
-                      {associatedSalespeople.slice(0, 10).map((sp: any, index: number) => (
-                        <Box key={sp.id || index} sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <Typography variant="body2" color="text.primary">
-                            {sp.displayName || sp.fullName || sp.name || sp.email || 'Salesperson'}
-                          </Typography>
-                          {index < Math.min(associatedSalespeople.length, 10) - 1 && (
-                            <Typography variant="body2" color="text.secondary">•</Typography>
-                          )}
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">None</Typography>
-                  )}
-                </Box>
-              )}
-
-                              {/* Deal Age & Health Indicators */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mt: 0, marginTop: 0 }}>
-                  {/* Deal Age */}
                   {(() => {
                     const age = getDealAge((deal as any)?.createdAt);
                     if (!age) return null;
-                    
-                    return (
-                      <DealAgeChip 
-                        ageDays={age.days} 
-                        createdAt={age.date}
-                        showEmoji={true}
-                        variant="default"
-                      />
-                    );
+                    return <DealAgeChip ageDays={age.days} createdAt={age.date} showEmoji={true} variant="compact" />;
                   })()}
-                  
-                  {/* Deal Health */}
+
                   {(() => {
                     const age = getDealAge((deal as any)?.createdAt);
                     const health = getDealHealth(deal, age);
-                    
                     return (
-                      <HealthBadge 
+                      <HealthBadge
                         bucket={health.bucket as any}
                         score={health.score}
                         reasons={health.reasons}
-                        showScore={true}
-                        variant="default"
+                        showScore={false}
+                        variant="compact"
                       />
                     );
                   })()}
-                  
-                  {/* Deal Priority */}
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>Priority:</Typography>
-                    <Chip
-                      label={deal.estimatedRevenue > 100000 ? 'High' : deal.estimatedRevenue > 50000 ? 'Medium' : 'Low'}
-                      size="small"
-                      sx={{
-                        bgcolor: deal.estimatedRevenue > 100000 ? 'error.light' : deal.estimatedRevenue > 50000 ? 'warning.light' : 'success.light',
-                        color: deal.estimatedRevenue > 100000 ? 'error.dark' : deal.estimatedRevenue > 50000 ? 'warning.dark' : 'success.dark',
-                        fontWeight: 500,
-                        fontSize: '0.75rem',
-                        my: 0.5
-                      }}
-                    />
-                  </Box>
                 </Box>
+              </Box>
             </Box>
           </Box>
-
-          {/* Action Buttons */}
-          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1 }}>
-            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-              <Tooltip title="Open Sales Coach">
-                <IconButton
-                  onClick={() => {
-                    if (deal && tenantId) {
-                      openChatGPT({
-                        type: 'sales_coach',
-                        entityType: 'deal',
-                        entityId: deal.id,
-                        entityName: deal.name || 'Deal',
-                        tenantId: tenantId,
-                        associations: {
-                          companies: company ? [company] : [],
-                          contacts: associatedContacts,
-                          deals: [deal],
-                          salespeople: associatedSalespeople,
-                          locations: (deal as any)?.associations?.locations || []
-                        },
-                      });
-                    }
-                  }}
-                  sx={{
-                    p: 1,
-                    color: 'primary.main',
-                    bgcolor: 'action.hover',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: 'primary.dark',
-                      bgcolor: 'primary.light',
-                      transform: 'translateY(-1px)',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                    },
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <RocketLaunchIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="Add Task">
-                <IconButton
-                  onClick={() => setShowCreateTaskDialog(true)}
-                  sx={{
-                    p: 1,
-                    color: 'primary.main',
-                    bgcolor: 'action.hover',
-                    borderRadius: 1,
-                    '&:hover': {
-                      color: 'primary.dark',
-                      bgcolor: 'primary.light',
-                      transform: 'translateY(-1px)',
-                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                    },
-                    transition: 'all 0.2s ease'
-                  }}
-                >
-                  <AddTaskIcon sx={{ fontSize: 20 }} />
-                </IconButton>
-              </Tooltip>
-              <Button 
-                variant="outlined" 
-                startIcon={<AddIcon />}
-                onClick={() => setShowAddNoteDialog(true)}
-                size="small"
-              >
-                Add Note
-              </Button>
-              <Button 
-                variant="contained" 
-                startIcon={<CheckCircleIcon />}
-                onClick={() => setShowLogActivityDialog(true)}
-                sx={{ 
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark'
-                  }
-                }}
-              >
-                Log Activity
-              </Button>
-              <GenerateJobOrderButton
-                dealId={deal.id}
-                dealName={deal.name}
-                companyId={deal.companyId}
-                companyName={deal.companyName}
-                jobTitles={stageData?.discovery?.jobTitles || []}
-                onJobOrderCreated={(jobOrderIds) => {
-                  // Optionally navigate to the job orders or show success message
-                  console.log('Job Orders created:', jobOrderIds);
-                }}
-                disabled={deal.stage !== 'closedWon' && deal.stage !== 'verbalAgreement'}
-                variant="contained"
-                size="small"
-                sx={{
-                  bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.main' : 'grey.400',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.dark' : 'grey.500'
-                  },
-                  '&:disabled': {
-                    bgcolor: 'grey.400',
-                    color: 'grey.600'
-                  }
-                }}
-              />
-            </Box>
+        }
+        titleRightActions={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap' }}>
+            <Button variant="outlined" startIcon={<AddIcon />} onClick={() => setShowAddNoteDialog(true)} size="small">
+              Add Note
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<CheckCircleIcon />}
+              onClick={() => setShowLogActivityDialog(true)}
+              sx={{
+                bgcolor: 'primary.main',
+                color: 'white',
+                '&:hover': { bgcolor: 'primary.dark' },
+              }}
+            >
+              Log Activity
+            </Button>
+            <GenerateJobOrderButton
+              dealId={deal.id}
+              dealName={deal.name}
+              companyId={deal.companyId}
+              companyName={deal.companyName}
+              jobTitles={stageData?.discovery?.jobTitles || []}
+              onJobOrderCreated={(jobOrderIds) => {
+                console.log('Job Orders created:', jobOrderIds);
+              }}
+              disabled={deal.stage !== 'closedWon' && deal.stage !== 'verbalAgreement'}
+              variant="contained"
+              size="small"
+              sx={{
+                bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.main' : 'grey.400',
+                color: 'white',
+                '&:hover': {
+                  bgcolor: deal.stage === 'closedWon' || deal.stage === 'verbalAgreement' ? 'success.dark' : 'grey.500',
+                },
+                '&:disabled': {
+                  bgcolor: 'grey.400',
+                  color: 'grey.600',
+                },
+              }}
+            />
           </Box>
-        </Box>
-        
-
-      </Box>
+        }
+        showDivider={false}
+      />
 
       {/* Main Content Area */}
-      <Box sx={{ display: 'flex', gap: 3 }}>
-        {/* Main Content Area */}
-        <Box sx={{ width: '100%' }}>
-          {/* Tabs */}
-          <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-            <Tabs
-              value={tabValue}
-              onChange={handleTabChange}
-              indicatorColor="primary"
-              textColor="primary"
-              variant="scrollable"
-              scrollButtons="auto"
-              aria-label="Deal details tabs"
-            >
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <DashboardIcon fontSize="small" />
-                    Dashboard
-                  </Box>
-                } 
-              />
-
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <StairsIcon fontSize="small" />
-                    Stages
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <NotesIcon fontSize="small" />
-                    Notes
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <TimelineIcon fontSize="small" />
-                    Activity
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <WorkIcon fontSize="small" />
-                    Draft Job Order
-                  </Box>
-                } 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <DescriptionIcon fontSize="small" />
-                    Contracts
-                  </Box>
-                } 
-              />
-            </Tabs>
-          </Paper>
+      <Box sx={{ px: { xs: 2, md: 3 }, pt: 1, pb: 3, flex: 1, minHeight: 0 }}>
+        {/* Record-spec tab nav */}
+        <Box
+          sx={{
+            mt: 0,
+            mb: 2,
+            px: 2,
+            py: 1.25,
+            backgroundColor: '#F9FAFB',
+            borderRadius: 2,
+            border: '1px solid #EAEEF4',
+            overflowX: 'auto',
+            overflowY: 'hidden',
+            '&::-webkit-scrollbar': { height: '6px' },
+            '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+            '&::-webkit-scrollbar-thumb': {
+              background: 'rgba(0, 0, 0, 0.15)',
+              borderRadius: '4px',
+              '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+            },
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          }}
+        >
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+            {dealTabs.map((t) => {
+              const isActive = tabValue === t.index;
+              return (
+                <Button
+                  key={t.label}
+                  startIcon={t.icon}
+                  onClick={() => setTabValue(t.index)}
+                  variant={isActive ? 'contained' : 'text'}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(isActive
+                      ? {
+                          backgroundColor: '#0B63C5',
+                          color: 'white',
+                          '&:hover': { backgroundColor: '#0B63C5' },
+                        }
+                      : {
+                          color: '#6B7280',
+                          backgroundColor: 'white',
+                          border: '1px solid #E5E7EB',
+                          '&:hover': { backgroundColor: '#F3F4F6' },
+                        }),
+                  }}
+                >
+                  {t.label}
+                </Button>
+              );
+            })}
+          </Box>
+        </Box>
 
       {/* Tab Panels */}
       <TabPanel value={tabValue} index={0}>
@@ -2885,7 +2792,6 @@ const DealDetails: React.FC = () => {
           </CardContent>
         </Card>
       </TabPanel>
-        </Box>
       </Box>
 
       {/* Delete Deal Button - Bottom of page */}

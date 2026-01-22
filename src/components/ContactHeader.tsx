@@ -685,7 +685,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
           {/* Contact Information */}
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0, flex: 1 }}>
             {/* Name + Contact Type + Favorite Star */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 0.25, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.25, flexWrap: 'wrap' }}>
               <Typography variant="h4" sx={{ fontWeight: 700, color: 'text.primary', fontSize: '1.75rem' }}>
                 {getDisplayName()}
               </Typography>
@@ -694,7 +694,40 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                   label={contact.contactType}
                   size="small"
                   color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
-                  sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+                  sx={{
+                    fontWeight: 500,
+                    fontSize: '0.8125rem',
+                    height: '28px',
+                    borderRadius: 1,
+                    // Match the green styling from Additional Details section
+                    borderColor: contact.contactType === 'Decision Maker'
+                      ? 'rgba(76, 175, 80, 0.3)'
+                      : contact.contactType === 'Unknown'
+                      ? 'rgba(255, 152, 0, 0.3)'
+                      : 'rgba(33, 150, 243, 0.3)',
+                    bgcolor: contact.contactType === 'Decision Maker'
+                      ? 'rgba(76, 175, 80, 0.08)'
+                      : contact.contactType === 'Unknown'
+                      ? 'rgba(255, 152, 0, 0.08)'
+                      : 'rgba(33, 150, 243, 0.08)',
+                    color: contact.contactType === 'Decision Maker'
+                      ? '#4CAF50'
+                      : contact.contactType === 'Unknown'
+                      ? '#FF9800'
+                      : '#2196F3',
+                    '&:hover': {
+                      borderColor: contact.contactType === 'Decision Maker'
+                        ? 'rgba(76, 175, 80, 0.5)'
+                        : contact.contactType === 'Unknown'
+                        ? 'rgba(255, 152, 0, 0.5)'
+                        : 'rgba(33, 150, 243, 0.5)',
+                      bgcolor: contact.contactType === 'Decision Maker'
+                        ? 'rgba(76, 175, 80, 0.12)'
+                        : contact.contactType === 'Unknown'
+                        ? 'rgba(255, 152, 0, 0.12)'
+                        : 'rgba(33, 150, 243, 0.12)',
+                    }
+                  }}
                 />
               )}
               {toggleFavorite && (
@@ -855,37 +888,6 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                     }}
                   >
                     <LinkedInIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-              )}
-
-              {/* Website (right after LinkedIn per spec) */}
-              {hasWebsite && (
-                <Tooltip title={`Visit ${websiteUrl}`}>
-                  <IconButton
-                    size="small"
-                    sx={{ 
-                      p: 1,
-                      color: 'primary.main',
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: 'primary.dark',
-                        bgcolor: 'primary.light',
-                        transform: 'translateY(-1px)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                    onClick={() => {
-                      let url = websiteUrl;
-                      if (!url.startsWith('http://') && !url.startsWith('https://')) {
-                        url = 'https://' + url;
-                      }
-                      window.open(url, '_blank');
-                    }}
-                  >
-                    <LanguageIcon sx={{ fontSize: 20 }} />
                   </IconButton>
                 </Tooltip>
               )}
@@ -1303,7 +1305,40 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                 label={contact.contactType}
                 size="small"
                 color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
-                sx={{ height: 24, fontSize: '0.75rem', fontWeight: 500 }}
+                sx={{
+                  fontWeight: 500,
+                  fontSize: '0.8125rem',
+                  height: '28px',
+                  borderRadius: 1,
+                  // Match the green styling from Additional Details section
+                  borderColor: contact.contactType === 'Decision Maker'
+                    ? 'rgba(76, 175, 80, 0.3)'
+                    : contact.contactType === 'Unknown'
+                    ? 'rgba(255, 152, 0, 0.3)'
+                    : 'rgba(33, 150, 243, 0.3)',
+                  bgcolor: contact.contactType === 'Decision Maker'
+                    ? 'rgba(76, 175, 80, 0.08)'
+                    : contact.contactType === 'Unknown'
+                    ? 'rgba(255, 152, 0, 0.08)'
+                    : 'rgba(33, 150, 243, 0.08)',
+                  color: contact.contactType === 'Decision Maker'
+                    ? '#4CAF50'
+                    : contact.contactType === 'Unknown'
+                    ? '#FF9800'
+                    : '#2196F3',
+                  '&:hover': {
+                    borderColor: contact.contactType === 'Decision Maker'
+                      ? 'rgba(76, 175, 80, 0.5)'
+                      : contact.contactType === 'Unknown'
+                      ? 'rgba(255, 152, 0, 0.5)'
+                      : 'rgba(33, 150, 243, 0.5)',
+                    bgcolor: contact.contactType === 'Decision Maker'
+                      ? 'rgba(76, 175, 80, 0.12)'
+                      : contact.contactType === 'Unknown'
+                      ? 'rgba(255, 152, 0, 0.12)'
+                      : 'rgba(33, 150, 243, 0.12)',
+                  }
+                }}
               />
             )}
             {toggleFavorite && (
@@ -1457,6 +1492,37 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                   }}
                 >
                   <LinkedInIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </Tooltip>
+            )}
+
+            {/* Website (right after LinkedIn per spec) */}
+            {hasWebsite && (
+              <Tooltip title={`Visit ${websiteUrl}`}>
+                <IconButton
+                  size="small"
+                  sx={{ 
+                    p: 1,
+                    color: 'primary.main',
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: 'primary.dark',
+                      bgcolor: 'primary.light',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                    },
+                    transition: 'all 0.2s ease'
+                  }}
+                  onClick={() => {
+                    let url = websiteUrl;
+                    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                      url = 'https://' + url;
+                    }
+                    window.open(url, '_blank');
+                  }}
+                >
+                  <LanguageIcon sx={{ fontSize: 20 }} />
                 </IconButton>
               </Tooltip>
             )}

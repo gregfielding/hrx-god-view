@@ -20,7 +20,7 @@ import {
   Skeleton,
   Grid,
 } from '@mui/material';
-import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../contexts/AuthContext';
@@ -110,6 +110,54 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
       }
     };
     load();
+  }, [contact?.id, tenantId]);
+
+  // Realtime refresh: when a new email_log lands for this contact, reload activities.
+  // This ensures the Activity tab updates immediately after sending an email from the drawer.
+  useEffect(() => {
+    if (!contact?.id || !tenantId) return;
+    const q = query(
+      collection(db, 'tenants', tenantId, 'email_logs'),
+      where('contactId', '==', contact.id),
+      orderBy('timestamp', 'desc'),
+      limit(1)
+    );
+    const unsub = onSnapshot(
+      q,
+      () => {
+        // Fire-and-forget; load() is defined in the other effect, so re-run it by duplicating minimal logic here.
+        (async () => {
+          try {
+            const { loadContactActivities } = await import('../utils/activityService');
+            const activities = await loadContactActivities(tenantId, contact.id, {
+              limit: 200,
+              includeTasks: true,
+              includeEmails: true,
+              includeNotes: true,
+              includeAIActivities: false,
+              onlyCompletedTasks: true,
+            });
+            const aggregated: ContactActivityItem[] = activities.map((activity) => ({
+              id: activity.id,
+              type: activity.type,
+              timestamp: activity.timestamp,
+              title: activity.title,
+              description: activity.description,
+              metadata: activity.metadata,
+            }));
+            setItems(aggregated);
+            setPage(0);
+          } catch (e: any) {
+            // Don't clobber the UI on listener errors; just log
+            console.warn('ContactActivityTab: failed to refresh activities after email_logs update', e);
+          }
+        })();
+      },
+      (err) => {
+        console.warn('ContactActivityTab: email_logs listener error', err);
+      }
+    );
+    return () => unsub();
   }, [contact?.id, tenantId]);
 
   // Derived list after filters

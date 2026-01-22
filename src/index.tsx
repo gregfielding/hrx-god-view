@@ -8,8 +8,9 @@ import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { ThemeModeProvider } from './theme/theme';
 
-// Development-only console noise suppression (runs before components mount)
-if (process.env.NODE_ENV === 'development') {
+// Console noise suppression for Firestore internal errors (runs before components mount)
+// These are SDK bugs that don't affect functionality - suppress in all environments
+{
   const originalError = console.error;
   const originalWarn = console.warn;
 
@@ -31,7 +32,16 @@ if (process.env.NODE_ENV === 'development') {
       'Firestore/Write/channel',
       'POST https://firestore.googleapis.com',
       'INTERNAL ASSERTION FAILED',
+      'Internal assertion failed',
+      'internal assertion failed',
       'Unexpected state',
+      'unexpected state',
+      '__PRIVATE__fail',
+      '__PRIVATE_hardAssert',
+      'TargetState.Ue',
+      'WatchChangeAggregator',
+      'ID: ca9',
+      'ID: b815',
     ];
     const isTerminateNoise = args.some((a) => argContains(a, needles)) ||
       argContains(args?.map?.(String)?.join(' '), needles);
@@ -56,15 +66,20 @@ if (process.env.NODE_ENV === 'development') {
   // and Firestore internal assertion errors (SDK bugs that don't affect functionality)
   const shouldSuppress = (text?: string) => {
     if (!text) return false;
+    const textLower = text.toLowerCase();
     return (
       text.includes('TYPE=terminate') ||
       text.includes('https://firestore.googleapis.com/google.firestore.v1.Firestore/Write/channel') ||
       (text.includes('google.firestore.v1.Firestore/Write/channel') && text.includes('TYPE=terminate')) ||
       (text.includes('Firestore/Write/channel') && text.includes('TYPE=terminate')) ||
       (text.includes('POST https://firestore.googleapis.com') && text.includes('TYPE=terminate')) ||
-      text.includes('FIRESTORE') && text.includes('INTERNAL ASSERTION FAILED') ||
-      text.includes('INTERNAL ASSERTION FAILED') ||
-      (text.includes('Unexpected state') && text.includes('FIRESTORE'))
+      (textLower.includes('firestore') && textLower.includes('internal assertion failed')) ||
+      textLower.includes('internal assertion failed') ||
+      (textLower.includes('unexpected state') && (textLower.includes('firestore') || textLower.includes('id: ca9') || textLower.includes('id: b815'))) ||
+      textLower.includes('__private__fail') ||
+      textLower.includes('__private_hardassert') ||
+      textLower.includes('targetstate.ue') ||
+      textLower.includes('watchchangeaggregator')
     );
   };
 

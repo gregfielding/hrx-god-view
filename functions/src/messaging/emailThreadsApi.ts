@@ -25,6 +25,7 @@ import {
 import { getEmailProvider } from './emailProviderFactory';
 import { resolveSenderIdentity } from './senderIdentity';
 import { logMessage } from './messageLogging';
+import { generateEmailSignature, appendSignatureToEmail } from './emailSignature';
 import {
   syncReadStateToGmail,
   syncArchiveStateToGmail,
@@ -38,6 +39,127 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+async function buildStoredBodiesWithSignature(params: {
+  tenantId: string;
+  signatureUserId: string;
+  rawHtmlBody: string;
+  rawTextBody: string;
+  userData: any;
+}): Promise<{ htmlBody: string; textBody: string; signatureApplied: boolean }> {
+  const { tenantId, signatureUserId, rawHtmlBody, rawTextBody, userData } = params;
+  try {
+    let signatureSettings = userData?.emailSignature;
+    if (!signatureSettings) {
+      return { htmlBody: rawHtmlBody, textBody: rawTextBody, signatureApplied: false };
+    }
+
+    // If the user has any signature config, generate it. (Enabled is treated as always-on in providers.)
+    const hasAnySignatureConfig =
+      !!signatureSettings &&
+      (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data || signatureSettings.enabled);
+    if (!hasAnySignatureConfig) {
+      return { htmlBody: rawHtmlBody, textBody: rawTextBody, signatureApplied: false };
+    }
+
+    // Fetch tenant branding (logo + website)
+    let tenantLogoUrl: string | undefined;
+    let tenantWebsite: string | undefined;
+    try {
+      const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+      if (tenantDoc.exists) {
+        const tenantData = tenantDoc.data();
+        tenantLogoUrl = tenantData?.avatar;
+        tenantWebsite = tenantData?.website;
+      }
+    } catch (e: any) {
+      logger.warn('buildStoredBodiesWithSignature: Failed to fetch tenant data', { tenantId, error: e?.message });
+    }
+
+    const normalizeJobTitle = (title?: string): string => {
+      if (!title) return '';
+      return String(title)
+        .replace(/\s*\|\s*C1 Staffing\s*$/i, '')
+        .replace(/\s*-\s*C1 Staffing\s*$/i, '')
+        .trim();
+    };
+
+    const resolveOfficeLocation = (): string => {
+      const direct = userData?.officeLocation || userData?.location;
+      if (typeof direct === 'string' && direct.trim()) return direct.trim();
+      const city = userData?.city || '';
+      const state = userData?.state || '';
+      return [city, state].filter(Boolean).join(', ');
+    };
+
+    const hadOfficeLocationKey =
+      !!signatureSettings?.data &&
+      Object.prototype.hasOwnProperty.call(signatureSettings.data, 'officeLocation');
+
+    signatureSettings = {
+      template: signatureSettings.template || 'default',
+      enabled: signatureSettings.enabled !== false,
+      data: signatureSettings.data || {},
+    };
+
+    // Fill missing signature fields from user profile (matching provider behavior)
+    if (signatureSettings.data) {
+      if (!signatureSettings.data.email && userData?.email) {
+        signatureSettings.data.email = userData.email;
+      }
+      if (!signatureSettings.data.fullName) {
+        const fullName =
+          userData?.displayName ||
+          `${userData?.firstName || ''} ${userData?.lastName || ''}`.trim() ||
+          userData?.email?.split('@')?.[0] ||
+          '';
+        if (fullName) signatureSettings.data.fullName = fullName;
+      }
+      if (!signatureSettings.data.phone && (userData?.phone || userData?.phoneNumber)) {
+        signatureSettings.data.phone = userData?.phone || userData?.phoneNumber || '';
+      }
+      if (!signatureSettings.data.jobTitle && userData?.jobTitle) {
+        signatureSettings.data.jobTitle = normalizeJobTitle(userData.jobTitle);
+      } else if (signatureSettings.data.jobTitle) {
+        signatureSettings.data.jobTitle = normalizeJobTitle(signatureSettings.data.jobTitle);
+      }
+
+      // Only fill officeLocation from user profile if settings never had the key.
+      // If user left it blank in settings, keep it blank to match preview.
+      if (!hadOfficeLocationKey && !signatureSettings.data.officeLocation) {
+        const officeLocation = resolveOfficeLocation();
+        if (officeLocation) signatureSettings.data.officeLocation = officeLocation;
+      }
+
+      if (!signatureSettings.data.pronouns && userData?.pronouns) {
+        signatureSettings.data.pronouns = userData.pronouns;
+      }
+      if (signatureSettings.data.includeConfidentialityNotice == null && userData?.includeConfidentialityNotice != null) {
+        signatureSettings.data.includeConfidentialityNotice = userData.includeConfidentialityNotice;
+      }
+      if (tenantLogoUrl) signatureSettings.data.logoUrl = tenantLogoUrl;
+      if (tenantWebsite) signatureSettings.data.website = tenantWebsite;
+    }
+
+    const enabledSettings = { ...signatureSettings, enabled: true };
+    const signatureHtml = generateEmailSignature(enabledSettings);
+    if (!signatureHtml || !String(signatureHtml).trim()) {
+      return { htmlBody: rawHtmlBody, textBody: rawTextBody, signatureApplied: false };
+    }
+
+    const htmlBody = appendSignatureToEmail(rawHtmlBody, signatureHtml);
+    const textSignature = String(signatureHtml).replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+    const textBody = textSignature ? `${(rawTextBody || '').trim()}\n\n${textSignature}` : rawTextBody;
+    return { htmlBody, textBody, signatureApplied: true };
+  } catch (e: any) {
+    logger.warn('buildStoredBodiesWithSignature: Failed to apply signature for storage', {
+      tenantId,
+      signatureUserId,
+      error: e?.message,
+    });
+    return { htmlBody: rawHtmlBody, textBody: rawTextBody, signatureApplied: false };
+  }
+}
+
 /**
  * GET /api/email/threads
  * 
@@ -48,11 +170,13 @@ export const listEmailThreadsApi = onRequest(
     cors: true,
   },
   async (request, response) => {
+    // Set CORS headers immediately for all requests
+    response.set('Access-Control-Allow-Origin', '*');
+    response.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
-      response.set('Access-Control-Allow-Origin', '*');
-      response.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-      response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       response.status(204).send('');
       return;
     }
@@ -62,8 +186,6 @@ export const listEmailThreadsApi = onRequest(
         response.status(405).json({ success: false, error: { code: 'METHOD_NOT_ALLOWED', message: 'Only GET allowed' } });
         return;
       }
-
-      response.set('Access-Control-Allow-Origin', '*');
 
       // TODO: Add authentication
       const userId = request.query.userId as string;
@@ -572,6 +694,15 @@ export const sendEmailReplyApi = onRequest(
         return;
       }
 
+      // Ensure our stored message body matches what the provider sent (includes signature)
+      const storedBodies = await buildStoredBodiesWithSignature({
+        tenantId,
+        signatureUserId: userId,
+        rawHtmlBody: bodyHtml || bodyPlain,
+        rawTextBody: bodyPlain,
+        userData,
+      });
+
       // Add message to thread
       const messageId = await addMessageToThread(threadId, tenantId, {
         direction: 'outbound',
@@ -581,9 +712,9 @@ export const sendEmailReplyApi = onRequest(
         cc: ccEmails.length > 0 ? ccEmails : undefined,
         bcc: bccEmails.length > 0 ? bccEmails : undefined,
         subject,
-        bodyHtml,
-        bodyPlain,
-        bodySnippet: bodyPlain.substring(0, 200),
+        bodyHtml: storedBodies.htmlBody,
+        bodyPlain: storedBodies.textBody,
+        bodySnippet: storedBodies.textBody.substring(0, 200),
         attachments: attachments || [],
         status: emailResult.providerMessageId ? 'sent' : 'failed',
         providerMessageId: emailResult.providerMessageId,
@@ -613,8 +744,8 @@ export const sendEmailReplyApi = onRequest(
             direction: 'outbound',
             fromIdentity: 'recruiter',
             fromUserId: userId,
-            contentOriginal: bodyHtml || bodyPlain,
-            contentSent: bodyPlain,
+            contentOriginal: storedBodies.htmlBody,
+            contentSent: storedBodies.textBody,
             language: null,
             status: emailResult.providerMessageId ? 'sent' : 'failed',
             providerMessageId: emailResult.providerMessageId,
@@ -645,8 +776,8 @@ export const sendEmailReplyApi = onRequest(
             cc: ccEmails.length > 0 ? ccEmails : undefined,
             bcc: bccEmails.length > 0 ? bccEmails : undefined,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            bodySnippet: bodyPlain.substring(0, 250),
-            bodyHtml,
+            bodySnippet: storedBodies.textBody.substring(0, 250),
+            bodyHtml: storedBodies.htmlBody,
             direction: 'sent',
             contactId: contact.id,
             companyId: contact.companyId || null,
@@ -668,7 +799,7 @@ export const sendEmailReplyApi = onRequest(
             entityId: contact.id,
             activityType: 'email',
             title: `Email sent: ${subject}`,
-            description: bodyPlain.substring(0, 200) + (bodyPlain.length > 200 ? '...' : ''),
+            description: storedBodies.textBody.substring(0, 200) + (storedBodies.textBody.length > 200 ? '...' : ''),
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             userId,
             userName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
@@ -681,7 +812,7 @@ export const sendEmailReplyApi = onRequest(
               direction: 'outbound',
               gmailMessageId: emailResult.providerMessageId,
               gmailThreadId: threadData.gmailThreadId,
-              bodySnippet: bodyPlain.substring(0, 500),
+              bodySnippet: storedBodies.textBody.substring(0, 500),
               contactEmail: contact.email,
               contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
               threadId: threadId,
@@ -845,6 +976,15 @@ export const sendNewEmailApi = onRequest(
           return;
         }
 
+        // Ensure our stored message body matches what the provider sent (includes signature)
+        const storedBodies = await buildStoredBodiesWithSignature({
+          tenantId,
+          signatureUserId: userId,
+          rawHtmlBody: bodyHtml || bodyPlain,
+          rawTextBody: bodyPlain,
+          userData,
+        });
+
         // Create a new thread for this email (same as Gmail path; this is our internal thread)
         const newThread = await findOrCreateEmailThread(
           tenantId,
@@ -868,9 +1008,9 @@ export const sendNewEmailApi = onRequest(
           cc: ccEmails.length > 0 ? ccEmails : undefined,
           bcc: bccEmails.length > 0 ? bccEmails : undefined,
           subject,
-          bodyHtml,
-          bodyPlain,
-          bodySnippet: bodyPlain.substring(0, 200),
+          bodyHtml: storedBodies.htmlBody,
+          bodyPlain: storedBodies.textBody,
+          bodySnippet: storedBodies.textBody.substring(0, 200),
           attachments: attachments || [],
           status: emailResult.providerMessageId ? 'sent' : 'failed',
           providerMessageId: emailResult.providerMessageId,
@@ -941,6 +1081,15 @@ export const sendNewEmailApi = onRequest(
         return;
       }
 
+      // Ensure our stored message body matches what the provider sent (includes signature)
+      const storedBodies = await buildStoredBodiesWithSignature({
+        tenantId,
+        signatureUserId: userId,
+        rawHtmlBody: bodyHtml || bodyPlain,
+        rawTextBody: bodyPlain,
+        userData,
+      });
+
       // Create a new thread for this email
       // Note: For new emails, Gmail will create its own thread, but we don't have the threadId yet
       // The thread will be created without gmailThreadId initially
@@ -967,9 +1116,9 @@ export const sendNewEmailApi = onRequest(
         cc: ccEmails.length > 0 ? ccEmails : undefined,
         bcc: bccEmails.length > 0 ? bccEmails : undefined,
         subject,
-        bodyHtml,
-        bodyPlain,
-        bodySnippet: bodyPlain.substring(0, 200),
+        bodyHtml: storedBodies.htmlBody,
+        bodyPlain: storedBodies.textBody,
+        bodySnippet: storedBodies.textBody.substring(0, 200),
         attachments: attachments || [],
         status: emailResult.providerMessageId ? 'sent' : 'failed',
         providerMessageId: emailResult.providerMessageId,
@@ -999,8 +1148,8 @@ export const sendNewEmailApi = onRequest(
             direction: 'outbound',
             fromIdentity: 'recruiter',
             fromUserId: userId,
-            contentOriginal: bodyHtml || bodyPlain,
-            contentSent: bodyPlain,
+            contentOriginal: storedBodies.htmlBody,
+            contentSent: storedBodies.textBody,
             language: null,
             status: emailResult.providerMessageId ? 'sent' : 'failed',
             providerMessageId: emailResult.providerMessageId,
@@ -1031,8 +1180,8 @@ export const sendNewEmailApi = onRequest(
             cc: ccEmails.length > 0 ? ccEmails : undefined,
             bcc: bccEmails.length > 0 ? bccEmails : undefined,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            bodySnippet: bodyPlain.substring(0, 250),
-            bodyHtml,
+            bodySnippet: storedBodies.textBody.substring(0, 250),
+            bodyHtml: storedBodies.htmlBody,
             direction: 'sent',
             contactId: contact.id,
             companyId: contact.companyId || null,
@@ -1054,7 +1203,7 @@ export const sendNewEmailApi = onRequest(
             entityId: contact.id,
             activityType: 'email',
             title: `Email sent: ${subject}`,
-            description: bodyPlain.substring(0, 200) + (bodyPlain.length > 200 ? '...' : ''),
+            description: storedBodies.textBody.substring(0, 200) + (storedBodies.textBody.length > 200 ? '...' : ''),
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             userId,
             userName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',

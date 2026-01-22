@@ -70,6 +70,7 @@ import {
   Edit as EditIcon,
   Work as WorkIcon,
   Person as PersonIcon,
+  ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -80,6 +81,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import ActivityLogTab from '../../components/ActivityLogTab';
+import { getLastContactActivity, type UnifiedActivityItem } from '../../utils/activityService';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
 import { LoggableSlider, LoggableTextField, LoggableSwitch } from '../../components/LoggableField';
@@ -102,6 +104,7 @@ import { Stack } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { ContactHeaderMarketing, type CrmContactIndustrySegment } from '../../components/crm/contacts/ContactHeaderMarketing';
+import { formatPhoneNumber } from '../../utils/formatPhone';
 
 interface ContactData {
   id: string;
@@ -259,6 +262,7 @@ const ContactDetails: React.FC = () => {
   const [tabValue, setTabValue] = useState(0);
   const [company, setCompany] = useState<any>(null);
   const [activities, setActivities] = useState<any[]>([]);
+  const [lastActivity, setLastActivity] = useState<UnifiedActivityItem | null>(null);
   const [aiEnhancing, setAiEnhancing] = useState(false);
   const [aiSuccess, setAiSuccess] = useState<string | null>(null);
   const [snackbarOpen, setSnackbarOpen] = useState(false);
@@ -372,9 +376,7 @@ const ContactDetails: React.FC = () => {
   const [localError, setLocalError] = useState<string | null>(null);
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
   
-  // Recent Activity state
-  const [recentActivities, setRecentActivities] = useState<any[]>([]);
-  const [loadingActivities, setLoadingActivities] = useState(false);
+  // Recent Activity state (shown at top of right column)
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [notesCount, setNotesCount] = useState<number>(0);
   
@@ -398,6 +400,17 @@ const ContactDetails: React.FC = () => {
     setSnackbarMessage(message);
     setSnackbarSeverity(severity);
     setSnackbarOpen(true);
+  };
+
+  // Copy to clipboard function
+  const copyToClipboard = async (text: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast(`${label} copied to clipboard`, 'success');
+    } catch (err) {
+      console.error('Failed to copy to clipboard:', err);
+      showToast(`Failed to copy ${label}`, 'error');
+    }
   };
 
   // Calculate contact metrics
@@ -771,43 +784,7 @@ const ContactDetails: React.FC = () => {
     }
   };
 
-  // Load recent activities for the contact
-  const loadRecentActivities = async () => {
-    if (!contactId || !tenantId) return;
-    
-    setLoadingActivities(true);
-    try {
-      const { loadContactActivities } = await import('../../utils/activityService');
-      const activities = await loadContactActivities(tenantId, contactId, {
-        limit: 8,
-        includeTasks: true,
-        includeEmails: true,
-        includeNotes: true,
-        includeAIActivities: false,
-        onlyCompletedTasks: true
-      });
-      
-      // Convert to the format expected by the component
-      const formattedActivities = activities.map(activity => ({
-        id: activity.id,
-        type: activity.type,
-        title: activity.title,
-        description: activity.description,
-        timestamp: activity.timestamp,
-        salespersonId: activity.salespersonId,
-        icon: activity.type === 'task' ? 'task' : activity.type === 'email' ? 'email' : 'note',
-        ...(activity.type === 'email' && { direction: activity.metadata?.direction || 'sent' }),
-        ...(activity.type === 'task' && { status: activity.metadata?.status || 'completed' })
-      }));
-      
-      setRecentActivities(formattedActivities);
-    } catch (err) {
-      console.error('Error loading recent activities:', err);
-      setRecentActivities([]);
-    } finally {
-      setLoadingActivities(false);
-    }
-  };
+  // (Removed) Duplicate Recent Activity widget under Contact Details (now shown in right column)
 
   // Handle location association update (now supports multiple locations)
   const handleLocationAssociationUpdate = async (selectedLocations: any[]) => {
@@ -925,6 +902,40 @@ const ContactDetails: React.FC = () => {
 
       // Load activities (you can implement this based on your activity tracking system)
       setActivities([]);
+      
+      // Load last activity for Recent Activity card
+      const loadLastActivity = async () => {
+        try {
+          const lastActivityData = await getLastContactActivity(tenantId, contactId);
+          setLastActivity(lastActivityData);
+        } catch (err) {
+          console.error('Error loading last activity:', err);
+          setLastActivity(null);
+        }
+      };
+      
+      await loadLastActivity();
+      
+      // Set up real-time listener for email_logs to refresh Recent Activity
+      const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+      const emailsQuery = query(
+        emailsRef,
+        where('contactId', '==', contactId),
+        orderBy('timestamp', 'desc'),
+        limit(1)
+      );
+      
+      const unsubscribeEmails = onSnapshot(emailsQuery, async () => {
+        // Refresh last activity when new emails are logged
+        await loadLastActivity();
+      }, (err) => {
+        console.warn('Error listening to email_logs:', err);
+      });
+      
+      // Store unsubscribe function for cleanup
+      return () => {
+        unsubscribeEmails();
+      };
 
       // Removed legacy company picker load (associations are the source of truth)
       
@@ -997,7 +1008,6 @@ const ContactDetails: React.FC = () => {
   useEffect(() => {
     loadContact();
     loadSalespeople();
-    loadRecentActivities();
     loadAllCompanies();
     loadJobOrdersForContact();
     
@@ -1016,6 +1026,55 @@ const ContactDetails: React.FC = () => {
       };
     }
   }, [contactId, tenantId]);
+
+  // Set up real-time listeners for Recent Activity and Active Salespeople
+  useEffect(() => {
+    if (!tenantId || !contactId) return;
+
+    // Load last activity function
+    const loadLastActivity = async () => {
+      try {
+        const lastActivityData = await getLastContactActivity(tenantId, contactId);
+        setLastActivity(lastActivityData);
+      } catch (err) {
+        console.error('Error loading last activity:', err);
+        setLastActivity(null);
+      }
+    };
+
+    // Set up real-time listener for email_logs to refresh Recent Activity
+    const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
+    const emailsQuery = query(
+      emailsRef,
+      where('contactId', '==', contactId),
+      orderBy('timestamp', 'desc'),
+      limit(1)
+    );
+    
+    const unsubscribeEmails = onSnapshot(emailsQuery, async () => {
+      // Refresh last activity when new emails are logged
+      await loadLastActivity();
+    }, (err) => {
+      console.warn('Error listening to email_logs:', err);
+    });
+
+    // Set up real-time listener for contact document to refresh Active Salespeople
+    const contactRef = doc(db, 'tenants', tenantId, 'crm_contacts', contactId);
+    const unsubscribeContact = onSnapshot(contactRef, (docSnapshot) => {
+      if (docSnapshot.exists()) {
+        const contactData = { id: docSnapshot.id, ...docSnapshot.data() } as ContactData;
+        setContact(prev => prev ? { ...prev, ...contactData } : contactData);
+      }
+    }, (err) => {
+      console.warn('Error listening to contact document:', err);
+    });
+
+    // Cleanup
+    return () => {
+      unsubscribeEmails();
+      unsubscribeContact();
+    };
+  }, [tenantId, contactId]);
 
   // Initialize selected locations when contact or companyLocations change
   useEffect(() => {
@@ -1464,22 +1523,6 @@ const ContactDetails: React.FC = () => {
     return null;
   };
 
-  // Get activity icon based on type
-  const getActivityIcon = (iconType: string) => {
-    switch (iconType) {
-      case 'task':
-        return <AddTaskIcon sx={{ fontSize: 16 }} />;
-      case 'email':
-        return <EmailIcon sx={{ fontSize: 16 }} />;
-      case 'note':
-        return <NotesIcon sx={{ fontSize: 16 }} />;
-      case 'ai':
-        return <AIIcon sx={{ fontSize: 16 }} />;
-      default:
-        return <InfoIcon sx={{ fontSize: 16 }} />;
-    }
-  };
-
   // Format timestamp for display
   const formatActivityTime = (timestamp: Date) => {
     const now = new Date();
@@ -1489,9 +1532,9 @@ const ContactDetails: React.FC = () => {
     const diffDays = Math.floor(diffMs / 86400000);
 
     if (diffMins < 1) return 'Just now';
-    if (diffMins < 60) return `${diffMins}m ago`;
-    if (diffHours < 24) return `${diffHours}h ago`;
-    if (diffDays < 7) return `${diffDays}d ago`;
+    if (diffMins < 60) return `${diffMins} minute${diffMins !== 1 ? 's' : ''} ago`;
+    if (diffHours < 24) return `${diffHours} hour${diffHours !== 1 ? 's' : ''} ago`;
+    if (diffDays < 7) return `${diffDays} day${diffDays !== 1 ? 's' : ''} ago`;
     return timestamp.toLocaleDateString();
   };
 
@@ -1706,8 +1749,8 @@ const ContactDetails: React.FC = () => {
                 justifyContent: 'space-between', 
                 minHeight: 108 
               }}>
-                {/* Line 1: Name */}
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0 }}>
+                {/* Line 1: Name + Contact Type + Favorite Star */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0, flexWrap: 'wrap' }}>
                   <Typography
                     variant="h6"
                     sx={{
@@ -1718,6 +1761,47 @@ const ContactDetails: React.FC = () => {
                   >
                     {getContactDisplayName()}
                   </Typography>
+                  {contact.contactType && (
+                    <Chip
+                      label={contact.contactType}
+                      size="small"
+                      color={contact.contactType === 'Decision Maker' ? 'success' : contact.contactType === 'Champion' ? 'primary' : 'default'}
+                      sx={{
+                        fontWeight: 500,
+                        fontSize: '0.8125rem',
+                        height: '28px',
+                        borderRadius: 1,
+                        // Match the green styling from Additional Details section
+                        borderColor: contact.contactType === 'Decision Maker'
+                          ? 'rgba(76, 175, 80, 0.3)'
+                          : contact.contactType === 'Unknown'
+                          ? 'rgba(255, 152, 0, 0.3)'
+                          : 'rgba(33, 150, 243, 0.3)',
+                        bgcolor: contact.contactType === 'Decision Maker'
+                          ? 'rgba(76, 175, 80, 0.08)'
+                          : contact.contactType === 'Unknown'
+                          ? 'rgba(255, 152, 0, 0.08)'
+                          : 'rgba(33, 150, 243, 0.08)',
+                        color: contact.contactType === 'Decision Maker'
+                          ? '#4CAF50'
+                          : contact.contactType === 'Unknown'
+                          ? '#FF9800'
+                          : '#2196F3',
+                        '&:hover': {
+                          borderColor: contact.contactType === 'Decision Maker'
+                            ? 'rgba(76, 175, 80, 0.5)'
+                            : contact.contactType === 'Unknown'
+                            ? 'rgba(255, 152, 0, 0.5)'
+                            : 'rgba(33, 150, 243, 0.5)',
+                          bgcolor: contact.contactType === 'Decision Maker'
+                            ? 'rgba(76, 175, 80, 0.12)'
+                            : contact.contactType === 'Unknown'
+                            ? 'rgba(255, 152, 0, 0.12)'
+                            : 'rgba(33, 150, 243, 0.12)',
+                        }
+                      }}
+                    />
+                  )}
                   <FavoriteButton
                     itemId={contact.id}
                     favoriteType="contacts"
@@ -1766,12 +1850,14 @@ const ContactDetails: React.FC = () => {
                     </Tooltip>
                   )}
                   {(contact.phone || contact.workPhone) && (
-                    <Tooltip title={`Call ${contact.phone || contact.workPhone}`}>
+                    <Tooltip title={`Call ${formatPhoneNumber(contact.phone || contact.workPhone || '')}`}>
                       <IconButton
                         size="small"
                         onClick={() => {
                           if (contact.phone || contact.workPhone) {
-                            window.open(`tel:${contact.phone || contact.workPhone}`, '_blank');
+                            // Use cleaned phone number (digits only) for tel: link
+                            const phoneDigits = (contact.phone || contact.workPhone || '').replace(/\D/g, '');
+                            window.open(`tel:${phoneDigits}`, '_blank');
                           }
                         }}
                         sx={{ 
@@ -1818,6 +1904,36 @@ const ContactDetails: React.FC = () => {
                         }}
                       >
                         <LinkedInIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {/* Website icon (right after LinkedIn per spec) */}
+                  {contact.website && (
+                    <Tooltip title={`Visit ${contact.website}`}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          let url = contact.website!;
+                          if (!url.startsWith('http://') && !url.startsWith('https://')) {
+                            url = 'https://' + url;
+                          }
+                          window.open(url, '_blank');
+                        }}
+                        sx={{ 
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <LanguageIcon sx={{ fontSize: 20 }} />
                       </IconButton>
                     </Tooltip>
                   )}
@@ -1960,25 +2076,31 @@ const ContactDetails: React.FC = () => {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                       <LocationIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
                       <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
-                        {selectedLocations.slice(0, 2).map((loc: any, idx: number) => (
-                          <React.Fragment key={loc.id || idx}>
-                            <Typography
-                              component="span"
-                              sx={{
-                                color: 'rgb(74, 144, 226)',
-                                cursor: company?.id ? 'pointer' : 'default',
-                                fontWeight: 600,
-                                '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
-                              }}
-                              onClick={() => {
-                                if (company?.id) navigate(`/crm/companies/${company.id}/locations/${loc.id}`);
-                              }}
-                            >
-                              {loc.nickname || loc.name || loc.title || 'Location'}
-                            </Typography>
-                            {idx < Math.min(2, selectedLocations.length) - 1 ? ', ' : ''}
-                          </React.Fragment>
-                        ))}
+                        {selectedLocations.slice(0, 2).map((loc: any, idx: number) => {
+                          const locationName = loc.nickname || loc.name || loc.title || 'Location';
+                          const cityState = [loc.city, loc.state].filter(Boolean).join(', ');
+                          const displayText = cityState ? `${locationName} - ${cityState}` : locationName;
+                          
+                          return (
+                            <React.Fragment key={loc.id || idx}>
+                              <Typography
+                                component="span"
+                                sx={{
+                                  color: 'rgb(74, 144, 226)',
+                                  cursor: company?.id ? 'pointer' : 'default',
+                                  fontWeight: 600,
+                                  '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
+                                }}
+                                onClick={() => {
+                                  if (company?.id) navigate(`/crm/companies/${company.id}/locations/${loc.id}`);
+                                }}
+                              >
+                                {displayText}
+                              </Typography>
+                              {idx < Math.min(2, selectedLocations.length) - 1 ? ', ' : ''}
+                            </React.Fragment>
+                          );
+                        })}
                         {selectedLocations.length > 2 ? ` +${selectedLocations.length - 2}` : ''}
                       </Typography>
                     </Box>
@@ -2068,6 +2190,22 @@ const ContactDetails: React.FC = () => {
                   }}
                   onUpdateMarketing={handleUpdateMarketing}
                 />
+
+                {/* Line 5: Professional Headline */}
+                {contact.headline && (
+                  <Typography 
+                    variant="body2" 
+                    color="text.secondary" 
+                    sx={{ 
+                      fontStyle: 'italic',
+                      mt: 1,
+                      fontSize: '0.875rem',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {contact.headline}
+                  </Typography>
+                )}
               </Box>
             </Box>
           </Box>
@@ -2552,11 +2690,13 @@ const ContactDetails: React.FC = () => {
                     </Box>
                     <TextField
                       label="Phone"
-                      defaultValue={contact.phone || contact.workPhone || ''}
+                      defaultValue={formatPhoneNumber(contact.phone || contact.workPhone || '')}
                       onBlur={(e) => {
                         const next = (e.target.value || '').trim();
-                        if ((contact.phone || contact.workPhone || '') !== next) {
-                          handleContactUpdate('phone', next);
+                        // Store cleaned version (digits only) but display formatted
+                        const cleaned = next.replace(/\D/g, '');
+                        if ((contact.phone || contact.workPhone || '').replace(/\D/g, '') !== cleaned) {
+                          handleContactUpdate('phone', cleaned);
                         }
                       }}
                       fullWidth
@@ -2565,11 +2705,13 @@ const ContactDetails: React.FC = () => {
                     />
                     <TextField
                       label="Mobile"
-                      defaultValue={contact.mobilePhone || ''}
+                      defaultValue={formatPhoneNumber(contact.mobilePhone || '')}
                       onBlur={(e) => {
                         const next = (e.target.value || '').trim();
-                        if ((contact.mobilePhone || '') !== next) {
-                          handleContactUpdate('mobilePhone', next);
+                        // Store cleaned version (digits only) but display formatted
+                        const cleaned = next.replace(/\D/g, '');
+                        if ((contact.mobilePhone || '').replace(/\D/g, '') !== cleaned) {
+                          handleContactUpdate('mobilePhone', cleaned);
                         }
                       }}
                       fullWidth
@@ -2601,6 +2743,87 @@ const ContactDetails: React.FC = () => {
                       fullWidth
                       size="small"
                       InputProps={{ startAdornment: <LinkedInIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Website"
+                      defaultValue={contact.website || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.website || '') !== next) {
+                          handleContactUpdate('website', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <LanguageIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Twitter URL"
+                      defaultValue={contact.twitterUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.twitterUrl || '') !== next) {
+                          handleContactUpdate('twitterUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <TwitterIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Facebook URL"
+                      defaultValue={contact.facebookUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.facebookUrl || '') !== next) {
+                          handleContactUpdate('facebookUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <FacebookIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Instagram URL"
+                      defaultValue={contact.instagramUrl || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.instagramUrl || '') !== next) {
+                          handleContactUpdate('instagramUrl', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputProps={{ startAdornment: <InstagramIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                    />
+                    <TextField
+                      label="Professional Headline"
+                      defaultValue={contact.headline || ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.headline || '') !== next) {
+                          handleContactUpdate('headline', next);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      multiline
+                      rows={2}
+                      placeholder="e.g., Bilingual HR Business Partner | Client Services | Passionate about customer service..."
+                    />
+                    <TextField
+                      label="Birthday"
+                      type="date"
+                      defaultValue={contact.birthday ? new Date(contact.birthday).toISOString().split('T')[0] : ''}
+                      onBlur={(e) => {
+                        const next = (e.target.value || '').trim();
+                        if ((contact.birthday ? new Date(contact.birthday).toISOString().split('T')[0] : '') !== next) {
+                          handleContactUpdate('birthday', next || null);
+                        }
+                      }}
+                      fullWidth
+                      size="small"
+                      InputLabelProps={{ shrink: true }}
                     />
                     
                     <FormControl fullWidth size="small">
@@ -2736,42 +2959,143 @@ const ContactDetails: React.FC = () => {
                     </Box>
 
                     {/* Contact Address Information */}
-                    {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
-                      <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-                        <Typography variant="subtitle2" fontWeight="medium" color="text.primary" gutterBottom>
+                    {selectedLocations.length > 0 ? (
+                      // Show address from worksite locations
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Address (from Work Locations)
+                        </Typography>
+                        {selectedLocations.map((location, idx) => (
+                          <Box key={location.id} sx={{ mb: 2, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                            <Typography variant="body2" fontWeight="medium" color="text.primary" gutterBottom>
+                              {location.nickname || location.name || location.title || 'Location'} {selectedLocations.length > 1 && `(${idx + 1})`}
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              {location.address && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {location.address}
+                                </Typography>
+                              )}
+                              {(location.city || location.state || location.country) && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {[location.city, location.state, location.country].filter(Boolean).join(', ')}
+                                </Typography>
+                              )}
+                              {location.zipcode && (
+                                <Typography variant="body2" color="text.secondary">
+                                  {location.zipcode}
+                                </Typography>
+                              )}
+                            </Box>
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block', fontStyle: 'italic' }}>
+                              Address is managed via the work location above. Edit the location to change this address.
+                            </Typography>
+                          </Box>
+                        ))}
+                        <TextField
+                          label="Time Zone"
+                          defaultValue={contact.timeZone || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.timeZone || '') !== next) {
+                              handleContactUpdate('timeZone', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          placeholder="e.g., America/Los_Angeles"
+                          sx={{ mt: 1 }}
+                        />
+                      </Box>
+                    ) : (
+                      // Show editable address fields when no worksite locations
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                           Contact Address
                         </Typography>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                          {contact.formattedAddress && (
-                            <Typography variant="body2" color="text.secondary">
-                              {contact.formattedAddress}
-                            </Typography>
-                          )}
-                          {!contact.formattedAddress && (
-                            <>
-                              {contact.address && (
-                                <Typography variant="body2" color="text.secondary">
-                                  {contact.address}
-                                </Typography>
-                              )}
-                              {(contact.city || contact.state || contact.country) && (
-                                <Typography variant="body2" color="text.secondary">
-                                  {[contact.city, contact.state, contact.country].filter(Boolean).join(', ')}
-                                </Typography>
-                              )}
-                              {contact.zipcode && (
-                                <Typography variant="body2" color="text.secondary">
-                                  {contact.zipcode}
-                                </Typography>
-                              )}
-                            </>
-                          )}
-                          {contact.timeZone && (
-                            <Typography variant="caption" color="text.secondary">
-                              Time Zone: {contact.timeZone}
-                            </Typography>
-                          )}
+                        <TextField
+                          label="Street Address"
+                          defaultValue={contact.address || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.address || '') !== next) {
+                              handleContactUpdate('address', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          sx={{ mb: 1 }}
+                          InputProps={{ startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
+                        />
+                        <Box sx={{ display: 'flex', gap: 1, mb: 1 }}>
+                          <TextField
+                            label="City"
+                            defaultValue={contact.city || ''}
+                            onBlur={(e) => {
+                              const next = (e.target.value || '').trim();
+                              if ((contact.city || '') !== next) {
+                                handleContactUpdate('city', next);
+                              }
+                            }}
+                            fullWidth
+                            size="small"
+                          />
+                          <TextField
+                            label="State"
+                            defaultValue={contact.state || ''}
+                            onBlur={(e) => {
+                              const next = (e.target.value || '').trim();
+                              if ((contact.state || '') !== next) {
+                                handleContactUpdate('state', next);
+                              }
+                            }}
+                            fullWidth
+                            size="small"
+                          />
+                          <TextField
+                            label="Zip Code"
+                            defaultValue={contact.zipcode || ''}
+                            onBlur={(e) => {
+                              const next = (e.target.value || '').trim();
+                              if ((contact.zipcode || '') !== next) {
+                                handleContactUpdate('zipcode', next);
+                              }
+                            }}
+                            fullWidth
+                            size="small"
+                          />
                         </Box>
+                        <TextField
+                          label="Country"
+                          defaultValue={contact.country || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.country || '') !== next) {
+                              handleContactUpdate('country', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          sx={{ mb: 1 }}
+                        />
+                        <TextField
+                          label="Time Zone"
+                          defaultValue={contact.timeZone || ''}
+                          onBlur={(e) => {
+                            const next = (e.target.value || '').trim();
+                            if ((contact.timeZone || '') !== next) {
+                              handleContactUpdate('timeZone', next);
+                            }
+                          }}
+                          fullWidth
+                          size="small"
+                          placeholder="e.g., America/Los_Angeles"
+                        />
+                        {contact.formattedAddress && (
+                          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                            Formatted: {contact.formattedAddress}
+                          </Typography>
+                        )}
                       </Box>
                     )}
 
@@ -2830,24 +3154,39 @@ const ContactDetails: React.FC = () => {
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     Email
                                   </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    <MUILink 
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        if (gmailConnected) {
-                                          setMessageDrawerChannel('email');
-                                          setMessageDrawerOpen(true);
-                                        } else {
-                                          window.open(`mailto:${contact.email}`, '_blank');
-                                        }
-                                      }}
-                                      color="primary" 
-                                      underline="hover"
-                                      sx={{ wordBreak: 'break-all', cursor: 'pointer' }}
-                                    >
-                                      {contact.email}
-                                    </MUILink>
-                                  </Typography>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                    <Typography variant="body1" sx={{ flex: 1 }}>
+                                      <MUILink 
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          if (gmailConnected) {
+                                            setMessageDrawerChannel('email');
+                                            setMessageDrawerOpen(true);
+                                          } else {
+                                            window.open(`mailto:${contact.email}`, '_blank');
+                                          }
+                                        }}
+                                        color="primary" 
+                                        underline="hover"
+                                        sx={{ wordBreak: 'break-all', cursor: 'pointer' }}
+                                      >
+                                        {contact.email}
+                                      </MUILink>
+                                    </Typography>
+                                    <Tooltip title="Copy email to clipboard">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => copyToClipboard(contact.email || '', 'Email')}
+                                        sx={{ 
+                                          p: 0.5,
+                                          color: 'text.secondary',
+                                          '&:hover': { color: 'primary.main' }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Box>
                                 </Box>
                               </Box>
                             </Grid>
@@ -2860,9 +3199,27 @@ const ContactDetails: React.FC = () => {
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     Phone
                                   </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    {contact.phone || contact.workPhone || '-'}
-                                  </Typography>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                    <Typography variant="body1" sx={{ flex: 1 }}>
+                                      {formatPhoneNumber(contact.phone || contact.workPhone || '') || '-'}
+                                    </Typography>
+                                    <Tooltip title="Copy phone number to clipboard">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => {
+                                          const phoneValue = contact.phone || contact.workPhone || '';
+                                          copyToClipboard(formatPhoneNumber(phoneValue), 'Phone number');
+                                        }}
+                                        sx={{ 
+                                          p: 0.5,
+                                          color: 'text.secondary',
+                                          '&:hover': { color: 'primary.main' }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Box>
                                 </Box>
                               </Box>
                             </Grid>
@@ -2875,14 +3232,29 @@ const ContactDetails: React.FC = () => {
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     Mobile
                                   </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                    {contact.mobilePhone}
-                                  </Typography>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                    <Typography variant="body1" sx={{ flex: 1 }}>
+                                      {formatPhoneNumber(contact.mobilePhone)}
+                                    </Typography>
+                                    <Tooltip title="Copy mobile number to clipboard">
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => copyToClipboard(formatPhoneNumber(contact.mobilePhone || ''), 'Mobile number')}
+                                        sx={{ 
+                                          p: 0.5,
+                                          color: 'text.secondary',
+                                          '&:hover': { color: 'primary.main' }
+                                        }}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Box>
                                 </Box>
                               </Box>
                             </Grid>
                           )}
-                          {(contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
+                          {(selectedLocations.length > 0 || contact.address || contact.city || contact.state || contact.country || contact.formattedAddress) && (
                             <Grid item xs={12}>
                               <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                                 <LocationIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
@@ -2890,13 +3262,43 @@ const ContactDetails: React.FC = () => {
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     Address
                                   </Typography>
-                                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                                    {contact.formattedAddress || 
-                                     [contact.address, contact.city, contact.state, contact.country, contact.zipcode]
-                                       .filter(Boolean)
-                                       .join(', ') || '-'}
-                                    {contact.timeZone && ` (${contact.timeZone})`}
-                                  </Typography>
+                                  <Box sx={{ mt: 0.25 }}>
+                                    {selectedLocations.length > 0 ? (
+                                      // Show worksite location address
+                                      selectedLocations.map((location, idx) => (
+                                        <Box key={location.id} sx={{ mb: idx < selectedLocations.length - 1 ? 1 : 0 }}>
+                                          <Typography variant="body2" fontWeight="medium" color="text.primary">
+                                            {location.nickname || location.name || location.title || 'Location'}
+                                          </Typography>
+                                          <Typography variant="body2" color="text.secondary">
+                                            {location.address || '-'}
+                                            {location.address && (location.city || location.state || location.zipcode || location.country) && ', '}
+                                            {[location.city, location.state, location.zipcode, location.country].filter(Boolean).join(', ')}
+                                          </Typography>
+                                          {contact.timeZone && idx === 0 && (
+                                            <Typography variant="caption" color="text.secondary">
+                                              {contact.timeZone}
+                                            </Typography>
+                                          )}
+                                        </Box>
+                                      ))
+                                    ) : (
+                                      // Fallback to contact address fields
+                                      <>
+                                        <Typography variant="body2" color="text.secondary">
+                                          {contact.formattedAddress || 
+                                           [contact.address, contact.city, contact.state, contact.country, contact.zipcode]
+                                             .filter(Boolean)
+                                             .join(', ') || '-'}
+                                        </Typography>
+                                        {contact.timeZone && (
+                                          <Typography variant="caption" color="text.secondary">
+                                            {contact.timeZone}
+                                          </Typography>
+                                        )}
+                                      </>
+                                    )}
+                                  </Box>
                                 </Box>
                               </Box>
                             </Grid>
@@ -3145,6 +3547,12 @@ const ContactDetails: React.FC = () => {
                 </CardContent>
               </Card>
 
+            </Box>
+          </Grid>
+
+          {/* Right Column - Connections: Company, Location, Opportunities, Job Orders, Active Salespeople */}
+          <Grid item xs={12} md={4}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
               {/* Recent Activity */}
               <Card>
                 <CardHeader 
@@ -3152,170 +3560,38 @@ const ContactDetails: React.FC = () => {
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
                 />
                 <CardContent sx={{ p: 2 }}>
-                  {loadingActivities ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  ) : recentActivities.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {recentActivities.map((activity) => (
-                        <Box 
-                          key={activity.id} 
-                          sx={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: 1, 
-                            p: 1, 
-                            borderRadius: 1,
-                            cursor: 'pointer',
-                            '&:hover': {
-                              bgcolor: 'grey.50'
-                            }
-                          }}
-                          onClick={() => {
-                            // Navigate to appropriate section based on activity type
-                            switch (activity.type) {
-                              case 'task':
-                                setTabValue(1); // Tasks tab
-                                break;
-                              case 'note':
-                                setTabValue(2); // Notes tab
-                                break;
-                              case 'email':
-                                setTabValue(3); // Activity tab
-                                break;
-                              default:
-                                break;
-                            }
-                          }}
-                        >
-                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
-                            {getActivityIcon(activity.icon)}
-                          </Avatar>
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography variant="body2" fontSize="0.75rem" fontWeight="medium" noWrap>
-                              {activity.title}
-                            </Typography>
-                            {activity.description && (
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {activity.description.length > 50 
-                                  ? `${activity.description.substring(0, 50)}...` 
-                                  : activity.description}
-                              </Typography>
-                            )}
-                          </Box>
-                          <Typography variant="caption" color="text.secondary" fontSize="0.7rem">
-                            {formatActivityTime(activity.timestamp)}
-                          </Typography>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Box sx={{ textAlign: 'center', py: 2 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No recent activity
+                  {lastActivity ? (
+                    <Box>
+                      <Typography variant="body2" fontWeight="medium" color="text.primary" sx={{ mb: 1 }}>
+                        Last Touch
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          📅 {lastActivity.timestamp.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                        </Typography>
+                      </Box>
+                      <Typography variant="body2" color="text.primary" sx={{ mb: 0.5 }}>
+                        {lastActivity.type === 'email' && lastActivity.metadata?.direction === 'sent' 
+                          ? `Email sent by ${lastActivity.salespersonName || 'User'}`
+                          : lastActivity.type === 'email' && lastActivity.metadata?.direction === 'received'
+                          ? `Email received from ${lastActivity.metadata?.from || 'Contact'}`
+                          : lastActivity.type === 'task'
+                          ? `Task: ${lastActivity.title}`
+                          : lastActivity.type === 'note'
+                          ? `Note added by ${lastActivity.salespersonName || 'User'}`
+                          : lastActivity.title || 'Activity'}
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
-                        Activities will appear here as they occur
+                        ⏱ {formatActivityTime(lastActivity.timestamp)}
                       </Typography>
                     </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No recent activity
+                    </Typography>
                   )}
                 </CardContent>
               </Card>
-
-            </Box>
-          </Grid>
-
-          {/* Right Column - Connections: Company, Location, Opportunities, Job Orders, Active Salespeople */}
-          <Grid item xs={12} md={4}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Company */}
-              {company && (
-                <Card>
-                  <CardHeader 
-                    title="Company" 
-                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  />
-                  <CardContent sx={{ p: 2 }}>
-                    <Box 
-                      sx={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: 1, 
-                        p: 1, 
-                        borderRadius: 1, 
-                        bgcolor: 'grey.50',
-                        cursor: 'pointer',
-                        '&:hover': {
-                          bgcolor: 'grey.100'
-                        }
-                      }}
-                      onClick={() => navigate(`/crm/companies/${company.id}`)}
-                    >
-                      <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
-                        <BusinessIcon sx={{ fontSize: 16 }} />
-                      </Avatar>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="body2" fontWeight="medium">
-                          {company.companyName || company.name || 'Unknown Company'}
-                        </Typography>
-                        {company.industry && (
-                          <Typography variant="caption" color="text.secondary">
-                            {company.industry}
-                          </Typography>
-                        )}
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Location */}
-              {selectedLocations.length > 0 && selectedLocations.map((location) => (
-                <Card key={location.id}>
-                  <CardHeader 
-                    title="Location" 
-                    titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                  />
-                  <CardContent sx={{ p: 2 }}>
-                    <Box 
-                      sx={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: 1, 
-                        p: 1, 
-                        borderRadius: 1, 
-                        bgcolor: 'grey.50',
-                        cursor: 'pointer',
-                        '&:hover': {
-                          bgcolor: 'grey.100'
-                        }
-                      }}
-                      onClick={() => {
-                        if (company?.id) {
-                          navigate(`/crm/companies/${company.id}/locations/${location.id}`);
-                        }
-                      }}
-                    >
-                      <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
-                        <LocationIcon sx={{ fontSize: 16 }} />
-                      </Avatar>
-                      <Box sx={{ flex: 1 }}>
-                        <Typography variant="body2" fontWeight="medium">
-                          {location.nickname || location.name || location.title || 'Unknown Location'}
-                        </Typography>
-                        {location.code && (
-                          <Typography variant="caption" color="text.secondary">
-                            {location.code}
-                          </Typography>
-                        )}
-                      </Box>
-                    </Box>
-                  </CardContent>
-                </Card>
-              ))}
 
               {/* Opportunities */}
               <Card>

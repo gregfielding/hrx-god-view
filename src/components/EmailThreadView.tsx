@@ -128,6 +128,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   const [optimisticMessages, setOptimisticMessages] = useState<Map<string, EmailMessage>>(new Map());
   const [showAllRecipients, setShowAllRecipients] = useState(false);
   const requestedAssetsRef = useRef<Set<string>>(new Set()); // gmailMessageIds requested for attachment/image resolution
+  const failedAssetsRef = useRef<Map<string, number>>(new Map()); // Track failed attempts with timestamps for retry backoff
 
   const threadAttachments = useMemo(() => {
     if (!thread?.messages || thread.messages.length === 0) return [];
@@ -147,7 +148,16 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   const resolveCidImages = useCallback((html: string, attachments?: EmailAttachment[]): string => {
     if (!html) return html;
     const atts = attachments || [];
-    if (atts.length === 0) return html;
+    if (atts.length === 0) {
+      // If HTML has cid but no attachments, log for debugging
+      if (/cid:/i.test(html)) {
+        console.log('[EmailThreadView] HTML has cid references but no attachments provided', {
+          htmlSnippet: html.substring(0, 200),
+          attachmentCount: atts.length,
+        });
+      }
+      return html;
+    }
     
     // Map contentId -> downloadUrl for inline images
     // Build map with multiple key formats for flexible matching
@@ -164,11 +174,29 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         map.set(normalized.toLowerCase(), a.downloadUrl);
       }
     }
-    if (map.size === 0) return html;
+    
+    if (map.size === 0) {
+      if (/cid:/i.test(html)) {
+        console.log('[EmailThreadView] HTML has cid references but no attachments with contentId+downloadUrl', {
+          htmlSnippet: html.substring(0, 200),
+          attachments: atts.map(a => ({
+            id: a.id,
+            name: a.name,
+            hasContentId: !!a.contentId,
+            hasDownloadUrl: !!a.downloadUrl,
+            contentId: a.contentId,
+          })),
+        });
+      }
+      return html;
+    }
 
     // Replace cid: references in various formats
     // Match: src="cid:..." or src='cid:...' or src=cid:...
-    let resolved = html.replace(/src=(["']?)cid:([^"'\s>]+)\1?/gi, (match, quote, cid) => {
+    let resolved = html;
+    let replacementCount = 0;
+    
+    resolved = resolved.replace(/src=(["']?)cid:([^"'\s>]+)\1?/gi, (match, quote, cid) => {
       const key = String(cid || '').replace(/[<>]/g, '').trim();
       // Try exact match first
       let url = map.get(key);
@@ -189,9 +217,15 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         }
       }
       if (!url) {
-        // No match found, return original
+        // No match found, log for debugging
+        console.warn('[EmailThreadView] Could not resolve cid reference', {
+          cid,
+          key,
+          availableKeys: Array.from(map.keys()),
+        });
         return match;
       }
+      replacementCount++;
       // Use the quote style from the original match, or default to double quote
       const quoteChar = quote || '"';
       return `src=${quoteChar}${url}${quoteChar}`;
@@ -212,8 +246,19 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
           }
         }
       }
-      return url ? `background-image: url("${url}")` : match;
+      if (url) {
+        replacementCount++;
+        return `background-image: url("${url}")`;
+      }
+      return match;
     });
+    
+    if (replacementCount > 0) {
+      console.log('[EmailThreadView] Resolved cid images', {
+        replacementCount,
+        mapSize: map.size,
+      });
+    }
     
     return resolved;
   }, []);
@@ -222,7 +267,29 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
     async (msg: EmailMessage) => {
       const gmailMessageId = (msg as any).gmailMessageId;
       if (!gmailMessageId || !user?.uid) return;
-      if (requestedAssetsRef.current.has(gmailMessageId)) return;
+      
+      // Check if we've already requested (and it's still in progress)
+      if (requestedAssetsRef.current.has(gmailMessageId)) {
+        console.log('[EmailThreadView] Already requested assets for', gmailMessageId);
+        return;
+      }
+      
+      // Check if we've failed recently (exponential backoff: 5s, 15s, 45s)
+      const failedAttempt = failedAssetsRef.current.get(gmailMessageId);
+      if (failedAttempt) {
+        const timeSinceFailure = Date.now() - failedAttempt;
+        const backoffMs = Math.min(45000, 5000 * Math.pow(3, Math.floor(timeSinceFailure / 5000)));
+        if (timeSinceFailure < backoffMs) {
+          console.log('[EmailThreadView] Skipping retry - still in backoff period', {
+            gmailMessageId,
+            timeSinceFailure,
+            backoffMs,
+          });
+          return;
+        }
+        // Backoff period expired, allow retry
+        failedAssetsRef.current.delete(gmailMessageId);
+      }
 
       const html = msg.bodyHtml || '';
       const hasCidImages = /cid:/i.test(html);
@@ -232,22 +299,125 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
       // Load assets if:
       // 1. HTML contains cid: references (inline images), OR
       // 2. We have attachments but they don't have download URLs yet
-      if (!hasCidImages && !hasAttachmentIds) return;
+      if (!hasCidImages && !hasAttachmentIds) {
+        console.log('[EmailThreadView] Skipping asset load - no cid images and attachments already have URLs', {
+          gmailMessageId,
+          hasCidImages,
+          hasAttachments,
+          hasAttachmentIds,
+        });
+        return;
+      }
+
+      console.log('[EmailThreadView] Loading Gmail assets for message', {
+        gmailMessageId,
+        hasCidImages,
+        hasAttachments,
+        hasAttachmentIds,
+      });
 
       requestedAssetsRef.current.add(gmailMessageId);
       try {
         const getAssets = httpsCallable(functions, 'getGmailMessageAttachments');
-        await getAssets({
+        const result = await getAssets({
           userId: user.uid,
           tenantId,
           threadId,
           gmailMessageId,
         });
-        // Attachments will be merged into the message doc server-side; realtime will refresh UI.
-      } catch (err) {
-        console.warn('Failed to load Gmail assets for message', gmailMessageId, err);
-        // best-effort only - remove from requested set so we can retry later
+        const resultData = result.data as any;
+        const attachmentCount = Array.isArray(resultData?.attachments) ? resultData.attachments.length : 0;
+        console.log('[EmailThreadView] Gmail assets loaded', {
+          gmailMessageId,
+          success: resultData?.success,
+          attachmentCount,
+          attachments: resultData?.attachments?.map((a: any) => ({
+            id: a.id,
+            name: a.name,
+            contentId: a.contentId,
+            hasDownloadUrl: !!a.downloadUrl,
+          })),
+        });
+        
+        // Clear any previous failure record on success
+        failedAssetsRef.current.delete(gmailMessageId);
+
+        // Apply attachments to local UI immediately (don't wait for Firestore persistence)
+        if (resultData?.success && Array.isArray(resultData?.attachments) && attachmentCount > 0) {
+          setThread((prev) => {
+            if (!prev) return prev;
+            const nextMessages = (prev.messages || []).map((m) => {
+              if ((m as any).gmailMessageId !== gmailMessageId) return m;
+              const existing = Array.isArray(m.attachments) ? m.attachments : [];
+              const incoming = resultData.attachments as EmailAttachment[];
+              const seen = new Set<string>();
+              const merged: EmailAttachment[] = [];
+              for (const a of [...incoming, ...existing]) {
+                const key = a.storagePath || a.id || `${a.name}:${a.size}:${a.contentType}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                merged.push(a);
+              }
+              return { ...m, attachments: merged };
+            });
+            return { ...prev, messages: nextMessages };
+          });
+        }
+
+        // If the function returned success=false, allow later retries
+        if (!resultData?.success) {
+          console.warn('[EmailThreadView] getGmailMessageAttachments returned success=false', resultData);
+          // Remove from requested set so we can retry later if needed
+          requestedAssetsRef.current.delete(gmailMessageId);
+          // Record failure timestamp for backoff
+          failedAssetsRef.current.set(gmailMessageId, Date.now());
+          return;
+        }
+
+        // If we expected CID images but got zero attachments back, treat as a retryable failure.
+        // This prevents "success=true, attachments=[]" from permanently locking a message with broken inline images.
+        if (hasCidImages && attachmentCount === 0) {
+          console.warn('[EmailThreadView] CID images present but no attachments returned; will retry after backoff', {
+            gmailMessageId,
+            hasCidImages,
+            resultData,
+          });
+          requestedAssetsRef.current.delete(gmailMessageId);
+          failedAssetsRef.current.set(gmailMessageId, Date.now());
+          return;
+        }
+
+        // If attachments came back but none have download URLs, also retry later.
+        if (hasCidImages && attachmentCount > 0) {
+          const hasAnyUrl = (resultData.attachments as any[]).some((a) => !!a?.downloadUrl);
+          if (!hasAnyUrl) {
+            console.warn('[EmailThreadView] Attachments returned but missing downloadUrl; will retry after backoff', {
+              gmailMessageId,
+              attachmentCount,
+            });
+            requestedAssetsRef.current.delete(gmailMessageId);
+            failedAssetsRef.current.set(gmailMessageId, Date.now());
+            return;
+          }
+        }
+      } catch (err: any) {
+        console.error('[EmailThreadView] Failed to load Gmail assets for message', {
+          gmailMessageId,
+          error: err?.message,
+          code: err?.code,
+          details: err?.details,
+          stack: err?.stack?.substring(0, 500), // Truncate stack for readability
+        });
+        // Remove from requested set so we can retry later (with exponential backoff)
         requestedAssetsRef.current.delete(gmailMessageId);
+        
+        // Record failure timestamp for backoff
+        failedAssetsRef.current.set(gmailMessageId, Date.now());
+        
+        // If it's an INTERNAL error, it might be transient - log but don't spam
+        if (err?.code === 'internal' || err?.message?.includes('INTERNAL')) {
+          console.warn('[EmailThreadView] INTERNAL error from getGmailMessageAttachments - may be transient, will retry after backoff');
+        }
       }
     },
     [tenantId, threadId, user?.uid]
@@ -1199,6 +1369,23 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                           // Best-effort: load Gmail inline assets (cid images / attachments) when needed
                           void maybeLoadGmailAssetsForMessage(message);
                           const resolvedHtml = resolveCidImages(message.bodyHtml || '', message.attachments);
+                          
+                          // Debug logging
+                          if (message.bodyHtml && /cid:/i.test(message.bodyHtml)) {
+                            console.log('[EmailThreadView] Message has cid images:', {
+                              messageId: message.id,
+                              gmailMessageId: (message as any).gmailMessageId,
+                              hasAttachments: !!message.attachments?.length,
+                              attachmentCount: message.attachments?.length || 0,
+                              attachments: message.attachments?.map(a => ({
+                                id: a.id,
+                                name: a.name,
+                                contentId: a.contentId,
+                                hasDownloadUrl: !!a.downloadUrl,
+                              })),
+                            });
+                          }
+                          
                           return (
                             <EmailBodyRenderer
                               html={resolvedHtml}

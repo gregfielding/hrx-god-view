@@ -1446,7 +1446,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     }
 
     // When on Prospecting tab, skip real-time listeners to avoid unnecessary reads
-    if (tabValue === 3) {
+    // Note: Archive is tabValue === 3; Prospecting is tabValue === 4.
+    if (tabValue === 4) {
       return;
     }
 
@@ -4708,6 +4709,10 @@ const CompaniesTab: React.FC<{
   const filtersRef = useRef<HTMLDivElement | null>(null);
   const [filtersHeight, setFiltersHeight] = useState<number>(0);
   const [isScrolled, setIsScrolled] = useState(false);
+  
+  // Pagination state (Inbox standard)
+  const [dealPage, setDealPage] = useState(0);
+  const [dealRowsPerPage, setDealRowsPerPage] = useState(20);
   const [newOpportunityForm, setNewOpportunityForm] = useState({
     name: '',
     companyId: '',
@@ -5124,6 +5129,15 @@ const CompaniesTab: React.FC<{
     return filtered;
   }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson, showArchived]);
 
+  // Reset pagination when search/filters change (Inbox standard)
+  useEffect(() => {
+    setDealPage(0);
+  }, [search, dealFilter, selectedSalesperson, showArchived]);
+
+  const paginatedDeals = React.useMemo(() => {
+    return filteredDeals.slice(dealPage * dealRowsPerPage, dealPage * dealRowsPerPage + dealRowsPerPage);
+  }, [filteredDeals, dealPage, dealRowsPerPage]);
+
 
 
   const handleEditDeal = (deal: any) => {
@@ -5195,6 +5209,20 @@ const CompaniesTab: React.FC<{
       // You might want to show an error message to the user
     }
   };
+
+  const dealHeaderCellSx = {
+    padding: '4px 12px',
+    fontSize: '11px',
+    fontWeight: 500,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.5px',
+    color: 'rgba(0, 0, 0, 0.85)',
+    height: '32px',
+    bgcolor: '#FFFFFF',
+    borderBottom: '1px solid #E5E7EB',
+    whiteSpace: 'nowrap' as const,
+  };
+
   return (
     <Box>
       {/* Header with search and actions */}
@@ -5309,22 +5337,28 @@ const CompaniesTab: React.FC<{
       </Box>
       
       {/* Deals Table */}
-        <TableContainer component={Paper} sx={{ 
-          overflowX: 'auto',
-          overflowY: 'visible',
-          borderRadius: 0,
-          border: '1px solid #EAEEF4',
-          borderTop: 'none',
-          boxShadow: 'none',
-          mt: 0,
-          pt: 0,
-          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
-          '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
-          '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
-          scrollbarWidth: 'thin',
-          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
-        }} data-testid="customers-list">
-          <Table sx={{ minWidth: 1520 }} data-testid="customers-table">
+        <TableContainer
+          component={Paper}
+          elevation={0}
+          sx={{ 
+            borderRadius: 0,
+            border: '1px solid #EAEEF4',
+            borderTop: 'none',
+            boxShadow: 'none',
+            mt: 0,
+            pt: 0,
+            px: 2, // Inbox padding
+            overflowX: 'auto',
+            overflowY: 'visible', // Outer scroll container handles vertical scroll (sticky header uses page scroll)
+            '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+            '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+            '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          }}
+          data-testid="customers-list"
+        >
+          <Table size="small" stickyHeader sx={{ minWidth: 1520, width: '100%' }} data-testid="customers-table">
           <TableHead
             sx={{
               '& .MuiTableCell-root': {
@@ -5336,227 +5370,181 @@ const CompaniesTab: React.FC<{
             }}
           >
             <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
-              <TableCell sx={{ 
-                width: 250,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 250, minWidth: 250 }}>
                 <TableSortLabel
                   active={sortField === 'name'}
                   direction={sortField === 'name' ? sortDirection : 'asc'}
                   onClick={() => handleSort('name')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'name' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Deal Name
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 150,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 150, minWidth: 150 }}>
                 <TableSortLabel
                   active={sortField === 'company'}
                   direction={sortField === 'company' ? sortDirection : 'asc'}
                   onClick={() => handleSort('company')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'company' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Company
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 120,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120 }}>
                 <TableSortLabel
                   active={sortField === 'stage'}
                   direction={sortField === 'stage' ? sortDirection : 'asc'}
                   onClick={() => handleSort('stage')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'stage' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Stage
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 120,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                textAlign: 'right',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120, textAlign: 'right' }}>
                 <TableSortLabel
                   active={sortField === 'value'}
                   direction={sortField === 'value' ? sortDirection : 'asc'}
                   onClick={() => handleSort('value')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'value' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Value
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 100,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
                 <TableSortLabel
                   active={sortField === 'createdAt'}
                   direction={sortField === 'createdAt' ? sortDirection : 'asc'}
                   onClick={() => handleSort('createdAt')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'createdAt' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Age
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 100,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
                 <TableSortLabel
                   active={sortField === 'status'}
                   direction={sortField === 'status' ? sortDirection : 'asc'}
                   onClick={() => handleSort('status')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'status' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Status
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 100,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
                 <TableSortLabel
                   active={sortField === 'health'}
                   direction={sortField === 'health' ? sortDirection : 'asc'}
                   onClick={() => handleSort('health')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'health' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Health
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 120,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120 }}>
                 <TableSortLabel
                   active={sortField === 'closeDate'}
                   direction={sortField === 'closeDate' ? sortDirection : 'asc'}
                   onClick={() => handleSort('closeDate')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'closeDate' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Close Date
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ 
-                width: 100,
-                fontSize: '0.75rem',
-                fontWeight: 600, 
-                color: '#374151',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
-                borderBottom: '1px solid #E5E7EB',
-                py: 1.5
-              }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
                 <TableSortLabel
                   active={sortField === 'owner'}
                   direction={sortField === 'owner' ? sortDirection : 'asc'}
                   onClick={() => handleSort('owner')}
                   sx={{ 
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    color: '#374151',
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
                     textTransform: 'uppercase',
-                    letterSpacing: '0.05em'
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'owner' ? 1 : 0.3,
+                    },
                   }}
                 >
                   Owner
@@ -5566,26 +5554,47 @@ const CompaniesTab: React.FC<{
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredDeals.map((deal) => (
-              <TableRow 
-                key={deal.id} 
-                hover
-                                  onClick={(e) => {
+            {filteredDeals.length === 0 ? (
+              <TableRow>
+                <TableCell
+                  colSpan={9}
+                  sx={{
+                    py: 6,
+                    textAlign: 'center',
+                    color: 'text.secondary',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                  }}
+                >
+                  {showArchived ? 'No archived opportunities' : 'No opportunities'}
+                </TableCell>
+              </TableRow>
+            ) : (
+              paginatedDeals.map((deal, index) => (
+                <TableRow 
+                  key={deal.id} 
+                  hover
+                  onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     if (deal.id) {
                       navigate(`/crm/deals/${deal.id}`);
                     }
                   }}
-                sx={{ 
-                  height: '48px',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    backgroundColor: '#F9FAFB'
-                  }
-                }}
-              >
-                <TableCell sx={{ py: 1 }}>
+                  sx={{ 
+                    height: '36px',
+                    cursor: 'pointer',
+                    bgcolor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                    '& td': {
+                      borderBottom: '1px solid',
+                      borderColor: 'divider',
+                    },
+                    '&:hover': {
+                      backgroundColor: '#F9FAFB'
+                    }
+                  }}
+                >
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <Typography 
                     variant="body2" 
                     fontWeight={600}
@@ -5594,7 +5603,7 @@ const CompaniesTab: React.FC<{
                     {deal.name}
                   </Typography>
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Avatar 
                       src={(() => {
@@ -5626,14 +5635,14 @@ const CompaniesTab: React.FC<{
                     </Typography>
                   </Box>
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <StageChip 
                     stage={deal.stage} 
                     size="small" 
                     useCustomColors={true}
                   />
                 </TableCell>
-                <TableCell sx={{ py: 1, textAlign: 'right' }}>
+                <TableCell sx={{ px: 1.5, py: 0.75, textAlign: 'right' }}>
                   <Typography 
                     variant="body2" 
                     fontWeight={500}
@@ -5643,7 +5652,7 @@ const CompaniesTab: React.FC<{
                     {getDealEstimatedValue(deal)}
                   </Typography>
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   {(() => {
                     const age = getDealAge(deal?.createdAt);
                     if (!age) return <Typography variant="body2" color="#6B7280">-</Typography>;
@@ -5658,7 +5667,7 @@ const CompaniesTab: React.FC<{
                     );
                   })()}
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   {(() => {
                     const status = getDealStatus(deal);
                     return (
@@ -5680,7 +5689,7 @@ const CompaniesTab: React.FC<{
                     );
                   })()}
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   {(() => {
                     const health = getDealHealth(deal);
                     
@@ -5695,22 +5704,36 @@ const CompaniesTab: React.FC<{
                     );
                   })()}
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
                     {getDealCloseDate(deal)}
                   </Typography>
                 </TableCell>
-                <TableCell sx={{ py: 1 }}>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
                     {getDealOwner(deal)}
                   </Typography>
                 </TableCell>
 
-              </TableRow>
-            ))}
+                </TableRow>
+              ))
+            )}
           </TableBody>
         </Table>
       </TableContainer>
+
+      {filteredDeals.length > 0 && (
+        <StandardTablePagination
+          count={filteredDeals.length}
+          page={dealPage}
+          onPageChange={(_, newPage) => setDealPage(newPage)}
+          rowsPerPage={dealRowsPerPage}
+          onRowsPerPageChange={(e) => {
+            setDealRowsPerPage(parseInt(e.target.value, 10));
+            setDealPage(0);
+          }}
+        />
+      )}
 
       {/* Deal Dialog */}
       <Dialog open={showDealDialog} onClose={() => setShowDealDialog(false)} maxWidth="md" fullWidth>

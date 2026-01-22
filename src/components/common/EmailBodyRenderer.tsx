@@ -171,6 +171,7 @@ const EmailBodyRenderer: React.FC<EmailBodyRendererProps> = ({
   const hasHtml = sanitizedHtml.length > 0;
 
   // Use iframe for true CSS isolation when HTML is present
+  // Re-render when sanitizedHtml changes (e.g., when cid images are resolved)
   useEffect(() => {
     if (hasHtml && iframeRef.current) {
       const iframe = iframeRef.current;
@@ -214,7 +215,8 @@ const EmailBodyRenderer: React.FC<EmailBodyRendererProps> = ({
       // Reset fallback when we have HTML and are attempting iframe render
       setUseFallback(false);
 
-      // Load content
+      // Load content - update srcdoc whenever sanitizedHtml changes
+      // This ensures that when cid images are resolved, the iframe re-renders with the new URLs
       iframe.srcdoc = srcDoc;
 
       let resizeTimeout: NodeJS.Timeout | null = null;

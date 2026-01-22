@@ -798,13 +798,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           onOptimisticMessage(optimisticMessage);
         }
 
-        // Close drawer immediately for better UX
-        setSuccess(true);
-        setTimeout(() => {
-          onClose();
-        }, 500);
-
-        // Send email in background
+        // Send email and only show success/close AFTER the server confirms.
+        // This prevents "silent success" when Gmail/SendGrid fails.
         try {
           const response = await fetch(
             `${API_BASE_URL}/sendEmailReplyApi?threadId=${encodeURIComponent(threadId)}`,
@@ -843,6 +838,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
             if (onSend) {
               onSend({ success: true, dispatchedChannels: ['email'], messageLogIds: [result.messageId] });
             }
+            setSuccess(true);
+            setTimeout(() => {
+              onClose();
+            }, 750);
           } else {
             // Remove optimistic message on error
             if (onMessageSent) {

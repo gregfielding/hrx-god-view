@@ -1,4 +1,4 @@
-import { onCall, onRequest } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { getFirestore } from 'firebase-admin/firestore';
 import * as admin from 'firebase-admin';
@@ -999,27 +999,33 @@ export const getGmailMailboxCounts = onCall(
  * This is used by the email thread view to display inline images and attachments.
  */
 export const getGmailMessageAttachments = onCall(
-  { cors: true, memory: '512MiB', concurrency: 10 },
+  { cors: true, memory: '512MiB', concurrency: 10, timeoutSeconds: 300 },
   async (request) => {
-    const { userId, tenantId, gmailMessageId, threadId, maxAgeMs = 10 * 60 * 1000 } = request.data || {};
-    if (!userId || !tenantId || !gmailMessageId) {
-      throw new Error('Missing required fields: userId, tenantId, gmailMessageId');
-    }
+    try {
+      const { userId, tenantId, gmailMessageId, threadId, maxAgeMs = 10 * 60 * 1000 } = request.data || {};
+      if (!userId || !tenantId || !gmailMessageId) {
+        logger.error('getGmailMessageAttachments: Missing required fields', { userId, tenantId, gmailMessageId });
+        throw new HttpsError('invalid-argument', 'Missing required fields: userId, tenantId, gmailMessageId');
+      }
 
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    if (!userDoc.exists) {
-      throw new Error('User not found');
-    }
+      logger.info('getGmailMessageAttachments: Starting', { userId, tenantId, gmailMessageId, threadId });
 
-    const userData: any = userDoc.data() || {};
-    const gmailTokens = userData?.gmailTokens;
-    if (!gmailTokens?.access_token) {
-      return { success: false, connected: false, attachments: [] };
-    }
+      const userRef = db.collection('users').doc(userId);
+      const userDoc = await userRef.get();
+      if (!userDoc.exists) {
+        logger.error('getGmailMessageAttachments: User not found', { userId });
+        throw new HttpsError('not-found', 'User not found');
+      }
 
-    oauth2Client.setCredentials(gmailTokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+      const userData: any = userDoc.data() || {};
+      const gmailTokens = userData?.gmailTokens;
+      if (!gmailTokens?.access_token) {
+        logger.warn('getGmailMessageAttachments: Gmail not connected', { userId });
+        return { success: false, connected: false, attachments: [] };
+      }
+
+      oauth2Client.setCredentials(gmailTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
     // Load message payload to discover attachments + inline images
     const messageRes = await gmail.users.messages.get({
@@ -1044,6 +1050,9 @@ export const getGmailMessageAttachments = onCall(
     };
 
     const bucket = getStorage().bucket();
+    const bucketName = bucket.name;
+    const makeDownloadUrl = (path: string, token: string) =>
+      `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}`;
     const out: AttachmentOut[] = [];
 
     for (const part of parts) {
@@ -1071,18 +1080,34 @@ export const getGmailMessageAttachments = onCall(
         if (exists) {
           const [meta] = await file.getMetadata().catch(() => [null as any]);
           const updated = meta?.updated ? new Date(meta.updated).getTime() : null;
+          const tokensRaw: string = String(meta?.metadata?.firebaseStorageDownloadTokens || '');
+          const tokenFromMeta = tokensRaw.split(',')[0]?.trim();
           if (updated && Date.now() - updated <= Number(maxAgeMs)) {
-            const [signedUrl] = await file.getSignedUrl({
-              action: 'read',
-              expires: Date.now() + 60 * 60 * 1000,
-            });
+            // Prefer Firebase download token URLs (avoid SignedUrl IAM/signBlob issues)
+            let token = tokenFromMeta;
+            if (!token) {
+              try {
+                // Node 20 supports crypto.randomUUID()
+                // eslint-disable-next-line @typescript-eslint/no-var-requires
+                const crypto = require('crypto');
+                token = crypto.randomUUID();
+                await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } }).catch(() => undefined);
+              } catch (e: any) {
+                logger.warn('getGmailMessageAttachments: Failed to set download token on cached attachment', {
+                  gmailMessageId,
+                  attachmentId,
+                  error: e?.message,
+                });
+              }
+            }
+            const downloadUrl = token ? makeDownloadUrl(storagePath, token) : '';
             out.push({
               id: attachmentId,
               name: filenameRaw || filename,
               contentType: mimeType,
               size,
               storagePath,
-              downloadUrl: signedUrl,
+              downloadUrl,
               contentId,
               disposition,
             });
@@ -1093,28 +1118,77 @@ export const getGmailMessageAttachments = onCall(
         // ignore cache errors; fall through to fetch
       }
 
-      const attRes = await gmail.users.messages.attachments.get({
-        userId: 'me',
-        messageId: gmailMessageId,
-        id: attachmentId,
-      });
+      try {
+        const attRes = await gmail.users.messages.attachments.get({
+          userId: 'me',
+          messageId: gmailMessageId,
+          id: attachmentId,
+        });
 
-      const dataStr: string = String((attRes.data as any)?.data || '');
-      const normalized = dataStr.replace(/-/g, '+').replace(/_/g, '/');
-      const buffer = Buffer.from(normalized, 'base64');
+        const dataStr: string = String((attRes.data as any)?.data || '');
+        if (!dataStr) {
+          logger.warn('getGmailMessageAttachments: Empty attachment data', { attachmentId, gmailMessageId });
+          continue;
+        }
 
-      await file.save(buffer, {
-        contentType: mimeType,
-        resumable: false,
-        metadata: {
-          cacheControl: 'private, max-age=3600',
-        },
-      });
+        const normalized = dataStr.replace(/-/g, '+').replace(/_/g, '/');
+        let buffer: Buffer;
+        try {
+          buffer = Buffer.from(normalized, 'base64');
+        } catch (err: any) {
+          logger.error('getGmailMessageAttachments: Failed to decode base64', {
+            attachmentId,
+            gmailMessageId,
+            error: err?.message,
+          });
+          continue;
+        }
 
-      const [signedUrl] = await file.getSignedUrl({
-        action: 'read',
-        expires: Date.now() + 60 * 60 * 1000,
-      });
+        if (buffer.length === 0) {
+          logger.warn('getGmailMessageAttachments: Empty buffer after decode', { attachmentId, gmailMessageId });
+          continue;
+        }
+
+        await file.save(buffer, {
+          contentType: mimeType,
+          resumable: false,
+          metadata: {
+            cacheControl: 'private, max-age=3600',
+          },
+        });
+      } catch (partErr: any) {
+        logger.error('getGmailMessageAttachments: Failed to fetch/save attachment', {
+          attachmentId,
+          gmailMessageId,
+          error: partErr?.message,
+          code: partErr?.code,
+        });
+        // Continue with other attachments even if one fails
+        continue;
+      }
+
+      // Ensure a Firebase download token exists so we can build a stable URL (no signedUrl permissions required)
+      let token = '';
+      try {
+        const [meta] = await file.getMetadata().catch(() => [null as any]);
+        const tokensRaw: string = String(meta?.metadata?.firebaseStorageDownloadTokens || '');
+        token = tokensRaw.split(',')[0]?.trim() || '';
+      } catch {}
+      if (!token) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const crypto = require('crypto');
+          token = crypto.randomUUID();
+          await file.setMetadata({ metadata: { firebaseStorageDownloadTokens: token } });
+        } catch (e: any) {
+          logger.warn('getGmailMessageAttachments: Failed to set download token', {
+            gmailMessageId,
+            attachmentId,
+            error: e?.message,
+          });
+        }
+      }
+      const downloadUrl = token ? makeDownloadUrl(storagePath, token) : '';
 
       out.push({
         id: attachmentId,
@@ -1122,7 +1196,7 @@ export const getGmailMessageAttachments = onCall(
         contentType: mimeType,
         size,
         storagePath,
-        downloadUrl: signedUrl,
+        downloadUrl,
         contentId,
         disposition,
       });
@@ -1169,7 +1243,28 @@ export const getGmailMessageAttachments = onCall(
       }
     }
 
-    return { success: true, attachments: out };
+      logger.info('getGmailMessageAttachments: Success', {
+        userId,
+        gmailMessageId,
+        attachmentCount: out.length,
+      });
+      return { success: true, attachments: out };
+    } catch (err: any) {
+      logger.error('getGmailMessageAttachments: Error', {
+        error: err?.message,
+        stack: err?.stack,
+        userId: request.data?.userId,
+        gmailMessageId: request.data?.gmailMessageId,
+      });
+      // Preserve details client-side (avoid opaque functions/internal)
+      throw err instanceof HttpsError
+        ? err
+        : new HttpsError('internal', `Failed to load Gmail attachments: ${err?.message || 'Unknown error'}`, {
+            userId: request.data?.userId,
+            tenantId: request.data?.tenantId,
+            gmailMessageId: request.data?.gmailMessageId,
+          });
+    }
   }
 );
 
