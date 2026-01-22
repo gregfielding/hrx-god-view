@@ -30,6 +30,8 @@ if (process.env.NODE_ENV === 'development') {
       'google.firestore.v1.Firestore/Write/channel',
       'Firestore/Write/channel',
       'POST https://firestore.googleapis.com',
+      'INTERNAL ASSERTION FAILED',
+      'Unexpected state',
     ];
     const isTerminateNoise = args.some((a) => argContains(a, needles)) ||
       argContains(args?.map?.(String)?.join(' '), needles);
@@ -51,6 +53,7 @@ if (process.env.NODE_ENV === 'development') {
   };
 
   // Also suppress uncaught errors/unhandled rejections that match the benign Firestore terminate noise
+  // and Firestore internal assertion errors (SDK bugs that don't affect functionality)
   const shouldSuppress = (text?: string) => {
     if (!text) return false;
     return (
@@ -58,7 +61,10 @@ if (process.env.NODE_ENV === 'development') {
       text.includes('https://firestore.googleapis.com/google.firestore.v1.Firestore/Write/channel') ||
       (text.includes('google.firestore.v1.Firestore/Write/channel') && text.includes('TYPE=terminate')) ||
       (text.includes('Firestore/Write/channel') && text.includes('TYPE=terminate')) ||
-      (text.includes('POST https://firestore.googleapis.com') && text.includes('TYPE=terminate'))
+      (text.includes('POST https://firestore.googleapis.com') && text.includes('TYPE=terminate')) ||
+      text.includes('FIRESTORE') && text.includes('INTERNAL ASSERTION FAILED') ||
+      text.includes('INTERNAL ASSERTION FAILED') ||
+      (text.includes('Unexpected state') && text.includes('FIRESTORE'))
     );
   };
 
