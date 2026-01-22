@@ -995,8 +995,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               </FormControl>
             ) : null}
             
-            {/* Channel Selector - Hide for forwards (always email) */}
-            {!defaultBody && (
+            {/* Channel Selector - Hide when email-only (compose, reply, forward from inbox) */}
+            {!defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && (
               <FormControl component="fieldset">
                 <FormLabel component="legend">Channels</FormLabel>
                 <FormGroup row sx={{ mt: 1 }}>
@@ -1028,7 +1028,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
             </FormControl>
             )}
 
-            <Divider />
+            {/* Only show divider if Channels section is visible */}
+            {!defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && <Divider />}
 
             {/* Email-specific fields */}
             {channels.includes('email') && (

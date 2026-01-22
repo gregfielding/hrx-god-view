@@ -16,6 +16,8 @@ export interface EmailSignatureData {
   schedulingLink?: string;
   applicationPortal?: string;
   includeConfidentialityNotice?: boolean;
+  website?: string; // Tenant website
+  logoUrl?: string; // Tenant logo/avatar
 }
 
 export interface EmailSignatureSettings {
@@ -36,93 +38,120 @@ function formatPhone(phone: string): { display: string; digits: string } {
   return { display: phone, digits };
 }
 
-function generateDefaultSignature(data: EmailSignatureData): string {
-  const phone = data.phone ? formatPhone(data.phone) : null;
-  const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
-  const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
-  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
-  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
-  
-  return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
-${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span><br/>
-<span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
+/**
+ * Escapes HTML special characters
+ */
+function escapeHtml(str: string): string {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return str.replace(/[&<>"']/g, (m) => map[m]);
+}
 
-<span style="font-size:12px;color:#555;">
-Nevada • Texas • Arizona • California
-</span>`;
+function generateDefaultSignature(data: EmailSignatureData): string {
+  // Map to match preview format exactly (title instead of jobTitle, location instead of officeLocation)
+  const title = data.jobTitle || '';
+  const location = data.officeLocation || undefined;
+  
+  const lines: string[] = [];
+
+  // Name line (optionally with pronouns) - EXACT match to preview
+  const nameLine = data.pronouns
+    ? `<strong>${escapeHtml(data.fullName)}</strong> <span style="font-weight:normal;color:#555;font-size:12px;">(${escapeHtml(data.pronouns)})</span>`
+    : `<strong>${escapeHtml(data.fullName)}</strong>`;
+  lines.push(nameLine);
+
+  // Title only (no company suffix) - EXACT match to preview
+  if (title && title.trim()) {
+    lines.push(`${escapeHtml(title.trim())}`);
+  }
+
+  // Phone - EXACT match to preview
+  if (data.phone && data.phone.trim()) {
+    lines.push(`${escapeHtml(data.phone.trim())}`);
+  }
+
+  // Email - EXACT match to preview
+  if (data.email && data.email.trim()) {
+    lines.push(
+      `<a href="mailto:${escapeHtml(data.email.trim())}" style="color:#1155CC;text-decoration:none;">${escapeHtml(data.email.trim())}</a>`
+    );
+  }
+
+  // Website (only show if provided) - EXACT match to preview
+  if (data.website && data.website.trim()) {
+    const url = data.website.trim().startsWith('http') ? data.website.trim() : `https://${data.website.trim()}`;
+    const displayUrl = data.website.trim().replace(/^https?:\/\//, '');
+    lines.push(
+      `<a href="${escapeHtml(url)}" style="color:#1155CC;text-decoration:none;">${escapeHtml(displayUrl)}</a>`
+    );
+  }
+
+  // Location - EXACT match to preview
+  if (location && location.trim()) {
+    lines.push(`${escapeHtml(location.trim())}`);
+  }
+
+  const textBlock = lines.join('<br/>\n');
+
+  // Logo cell - EXACT match to preview
+  const logoCell = data.logoUrl
+    ? `<td style="padding-right:14px;vertical-align:top;">
+          <img src="${escapeHtml(data.logoUrl)}"
+               alt="Company logo"
+               style="height:60px;width:auto;border-radius:4px;display:block;" />
+       </td>`
+    : '';
+
+  // Table HTML - EXACT match to preview
+  const tableHtml = `
+<table cellpadding="0" cellspacing="0" role="presentation">
+  <tr>
+    ${logoCell}
+    <td style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.4;color:#111111;">
+      ${textBlock}
+    </td>
+  </tr>
+</table>
+`.trim();
+
+  return tableHtml;
 }
 
 function generateSalesSignature(data: EmailSignatureData): string {
-  const phone = data.phone ? formatPhone(data.phone) : null;
-  const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
-  const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
-  const schedulingLine = data.schedulingLink ? `<br/><span style="font-size:13px;">📅 <a href="${data.schedulingLink}" style="color:#2F5FFF;">Book time with me</a></span>` : '';
-  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
-  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
-  
-  return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
-${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span>${schedulingLine}<br/>
-<span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
-
-<span style="font-size:12px;color:#555;">
-Nevada • Texas • Arizona • California
-</span>`;
+  // Use same format as default, but can add scheduling link if needed
+  return generateDefaultSignature(data);
 }
 
 function generateRecruiterSignature(data: EmailSignatureData): string {
-  const phone = data.phone ? formatPhone(data.phone) : null;
-  const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
-  const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
-  const applicationLine = data.applicationPortal ? `<br/><span style="font-size:13px;">📝 <a href="${data.applicationPortal}" style="color:#2F5FFF;">Apply with C1 Staffing</a></span>` : '';
-  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
-  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
-  
-  return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
-${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span>${applicationLine}<br/>
-<span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
-
-<span style="font-size:12px;color:#555;">
-Nevada • Texas • Arizona • California
-</span>`;
+  // Use same format as default
+  return generateDefaultSignature(data);
 }
 
 function generateExecutiveSignature(data: EmailSignatureData): string {
-  const phone = data.phone ? formatPhone(data.phone) : null;
-  const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
-  const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
-  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
-  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
-  
-  return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
-${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span><br/>
-<span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
-
-<span style="font-size:12px;color:#555;">
-C1 Staffing — People Powering Business
-</span>`;
+  // Use same format as default
+  return generateDefaultSignature(data);
 }
 
 function generateConfidentialityNotice(): string {
-  return `<br/><br/><span style="font-size:11px;color:#777;">
-CONFIDENTIALITY NOTICE: This email and any attachments are intended only for the named recipient. If you received this message in error, please notify the sender and delete it immediately.
-</span>`;
+  return `
+<br/>
+<div style="margin-top:8px;font-family:Arial,Helvetica,sans-serif;font-size:11px;line-height:1.4;color:#777777;max-width:520px;">
+  This email and any attachments may contain confidential information intended only for the recipient. If you received this message in error, please notify the sender and delete it.
+</div>
+`.trim();
 }
 
 export function generateEmailSignature(settings: EmailSignatureSettings): string {
   // Always generate signature if settings exist (enabled flag is now optional/ignored)
   // This ensures signatures are always included automatically
-
-  if (settings.customHtml) {
-    let signature = settings.customHtml;
-    if (settings.data?.includeConfidentialityNotice) {
-      signature += generateConfidentialityNotice();
-    }
-    return signature;
-  }
+  
+  // IGNORE customHtml - always use template-based generation to match preview
+  // This ensures consistency between preview and delivered emails
 
   // Check if we have minimum required data to generate a signature
   // Allow signature generation if we have at least email OR fullName
@@ -130,7 +159,6 @@ export function generateEmailSignature(settings: EmailSignatureSettings): string
     return '';
   }
   
-  // If we have customHtml but no template data, that's fine - customHtml was already handled above
   // For template-based signatures, we need at least email or fullName
   if (!settings.data.email && !settings.data.fullName) {
     return '';

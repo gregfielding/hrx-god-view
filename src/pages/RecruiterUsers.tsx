@@ -59,6 +59,7 @@ type SecurityLevel =
   | '4'
   | 'active_employee'
   | 'active_contractor'
+  | 'onboarding'
   | 'all';
 
 interface RecruiterUser {
@@ -670,11 +671,14 @@ const RecruiterUsers: React.FC = () => {
 
           const isActiveEmployee = user.securityLevel === '4' && isEmployee;
           const isActiveContractor = user.securityLevel === '4' && isContractor;
+          const isOnboarding = employeeStatus === 'in progress' || contractorStatus === 'in progress';
 
           if (securityLevelFilter === 'active_employee') {
             if (!isActiveEmployee) return false;
           } else if (securityLevelFilter === 'active_contractor') {
             if (!isActiveContractor) return false;
+          } else if (securityLevelFilter === 'onboarding') {
+            if (!isOnboarding) return false;
           } else if (user.securityLevel !== securityLevelFilter) {
             // Back-compat: allow older cached values like "4"
             return false;
@@ -909,6 +913,7 @@ const RecruiterUsers: React.FC = () => {
                 <MenuItem value="all">All Statuses</MenuItem>
                 <MenuItem value="active_contractor">Active Contractors</MenuItem>
                 <MenuItem value="active_employee">Active Employees</MenuItem>
+                <MenuItem value="onboarding">Onboarding</MenuItem>
                 <MenuItem value="3">Candidates</MenuItem>
                 <MenuItem value="2">Applicants</MenuItem>
                 <MenuItem value="1">Dismissed</MenuItem>

@@ -95,11 +95,58 @@ export class SendGridEmailProvider implements EmailProvider {
           });
           
           // Always include signature if it exists (treat enabled as always true)
-          if (signatureSettings && (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data)) {
+          if (signatureSettings && (signatureSettings.template || signatureSettings.customHtml || signatureSettings.data || signatureSettings.enabled)) {
             // Import signature generation utilities
             const { generateEmailSignature, appendSignatureToEmail } = await import('./emailSignature');
             
-            // Ensure signature data has required fields, fallback to user data if missing
+            // Fetch tenant information for logo and website
+            let tenantLogoUrl: string | undefined;
+            let tenantWebsite: string | undefined;
+            if (options.tenantId) {
+              try {
+                const tenantDoc = await db.collection('tenants').doc(options.tenantId).get();
+                if (tenantDoc.exists) {
+                  const tenantData = tenantDoc.data();
+                  tenantLogoUrl = tenantData?.avatar;
+                  tenantWebsite = tenantData?.website;
+                }
+              } catch (error) {
+                logger.warn('Failed to fetch tenant data for signature', { tenantId: options.tenantId, error });
+              }
+            }
+            
+            const normalizeJobTitle = (title?: string): string => {
+              if (!title) return '';
+              return title
+                .replace(/\s*\|\s*C1 Staffing\s*$/i, '')
+                .replace(/\s*-\s*C1 Staffing\s*$/i, '')
+                .trim();
+            };
+
+            const resolveOfficeLocation = (): string => {
+              const direct = userData?.officeLocation || userData?.location;
+              if (typeof direct === 'string' && direct.trim()) {
+                return direct.trim();
+              }
+              const city = userData?.city || '';
+              const state = userData?.state || '';
+              return [city, state].filter(Boolean).join(', ');
+            };
+
+            // Ensure signature data exists and has required fields, fallback to user data if missing.
+            // IMPORTANT: Only fill optional fields (like officeLocation) from the user profile if the
+            // saved signature settings DO NOT explicitly include that key. This keeps sent emails
+            // matching the on-screen preview exactly.
+            const hadOfficeLocationKey =
+              !!signatureSettings?.data &&
+              Object.prototype.hasOwnProperty.call(signatureSettings.data, 'officeLocation');
+
+            signatureSettings = {
+              template: signatureSettings.template || 'default',
+              enabled: signatureSettings.enabled !== false,
+              data: signatureSettings.data || {},
+            };
+
             if (signatureSettings.data) {
               if (!signatureSettings.data.email && userData?.email) {
                 signatureSettings.data.email = userData.email;
@@ -113,11 +160,34 @@ export class SendGridEmailProvider implements EmailProvider {
                   signatureSettings.data.fullName = fullName;
                 }
               }
-              if (!signatureSettings.data.phone && userData?.phone) {
-                signatureSettings.data.phone = userData.phone;
+              if (!signatureSettings.data.phone && (userData?.phone || userData?.phoneNumber)) {
+                signatureSettings.data.phone = userData?.phone || userData?.phoneNumber || '';
               }
               if (!signatureSettings.data.jobTitle && userData?.jobTitle) {
-                signatureSettings.data.jobTitle = userData.jobTitle;
+                signatureSettings.data.jobTitle = normalizeJobTitle(userData.jobTitle);
+              } else if (signatureSettings.data.jobTitle) {
+                signatureSettings.data.jobTitle = normalizeJobTitle(signatureSettings.data.jobTitle);
+              }
+              // Only fill officeLocation from user profile if settings never had the field.
+              // If user left it blank in settings, keep it blank to match preview.
+              if (!hadOfficeLocationKey && !signatureSettings.data.officeLocation) {
+                const officeLocation = resolveOfficeLocation();
+                if (officeLocation) {
+                  signatureSettings.data.officeLocation = officeLocation;
+                }
+              }
+              if (!signatureSettings.data.pronouns && userData?.pronouns) {
+                signatureSettings.data.pronouns = userData.pronouns;
+              }
+              if (signatureSettings.data.includeConfidentialityNotice == null && userData?.includeConfidentialityNotice != null) {
+                signatureSettings.data.includeConfidentialityNotice = userData.includeConfidentialityNotice;
+              }
+              // Add tenant info (always set if available)
+              if (tenantLogoUrl) {
+                signatureSettings.data.logoUrl = tenantLogoUrl;
+              }
+              if (tenantWebsite) {
+                signatureSettings.data.website = tenantWebsite;
               }
             }
             

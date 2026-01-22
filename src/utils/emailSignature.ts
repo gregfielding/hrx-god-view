@@ -46,14 +46,15 @@ function formatPhone(phone: string): { display: string; digits: string } {
  * Generates default signature HTML
  */
 function generateDefaultSignature(data: EmailSignatureData): string {
-  const phone = formatPhone(data.phone);
+  const phone = data.phone ? formatPhone(data.phone) : null;
   const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
   const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
+  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
+  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
   
   return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${data.jobTitle} | <strong>C1 Staffing</strong></span>${locationLine}<br/>
-<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>
-<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span><br/>
+<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
+${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span><br/>
 <span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
 
 <span style="font-size:12px;color:#555;">
@@ -65,15 +66,16 @@ Nevada • Texas • Arizona • California
  * Generates sales signature HTML
  */
 function generateSalesSignature(data: EmailSignatureData): string {
-  const phone = formatPhone(data.phone);
+  const phone = data.phone ? formatPhone(data.phone) : null;
   const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
   const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
   const schedulingLine = data.schedulingLink ? `<br/><span style="font-size:13px;">📅 <a href="${data.schedulingLink}" style="color:#2F5FFF;">Book time with me</a></span>` : '';
+  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
+  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
   
   return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${data.jobTitle} | <strong>C1 Staffing</strong></span>${locationLine}<br/>
-<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>
-<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span>${schedulingLine}<br/>
+<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
+${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span>${schedulingLine}<br/>
 <span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
 
 <span style="font-size:12px;color:#555;">
@@ -85,15 +87,16 @@ Nevada • Texas • Arizona • California
  * Generates recruiter signature HTML
  */
 function generateRecruiterSignature(data: EmailSignatureData): string {
-  const phone = formatPhone(data.phone);
+  const phone = data.phone ? formatPhone(data.phone) : null;
   const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
   const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
   const applicationLine = data.applicationPortal ? `<br/><span style="font-size:13px;">📝 <a href="${data.applicationPortal}" style="color:#2F5FFF;">Apply with C1 Staffing</a></span>` : '';
+  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
+  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
   
   return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${data.jobTitle} | <strong>C1 Staffing</strong></span>${locationLine}<br/>
-<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>
-<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span>${applicationLine}<br/>
+<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
+${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span>${applicationLine}<br/>
 <span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
 
 <span style="font-size:12px;color:#555;">
@@ -105,14 +108,15 @@ Nevada • Texas • Arizona • California
  * Generates executive signature HTML (simplified)
  */
 function generateExecutiveSignature(data: EmailSignatureData): string {
-  const phone = formatPhone(data.phone);
+  const phone = data.phone ? formatPhone(data.phone) : null;
   const locationLine = data.officeLocation ? `<br/><span style="font-size:13px;">📍 ${data.officeLocation}</span>` : '';
   const pronounsLine = data.pronouns ? `<br/><span style="font-size:13px;">${data.pronouns}</span>` : '';
+  const phoneLine = phone ? `<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>` : '';
+  const jobTitleLine = data.jobTitle ? `${data.jobTitle} | ` : '';
   
   return `<strong style="font-size:14px;">${data.fullName}</strong>${pronounsLine}<br/>
-<span style="font-size:13px;">${data.jobTitle} | <strong>C1 Staffing</strong></span>${locationLine}<br/>
-<span style="font-size:13px;">📞 <a href="tel:${phone.digits}" style="color:#2F5FFF;">${phone.display}</a></span><br/>
-<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span><br/>
+<span style="font-size:13px;">${jobTitleLine}<strong>C1 Staffing</strong></span>${locationLine}<br/>
+${phoneLine}<span style="font-size:13px;">📧 <a href="mailto:${data.email}" style="color:#2F5FFF;">${data.email}</a></span><br/>
 <span style="font-size:13px;">🌐 <a href="https://www.c1staffing.com" style="color:#2F5FFF;">www.c1staffing.com</a></span><br/><br/>
 
 <span style="font-size:12px;color:#555;">
@@ -133,20 +137,29 @@ CONFIDENTIALITY NOTICE: This email and any attachments are intended only for the
  * Generates complete email signature HTML based on template and data
  */
 export function generateEmailSignature(settings: EmailSignatureSettings): string {
-  if (!settings.enabled) {
-    return '';
-  }
+  // Always generate signature if settings exist (enabled flag is now optional/ignored)
+  // This ensures signatures are always included automatically
 
-  // Use custom HTML if provided
   if (settings.customHtml) {
     let signature = settings.customHtml;
-    if (settings.data.includeConfidentialityNotice) {
+    if (settings.data?.includeConfidentialityNotice) {
       signature += generateConfidentialityNotice();
     }
     return signature;
   }
 
-  // Generate based on template
+  // Check if we have minimum required data to generate a signature
+  // Allow signature generation if we have at least email OR fullName
+  if (!settings.data) {
+    return '';
+  }
+  
+  // If we have customHtml but no template data, that's fine - customHtml was already handled above
+  // For template-based signatures, we need at least email or fullName
+  if (!settings.data.email && !settings.data.fullName) {
+    return '';
+  }
+
   let signature = '';
   switch (settings.template) {
     case 'sales':
@@ -164,7 +177,6 @@ export function generateEmailSignature(settings: EmailSignatureSettings): string
       break;
   }
 
-  // Add confidentiality notice if requested
   if (settings.data.includeConfidentialityNotice) {
     signature += generateConfidentialityNotice();
   }

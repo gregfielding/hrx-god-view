@@ -3243,6 +3243,7 @@ const UserInboxPage: React.FC = () => {
         onClose={() => setMessageDrawerOpen(false)}
         recipients={[]} // Start with empty recipients - user can add them in the drawer
         tenantId={effectiveTenantId}
+        defaultChannels={['email']} // Email-only when composing from inbox
         onSend={(result) => {
           if (result.success) {
             // Reload email threads after sending
