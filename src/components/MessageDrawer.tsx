@@ -1347,9 +1347,9 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       onClose={onClose}
       PaperProps={{
         sx: {
-          width: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
-          maxWidth: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
-          minWidth: { xs: '100%', sm: '100%', md: '600px', lg: '700px' },
+          width: { xs: '100%', sm: '100%', md: '60vw', lg: '70vw' },
+          minWidth: { md: '600px', lg: '800px' },
+          maxWidth: { md: '60vw', lg: '70vw' },
           boxSizing: 'border-box',
         },
       }}

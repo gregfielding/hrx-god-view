@@ -145,9 +145,6 @@ import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
 const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
-logger.debug('Google Maps API key available', {
-  extra: { available: !!googleMapsApiKey },
-});
 
 // Static libraries array to prevent performance warnings (shared across app)
 const googleMapsLibraries: Libraries = ['places', 'maps'];
@@ -323,7 +320,6 @@ const MessagingTabWrapper: React.FC = () => {
 };
 
 function App() {
-  logger.debug('App rendered');
   useEffect(() => {
     try {
       // Enable new associations read by default
@@ -1023,7 +1019,6 @@ function App() {
     </Routes>
   );
 
-  logger.debug('App component about to return JSX');
   return (
     <Box sx={{ backgroundColor: 'rgb(247, 248, 251)', minHeight: '100vh' }}>
       <Router>

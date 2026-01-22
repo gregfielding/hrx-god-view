@@ -707,8 +707,6 @@ const ThemeModeContext = createContext({
 });
 
 export const ThemeModeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  console.log('ThemeModeProvider rendering');
-  
   // Force light mode for all users - clear any existing dark mode preferences
   const forceLightMode = () => {
     try {

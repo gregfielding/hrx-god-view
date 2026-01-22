@@ -113,6 +113,7 @@ import { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHtt
 import { getEmailLogBody } from './emailLogs';
 import { backfillLoggedActivities } from './backfillLoggedActivities';
 import { backfillShiftIdsInApplications } from './backfillShiftIdsInApplications';
+import { archiveAllCrmDeals } from './archiveAllCrmDeals';
 export { getGoogleStatus, getGoogleStatusHttp } from './getGoogleStatus';
 import { runProspecting, saveProspectingSearch, addProspectsToCRM, createCallList } from './prospecting';
 
@@ -175,6 +176,7 @@ export { queueGmailBulkImport, getGmailImportProgress, getGmailImportProgressHtt
 export { getEmailLogBody };
 export { backfillLoggedActivities };
 export { backfillShiftIdsInApplications };
+export { archiveAllCrmDeals };
 export { backfillJobPostingLocations } from './backfillJobPostingLocations';
 export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
 export { autoWithdrawApplicationsOnHire } from './autoWithdrawApplicationsOnHire';

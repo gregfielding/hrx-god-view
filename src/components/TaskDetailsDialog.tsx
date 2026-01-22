@@ -28,12 +28,9 @@ import {
 import {
   Schedule as ScheduleIcon,
   CheckCircle as CheckCircleIcon,
-  AutoAwesome as AutoAwesomeIcon,
-  Save as SaveIcon,
-  Refresh as RefreshIcon
+  Save as SaveIcon
 } from '@mui/icons-material';
 import { doc, getDoc } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { TaskService } from '../utils/taskService';
 import { TaskStatus, TaskType, TaskCategory, TaskClassification } from '../types/Tasks';
@@ -88,10 +85,9 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     notes: '',
     quotaCategory: 'business_generating',
     estimatedDuration: 0,
-    aiSuggested: false,
-    aiPrompt: '',
-    aiRecommendations: '',
-    associations: {
+        aiSuggested: false,
+        aiPrompt: '',
+        associations: {
       companies: [],
       contacts: [],
       deals: [],
@@ -129,7 +125,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [dealContacts, setDealContacts] = useState<any[]>([]);
   const [dealSalespeople, setDealSalespeople] = useState<any[]>([]);
-  const [generatingRecommendations, setGeneratingRecommendations] = useState(false);
 
   const taskService = TaskService.getInstance();
 
@@ -277,7 +272,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         estimatedDuration: task.estimatedDuration || 30,
         aiSuggested: task.aiSuggested || false,
         aiPrompt: task.aiPrompt || '',
-        aiRecommendations: task.aiRecommendations || '',
         associations: task.associations || {
           companies: [],
           contacts: [],
@@ -307,10 +301,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
       console.log('Task associations:', task.associations);
       console.log('Task assignedTo:', task.assignedTo);
       
-      // Auto-generate AI recommendations if they don't exist
-      if (!task.aiRecommendations && task.associations?.deals?.length > 0) {
-        setTimeout(() => handleGenerateAIRecommendations(), 1000); // Small delay to ensure form is loaded
-      }
     }
   }, [task, open, salespersonId, tenantId]);
 
@@ -327,53 +317,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     });
   };
 
-  const handleGenerateAIRecommendations = async () => {
-    if (!task?.id) return;
-    
-    setGeneratingRecommendations(true);
-    try {
-      // Call Deal Coach AI to generate recommendations using Firebase Callable
-      const functions = getFunctions(undefined, 'us-central1');
-      const chatFn = httpsCallable(functions, 'dealCoachChatCallable');
-      
-      const result = await chatFn({
-        dealId: task.associations?.deals?.[0] || '',
-        stageKey: task.stage || 'discovery',
-        message: `Generate ${formData.type === 'email' ? 'email content' : 
-                  formData.type === 'phone_call' ? 'phone call script' : 
-                  formData.type === 'activity' ? 'activity suggestions' : 
-                  'recommendations'} for this task: ${formData.title}. ${formData.description || ''}`,
-        tenantId: tenantId,
-        userId: salespersonId
-      });
-
-      if (result.data) {
-        const response = result.data as any;
-        if (response.text) {
-          // Update local form state
-          setFormData(prev => ({
-            ...prev,
-            aiRecommendations: response.text
-          }));
-          
-          // Save to database
-          try {
-            await taskService.updateTask(task.id, {
-              aiRecommendations: response.text
-            }, tenantId);
-          } catch (error) {
-            console.error('Error saving AI recommendations to database:', error);
-            setError('Failed to save AI recommendations');
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Error generating AI recommendations:', error);
-      setError('Failed to generate AI recommendations');
-    } finally {
-      setGeneratingRecommendations(false);
-    }
-  };
 
   const handleAssociationChange = (type: string, value: any) => {
     console.log('🔍 handleAssociationChange called:', { type, value });
@@ -476,7 +419,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         quotaCategory: 'business_generating' as const,
         aiSuggested: formData.aiSuggested,
         aiPrompt: formData.aiPrompt,
-        aiRecommendations: formData.aiRecommendations,
         associations: formData.associations,
         communicationDetails: formData.type === 'email' ? formData.communicationDetails : undefined,
         // Add user's timezone for proper sync
@@ -933,64 +875,6 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   </Grid>
                 </>
               )}
-
-              {/* Deal Coach Recommendations */}
-              <Grid item xs={12}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-                  <Typography variant="h6" color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <AutoAwesomeIcon />
-                    Deal Coach Recommendations
-                  </Typography>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<RefreshIcon />}
-                    onClick={handleGenerateAIRecommendations}
-                    disabled={generatingRecommendations}
-                  >
-                    {generatingRecommendations ? 'Generating...' : 'Refresh'}
-                  </Button>
-                </Box>
-              </Grid>
-              
-              <Grid item xs={12}>
-                <Box
-                  sx={{
-                    border: '1px solid',
-                    borderColor: 'divider',
-                    borderRadius: 1,
-                    p: 2,
-                    minHeight: '200px',
-                    backgroundColor: 'background.paper',
-                    position: 'relative'
-                  }}
-                >
-                  {formData.aiRecommendations ? (
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        whiteSpace: 'pre-wrap',
-                        lineHeight: 1.6,
-                        color: 'text.primary'
-                      }}
-                    >
-                      {formData.aiRecommendations}
-                    </Typography>
-                  ) : (
-                    <Typography
-                      variant="body2"
-                      color="text.secondary"
-                      sx={{ fontStyle: 'italic' }}
-                    >
-                      {formData.type === 'email' ? 'AI-generated email content will appear here...' :
-                       formData.type === 'phone_call' ? 'AI-generated phone call script will appear here...' :
-                       formData.type === 'activity' ? 'AI-generated activity suggestions will appear here...' :
-                       'AI-generated recommendations will appear here...'}
-                    </Typography>
-                  )}
-                </Box>
-              </Grid>
-
 
             </Grid>
         </DialogContent>

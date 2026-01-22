@@ -93,10 +93,10 @@ import {
   FileDownload as FileDownloadIcon,
   ContentCopy as ContentCopyIcon,
   StarBorder as StarBorderIcon,
+  Archive as ArchiveIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
-
-import { db , functions } from '../../firebase';
+import { db, functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useCRMCache } from '../../contexts/CRMCacheContext';
 import { useFavorites } from '../../hooks/useFavorites';
@@ -157,11 +157,12 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     const tabParam = searchParams.get('tab');
     if (tabParam) {
       const tabMap: Record<string, number> = {
-        // CRM tab buttons now only show Opportunities + Pipeline.
+        // CRM tab buttons now only show Opportunities + Pipeline + Archive.
         // Hidden tabs map to Opportunities to avoid landing users on hidden views.
         'dashboard': 1,
         'opportunities': 1,
         'pipeline': 2,
+        'archive': 3,
         'prospect': 1,
         'activity': 1,
         'reports': 9,
@@ -1361,11 +1362,12 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     
     if (tabParam && !didRestoreTabFromCacheRef.current) {
       const tabMap: Record<string, number> = {
-        // CRM tab buttons now only show Opportunities + Pipeline.
+        // CRM tab buttons now only show Opportunities + Pipeline + Archive.
         // Hidden tabs map to Opportunities to avoid landing users on hidden views.
         'dashboard': 1,
         'opportunities': 1,
         'pipeline': 2,
+        'archive': 3,
         'prospect': 1,
         'activity': 1,
         'reports': 9,
@@ -1374,7 +1376,6 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       };
       const newTabValue = tabMap[tabParam] ?? 1;
       if (newTabValue !== tabValue) {
-        console.log('🔄 Setting tab value from URL parameter change:', { tabParam, newTabValue, currentTabValue: tabValue });
         setTabValue(newTabValue);
         updateCacheState({ activeTab: newTabValue });
         didRestoreTabFromCacheRef.current = true;
@@ -1578,9 +1579,10 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
     // Update URL in the next tick to ensure isUserTabChange is set first
     setTimeout(() => {
       const tabMap: Record<number, string> = {
-        // CRM tab buttons now only show Opportunities + Pipeline.
+        // CRM tab buttons now only show Opportunities + Pipeline + Archive.
         1: 'opportunities',
         2: 'pipeline',
+        3: 'archive',
         9: 'reports',
         7: 'kpi-management',
         8: 'kpi-dashboard'
@@ -2010,6 +2012,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                 {[
                   { label: 'Opportunities', value: 1, icon: <DealIcon fontSize="small" /> },
                   { label: 'Pipeline', value: 2, icon: <PipelineIcon fontSize="small" /> },
+                  { label: 'Archive', value: 3, icon: <ArchiveIcon fontSize="small" /> },
                 ].map((t) => {
                   const isActive = tabValue === t.value;
                   return (
@@ -2044,41 +2047,73 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         rightActions={
           standaloneTab === 'contacts' ? undefined : (
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-              {tabValue === 1 && (
+              {(tabValue === 1 || tabValue === 3) && (
                 <InboxSearchBar
                   value={search}
                   onChange={setSearch}
                   onSearch={setSearch}
-                  placeholder="Search opportunities..."
+                  placeholder={tabValue === 3 ? "Search archived opportunities..." : "Search opportunities..."}
                 />
               )}
 
               {tabValue === 1 && (
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => {
-                    setOpportunityDialogOpen(true);
-                  }}
-                  sx={{
-                    textTransform: 'none',
-                    borderRadius: '24px',
-                    px: 2.5,
-                    py: 1,
-                    height: '40px',
-                    fontWeight: 500,
-                    fontSize: '14px',
-                    bgcolor: '#0057B8',
-                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                    '&:hover': {
-                      bgcolor: '#004a9f',
-                      boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                    },
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Add Opportunity
-                </Button>
+                <>
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={() => {
+                      setOpportunityDialogOpen(true);
+                    }}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '24px',
+                      px: 2.5,
+                      py: 1,
+                      height: '40px',
+                      fontWeight: 500,
+                      fontSize: '14px',
+                      bgcolor: '#0057B8',
+                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                      '&:hover': {
+                        bgcolor: '#004a9f',
+                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                      },
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Add Opportunity
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    color="warning"
+                    startIcon={<ArchiveIcon />}
+                    onClick={async () => {
+                      if (!window.confirm('This will archive ALL existing CRM deals. Are you sure you want to continue?')) {
+                        return;
+                      }
+                      try {
+                        const archiveAllCrmDeals = httpsCallable(functions, 'archiveAllCrmDeals');
+                        const result = await archiveAllCrmDeals({ tenantId });
+                        const data = result.data as any;
+                        alert(`Archive complete! ${data.dealsArchived} deals archived.`);
+                        window.location.reload();
+                      } catch (error: any) {
+                        alert(`Error: ${error.message}`);
+                      }
+                    }}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '24px',
+                      px: 2.5,
+                      py: 1,
+                      height: '40px',
+                      fontWeight: 500,
+                      fontSize: '14px',
+                    }}
+                  >
+                    Archive All Deals
+                  </Button>
+                </>
               )}
             </Box>
           )
@@ -2170,6 +2205,32 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       )}
       
       {tabValue === 3 && (
+        <Box data-testid="archive-panel">
+          <DealsTab 
+            deals={deals}
+            allDeals={allDeals}
+            companies={companies}
+            allCompanies={allCompanies}
+            loadingAllCompanies={loadingAllCompanies}
+            contacts={contacts}
+            pipelineStages={pipelineStages}
+            search={search}
+            onSearchChange={setSearch}
+            onAddNew={() => setOpportunityDialogOpen(true)}
+            dealFilter={dealFilter}
+            onDealFilterChange={handleDealFilterChange}
+            currentUser={currentUser}
+            salesTeam={salesTeam}
+            tenantId={tenantId}
+            opportunityDialogOpen={opportunityDialogOpen}
+            onOpportunityDialogOpenChange={setOpportunityDialogOpen}
+            scrollContainerRef={contentRef}
+            showArchived={true}
+          />
+        </Box>
+      )}
+      
+      {tabValue === 4 && (
         <ProspectingHub />
       )}
       
@@ -4624,7 +4685,8 @@ const CompaniesTab: React.FC<{
   opportunityDialogOpen: boolean;
   onOpportunityDialogOpenChange: (next: boolean) => void;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-  }> = ({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef }) => {
+  showArchived?: boolean;
+  }> = ({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false }) => {
   const navigate = useNavigate();
   const [showDealDialog, setShowDealDialog] = useState(false);
   const [editingDeal, setEditingDeal] = useState<any>(null);
@@ -4988,6 +5050,15 @@ const CompaniesTab: React.FC<{
   const filteredDeals = React.useMemo(() => {
     let filtered = deals;
     
+    // Filter by archived status
+    if (showArchived) {
+      // Archive tab: only show archived deals
+      filtered = filtered.filter(deal => deal.archived === true);
+    } else {
+      // Opportunities tab: exclude archived deals
+      filtered = filtered.filter(deal => deal.archived !== true);
+    }
+    
     // Apply deal filter (all vs my)
     if (dealFilter === 'my' && currentUser?.uid) {
       const beforeFilter = filtered.length;
@@ -5051,7 +5122,7 @@ const CompaniesTab: React.FC<{
     });
     
     return filtered;
-  }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson]);
+  }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson, showArchived]);
 
 
 
@@ -5195,10 +5266,10 @@ const CompaniesTab: React.FC<{
             }}
           >
             <ToggleButton value="all" sx={{ mr: 1 }}>
-              All Opportunities
+              {showArchived ? 'All Archive' : 'All Opportunities'}
             </ToggleButton>
             <ToggleButton value="my">
-              My Opportunities
+              {showArchived ? 'My Archive' : 'My Opportunities'}
             </ToggleButton>
           </ToggleButtonGroup>
           
@@ -6307,6 +6378,8 @@ const PipelineTab: React.FC<{
   // Apply filters including stage, owner, industry, size, and age
   const applyFilters = React.useCallback(() => {
     let data = [...deals];
+    // Exclude archived deals from Pipeline view
+    data = data.filter((d) => d.archived !== true);
     // Stage filter (from funnel click or stage chips)
     const selectedStages = (filters?.stages as string[]) || [];
     if (selectedStages.length > 0) {

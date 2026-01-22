@@ -86,7 +86,6 @@ import { LoggableSlider, LoggableTextField, LoggableSwitch } from '../../compone
 import ContactOpportunitiesTab from '../../components/ContactOpportunitiesTab';
 import AIAssistantChat from '../../components/AIAssistantChat';
 import ContactActivityTab from '../../components/ContactActivityTab';
-import ContactEmailsTab from '../../components/ContactEmailsTab';
 import { useChatGPT } from '../../contexts/ChatGPTContext';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import { TaskService } from '../../utils/taskService';
@@ -2163,28 +2162,6 @@ const ContactDetails: React.FC = () => {
             >
               Activity
             </Button>
-            <Button
-              variant={tabValue === 4 ? 'contained' : 'text'}
-              onClick={() => setTabValue(4)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 4 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
-                  fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<EmailIcon fontSize="small" />}
-            >
-              Emails
-            </Button>
           </Box>
         }
         rightActions={
@@ -3204,10 +3181,10 @@ const ContactDetails: React.FC = () => {
                                 setTabValue(1); // Tasks tab
                                 break;
                               case 'note':
-                                setTabValue(4); // Notes tab
+                                setTabValue(2); // Notes tab
                                 break;
                               case 'email':
-                                setTabValue(5); // Activity tab
+                                setTabValue(3); // Activity tab
                                 break;
                               default:
                                 break;
@@ -3727,15 +3704,6 @@ const ContactDetails: React.FC = () => {
           contact={contact}
           tenantId={tenantId}
         />
-      </TabPanel>
-
-      <TabPanel value={tabValue} index={4}>
-        {contact && (
-          <ContactEmailsTab
-            contact={contact}
-            tenantId={tenantId}
-          />
-        )}
       </TabPanel>
 
       {/* Delete Contact Button - Bottom of page */}

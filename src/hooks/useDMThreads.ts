@@ -82,11 +82,6 @@ export function useDMThreads({
       threadsQuery,
       (snapshot) => {
         try {
-          console.log('[useDMThreads] Snapshot received:', snapshot.docs.length, 'threads');
-          console.log('[useDMThreads] Snapshot metadata:', {
-            hasPendingWrites: snapshot.metadata.hasPendingWrites,
-            fromCache: snapshot.metadata.fromCache,
-          });
           // Filter by status client-side (active only)
           const threadsList = snapshot.docs
             .filter((doc) => {

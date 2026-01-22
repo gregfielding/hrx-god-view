@@ -631,19 +631,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             // Per-user module flags - read from tenant-specific location first, then fallback to top-level
             const tenantData = activeTenantId && userData.tenantIds?.[activeTenantId] ? userData.tenantIds[activeTenantId] : {};
             
-            // Debug logging for module access
-            if (activeTenantId) {
-              console.log('[AuthContext] Module access check:', {
-                activeTenantId,
-                hasTenantIds: !!userData.tenantIds,
-                tenantIdsType: typeof userData.tenantIds,
-                tenantData,
-                tenantDataRecruiter: tenantData.recruiter,
-                tenantDataCrmSales: tenantData.crm_sales,
-                topLevelRecruiter: userData.recruiter,
-                topLevelCrmSales: userData.crm_sales,
-              });
-            }
+            // Module access check (debug logging removed)
             
             setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
             setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
@@ -800,15 +788,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     const userData = lastUserDataRef.current;
     const tenantData = userData.tenantIds?.[activeTenant.id] || {};
     
-    // Debug logging for module access on tenant switch
-    console.log('[AuthContext] Updating module flags for activeTenant change:', {
-      activeTenantId: activeTenant.id,
-      tenantData,
-      tenantDataRecruiter: tenantData.recruiter,
-      tenantDataCrmSales: tenantData.crm_sales,
-      topLevelRecruiter: userData.recruiter,
-      topLevelCrmSales: userData.crm_sales,
-    });
+    // Updating module flags for activeTenant change (debug logging removed)
     
     setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
     setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));

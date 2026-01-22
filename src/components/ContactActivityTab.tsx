@@ -2,9 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
-  Card,
-  CardContent,
-  CardHeader,
   Table,
   TableBody,
   TableCell,
@@ -13,7 +10,6 @@ import {
   TableRow,
   Paper,
   Chip,
-  Button,
   FormControl,
   InputLabel,
   Select,
@@ -24,11 +20,14 @@ import {
   Skeleton,
   Grid,
 } from '@mui/material';
-import { collection, query, where, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { useAuth } from '../contexts/AuthContext';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import StandardTablePagination from './StandardTablePagination';
+import EmailThreadView from './EmailThreadView';
 
 // Types for contact activity items
 type ContactActivityItem = {
@@ -58,19 +57,23 @@ const getActivityTypeColor = (type: string): string => {
 };
 
 const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenantId }) => {
+  const { user } = useAuth();
   const [items, setItems] = useState<ContactActivityItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedContent, setExpandedContent] = useState<{ [id: string]: { bodyHtml?: string; bodySnippet?: string } }>({});
   const [expanding, setExpanding] = useState<boolean>(false);
+  // Email drawer state
+  const [selectedEmailThreadId, setSelectedEmailThreadId] = useState<string | null>(null);
+  const [emailDrawerOpen, setEmailDrawerOpen] = useState<boolean>(false);
   // Filters
   const [typeFilter, setTypeFilter] = useState<'all' | 'task' | 'email' | 'note'>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
-  // Pagination
-  const PAGE_SIZE = 25;
-  const [page, setPage] = useState<number>(1);
+  // Pagination (0-based for StandardTablePagination)
+  const [page, setPage] = useState<number>(0);
+  const [rowsPerPage, setRowsPerPage] = useState<number>(20);
 
   useEffect(() => {
     const load = async () => {
@@ -99,7 +102,7 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
         }));
         
         setItems(aggregated);
-        setPage(1);
+        setPage(0);
       } catch (e: any) {
         setError(e?.message || 'Failed to load activity');
       } finally {
@@ -123,55 +126,138 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
     return true;
   });
   const total = filtered.length;
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const pageItems = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pageItems = filtered.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   const handleRowClick = async (it: ContactActivityItem) => {
+    // For emails, open in EmailThreadView drawer
+    if (it.type === 'email') {
+      try {
+        // Extract emailLogId from activity id (shaped like email_<docId>)
+        const emailLogId = it.id.replace(/^email_/, '');
+        
+        console.log('Opening email from activity:', { emailLogId, activityId: it.id, metadata: it.metadata });
+        
+        // Get the email_log document to find threadId (gmailThreadId)
+        const emailLogRef = doc(db, 'tenants', tenantId, 'email_logs', emailLogId);
+        const emailLogDoc = await getDoc(emailLogRef);
+        
+        if (!emailLogDoc.exists()) {
+          console.error('Email log not found:', emailLogId);
+          alert('Email log not found. Please try again.');
+          return;
+        }
+        
+        const emailLogData = emailLogDoc.data();
+        const threadIdFromLog = emailLogData?.threadId;
+        const gmailThreadId = emailLogData?.gmailThreadId || threadIdFromLog; // threadId might be gmailThreadId
+        
+        console.log('Email log data:', { threadIdFromLog, gmailThreadId, emailLogData: { ...emailLogData, bodyHtml: '...' } });
+        
+        if (!user?.uid) {
+          alert('You must be logged in to view email threads.');
+          return;
+        }
+        
+        const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+          'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+        
+        let threadId: string | null = null;
+        
+        // Strategy 1: Try threadIdFromLog as document ID (for newer emails)
+        if (threadIdFromLog && threadIdFromLog.length > 20) {
+          // Document IDs are typically longer than 20 chars, gmailThreadIds are shorter
+          try {
+            const testUrl = `${API_BASE_URL}/getEmailThreadApi?threadId=${encodeURIComponent(threadIdFromLog)}&tenantId=${encodeURIComponent(tenantId)}`;
+            const testResponse = await fetch(testUrl);
+            
+            if (testResponse.ok) {
+              const testData = await testResponse.json();
+              if (testData.success && testData.thread) {
+                threadId = threadIdFromLog;
+                console.log('Found thread using threadId as document ID:', threadId);
+              }
+            }
+          } catch (e) {
+            console.log('threadIdFromLog is not a document ID, will try gmailThreadId lookup');
+          }
+        }
+        
+        // Strategy 2: Look up by gmailThreadId using listEmailThreadsApi
+        if (!threadId && gmailThreadId) {
+          try {
+            const listUrl = `${API_BASE_URL}/listEmailThreadsApi?userId=${encodeURIComponent(user.uid)}&tenantId=${encodeURIComponent(tenantId)}&limit=500`;
+            const listResponse = await fetch(listUrl);
+            
+            if (!listResponse.ok) {
+              console.error('listEmailThreadsApi failed:', listResponse.status, listResponse.statusText);
+              // If API fails, try using threadIdFromLog directly if it exists
+              if (threadIdFromLog) {
+                console.log('API failed, trying threadIdFromLog directly:', threadIdFromLog);
+                threadId = threadIdFromLog;
+              } else {
+                throw new Error(`Failed to list email threads: ${listResponse.status}`);
+              }
+            } else {
+              const listData = await listResponse.json();
+              
+              if (listData.success && listData.threads) {
+                // Find the thread with matching gmailThreadId
+                const matchingThread = listData.threads.find((thread: any) => 
+                  thread.gmailThreadId === gmailThreadId || thread.id === gmailThreadId
+                );
+                
+                if (matchingThread) {
+                  threadId = matchingThread.id;
+                  console.log('Found thread using gmailThreadId via API:', threadId);
+                }
+              }
+            }
+          } catch (e: any) {
+            console.error('Error looking up thread:', e);
+            // Last resort: if we have threadIdFromLog, try it directly
+            if (threadIdFromLog && !threadId) {
+              console.log('Trying threadIdFromLog as fallback:', threadIdFromLog);
+              threadId = threadIdFromLog;
+            }
+          }
+        }
+        
+        if (!threadId) {
+          console.error('No email thread found. threadIdFromLog:', threadIdFromLog, 'gmailThreadId:', gmailThreadId);
+          alert('Email thread not found. The email may not have been synced to threads yet, or you may not have access to this thread.');
+          return;
+        }
+        
+        console.log('Opening thread:', threadId);
+        setSelectedEmailThreadId(threadId);
+        setEmailDrawerOpen(true);
+      } catch (e: any) {
+        console.error('Failed to open email thread:', e);
+        alert(`Failed to open email: ${e?.message || 'Unknown error'}`);
+      }
+      return;
+    }
+    
+    // For non-email items, use the old expand behavior
     if (expandedId === it.id) {
       setExpandedId(null);
       return;
     }
     setExpandedId(it.id);
-    // Only fetch email bodies
-    if (it.type !== 'email') return;
-    if (expandedContent[it.id]) return; // already loaded
-    try {
-      setExpanding(true);
-      const functions = getFunctions();
-      const getEmailLogBody = httpsCallable(functions, 'getEmailLogBody');
-      // activity id is shaped like email_<docId>
-      const emailLogId = it.id.replace(/^email_/, '');
-      const resp: any = await getEmailLogBody({ tenantId, emailLogId });
-      setExpandedContent(prev => ({ ...prev, [it.id]: { bodyHtml: resp?.data?.bodyHtml, bodySnippet: resp?.data?.bodySnippet } }));
-    } catch (e) {
-      console.warn('Failed to load email body', e);
-    } finally {
-      setExpanding(false);
-    }
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-      <Card>
-        <CardHeader 
-          title="Contact Activity" 
-          titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-          action={
-            <Typography variant="body2" color="text.secondary" sx={{ mr: 2 }}>
-              {total} results
-            </Typography>
-          }
-        />
-        <CardContent sx={{ p: 2 }}>
-          {/* Filters */}
-          <Grid container spacing={2} sx={{ mb: 3 }}>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', px: 2 }}>
+      {/* Filters */}
+      <Box sx={{ mb: 2 }}>
+        <Grid container spacing={2}>
             <Grid item xs={12} sm={4} md={3}>
               <FormControl fullWidth size="small">
                 <InputLabel>Type</InputLabel>
                 <Select 
                   value={typeFilter} 
                   label="Type" 
-                  onChange={(e) => { setTypeFilter(e.target.value as any); setPage(1); }}
+                  onChange={(e) => { setTypeFilter(e.target.value as any); setPage(0); }}
                 >
                   <MenuItem value="all">All</MenuItem>
                   <MenuItem value="task">Tasks</MenuItem>
@@ -188,7 +274,7 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                 label="Start Date"
                 InputLabelProps={{ shrink: true }}
                 value={startDate}
-                onChange={(e) => { setStartDate(e.target.value); setPage(1); }}
+                onChange={(e) => { setStartDate(e.target.value); setPage(0); }}
               />
             </Grid>
             <Grid item xs={12} sm={4} md={3}>
@@ -199,42 +285,77 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                 label="End Date"
                 InputLabelProps={{ shrink: true }}
                 value={endDate}
-                onChange={(e) => { setEndDate(e.target.value); setPage(1); }}
+                onChange={(e) => { setEndDate(e.target.value); setPage(0); }}
               />
             </Grid>
-          </Grid>
-          
-          {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
-          {loading ? (
-            <Box>
-              <TableContainer 
-                component={Paper} 
-                variant="outlined"
-                sx={{
-                  borderRadius: 1,
-                  border: '1px solid',
-                  borderColor: 'divider'
-                }}
-              >
-                <Table>
-                  <TableHead>
-                    <TableRow sx={{ bgcolor: 'grey.50' }}>
-                      {['Type', 'Title', 'Description', 'When', ''].map((header) => (
-                        <TableCell key={header} sx={{
-                          fontSize: '0.75rem',
-                          fontWeight: 600,
-                          color: 'text.secondary',
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.05em',
-                          borderBottom: '1px solid',
-                          borderColor: 'divider',
-                          py: 1.5
-                        }}>
-                          {header}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  </TableHead>
+        </Grid>
+      </Box>
+      
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      
+      {/* Results count */}
+      <Box sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Typography variant="body2" color="text.secondary">
+          {total} results
+        </Typography>
+      </Box>
+      
+      {loading ? (
+        <TableContainer 
+          component={Paper}
+          variant="outlined"
+          sx={{
+            borderRadius: 2,
+            position: 'relative',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'auto',
+            width: '100%',
+            '&::-webkit-scrollbar': {
+              width: '8px',
+              height: '8px',
+            },
+            '&::-webkit-scrollbar-track': {
+              background: 'rgba(0, 0, 0, 0.02)',
+              borderRadius: '4px',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              background: 'rgba(0, 0, 0, 0.15)',
+              borderRadius: '4px',
+              '&:hover': {
+                background: 'rgba(0, 0, 0, 0.25)',
+              },
+            },
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          }}
+        >
+          <Table size="small" stickyHeader sx={{ width: '100%' }}>
+            <TableHead sx={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 10,
+              backgroundColor: 'background.paper',
+            }}>
+              <TableRow sx={{ backgroundColor: 'background.paper' }}>
+                {['Type', 'Title', 'Description', 'When', ''].map((header) => (
+                  <TableCell key={header} sx={{
+                    fontWeight: 700,
+                    bgcolor: '#FFFFFF',
+                    fontSize: '11px',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    py: 1.5
+                  }}>
+                    {header}
+                  </TableCell>
+                ))}
+              </TableRow>
+            </TableHead>
                   <TableBody>
                     {Array.from({ length: 3 }).map((_, index) => (
                       <TableRow key={`skeleton-${index}`}>
@@ -258,7 +379,6 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                   </TableBody>
                 </Table>
               </TableContainer>
-            </Box>
           ) : filtered.length === 0 ? (
             <Box textAlign="center" py={4}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
@@ -270,78 +390,100 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
             </Box>
           ) : (
             <TableContainer 
-              component={Paper} 
-              variant="outlined"
-              sx={{
-                overflowX: 'auto',
-                borderRadius: 1,
-                border: '1px solid',
-                borderColor: 'divider'
-              }}
-            >
-              <Table sx={{ minWidth: 1000 }}>
-                <TableHead>
-                  <TableRow sx={{ bgcolor: 'grey.50' }}>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Type
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Title
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      Description
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }}>
-                      When
-                    </TableCell>
-                    <TableCell sx={{
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      color: 'text.secondary',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.05em',
-                      borderBottom: '1px solid',
-                      borderColor: 'divider',
-                      py: 1.5
-                    }} />
-                  </TableRow>
-                </TableHead>
+          component={Paper}
+          variant="outlined"
+          sx={{
+            borderRadius: 2,
+            position: 'relative',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'auto',
+            width: '100%',
+            '&::-webkit-scrollbar': {
+              width: '8px',
+              height: '8px',
+            },
+            '&::-webkit-scrollbar-track': {
+              background: 'rgba(0, 0, 0, 0.02)',
+              borderRadius: '4px',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              background: 'rgba(0, 0, 0, 0.15)',
+              borderRadius: '4px',
+              '&:hover': {
+                background: 'rgba(0, 0, 0, 0.25)',
+              },
+            },
+            scrollbarWidth: 'thin',
+            scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+          }}
+        >
+          <Table size="small" stickyHeader sx={{ width: '100%' }}>
+            <TableHead sx={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 10,
+              backgroundColor: 'background.paper',
+            }}>
+              <TableRow sx={{ backgroundColor: 'background.paper' }}>
+                <TableCell sx={{
+                  fontWeight: 700,
+                  bgcolor: '#FFFFFF',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  color: 'rgba(0, 0, 0, 0.85)',
+                  py: 1.5
+                }}>
+                  Type
+                </TableCell>
+                <TableCell sx={{
+                  fontWeight: 700,
+                  bgcolor: '#FFFFFF',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  color: 'rgba(0, 0, 0, 0.85)',
+                  py: 1.5
+                }}>
+                  Title
+                </TableCell>
+                <TableCell sx={{
+                  fontWeight: 700,
+                  bgcolor: '#FFFFFF',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  color: 'rgba(0, 0, 0, 0.85)',
+                  py: 1.5
+                }}>
+                  Description
+                </TableCell>
+                <TableCell sx={{
+                  fontWeight: 700,
+                  bgcolor: '#FFFFFF',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  color: 'rgba(0, 0, 0, 0.85)',
+                  py: 1.5
+                }}>
+                  When
+                </TableCell>
+                <TableCell sx={{
+                  fontWeight: 700,
+                  bgcolor: '#FFFFFF',
+                  fontSize: '11px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  color: 'rgba(0, 0, 0, 0.85)',
+                  py: 1.5
+                }} />
+              </TableRow>
+            </TableHead>
                 <TableBody>
                   {pageItems.map((it) => (
                     <React.Fragment key={it.id}>
@@ -350,7 +492,10 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                       sx={{
                         cursor: 'pointer',
                         '&:hover': { 
-                          bgcolor: 'grey.50' 
+                          bgcolor: 'action.hover' 
+                        },
+                        '&:nth-of-type(even)': {
+                          bgcolor: 'rgba(0, 0, 0, 0.02)',
                         }
                       }}
                     >
@@ -398,29 +543,15 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                         </Typography>
                       </TableCell>
                       <TableCell width={48} align="right">
-                        {expandedId === it.id ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                        {it.type !== 'email' && (expandedId === it.id ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />)}
                       </TableCell>
                     </TableRow>
-                    {expandedId === it.id && (
+                    {expandedId === it.id && it.type !== 'email' && (
                       <TableRow>
                         <TableCell colSpan={5} sx={{ bgcolor: 'grey.50' }}>
-                          {it.type === 'email' ? (
-                            <Box sx={{ p: 2 }}>
-                              {expanding && !expandedContent[it.id] ? (
-                                <Box display="flex" justifyContent="center"><CircularProgress size={20} /></Box>
-                              ) : expandedContent[it.id]?.bodyHtml ? (
-                                <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1, p: 2 }} dangerouslySetInnerHTML={{ __html: expandedContent[it.id].bodyHtml as string }} />
-                              ) : (
-                                <Typography variant="body2" color="text.secondary">
-                                  {expandedContent[it.id]?.bodySnippet || 'No content available'}
-                                </Typography>
-                              )}
-                            </Box>
-                          ) : (
-                            <Box sx={{ p: 2 }}>
-                              <Typography variant="body2" color="text.secondary">No additional details</Typography>
-                            </Box>
-                          )}
+                          <Box sx={{ p: 2 }}>
+                            <Typography variant="body2" color="text.secondary">No additional details</Typography>
+                          </Box>
                         </TableCell>
                       </TableRow>
                     )}
@@ -430,32 +561,32 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
               </Table>
             </TableContainer>
           )}
-          {/* Pagination */}
-          {filtered.length > 0 && (
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 3 }}>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                disabled={page <= 1} 
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                Previous
-              </Button>
-              <Typography variant="body2" color="text.secondary">
-                Page {page} of {totalPages}
-              </Typography>
-              <Button 
-                size="small" 
-                variant="outlined" 
-                disabled={page >= totalPages} 
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              >
-                Next
-              </Button>
-            </Box>
-          )}
-        </CardContent>
-      </Card>
+      {/* Pagination Footer */}
+      {filtered.length > 0 && (
+        <StandardTablePagination
+          count={filtered.length}
+          page={page}
+          onPageChange={(_, newPage) => setPage(newPage)}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={(e) => {
+            setRowsPerPage(parseInt(e.target.value, 10));
+            setPage(0);
+          }}
+        />
+      )}
+
+      {/* Email Thread Drawer */}
+      {selectedEmailThreadId && (
+        <EmailThreadView
+          open={emailDrawerOpen}
+          onClose={() => {
+            setEmailDrawerOpen(false);
+            setSelectedEmailThreadId(null);
+          }}
+          threadId={selectedEmailThreadId}
+          tenantId={tenantId}
+        />
+      )}
     </Box>
   );
 };

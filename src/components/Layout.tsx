@@ -116,11 +116,7 @@ const Layout: React.FC = React.memo(function Layout() {
   const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
   const { count: mentionsUnreadCount } = useUnreadMentionsCount(user?.uid || null);
   
-  // Debug logging for mentions
-  useEffect(() => {
-    console.log('[Layout] Mentions hook called with userId:', user?.uid);
-    console.log('[Layout] Mentions unread count:', mentionsUnreadCount);
-  }, [user?.uid, mentionsUnreadCount]);
+  // Mentions tracking (debug logging removed)
 
   // Function to get page title based on current route
   const getPageTitle = () => {
@@ -1371,8 +1367,7 @@ const Layout: React.FC = React.memo(function Layout() {
           flexGrow: 1,
           display: 'flex',
           flexDirection: 'column',
-          minHeight: '150vh',
-          maxHeight: '150vh',
+          height: '100vh',
           overflow: 'hidden',
           '--drawer-width': `${drawerWidth}px`,
           transition: (theme) =>
@@ -1447,7 +1442,7 @@ const Layout: React.FC = React.memo(function Layout() {
                   objectFit: 'contain',
                 }}
                 onError={(e: any) => {
-                  console.error('Logo image failed to load, trying fallback:', e.target.src);
+                  // Logo image failed to load, trying fallback
                   // Fallback to C1.png if C1Y.png doesn't exist
                   if (e.target.src.endsWith('/C1Y.png')) {
                     e.target.src = '/C1.png';
@@ -1456,7 +1451,7 @@ const Layout: React.FC = React.memo(function Layout() {
                   }
                 }}
                 onLoad={() => {
-                  console.log('Logo image loaded successfully');
+                  // Logo loaded successfully
                 }}
               />
               </Box>
