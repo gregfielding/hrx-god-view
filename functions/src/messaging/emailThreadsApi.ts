@@ -585,6 +585,7 @@ export const sendEmailReplyApi = onRequest(
         bodyPlain,
         attachments,
         senderIdentity, // 'gmail' | 'sendgrid'
+        crmContactIds,
       } = request.body;
 
       if (!threadId || !tenantId || !userId || !to || !subject || !bodyPlain) {
@@ -758,10 +759,44 @@ export const sendEmailReplyApi = onRequest(
       // Find and log to CRM contacts (email_logs and activity_logs)
       try {
         const contactMap = await findContactsByEmails(tenantId, allRecipientEmails);
-        const contactIds: string[] = [];
-        
-        for (const [email, contact] of contactMap.entries()) {
-          contactIds.push(contact.id);
+
+        // Combine explicit CRM contacts (from UI context) with email-matched contacts.
+        const contactById = new Map<string, any>();
+
+        const explicitIds: string[] = Array.isArray(crmContactIds)
+          ? crmContactIds.filter((id: any) => typeof id === 'string' && id.trim())
+          : [];
+
+        if (explicitIds.length > 0) {
+          const explicitDocs = await Promise.all(
+            explicitIds.map(async (id) => {
+              try {
+                const snap = await db
+                  .collection('tenants')
+                  .doc(tenantId)
+                  .collection('crm_contacts')
+                  .doc(id)
+                  .get();
+                return snap.exists ? ({ id: snap.id, ...snap.data() } as any) : null;
+              } catch (e) {
+                logger.warn(`Failed to load explicit crm_contact ${id} for email logging`, e as any);
+                return null;
+              }
+            })
+          );
+          for (const c of explicitDocs) {
+            if (c?.id) contactById.set(c.id, c);
+          }
+        }
+
+        for (const [, contact] of contactMap.entries()) {
+          if (contact?.id) contactById.set(contact.id, contact);
+        }
+
+        const contactsToLog = Array.from(contactById.values());
+        const contactIds: string[] = contactsToLog.map((c: any) => c.id).filter(Boolean);
+
+        for (const contact of contactsToLog) {
           
           // Find deal for this contact
           const dealId = await findContactDeal(tenantId, contact.id);
@@ -778,7 +813,7 @@ export const sendEmailReplyApi = onRequest(
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             bodySnippet: storedBodies.textBody.substring(0, 250),
             bodyHtml: storedBodies.htmlBody,
-            direction: 'sent',
+            direction: 'outbound',
             contactId: contact.id,
             companyId: contact.companyId || null,
             dealId: dealId || null,
@@ -910,6 +945,7 @@ export const sendNewEmailApi = onRequest(
         bodyPlain,
         attachments,
         senderIdentity, // 'gmail' | 'sendgrid'
+        crmContactIds,
       } = request.body;
 
       if (!tenantId || !userId || !to || !subject || !bodyPlain) {
@@ -1016,6 +1052,122 @@ export const sendNewEmailApi = onRequest(
           providerMessageId: emailResult.providerMessageId,
           read: true,
         });
+
+        // Find and log to CRM contacts (email_logs and activity_logs)
+        // Note: this was previously missing for SendGrid path, which caused Contact Activity to be empty.
+        try {
+          const allRecipientEmails = [...toEmails, ...ccEmails, ...bccEmails];
+          const contactMap = await findContactsByEmails(tenantId, allRecipientEmails);
+
+          // Combine explicit CRM contacts (from UI context) with email-matched contacts.
+          const contactById = new Map<string, any>();
+
+          const explicitIds: string[] = Array.isArray(crmContactIds)
+            ? crmContactIds.filter((id: any) => typeof id === 'string' && id.trim())
+            : [];
+
+          if (explicitIds.length > 0) {
+            const explicitDocs = await Promise.all(
+              explicitIds.map(async (id) => {
+                try {
+                  const snap = await db
+                    .collection('tenants')
+                    .doc(tenantId)
+                    .collection('crm_contacts')
+                    .doc(id)
+                    .get();
+                  return snap.exists ? ({ id: snap.id, ...snap.data() } as any) : null;
+                } catch (e) {
+                  logger.warn(`Failed to load explicit crm_contact ${id} for email logging`, e as any);
+                  return null;
+                }
+              })
+            );
+            for (const c of explicitDocs) {
+              if (c?.id) contactById.set(c.id, c);
+            }
+          }
+
+          for (const [, contact] of contactMap.entries()) {
+            if (contact?.id) contactById.set(contact.id, contact);
+          }
+
+          const contactsToLog = Array.from(contactById.values());
+          const contactIds: string[] = contactsToLog.map((c: any) => c.id).filter(Boolean);
+
+          for (const contact of contactsToLog) {
+            const dealId = await findContactDeal(tenantId, contact.id);
+
+            const emailLog = {
+              messageId: emailResult.providerMessageId || `thread_${newThread.id}_${Date.now()}`,
+              threadId: newThread.id!,
+              subject,
+              from: fromEmail,
+              to: toEmails,
+              cc: ccEmails.length > 0 ? ccEmails : undefined,
+              bcc: bccEmails.length > 0 ? bccEmails : undefined,
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+              bodySnippet: storedBodies.textBody.substring(0, 250),
+              bodyHtml: storedBodies.htmlBody,
+              direction: 'outbound',
+              contactId: contact.id,
+              companyId: contact.companyId || null,
+              dealId: dealId || null,
+              userId,
+              isDraft: false,
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            await db.collection('tenants').doc(tenantId).collection('email_logs').add(emailLog);
+
+            const activityLog = {
+              tenantId,
+              entityType: 'contact',
+              entityId: contact.id,
+              activityType: 'email',
+              title: `Email sent: ${subject}`,
+              description: storedBodies.textBody.substring(0, 200) + (storedBodies.textBody.length > 200 ? '...' : ''),
+              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+              userId,
+              userName: userData?.displayName || userData?.firstName || userData?.email || 'Unknown',
+              metadata: {
+                emailSubject: subject,
+                emailFrom: fromEmail,
+                emailTo: toEmails,
+                emailCc: ccEmails.length > 0 ? ccEmails : undefined,
+                emailBcc: bccEmails.length > 0 ? bccEmails : undefined,
+                direction: 'outbound',
+                provider: 'sendgrid',
+                providerMessageId: emailResult.providerMessageId,
+                bodySnippet: storedBodies.textBody.substring(0, 500),
+                contactEmail: contact.email,
+                contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+                threadId: newThread.id!,
+              },
+              associations: {
+                contacts: [contact.id],
+                deals: dealId ? [dealId] : [],
+                companies: contact.companyId ? [contact.companyId] : [],
+              },
+              createdAt: admin.firestore.FieldValue.serverTimestamp(),
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            await db.collection('tenants').doc(tenantId).collection('activity_logs').add(activityLog);
+          }
+
+          // Update thread with contact IDs for quick lookup
+          if (contactIds.length > 0) {
+            const threadRef = db.collection('tenants').doc(tenantId).collection('emailThreads').doc(newThread.id!);
+            await threadRef.update({
+              participantContactIds: contactIds,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+          }
+        } catch (contactLogError) {
+          logger.error('Failed to log SendGrid email to contacts:', contactLogError);
+        }
 
         response.status(200).json({
           success: true,
@@ -1162,10 +1314,44 @@ export const sendNewEmailApi = onRequest(
       // Find and log to CRM contacts (email_logs and activity_logs)
       try {
         const contactMap = await findContactsByEmails(tenantId, allRecipientEmails);
-        const contactIds: string[] = [];
-        
-        for (const [email, contact] of contactMap.entries()) {
-          contactIds.push(contact.id);
+
+        // Combine explicit CRM contacts (from UI context) with email-matched contacts.
+        const contactById = new Map<string, any>();
+
+        const explicitIds: string[] = Array.isArray(crmContactIds)
+          ? crmContactIds.filter((id: any) => typeof id === 'string' && id.trim())
+          : [];
+
+        if (explicitIds.length > 0) {
+          const explicitDocs = await Promise.all(
+            explicitIds.map(async (id) => {
+              try {
+                const snap = await db
+                  .collection('tenants')
+                  .doc(tenantId)
+                  .collection('crm_contacts')
+                  .doc(id)
+                  .get();
+                return snap.exists ? ({ id: snap.id, ...snap.data() } as any) : null;
+              } catch (e) {
+                logger.warn(`Failed to load explicit crm_contact ${id} for email logging`, e as any);
+                return null;
+              }
+            })
+          );
+          for (const c of explicitDocs) {
+            if (c?.id) contactById.set(c.id, c);
+          }
+        }
+
+        for (const [, contact] of contactMap.entries()) {
+          if (contact?.id) contactById.set(contact.id, contact);
+        }
+
+        const contactsToLog = Array.from(contactById.values());
+        const contactIds: string[] = contactsToLog.map((c: any) => c.id).filter(Boolean);
+
+        for (const contact of contactsToLog) {
           
           // Find deal for this contact
           const dealId = await findContactDeal(tenantId, contact.id);
@@ -1182,7 +1368,7 @@ export const sendNewEmailApi = onRequest(
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             bodySnippet: storedBodies.textBody.substring(0, 250),
             bodyHtml: storedBodies.htmlBody,
-            direction: 'sent',
+            direction: 'outbound',
             contactId: contact.id,
             companyId: contact.companyId || null,
             dealId: dealId || null,

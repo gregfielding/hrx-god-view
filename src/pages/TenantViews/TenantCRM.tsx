@@ -2084,36 +2084,6 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                   >
                     Add Opportunity
                   </Button>
-                  <Button
-                    variant="outlined"
-                    color="warning"
-                    startIcon={<ArchiveIcon />}
-                    onClick={async () => {
-                      if (!window.confirm('This will archive ALL existing CRM deals. Are you sure you want to continue?')) {
-                        return;
-                      }
-                      try {
-                        const archiveAllCrmDeals = httpsCallable(functions, 'archiveAllCrmDeals');
-                        const result = await archiveAllCrmDeals({ tenantId });
-                        const data = result.data as any;
-                        alert(`Archive complete! ${data.dealsArchived} deals archived.`);
-                        window.location.reload();
-                      } catch (error: any) {
-                        alert(`Error: ${error.message}`);
-                      }
-                    }}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                    }}
-                  >
-                    Archive All Deals
-                  </Button>
                 </>
               )}
             </Box>
@@ -2194,15 +2164,17 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       )}
       
       {tabValue === 2 && (
-        <PipelineTab 
-          deals={deals}
-          companies={companies}
-          pipelineStages={pipelineStages}
-          salesTeam={salesTeam}
-          currentUser={currentUser}
-          filters={{...filters, currentUserId: currentUser?.uid}}
-          onFiltersChange={setFilters}
-        />
+        <Box sx={{ px: 2, pb: 2 }}>
+          <PipelineTab 
+            deals={deals}
+            companies={companies}
+            pipelineStages={pipelineStages}
+            salesTeam={salesTeam}
+            currentUser={currentUser}
+            filters={{...filters, currentUserId: currentUser?.uid}}
+            onFiltersChange={setFilters}
+          />
+        </Box>
       )}
       
       {tabValue === 3 && (

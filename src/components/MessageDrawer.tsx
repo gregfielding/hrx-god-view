@@ -59,6 +59,8 @@ interface MessageDrawerProps {
   onClose: () => void;
   recipients: MessageRecipient[];
   tenantId?: string;
+  // Optional CRM context: ensures emails log against these CRM contacts even if email matching fails.
+  crmContactIds?: string[];
   initialChannel?: Channel;
   defaultChannels?: Channel[];
   defaultSubject?: string;
@@ -85,6 +87,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   onClose,
   recipients,
   tenantId,
+  crmContactIds,
   initialChannel,
   defaultChannels,
   defaultSubject,
@@ -705,6 +708,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               bodyPlain,
               attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
               senderIdentity: selectedSenderId === 'system' ? 'sendgrid' : 'gmail',
+              crmContactIds: Array.isArray(crmContactIds) && crmContactIds.length > 0 ? crmContactIds : undefined,
             }),
           }
         );
@@ -819,6 +823,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                 bodyPlain,
                 attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
                 senderIdentity: selectedSenderId === 'system' ? 'sendgrid' : 'gmail',
+                crmContactIds: Array.isArray(crmContactIds) && crmContactIds.length > 0 ? crmContactIds : undefined,
               }),
             }
           );

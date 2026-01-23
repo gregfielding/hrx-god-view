@@ -4249,6 +4249,7 @@ const ContactDetails: React.FC = () => {
           }
           return recipients;
         })()}
+        crmContactIds={contact?.id ? [contact.id] : undefined}
         tenantId={tenantId || ''}
         defaultChannels={[messageDrawerChannel]}
         onSend={() => {

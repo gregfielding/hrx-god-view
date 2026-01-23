@@ -60,6 +60,9 @@ export interface EmailThread {
   participantUserIds?: string[]; // Array of user IDs (if users exist in system)
   participantContactIds?: string[]; // Array of contact IDs (for quick lookup)
   participantContacts?: ParticipantContact[]; // Enriched contact information
+  // Denormalized helpers for fast filtering (avoid per-thread message subcollection queries)
+  // Threads where the user has sent at least one message can be queried via array-contains.
+  sentByUserIds?: string[];
   lastMessageAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
   lastMessageSnippet?: string;
   unreadCount: number;
@@ -147,8 +150,14 @@ export async function findContactsByEmails(
     return contactMap;
   }
 
+  // Normalize input: extract emails from any "Name <email@>" shapes and lowercase/trim.
+  const normalizedEmails = emailAddresses
+    .flatMap((raw) => extractEmailAddresses(String(raw || '')))
+    .map((e) => e.toLowerCase().trim())
+    .filter(Boolean);
+
   // Firestore 'in' query limit is 10, so we need to batch
-  const uniqueEmails = Array.from(new Set(emailAddresses.map(e => e.toLowerCase())));
+  const uniqueEmails = Array.from(new Set(normalizedEmails));
   
   // Process in batches of 10
   for (let i = 0; i < uniqueEmails.length; i += 10) {
@@ -305,6 +314,7 @@ export async function findOrCreateEmailThread(
       subject: emailData.subject,
       participants: uniqueParticipants,
       participantUserIds: options?.userId ? [options.userId] : [],
+      sentByUserIds: [],
       lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
       unreadCount: 0,
       messageCount: 0,
@@ -406,6 +416,19 @@ export async function addMessageToThread(
     // Increment unread count if inbound
     if (message.direction === 'inbound' && !effectiveRead) {
       updates.unreadCount = (threadData.unreadCount || 0) + 1;
+    }
+
+    // Denormalize "sent by" for fast Sent view queries
+    if (message.direction === 'outbound' && message.fromUserId) {
+      const existing = Array.isArray(threadData.sentByUserIds) ? threadData.sentByUserIds : [];
+      if (!existing.includes(message.fromUserId)) {
+        updates.sentByUserIds = [...existing, message.fromUserId];
+      }
+      // Ensure the sender is tracked as a participant user as well
+      const existingParticipantUsers = Array.isArray(threadData.participantUserIds) ? threadData.participantUserIds : [];
+      if (!existingParticipantUsers.includes(message.fromUserId)) {
+        updates.participantUserIds = [...existingParticipantUsers, message.fromUserId];
+      }
     }
 
     // Update participants if new email addresses
@@ -573,7 +596,115 @@ export async function getUserEmailThreads(
       return [];
     }
 
-    // Query threads where user is a participant
+    // If Sent-only view requested, use denormalized field to avoid per-thread message lookups.
+    // We intentionally avoid extra where/orderBy constraints to reduce index requirements;
+    // we sort and filter (status/unread/category) in memory.
+    if (options?.sentOnly) {
+      const baseLimit = options?.limit ? Math.min(Math.max(Number(options.limit) * 3, 50), 600) : 150;
+      const snapshot = await db
+        .collection('tenants')
+        .doc(tenantId)
+        .collection('emailThreads')
+        .where('sentByUserIds', 'array-contains', userId)
+        .limit(baseLimit)
+        .get();
+
+      let threads = snapshot.docs
+        .map((doc) => ({ id: doc.id, ...doc.data() })) as EmailThread[];
+
+      // Back-compat fallback: older threads won't have sentByUserIds yet.
+      // If we got nothing, do a bounded best-effort scan of recent participant threads.
+      if (threads.length === 0) {
+        const fallbackSnap = await db
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('emailThreads')
+          .where('participants', 'array-contains', userEmail)
+          .orderBy('lastMessageAt', 'desc')
+          .limit(Math.min(baseLimit, 80))
+          .get();
+
+        const candidateThreads = fallbackSnap.docs
+          .map((doc) => ({ id: doc.id, ...doc.data() })) as EmailThread[];
+
+        const withSent: EmailThread[] = [];
+        const perQueryTimeoutMs = 1500;
+
+        const hasOutboundFromUser = async (thread: EmailThread): Promise<boolean> => {
+          if (!thread.id) return false;
+          const queryPromise = db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('emailThreads')
+            .doc(thread.id)
+            .collection('messages')
+            .where('direction', '==', 'outbound')
+            .where('fromUserId', '==', userId)
+            .limit(1)
+            .get();
+
+          const timeoutPromise = new Promise<admin.firestore.QuerySnapshot<admin.firestore.DocumentData> | null>((resolve) => {
+            setTimeout(() => resolve(null), perQueryTimeoutMs);
+          });
+
+          const result = await Promise.race([queryPromise, timeoutPromise]);
+          return !!(result && !result.empty);
+        };
+
+        // Check candidates in parallel with a small cap to avoid timeouts.
+        const checks = await Promise.all(
+          candidateThreads.slice(0, 50).map(async (t) => ({ t, ok: await hasOutboundFromUser(t) }))
+        );
+        for (const r of checks) {
+          if (r.ok) withSent.push(r.t);
+        }
+
+        threads = withSent;
+      }
+
+      // Filter out deleted unless explicitly requested
+      if (!options?.status) {
+        threads = threads.filter((thread) => thread.status !== 'deleted');
+      } else {
+        threads = threads.filter((thread) => thread.status === options.status);
+      }
+
+      // Unread-only for Sent generally doesn't apply, but respect it for consistency
+      if (options?.unreadOnly) {
+        threads = threads.filter((thread) => (thread.unreadCount || 0) > 0);
+      }
+
+      // Category filter (if caller passed it) in memory
+      if (options?.category) {
+        threads = threads.filter((thread) => {
+          const labels = thread.labels || [];
+          if (options.category === 'primary') return labels.length === 0 || labels.includes('primary');
+          return labels.includes(options.category!);
+        });
+      }
+
+      // Sort by lastMessageAt desc in memory
+      const toMs = (v: any) => {
+        try {
+          if (!v) return 0;
+          if (v instanceof admin.firestore.Timestamp) return v.toMillis();
+          if (typeof v.toDate === 'function') return v.toDate().getTime();
+          if (v instanceof Date) return v.getTime();
+          return new Date(v).getTime() || 0;
+        } catch {
+          return 0;
+        }
+      };
+      threads.sort((a, b) => toMs(b.lastMessageAt) - toMs(a.lastMessageAt));
+
+      if (options?.limit && threads.length > options.limit) {
+        threads = threads.slice(0, options.limit);
+      }
+
+      return threads;
+    }
+
+    // Default: Query threads where user is a participant
     // Note: We can't use != with orderBy, so we'll filter in memory
     let threadsQuery = db
       .collection('tenants')
@@ -682,33 +813,6 @@ export async function getUserEmailThreads(
       threadsWithCategory.push(...remainingThreads);
       
       threads = threadsWithCategory;
-    }
-
-    // Filter by sent only - check if thread has any outbound messages from this user
-    if (options?.sentOnly) {
-      const threadsWithSentMessages: EmailThread[] = [];
-      
-      for (const thread of threads) {
-        if (!thread.id) continue;
-        
-        // Check messages subcollection for outbound messages from this user
-        const messagesQuery = await db
-          .collection('tenants')
-          .doc(tenantId)
-          .collection('emailThreads')
-          .doc(thread.id)
-          .collection('messages')
-          .where('direction', '==', 'outbound')
-          .where('fromUserId', '==', userId)
-          .limit(1)
-          .get();
-        
-        if (!messagesQuery.empty) {
-          threadsWithSentMessages.push(thread);
-        }
-      }
-      
-      threads = threadsWithSentMessages;
     }
 
     // Apply limit after filtering

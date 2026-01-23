@@ -368,7 +368,6 @@ const CompanyDetails: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [companyContextOpen, setCompanyContextOpen] = useState(false);
   const [aiComponentsLoaded, setAiComponentsLoaded] = useState(false);
-  const [patternAlerts, setPatternAlerts] = useState<Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}>>([]);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
@@ -481,7 +480,6 @@ const CompanyDetails: React.FC = () => {
     newDashboard: localStorage.getItem('feature.newDashboard') !== 'false',
     dealCoach: localStorage.getItem('feature.dealCoach') !== 'false',
     keyboardShortcuts: localStorage.getItem('feature.keyboardShortcuts') !== 'false',
-    patternAlerts: localStorage.getItem('feature.patternAlerts') !== 'false',
     pinnedWidgets: localStorage.getItem('feature.pinnedWidgets') !== 'false',
     companyAI: localStorage.getItem('feature.companyAI') !== 'false'
   };
@@ -605,67 +603,6 @@ const CompanyDetails: React.FC = () => {
       unsubscribeJobOrders();
     };
   }, [companyId, tenantId, updateCacheState]);
-
-  // Pattern Detection and Alerts
-  const detectPatterns = () => {
-    const alerts: Array<{id: string; type: 'warning' | 'info' | 'success'; message: string; action?: string}> = [];
-    
-    if (company) {
-      // Check for companies with no contacts
-      if (contacts.length === 0) {
-        alerts.push({
-          id: 'no_contacts',
-          type: 'warning',
-          message: 'This company has no contacts. Consider adding key decision makers.',
-          action: 'View Contacts'
-        });
-      }
-
-      // Check for companies with no active deals
-      const activeDeals = deals.filter(deal => deal.stage !== 'closed_won' && deal.stage !== 'closed_lost');
-      if (activeDeals.length === 0 && deals.length > 0) {
-        alerts.push({
-          id: 'no_active_deals',
-          type: 'warning',
-          message: 'All deals for this company are closed. Consider creating new opportunities.',
-          action: 'View Opportunities'
-        });
-      }
-
-      // Check for companies with high potential but no deals
-      if (deals.length === 0 && company.industry) {
-        alerts.push({
-          id: 'no_deals',
-          type: 'info',
-          message: 'This company has potential but no deals yet. Consider creating your first opportunity.',
-          action: 'View Opportunities'
-        });
-      }
-
-      // Check for companies missing key information
-      const missingInfo = [];
-      if (!company.website) missingInfo.push('website');
-      if (!company.linkedin) missingInfo.push('LinkedIn');
-      if (!company.industry) missingInfo.push('industry');
-      
-      if (missingInfo.length > 0) {
-        alerts.push({
-          id: 'missing_info',
-          type: 'info',
-          message: `Missing key information: ${missingInfo.join(', ')}. Consider enhancing company data.`,
-          action: 'Enhance Data'
-        });
-      }
-    }
-
-    setPatternAlerts(alerts);
-  };
-
-  useEffect(() => {
-    if (company && contacts && deals) {
-      detectPatterns();
-    }
-  }, [company, contacts, deals]);
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -1519,37 +1456,6 @@ const CompanyDetails: React.FC = () => {
           </Box>
         }
       />
-      {/* Pattern Alerts */}
-      {featureFlags.patternAlerts && patternAlerts.length > 0 && (
-        <Box sx={{ mb: 2, px: { xs: 2, md: 3 } }}>
-          {patternAlerts.map((alert) => (
-            <Alert 
-              key={alert.id}
-              severity={alert.type}
-              sx={{ mb: 1 }}
-              action={
-                alert.action && (
-                  <Button 
-                    color="inherit" 
-                    size="small"
-                    onClick={() => {
-                      if (alert.action === 'View Contacts') {
-                        setTabValue(2); // Switch to Contacts tab
-                      } else if (alert.action === 'View Opportunities') {
-                        setTabValue(3); // Switch to Opportunities tab
-                      }
-                    }}
-                  >
-                    {alert.action}
-                  </Button>
-                )
-              }
-            >
-              {alert.message}
-            </Alert>
-          ))}
-        </Box>
-      )}
 
       {/* Collapsible Company Context Drawer */}
       <Collapse in={companyContextOpen} timeout="auto" unmountOnExit>
