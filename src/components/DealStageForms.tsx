@@ -73,6 +73,18 @@ import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../data/screeningsOptions';
 import { logger } from '../utils/logger';
 
+const normalizeAutocompleteKey = (v: any): string => {
+  if (v == null) return '';
+  const raw = typeof v === 'string' ? v : (v.value ?? v.label ?? '');
+  return String(raw).trim().toLowerCase().replace(/[^a-z0-9]+/g, '');
+};
+
+const normalizeAutocompleteLabel = (v: any): string => {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  return String(v.label ?? v.value ?? '');
+};
+
 
 interface Contact {
   id: string;
@@ -1590,13 +1602,14 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             });
           }}
           getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+          isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => {
               const { key, ...chipProps } = getTagProps({ index });
               return (
                 <Chip
                   key={key}
-                  label={typeof option === 'string' ? option : option.label}
+                  label={normalizeAutocompleteLabel(option)}
                   size="small"
                   {...chipProps}
                 />
@@ -1920,13 +1933,14 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             });
           }}
           getOptionLabel={(option) => typeof option === 'string' ? option : option.label}
+          isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => {
               const { key, ...chipProps } = getTagProps({ index });
               return (
                 <Chip
                   key={key}
-                  label={typeof option === 'string' ? option : option.label}
+                  label={normalizeAutocompleteLabel(option)}
                   size="small"
                   {...chipProps}
                 />
@@ -2024,6 +2038,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 'Other'
               ]}
               value={Array.isArray(data.compliance?.ppe) ? data.compliance.ppe : (data.compliance?.ppe ? [data.compliance.ppe] : [])}
+              isOptionEqualToValue={(option, value) => normalizeAutocompleteKey(option) === normalizeAutocompleteKey(value)}
               onChange={(event, newValue) => {
                 handleStageDataChange('scoping', 'compliance', {
                   ...data.compliance,

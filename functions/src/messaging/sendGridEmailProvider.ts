@@ -9,6 +9,7 @@
 import sgMail from '@sendgrid/mail';
 import { logger } from 'firebase-functions/v2';
 import { getStorage } from 'firebase-admin/storage';
+import { getStorageBucketName } from '../utils/storageBucket';
 import * as admin from 'firebase-admin';
 import {
   EmailProvider,
@@ -300,7 +301,7 @@ export class SendGridEmailProvider implements EmailProvider {
         for (const attachment of options.attachments) {
           try {
             // Download attachment from Firebase Storage
-            const bucket = getStorage().bucket();
+            const bucket = getStorage().bucket(getStorageBucketName());
             const file = bucket.file(attachment.storagePath);
             const [fileBuffer] = await file.download();
             

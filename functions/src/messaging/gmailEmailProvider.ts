@@ -11,6 +11,7 @@ import { defineString } from 'firebase-functions/params';
 import * as admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { EmailProvider, SendEmailOptions, EmailSendResult } from './EmailProvider';
+import { getStorageBucketName } from '../utils/storageBucket';
 
 const db = admin.firestore();
 
@@ -281,7 +282,7 @@ export class GmailEmailProvider implements EmailProvider {
         for (const attachment of options.attachments) {
           try {
             // Download attachment from Firebase Storage
-            const bucket = getStorage().bucket();
+            const bucket = getStorage().bucket(getStorageBucketName());
             const file = bucket.file(attachment.storagePath);
             const [fileBuffer] = await file.download();
             

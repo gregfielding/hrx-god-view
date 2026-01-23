@@ -1,6 +1,8 @@
 import * as functions from 'firebase-functions';
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { getStorage } from 'firebase-admin/storage';
+import { getStorageBucketName } from './utils/storageBucket';
 import { logger } from './utils/logger';
 import nlp from 'compromise';
 import OpenAI from 'openai';
@@ -438,7 +440,7 @@ async function archivePreviousResumes(userId: string, newUploadId: string): Prom
 async function generateResumeDownloadUrl(storagePath: string): Promise<string> {
   try {
     console.log('generateResumeDownloadUrl called with storagePath:', storagePath);
-    const bucket = admin.storage().bucket();
+    const bucket = getStorage().bucket(getStorageBucketName());
     const file = bucket.file(storagePath);
     
     // Check if file exists first
@@ -606,7 +608,7 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     
     // Upload file to Firebase Storage
     console.log('Uploading file to Firebase Storage at path:', storagePath);
-    const bucket = admin.storage().bucket();
+    const bucket = getStorage().bucket(getStorageBucketName());
     const file = bucket.file(storagePath);
     await file.save(fileBuffer, {
       metadata: {
@@ -1831,7 +1833,7 @@ export const getResumeSignedUrl = functions.https.onCall(async (request, context
     }
     
     // Generate signed URL
-    const bucket = admin.storage().bucket();
+    const bucket = getStorage().bucket(getStorageBucketName());
     const file = bucket.file(uploadData.storagePath);
     
     const [signedUrl] = await file.getSignedUrl({

@@ -85,6 +85,9 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
       if (typeof value?.toDate === 'function') return value.toDate();
       // ISO string or date string
       if (typeof value === 'string') {
+        // NOTE: For date-only strings like YYYY-MM-DD, `new Date("YYYY-MM-DD")` is parsed as UTC,
+        // which can display as the previous day in local timezones. Prefer parsing those explicitly
+        // when you need a date-only value.
         const d = new Date(value);
         return isNaN(d.getTime()) ? null : d;
       }
@@ -99,6 +102,46 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
     } catch {
       return null;
     }
+  };
+
+  const formatDateOnlyForDisplay = (v: any): string => {
+    if (!v) return '-';
+    const monthNames = [
+      'January', 'February', 'March', 'April', 'May', 'June',
+      'July', 'August', 'September', 'October', 'November', 'December',
+    ];
+
+    // YYYY-MM-DD (preferred storage)
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const [yyyy, mm, dd] = s.split('-');
+        const monthIdx = Math.max(1, Math.min(12, parseInt(mm, 10))) - 1;
+        const dayNum = parseInt(dd, 10);
+        return `${monthNames[monthIdx]} ${dayNum}, ${yyyy}`;
+      }
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+        const [mm, dd, yyyy] = s.split('/');
+        const monthIdx = Math.max(1, Math.min(12, parseInt(mm, 10))) - 1;
+        const dayNum = parseInt(dd, 10);
+        return `${monthNames[monthIdx]} ${dayNum}, ${yyyy}`;
+      }
+      // fallback
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      return s || '-';
+    }
+
+    // Firestore Timestamp / Date object: use UTC parts to avoid timezone day-shift
+    const d: Date | null =
+      typeof v?.toDate === 'function' ? v.toDate() :
+      v instanceof Date ? v :
+      null;
+    if (!d || isNaN(d.getTime())) return '-';
+    const yyyy = d.getUTCFullYear();
+    const monthIdx = d.getUTCMonth();
+    const dayNum = d.getUTCDate();
+    return `${monthNames[monthIdx]} ${dayNum}, ${yyyy}`;
   };
 
   // Helper function to check if a date value is valid and present
@@ -118,7 +161,11 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
     
     // Handle string
     if (typeof dob === 'string' && dob.trim() !== '') {
-      const date = new Date(dob);
+      // Accept common date-only formats without timezone conversion
+      const s = dob.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return true;
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return true;
+      const date = new Date(s);
       return !isNaN(date.getTime());
     }
     
@@ -627,8 +674,44 @@ const transportOptions: Array<{
     try {
       const userRef = doc(db, 'users', uid);
       let toSave: any = value;
+      const normalizeDateOnlyToYmd = (v: any): string | null => {
+        if (!v) return null;
+        if (typeof v === 'string') {
+          const s = v.trim();
+          if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+          if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+            const [mm, dd, yyyy] = s.split('/');
+            return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+          }
+          // Fall back: try to parse and format in UTC to preserve calendar day
+          const d = new Date(s);
+          if (!isNaN(d.getTime())) {
+            const yyyy = d.getUTCFullYear();
+            const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+            const dd = String(d.getUTCDate()).padStart(2, '0');
+            return `${yyyy}-${mm}-${dd}`;
+          }
+          return null;
+        }
+        if (typeof v?.toDate === 'function') {
+          const d = v.toDate();
+          const yyyy = d.getUTCFullYear();
+          const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(d.getUTCDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        if (v instanceof Date) {
+          const yyyy = v.getUTCFullYear();
+          const mm = String(v.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(v.getUTCDate()).padStart(2, '0');
+          return `${yyyy}-${mm}-${dd}`;
+        }
+        return null;
+      };
+
+      // Date-only fields: store as YYYY-MM-DD strings (avoid timezone shifts)
       if (field === 'startDate' || field === 'dateOfBirth') {
-        toSave = value ? new Date(value) : null;
+        toSave = normalizeDateOnlyToYmd(value);
       }
       
       // List of tenant-dependent fields that need to be stored in nested tenantIds structure
@@ -741,9 +824,10 @@ const transportOptions: Array<{
       
       const updateData = {
         ...cleanForm,
-        dob: form.dateOfBirth || null, // Save to 'dob' field (standard field name)
-        dateOfBirth: form.dateOfBirth ? new Date(form.dateOfBirth) : null, // Keep for backward compatibility
-        startDate: form.startDate ? new Date(form.startDate) : null,
+        // Store as date-only strings to avoid timezone day-shifts
+        dob: form.dateOfBirth || null, // Standard field name
+        dateOfBirth: form.dateOfBirth || null, // Backward compatibility: keep same value (string)
+        startDate: form.startDate || null,
         updatedAt: new Date()
       };
       
@@ -1267,7 +1351,7 @@ const transportOptions: Array<{
                                   Date of Birth
                                 </Typography>
                                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                                  {form.dateOfBirth ? new Date(form.dateOfBirth).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '-'}
+                                  {formatDateOnlyForDisplay(form.dateOfBirth)}
                                 </Typography>
                               </Box>
                             </Box>

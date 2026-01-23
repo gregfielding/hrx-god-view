@@ -7,6 +7,7 @@ import { logger } from './utils/logger';
 import { logMessage } from './messaging/messageLogging';
 import { findOrCreateEmailThread, addMessageToThread } from './messaging/emailThreading';
 import { getStorage } from 'firebase-admin/storage';
+import { getStorageBucketName } from './utils/storageBucket';
 
 
 const db = getFirestore();
@@ -61,6 +62,8 @@ function collectAllParts(payload: any, out: any[] = []): any[] {
   }
   return out;
 }
+
+// getStorageBucketName moved to ./utils/storageBucket
 
 function headerValue(headers: Array<{ name?: string; value?: string }> | undefined, name: string): string | undefined {
   if (!headers) return undefined;
@@ -1049,7 +1052,7 @@ export const getGmailMessageAttachments = onCall(
       disposition?: 'inline' | 'attachment';
     };
 
-    const bucket = getStorage().bucket();
+    const bucket = getStorage().bucket(getStorageBucketName());
     const bucketName = bucket.name;
     const makeDownloadUrl = (path: string, token: string) =>
       `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(path)}?alt=media&token=${encodeURIComponent(token)}`;

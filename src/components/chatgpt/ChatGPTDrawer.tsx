@@ -41,86 +41,160 @@ const ChatGPTDrawer: React.FC = () => {
 
   // Auto-detect scope from current route when drawer opens
   useEffect(() => {
+    let cancelled = false;
     if (isOpen && (!scope || scope.type === 'general')) {
       // Check if we're on a contact/company/deal detail page
       const path = location.pathname;
-      
-      if (path.startsWith('/contacts/') && params.contactId) {
+
+      const contactIdFromPath =
+        params.contactId ||
+        (path.match(/^\/(?:crm\/)?contacts\/([^/]+)/)?.[1] ?? null) ||
+        (path.match(/^\/contacts\/([^/]+)/)?.[1] ?? null);
+
+      const companyIdFromPath =
+        params.companyId ||
+        (path.match(/^\/crm\/companies\/([^/]+)/)?.[1] ?? null) ||
+        (path.match(/^\/companies\/([^/]+)/)?.[1] ?? null);
+
+      const dealIdFromPath =
+        params.dealId ||
+        (path.match(/^\/crm\/deals\/([^/]+)/)?.[1] ?? null) ||
+        (path.match(/^\/deals\/([^/]+)/)?.[1] ?? null);
+
+      const normalizeAssocIds = (value: any): string[] => {
+        if (!Array.isArray(value)) return [];
+        return value
+          .map((v: any) => (typeof v === 'string' ? v : v?.id))
+          .filter(Boolean);
+      };
+
+      if (contactIdFromPath && tenantId) {
         // We're on a contact detail page - fetch contact and set scope
-        const contactId = params.contactId;
-        if (tenantId && contactId) {
-          const contactRef = doc(db, 'tenants', tenantId, 'crm_contacts', contactId);
-          getDoc(contactRef).then((contactSnap) => {
-            if (contactSnap.exists()) {
-              const contactData = contactSnap.data();
-              const contactName = contactData.fullName || contactData.firstName || contactData.lastName || 'Contact';
-              console.log('[ChatGPTDrawer] Auto-detected contact page, setting scope:', contactName);
-              setScope({
-                type: 'sales_coach',
-                entityType: 'contact',
-                entityId: contactId,
-                entityName: contactName,
-                tenantId: tenantId,
-                contactCompany: contactData.companyName || contactData.company?.name,
-                contactTitle: contactData.jobTitle || contactData.title,
-                associations: contactData.associations || {},
-              });
-            }
-          }).catch((err) => {
+        const contactId = contactIdFromPath;
+        const contactRef = doc(db, 'tenants', tenantId, 'crm_contacts', contactId);
+        getDoc(contactRef)
+          .then((contactSnap) => {
+            if (!contactSnap.exists() || cancelled) return;
+            const contactData = contactSnap.data() as any;
+            const contactName = contactData.fullName || contactData.firstName || contactData.lastName || 'Contact';
+            console.log('[ChatGPTDrawer] Auto-detected contact page, setting scope:', contactName);
+            setScope({
+              type: 'sales_coach',
+              entityType: 'contact',
+              entityId: contactId,
+              entityName: contactName,
+              tenantId: tenantId,
+              contactCompany: contactData.companyName || contactData.company?.name,
+              contactTitle: contactData.jobTitle || contactData.title,
+              associations: {
+                contacts: [{ id: contactId, ...contactData }],
+              },
+            });
+          })
+          .catch((err) => {
             console.error('[ChatGPTDrawer] Error fetching contact:', err);
           });
-        }
-      } else if (path.startsWith('/companies/') && params.companyId) {
+      } else if (companyIdFromPath && tenantId) {
         // We're on a company detail page
-        const companyId = params.companyId;
-        if (tenantId && companyId) {
-          const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
-          getDoc(companyRef).then((companySnap) => {
-            if (companySnap.exists()) {
-              const companyData = companySnap.data();
-              const companyName = companyData.companyName || companyData.name || 'Company';
-              console.log('[ChatGPTDrawer] Auto-detected company page, setting scope:', companyName);
-              setScope({
-                type: 'sales_coach',
-                entityType: 'company',
-                entityId: companyId,
-                entityName: companyName,
-                tenantId: tenantId,
-                associations: companyData.associations || {},
-              });
-            }
-          }).catch((err) => {
+        const companyId = companyIdFromPath;
+        const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId);
+        getDoc(companyRef)
+          .then((companySnap) => {
+            if (!companySnap.exists() || cancelled) return;
+            const companyData = companySnap.data() as any;
+            const companyName = companyData.companyName || companyData.name || 'Company';
+            console.log('[ChatGPTDrawer] Auto-detected company page, setting scope:', companyName);
+            setScope({
+              type: 'sales_coach',
+              entityType: 'company',
+              entityId: companyId,
+              entityName: companyName,
+              tenantId: tenantId,
+              associations: {
+                companies: [{ id: companyId, ...companyData }],
+              },
+            });
+          })
+          .catch((err) => {
             console.error('[ChatGPTDrawer] Error fetching company:', err);
           });
-        }
-      } else if (path.startsWith('/deals/') && params.dealId) {
+      } else if (dealIdFromPath && tenantId) {
         // We're on a deal detail page
-        const dealId = params.dealId;
-        if (tenantId && dealId) {
-          const dealRef = doc(db, 'tenants', tenantId, 'crm_deals', dealId);
-          getDoc(dealRef).then((dealSnap) => {
-            if (dealSnap.exists()) {
-              const dealData = dealSnap.data();
-              const dealName = dealData.name || 'Deal';
-              console.log('[ChatGPTDrawer] Auto-detected deal page, setting scope:', dealName);
-              setScope({
-                type: 'sales_coach',
-                entityType: 'deal',
-                entityId: dealId,
-                entityName: dealName,
-                tenantId: tenantId,
-                associations: dealData.associations || {},
-              });
-            }
-          }).catch((err) => {
-            console.error('[ChatGPTDrawer] Error fetching deal:', err);
-          });
-        }
+        const dealId = dealIdFromPath;
+        const dealRef = doc(db, 'tenants', tenantId, 'crm_deals', dealId);
+        (async () => {
+          try {
+            const dealSnap = await getDoc(dealRef);
+            if (!dealSnap.exists() || cancelled) return;
+
+            const dealData = dealSnap.data() as any;
+            const dealName = dealData.name || 'Deal';
+
+            // Try to load company + contacts for richer Sales Coach context (best-effort)
+            const companyId =
+              dealData.companyId ||
+              dealData.primaryCompanyId ||
+              normalizeAssocIds(dealData.associations?.companies)[0] ||
+              null;
+
+            const contactIds = normalizeAssocIds(dealData.associations?.contacts).slice(0, 10);
+            const salespersonIds = normalizeAssocIds(dealData.associations?.salespeople).slice(0, 10);
+
+            const [companySnap, contactSnaps, salespersonSnaps] = await Promise.all([
+              companyId ? getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId)) : Promise.resolve(null as any),
+              Promise.all(
+                contactIds.map(async (id) => {
+                  const snap = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', id));
+                  return snap.exists() ? ({ id, ...(snap.data() as any) } as any) : null;
+                })
+              ),
+              Promise.all(
+                salespersonIds.map(async (id) => {
+                  // Salespeople are typically in root users collection
+                  const snap = await getDoc(doc(db, 'users', id));
+                  if (snap.exists()) return ({ id, ...(snap.data() as any) } as any);
+                  // Fallback to tenant users if needed
+                  const snap2 = await getDoc(doc(db, 'tenants', tenantId, 'users', id));
+                  return snap2.exists() ? ({ id, ...(snap2.data() as any) } as any) : null;
+                })
+              ),
+            ]);
+
+            if (cancelled) return;
+
+            const company =
+              companySnap && typeof companySnap.exists === 'function' && companySnap.exists()
+                ? ({ id: companyId, ...(companySnap.data() as any) } as any)
+                : null;
+
+            console.log('[ChatGPTDrawer] Auto-detected deal page, setting Sales Coach scope:', dealName);
+            setScope({
+              type: 'sales_coach',
+              entityType: 'deal',
+              entityId: dealId,
+              entityName: dealName,
+              tenantId: tenantId,
+              dealStage: dealData.stage,
+              associations: {
+                deals: [{ id: dealId, ...dealData }],
+                companies: company ? [company] : [],
+                contacts: contactSnaps.filter(Boolean),
+                salespeople: salespersonSnaps.filter(Boolean),
+                locations: [], // (optional) can be added later if needed
+              },
+            });
+          } catch (err) {
+            console.error('[ChatGPTDrawer] Error fetching deal/company/contacts for Sales Coach:', err);
+          }
+        })();
       } else {
         // Not on a detail page, set to general
         setScope({ type: 'general' });
       }
     }
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen, location.pathname, params, tenantId, scope, setScope]);
 
   // Determine what to show based on scope

@@ -343,33 +343,30 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     return eachDayOfInterval({ start: calendarStart, end: calendarEnd });
   }, [currentDate]);
 
-  // Load events from multiple sources
+  // Load CRM appointments (from tasks collection).
+  // Important: keep this subscription stable (only depends on userId/tenantId) to avoid
+  // Firestore internal assertion errors caused by rapid resubscribe churn.
   useEffect(() => {
     if (!userId || !tenantId) return;
+    const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
+    const appointmentsQuery = query(
+      tasksRef,
+      where('classification', '==', 'appointment'),
+      where('assignedTo', '==', userId)
+    );
 
-    const unsubscribeFunctions: (() => void)[] = [];
+    const unsubscribe = onSnapshot(
+      appointmentsQuery,
+      (snapshot) => {
+        const crmEvents: CalendarEvent[] = snapshot.docs.map((docSnap) => {
+          const data = docSnap.data();
 
-    // Load CRM appointments (from tasks collection)
-    const loadCRMAppointments = () => {
-      const tasksRef = collection(db, 'tenants', tenantId, 'tasks');
-      const appointmentsQuery = query(
-        tasksRef,
-        where('classification', '==', 'appointment'),
-        where('assignedTo', '==', userId)
-      );
-
-      const unsubscribe = onSnapshot(appointmentsQuery, (snapshot) => {
-        console.log(`📅 Loaded ${snapshot.docs.length} CRM appointments for user ${userId}`);
-        const crmEvents: CalendarEvent[] = snapshot.docs.map(doc => {
-          const data = doc.data();
-          console.log('Appointment data:', data);
-          
           // Handle different date field names
           const startTime = data.startTime || data.scheduledDate || data.dueDate;
           const endTime = data.endTime || data.scheduledDate || data.dueDate;
-          
+
           return {
-            id: doc.id,
+            id: docSnap.id,
             title: data.title || data.name || 'Untitled Appointment',
             start: safeDateConversion(startTime),
             end: safeDateConversion(endTime),
@@ -381,19 +378,26 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
             relatedTo: data.relatedTo,
           };
         });
-        
-        setEvents(prev => {
-          const filtered = prev.filter(e => e.type !== 'crm_appointment');
+
+        setEvents((prev) => {
+          const filtered = prev.filter((e) => e.type !== 'crm_appointment');
           return [...filtered, ...crmEvents];
         });
-      }, (error) => {
+      },
+      (error) => {
         console.info('📅 CRM appointments not accessible (permission-denied):', error.code);
-      });
+      }
+    );
 
-      unsubscribeFunctions.push(unsubscribe);
-    };
+    return () => unsubscribe();
+  }, [userId, tenantId]);
 
-    // Load Google Calendar events (from activities collection and direct API)
+  // Load Google Calendar events (from activities collection and direct API)
+  useEffect(() => {
+    if (!userId || !tenantId) return;
+
+    const unsubscribeFunctions: (() => void)[] = [];
+
     const loadGoogleCalendarEvents = async () => {
       const cacheKeySession = `calendarWidget.googleEvents.v1:${userId}:${tenantId}:${googleFetchRange.start.toISOString().slice(0, 10)}:${googleFetchRange.end.toISOString().slice(0, 10)}`;
 
@@ -547,8 +551,6 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       }
     };
 
-    // Load all event types
-    loadCRMAppointments();
     loadGoogleCalendarEvents().catch(error => {
       console.error('Error loading Google Calendar events:', error);
     });
@@ -559,7 +561,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
     return () => {
       unsubscribeFunctions.forEach(unsubscribe => unsubscribe());
     };
-  }, [userId, tenantId, view, selectedDate, currentDate, googleFetchRange.start, googleFetchRange.end, calendarEventsCache]);
+  }, [userId, tenantId, googleFetchRange.start, googleFetchRange.end, calendarEventsCache]);
 
   // Get events for a specific day
   const getEventsForDay = (date: Date) => {
