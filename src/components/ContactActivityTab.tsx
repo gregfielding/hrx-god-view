@@ -26,6 +26,9 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../contexts/AuthContext';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
+import ReplyIcon from '@mui/icons-material/Reply';
+import { Button } from '@mui/material';
 import StandardTablePagination from './StandardTablePagination';
 import EmailThreadView from './EmailThreadView';
 
@@ -37,6 +40,9 @@ type ContactActivityItem = {
   title: string;
   description?: string;
   metadata?: any;
+  bodySnippet?: string;
+  bodyHtml?: string;
+  source?: string;
 };
 
 interface ContactActivityTabProps {
@@ -176,10 +182,13 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
   const total = filtered.length;
   const pageItems = filtered.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
-  const handleRowClick = async (it: ContactActivityItem) => {
-    // For emails, open in EmailThreadView drawer
-    if (it.type === 'email') {
-      try {
+  // Open email thread in drawer
+  const openEmailThread = async (it: ContactActivityItem) => {
+    try {
+      // Check if we have threadId directly in metadata (faster path)
+      let threadId = it.metadata?.threadId || null;
+      
+      if (!threadId && it.type === 'email') {
         // Extract emailLogId from activity id (shaped like email_<docId>)
         const emailLogId = it.id.replace(/^email_/, '');
         
@@ -191,15 +200,16 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
         
         if (!emailLogDoc.exists()) {
           console.error('Email log not found:', emailLogId);
-          alert('Email log not found. Please try again.');
+          // Toggle expand instead to show any available content
+          setExpandedId(expandedId === it.id ? null : it.id);
           return;
         }
         
         const emailLogData = emailLogDoc.data();
         const threadIdFromLog = emailLogData?.threadId;
-        const gmailThreadId = emailLogData?.gmailThreadId || threadIdFromLog; // threadId might be gmailThreadId
+        const gmailThreadId = emailLogData?.gmailThreadId || threadIdFromLog;
         
-        console.log('Email log data:', { threadIdFromLog, gmailThreadId, emailLogData: { ...emailLogData, bodyHtml: '...' } });
+        console.log('Email log data:', { threadIdFromLog, gmailThreadId });
         
         if (!user?.uid) {
           alert('You must be logged in to view email threads.');
@@ -209,11 +219,8 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
         const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
           'https://us-central1-hrx1-d3beb.cloudfunctions.net';
         
-        let threadId: string | null = null;
-        
         // Strategy 1: Try threadIdFromLog as document ID (for newer emails)
         if (threadIdFromLog && threadIdFromLog.length > 20) {
-          // Document IDs are typically longer than 20 chars, gmailThreadIds are shorter
           try {
             const testUrl = `${API_BASE_URL}/getEmailThreadApi?threadId=${encodeURIComponent(threadIdFromLog)}&tenantId=${encodeURIComponent(tenantId)}`;
             const testResponse = await fetch(testUrl);
@@ -238,7 +245,6 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
             
             if (!listResponse.ok) {
               console.error('listEmailThreadsApi failed:', listResponse.status, listResponse.statusText);
-              // If API fails, try using threadIdFromLog directly if it exists
               if (threadIdFromLog) {
                 console.log('API failed, trying threadIdFromLog directly:', threadIdFromLog);
                 threadId = threadIdFromLog;
@@ -249,7 +255,6 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
               const listData = await listResponse.json();
               
               if (listData.success && listData.threads) {
-                // Find the thread with matching gmailThreadId
                 const matchingThread = listData.threads.find((thread: any) => 
                   thread.gmailThreadId === gmailThreadId || thread.id === gmailThreadId
                 );
@@ -262,31 +267,45 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
             }
           } catch (e: any) {
             console.error('Error looking up thread:', e);
-            // Last resort: if we have threadIdFromLog, try it directly
             if (threadIdFromLog && !threadId) {
               console.log('Trying threadIdFromLog as fallback:', threadIdFromLog);
               threadId = threadIdFromLog;
             }
           }
         }
-        
-        if (!threadId) {
-          console.error('No email thread found. threadIdFromLog:', threadIdFromLog, 'gmailThreadId:', gmailThreadId);
-          alert('Email thread not found. The email may not have been synced to threads yet, or you may not have access to this thread.');
-          return;
-        }
-        
-        console.log('Opening thread:', threadId);
-        setSelectedEmailThreadId(threadId);
-        setEmailDrawerOpen(true);
-      } catch (e: any) {
-        console.error('Failed to open email thread:', e);
-        alert(`Failed to open email: ${e?.message || 'Unknown error'}`);
+      }
+      
+      if (!threadId) {
+        console.error('No email thread found for activity:', it.id);
+        // Show expanded content as fallback
+        setExpandedId(expandedId === it.id ? null : it.id);
+        return;
+      }
+      
+      console.log('Opening thread:', threadId);
+      setSelectedEmailThreadId(threadId);
+      setEmailDrawerOpen(true);
+    } catch (e: any) {
+      console.error('Failed to open email thread:', e);
+      // Show expanded content as fallback
+      setExpandedId(expandedId === it.id ? null : it.id);
+    }
+  };
+
+  const handleRowClick = async (it: ContactActivityItem) => {
+    // For emails, try to open in EmailThreadView drawer
+    if (it.type === 'email') {
+      // If already expanded, try opening the drawer
+      if (expandedId === it.id) {
+        await openEmailThread(it);
+      } else {
+        // First click expands to show content, can click again or use button to open drawer
+        setExpandedId(it.id);
       }
       return;
     }
     
-    // For non-email items, use the old expand behavior
+    // For non-email items, use expand behavior
     if (expandedId === it.id) {
       setExpandedId(null);
       return;
@@ -591,14 +610,95 @@ const ContactActivityTab: React.FC<ContactActivityTabProps> = ({ contact, tenant
                         </Typography>
                       </TableCell>
                       <TableCell width={48} align="right">
-                        {it.type !== 'email' && (expandedId === it.id ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />)}
+                        {expandedId === it.id ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
                       </TableCell>
                     </TableRow>
-                    {expandedId === it.id && it.type !== 'email' && (
+                    {expandedId === it.id && (
                       <TableRow>
                         <TableCell colSpan={5} sx={{ bgcolor: 'grey.50' }}>
                           <Box sx={{ p: 2 }}>
-                            <Typography variant="body2" color="text.secondary">No additional details</Typography>
+                            {/* Show email content if available */}
+                            {it.type === 'email' ? (
+                              <Box>
+                                <Box sx={{ display: 'flex', gap: 2, mb: 1.5, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+                                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                    {it.metadata?.from && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        <strong>From:</strong> {it.metadata.from}
+                                      </Typography>
+                                    )}
+                                    {it.metadata?.to && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        <strong>To:</strong> {Array.isArray(it.metadata.to) ? it.metadata.to.join(', ') : it.metadata.to}
+                                      </Typography>
+                                    )}
+                                    {it.metadata?.subject && (
+                                      <Typography variant="caption" color="text.secondary">
+                                        <strong>Subject:</strong> {it.metadata.subject}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                  <Button
+                                    size="small"
+                                    variant="contained"
+                                    color="primary"
+                                    startIcon={<ReplyIcon />}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openEmailThread(it);
+                                    }}
+                                  >
+                                    Open Thread
+                                  </Button>
+                                </Box>
+                                {it.metadata?.bodySnippet ? (
+                                  <Typography 
+                                    variant="body2" 
+                                    color="text.secondary"
+                                    sx={{ 
+                                      whiteSpace: 'pre-wrap',
+                                      maxHeight: 200,
+                                      overflow: 'auto',
+                                      bgcolor: 'white',
+                                      p: 1.5,
+                                      borderRadius: 1,
+                                      border: '1px solid',
+                                      borderColor: 'divider'
+                                    }}
+                                  >
+                                    {it.metadata.bodySnippet}
+                                  </Typography>
+                                ) : (
+                                  <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+                                    Click "Open Thread" to view the full email content, reply, or forward.
+                                  </Typography>
+                                )}
+                              </Box>
+                            ) : it.description ? (
+                              <Typography variant="body2" color="text.secondary">
+                                {it.description}
+                              </Typography>
+                            ) : it.metadata?.priority || it.metadata?.taskType || it.metadata?.status ? (
+                              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                                {it.metadata?.priority && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    <strong>Priority:</strong> {it.metadata.priority}
+                                  </Typography>
+                                )}
+                                {it.metadata?.taskType && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    <strong>Type:</strong> {it.metadata.taskType}
+                                  </Typography>
+                                )}
+                                {it.metadata?.status && (
+                                  <Typography variant="caption" color="text.secondary">
+                                    <strong>Status:</strong> {it.metadata.status}
+                                  </Typography>
+                                )}
+                              </Box>
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">No additional details</Typography>
+                            )}
                           </Box>
                         </TableCell>
                       </TableRow>

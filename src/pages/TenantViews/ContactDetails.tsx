@@ -626,14 +626,46 @@ const ContactDetails: React.FC = () => {
       const result = await associationService.getEntityAssociations('contact', contactId);
       
       // Fallback: Query deals that reference this contact
+      // Check both contactIds (flat array) and associations.contacts (array of objects)
       let fallbackDeals: any[] = [];
       try {
+        // Query 1: Check contactIds array (flat array of IDs)
         const dealsQuery = query(
           collection(db, 'tenants', tenantId, 'crm_deals'),
           where('contactIds', 'array-contains', contactId)
         );
         const dealsSnapshot = await getDocs(dealsQuery);
         fallbackDeals = dealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        
+        // Query 2: For deals that might only have associations.contacts (objects),
+        // query by the contact's company and filter client-side
+        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        if (contactDoc.exists()) {
+          const contactData = contactDoc.data();
+          const companyId = contactData?.companyId || contactData?.associations?.companies?.[0];
+          
+          if (companyId) {
+            const companyDealsQuery = query(
+              collection(db, 'tenants', tenantId, 'crm_deals'),
+              where('companyId', '==', companyId)
+            );
+            const companyDealsSnapshot = await getDocs(companyDealsQuery);
+            const companyDeals = companyDealsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+            
+            // Filter to only deals that have this contact in associations.contacts
+            const matchingDeals = companyDeals.filter((deal: any) => {
+              if (deal.contactIds?.includes(contactId)) return true;
+              if (deal.associations?.contacts) {
+                return deal.associations.contacts.some((c: any) => 
+                  (typeof c === 'string' ? c : c?.id) === contactId
+                );
+              }
+              return false;
+            });
+            
+            fallbackDeals = [...fallbackDeals, ...matchingDeals];
+          }
+        }
       } catch (fallbackErr) {
         console.warn('Fallback deals query failed:', fallbackErr);
       }

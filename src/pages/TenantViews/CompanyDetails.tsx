@@ -103,6 +103,7 @@ import { Stack, Tooltip } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import AddTaskIcon from '@mui/icons-material/AddTask';
+import PersonSearchIcon from '@mui/icons-material/PersonSearch';
 import {
   collection,
   doc,
@@ -1408,6 +1409,28 @@ const CompanyDetails: React.FC = () => {
               startIcon={<NotesIcon fontSize="small" />}
             >
               Notes {notesCount > 0 && `(${notesCount})`}
+            </Button>
+            <Button
+              variant={tabValue === (company.centralizedVendorProcess ? 9 : 8) ? 'contained' : 'text'}
+              onClick={() => setTabValue(company.centralizedVendorProcess ? 9 : 8)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === (company.centralizedVendorProcess ? 9 : 8) ? {
+                  bgcolor: '#0057B8',
+                  color: 'white',
+                  fontWeight: 500,
+                } : {
+                  bgcolor: 'rgba(0, 0, 0, 0.04)',
+                  color: 'rgba(0, 0, 0, 0.7)',
+                  fontWeight: 400,
+                }),
+              }}
+              startIcon={<PersonSearchIcon fontSize="small" />}
+            >
+              Find Contacts
             </Button>
           </Box>
         }
@@ -6153,6 +6176,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     email: '',
     phone: '',
     jobTitle: '',
+    linkedinUrl: '',
     contactType: 'Unknown',
     tags: [],
     isActive: true,
@@ -6265,6 +6289,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
       const contactData = {
         ...contactForm,
         fullName: `${contactForm.firstName} ${contactForm.lastName}`,
+        linkedinUrl: (contactForm.linkedinUrl || '').trim(),
         tenantId,
         companyId: company.id,
         companyName: company.companyName || company.name,
@@ -6284,6 +6309,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
         email: '',
         phone: '',
         jobTitle: '',
+        linkedinUrl: '',
         contactType: 'Unknown',
         tags: [],
         isActive: true,
@@ -6737,6 +6763,15 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 label="Job Title"
                 value={contactForm.jobTitle}
                 onChange={(e) => handleContactFormChange('jobTitle', e.target.value)}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="LinkedIn URL"
+                placeholder="https://www.linkedin.com/in/username"
+                value={contactForm.linkedinUrl}
+                onChange={(e) => handleContactFormChange('linkedinUrl', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>

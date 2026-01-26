@@ -60,6 +60,7 @@ import {
   Work as WorkIcon,
   Description as DescriptionIcon,
   RocketLaunch as RocketLaunchIcon,
+  ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -771,11 +772,21 @@ const DealDetails: React.FC = () => {
     if (!deal || !tenantId) return;
     try {
       setActivatingDeal(true);
+      const now = new Date();
+      // Reset age (createdAt) and health (lastActivityAt) when reactivating
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         archived: false,
-        updatedAt: new Date(),
+        createdAt: now,        // Reset age to 0 days
+        lastActivityAt: now,   // Reset health (prevents "Stale" status)
+        updatedAt: now,
       });
-      setDeal((prev) => (prev ? { ...prev, archived: false } : prev));
+      setDeal((prev) => (prev ? { 
+        ...prev, 
+        archived: false,
+        createdAt: now,
+        lastActivityAt: now,
+        updatedAt: now,
+      } : prev));
     } catch (err) {
       console.error('Error activating deal:', err);
       alert('Failed to activate deal. Please try again.');
@@ -2462,6 +2473,25 @@ const DealDetails: React.FC = () => {
                 }}
               />
             )}
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<ArrowBackIcon />}
+              onClick={() => navigate('/crm')}
+              sx={{
+                textTransform: 'none',
+                borderRadius: 2,
+                px: 2,
+                borderColor: '#E5E7EB',
+                color: '#374151',
+                '&:hover': {
+                  borderColor: '#D1D5DB',
+                  bgcolor: '#F9FAFB',
+                },
+              }}
+            >
+              Back
+            </Button>
           </Box>
         }
         showDivider={false}

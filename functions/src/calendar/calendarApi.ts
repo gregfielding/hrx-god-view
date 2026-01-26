@@ -465,7 +465,9 @@ export const rsvpToEvent = onCall({
       if (attendee.email?.toLowerCase() === userEmail.toLowerCase()) {
         return {
           ...attendee,
-          responseStatus: responseStatus.toUpperCase() as 'ACCEPTED' | 'DECLINED' | 'TENTATIVE',
+          // Google Calendar API expects lowercase responseStatus values:
+          // 'needsAction' | 'declined' | 'tentative' | 'accepted'
+          responseStatus,
         };
       }
       return attendee;

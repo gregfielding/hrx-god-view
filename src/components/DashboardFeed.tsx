@@ -728,7 +728,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                   slack_channel: 'Slack Channels',
                   calendar: 'Calendar',
                   mention: 'Mentions',
-                  notification: 'System',
+                  notification: 'Automations',
                   task: 'Tasks',
                 };
                 return selected.map((v) => labelByValue[v] || v).join(', ');
@@ -745,7 +745,7 @@ const DashboardFeed: React.FC<DashboardFeedProps> = ({
                 { value: 'slack_channel', label: 'Slack Channels' },
                 { value: 'calendar', label: 'Calendar' },
                 { value: 'mention', label: 'Mentions' },
-                { value: 'notification', label: 'System' },
+                { value: 'notification', label: 'Automations' },
                 { value: 'task', label: 'Tasks' },
               ] as Array<{ value: DashboardFeedItem['sourceType']; label: string }>).map((opt) => (
                 <MenuItem key={opt.value} value={opt.value}>

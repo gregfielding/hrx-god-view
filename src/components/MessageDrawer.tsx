@@ -74,7 +74,9 @@ interface MessageDrawerProps {
 
 interface SenderOption {
   id: string;
-  type: 'system' | 'gmail' | 'recruiter_sms';
+  // NOTE: "system" sender (SendGrid / main Twilio) is reserved for automated notifications.
+  // User-facing compose/send flows should never allow selecting it.
+  type: 'gmail' | 'recruiter_sms';
   label: string;
   email?: string;
   phone?: string;
@@ -109,7 +111,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [senderOptions, setSenderOptions] = useState<SenderOption[]>([]);
-  const [selectedSenderId, setSelectedSenderId] = useState<string>('system');
+  const [selectedSenderId, setSelectedSenderId] = useState<string>('gmail');
+  const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
   const [loadingSenders, setLoadingSenders] = useState(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<Array<{ id: string; name: string; size: number; file: File }>>([]);
@@ -191,16 +194,19 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       setInternalRecipients(recipients);
       setRecipientInputValue(recipients.map(r => r.email || r.name).join(', '));
       setRecipientOptions([]);
+      setGmailConnected(null);
       
-      // Immediately set Gmail sender option (will be updated if not connected)
-      const initialOptions: SenderOption[] = [{
-        id: 'gmail',
-        type: 'gmail',
-        label: 'Gmail',
-        email: user?.email || '',
-        enabled: true,
-        description: 'Send from your Gmail account',
-      }];
+      // Always show Gmail option (disabled if not connected).
+      const initialOptions: SenderOption[] = [
+        {
+          id: 'gmail',
+          type: 'gmail',
+          label: 'Gmail',
+          email: user?.email || '',
+          enabled: true, // optimistic; will be corrected after status check
+          description: 'Send from your Gmail account',
+        },
+      ];
       setSenderOptions(initialOptions);
       setSelectedSenderId('gmail');
       setLoadingSenders(false);
@@ -214,28 +220,35 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           const gmailData = gmailResult.data as { connected?: boolean; email?: string };
           
           if (!gmailData?.connected) {
-            // Remove Gmail option if not connected
-            setSenderOptions([{
-              id: 'system',
-              type: 'system',
-              label: 'System',
-              enabled: true,
-              description: 'SendGrid email',
-            }]);
-            setSelectedSenderId('system');
-          } else if (gmailData?.email) {
-            // Update Gmail option with actual email
-            setSenderOptions([{
-              id: 'gmail',
-              type: 'gmail',
-              label: 'Gmail',
-              email: gmailData.email,
-              enabled: true,
-              description: `Send from ${gmailData.email}`,
-            }]);
+            setGmailConnected(false);
+            setSenderOptions([
+              {
+                id: 'gmail',
+                type: 'gmail',
+                label: 'Gmail',
+                email: gmailData?.email || user?.email || '',
+                enabled: false,
+                description: 'Connect Gmail to send from your address',
+              },
+            ]);
+          } else {
+            setGmailConnected(true);
+            const resolvedEmail = gmailData?.email || user?.email || '';
+            setSenderOptions([
+              {
+                id: 'gmail',
+                type: 'gmail',
+                label: 'Gmail',
+                email: resolvedEmail,
+                enabled: true,
+                description: resolvedEmail ? `Send from ${resolvedEmail}` : 'Send from your Gmail account',
+              },
+            ]);
           }
         } catch (err) {
           console.warn('Failed to check Gmail status:', err);
+          // Keep optimistic UI; we'll validate at send time as well.
+          setGmailConnected(null);
         }
         
         // Check Twilio number assignment
@@ -488,15 +501,6 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
     try {
       const options: SenderOption[] = [];
       
-      // Always add system sender
-      options.push({
-        id: 'system',
-        type: 'system',
-        label: 'System',
-        enabled: true,
-        description: 'SendGrid email / Main Twilio number',
-      });
-
       // Check Gmail connection
       try {
         const getGmailStatusFn = httpsCallable(functions, 'getGmailStatus');
@@ -554,20 +558,15 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
 
       setSenderOptions(options);
       
-      // Auto-select first available sender
-      if (options.length > 0) {
-        setSelectedSenderId(options[0].id);
+      // Auto-select Gmail if available.
+      const gmailOption = options.find(o => o.id === 'gmail');
+      if (gmailOption?.enabled) {
+        setSelectedSenderId('gmail');
       }
     } catch (err) {
       console.error('Error loading sender options:', err);
-      // Fallback to system sender only
-      setSenderOptions([{
-        id: 'system',
-        type: 'system',
-        label: 'System',
-        enabled: true,
-        description: 'SendGrid email / Main Twilio number',
-      }]);
+      // If we can't load sender options, don't fall back to system for compose.
+      setSenderOptions([]);
     } finally {
       setLoadingSenders(false);
     }
@@ -591,6 +590,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
 
     // Validate subject if email is selected
     if (channels.includes('email')) {
+              if (gmailConnected === false) {
+                setError('Gmail connection required to send email. Please connect Gmail in settings.');
+        return false;
+      }
       if (!subject.trim()) {
         setError('Subject is required');
         return false;
@@ -707,7 +710,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               bodyHtml: messageBody,
               bodyPlain,
               attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
-              senderIdentity: selectedSenderId === 'system' ? 'sendgrid' : 'gmail',
+              // User-composed emails must always send via Gmail API.
+              senderIdentity: 'gmail',
               crmContactIds: Array.isArray(crmContactIds) && crmContactIds.length > 0 ? crmContactIds : undefined,
             }),
           }
@@ -822,7 +826,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                 bodyHtml: messageBody,
                 bodyPlain,
                 attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
-                senderIdentity: selectedSenderId === 'system' ? 'sendgrid' : 'gmail',
+                // User-composed emails must always send via Gmail API.
+                senderIdentity: 'gmail',
                 crmContactIds: Array.isArray(crmContactIds) && crmContactIds.length > 0 ? crmContactIds : undefined,
               }),
             }
@@ -889,9 +894,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           overrideChannels: channels,
           metadata: {
             senderId: selectedSenderId,
-            senderType: selectedSender?.type || 'system',
-            source: selectedSender?.type === 'recruiter_sms' || selectedSender?.type === 'gmail' ? 'recruiter' : 'system',
-            sourceId: selectedSender?.type === 'recruiter_sms' || selectedSender?.type === 'gmail' ? user?.uid : undefined,
+            // Never send "system" here; system is reserved for automated notifications.
+            senderType: selectedSender?.type || 'gmail',
+            source: 'recruiter',
+            sourceId: user?.uid,
           },
         };
 

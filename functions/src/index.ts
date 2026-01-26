@@ -11268,6 +11268,9 @@ export { processInboundSms, handleStopKeyword, handleHelpKeyword, handleStartKey
 export { enqueueSmsOutbound, processSmsOutbound, createOutboundRequest } from './messaging/smsOutboundQueue';
 export { testCreateOutboundRequest, testCheckRequestStatus, testIdempotency } from './messaging/testSmsQueueCallable';
 
+// Plan B Phase 1 - System welcome SMS (queue-first)
+export { enqueueWelcomeSmsOnUserCreated } from './messaging/systemSmsTriggers';
+
 // Unified Messaging Framework - Template Engine
 export {
   getMessageTemplate,

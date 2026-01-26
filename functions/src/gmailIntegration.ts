@@ -862,7 +862,20 @@ export const getGmailMailboxCounts = onCall(
     const userRef = db.collection('users').doc(userId);
     const userDoc = await userRef.get();
     if (!userDoc.exists) {
-      throw new Error('User not found');
+      // New users may exist in Auth before their Firestore user doc is created.
+      // This endpoint is used for non-critical UI badges; return safe defaults instead of throwing.
+      const empty = {
+        inbox: { threadsTotal: 0, threadsUnread: 0, messagesUnread: 0 },
+        primary: { threadsTotal: 0, threadsUnread: 0 },
+        social: { threadsTotal: 0, threadsUnread: 0 },
+        promotions: { threadsTotal: 0, threadsUnread: 0 },
+        updates: { threadsTotal: 0, threadsUnread: 0 },
+        forums: { threadsTotal: 0, threadsUnread: 0 },
+        spam: { threadsTotal: 0, threadsUnread: 0 },
+        starred: { threadsTotal: 0, threadsUnread: 0 },
+        sent: { threadsTotal: 0, threadsUnread: 0 },
+      };
+      return { success: true, counts: empty, connected: false, userDocMissing: true };
     }
 
     const userData: any = userDoc.data() || {};

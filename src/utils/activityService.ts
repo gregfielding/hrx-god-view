@@ -215,7 +215,10 @@ export async function loadContactActivities(
             to: data.to, 
             direction: direction || 'sent',
             subject: data.subject,
-            gmailMessageId: data.messageId
+            gmailMessageId: data.messageId,
+            threadId: data.threadId,
+            bodySnippet: data.bodySnippet,
+            bodyHtml: data.bodyHtml
           },
           source: 'email_logs'
         });

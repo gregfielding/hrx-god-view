@@ -185,6 +185,32 @@ export async function findOrCreateThread(
 }
 
 /**
+ * Queue-first helper: get or create an SMS thread for a user.
+ * Plan B Phase 1 uses this to ensure system/programmatic SMS is reply-ready.
+ */
+export async function getOrCreateThreadForUser(params: {
+  tenantId: string;
+  userId: string;
+  phoneE164: string;
+  twilioNumber: string;
+  primaryRecruiterId?: string | null;
+}): Promise<string> {
+  const thread = await findOrCreateThread(
+    params.userId,
+    params.phoneE164,
+    params.twilioNumber,
+    params.tenantId,
+    params.primaryRecruiterId ? { primaryRecruiterId: params.primaryRecruiterId } : undefined
+  );
+
+  if (!thread.id) {
+    throw new Error('Failed to get or create SMS thread');
+  }
+
+  return thread.id;
+}
+
+/**
  * Create inbound message in thread
  */
 export async function createInboundMessage(

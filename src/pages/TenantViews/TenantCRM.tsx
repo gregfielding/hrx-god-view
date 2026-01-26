@@ -5196,7 +5196,7 @@ const CompaniesTab: React.FC<{
   };
 
   return (
-    <Box>
+    <Box sx={{ px: 2, pb: 2 }}>
       {/* Header with search and actions */}
       {/* <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 600, color: '#111827' }}>
@@ -5215,7 +5215,8 @@ const CompaniesTab: React.FC<{
           px: 1.5,
           py: 1.25,
           backgroundColor: '#F9FAFB',
-          borderRadius: 0,
+          borderTopLeftRadius: 8,
+          borderTopRightRadius: 8,
           border: '1px solid #E5E7EB',
           borderBottom: '1px solid #EAEEF4',
           overflowX: 'auto',
@@ -5311,17 +5312,27 @@ const CompaniesTab: React.FC<{
       {/* Deals Table */}
         <TableContainer
           component={Paper}
+          variant="outlined"
           elevation={0}
           sx={{ 
             borderRadius: 0,
-            border: '1px solid #EAEEF4',
+            borderLeft: '1px solid #E5E7EB',
+            borderRight: '1px solid #E5E7EB',
+            borderBottom: filteredDeals.length > 0 ? 'none' : '1px solid #E5E7EB',
             borderTop: 'none',
+            borderBottomLeftRadius: filteredDeals.length > 0 ? 0 : 8,
+            borderBottomRightRadius: filteredDeals.length > 0 ? 0 : 8,
             boxShadow: 'none',
             mt: 0,
             pt: 0,
             px: 2, // Inbox padding
+            pb: 1,
             overflowX: 'auto',
-            overflowY: 'visible', // Outer scroll container handles vertical scroll (sticky header uses page scroll)
+            overflowY: 'auto',
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            minHeight: 0,
             '&::-webkit-scrollbar': { width: '8px', height: '8px' },
             '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
             '&::-webkit-scrollbar-thumb': { background: 'rgba(0, 0, 0, 0.15)', borderRadius: '4px', '&:hover': { background: 'rgba(0, 0, 0, 0.25)' } },
@@ -5695,16 +5706,26 @@ const CompaniesTab: React.FC<{
       </TableContainer>
 
       {filteredDeals.length > 0 && (
-        <StandardTablePagination
-          count={filteredDeals.length}
-          page={dealPage}
-          onPageChange={(_, newPage) => setDealPage(newPage)}
-          rowsPerPage={dealRowsPerPage}
-          onRowsPerPageChange={(e) => {
-            setDealRowsPerPage(parseInt(e.target.value, 10));
-            setDealPage(0);
-          }}
-        />
+        <Box sx={{ 
+          borderLeft: '1px solid #E5E7EB',
+          borderRight: '1px solid #E5E7EB',
+          borderBottom: '1px solid #E5E7EB',
+          borderBottomLeftRadius: 8,
+          borderBottomRightRadius: 8,
+          backgroundColor: '#FFFFFF',
+          mt: -1, // Overlap with table container border
+        }}>
+          <StandardTablePagination
+            count={filteredDeals.length}
+            page={dealPage}
+            onPageChange={(_, newPage) => setDealPage(newPage)}
+            rowsPerPage={dealRowsPerPage}
+            onRowsPerPageChange={(e) => {
+              setDealRowsPerPage(parseInt(e.target.value, 10));
+              setDealPage(0);
+            }}
+          />
+        </Box>
       )}
 
       {/* Deal Dialog */}

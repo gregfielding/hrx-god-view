@@ -131,6 +131,7 @@ const RecruiterContacts: React.FC = () => {
     email: '',
     phone: '',
     jobTitle: '',
+    linkedinUrl: '',
     contactType: 'Unknown',
     isActive: true,
     tags: [] as string[],
@@ -710,6 +711,7 @@ const RecruiterContacts: React.FC = () => {
         workPhone: contactForm.phone || '',
         jobTitle: contactForm.jobTitle || '',
         title: contactForm.jobTitle || '',
+        linkedinUrl: (contactForm.linkedinUrl || '').trim(),
         contactType: contactForm.contactType,
         role: contactForm.contactType.toLowerCase().replace(' ', '_'),
         isActive: contactForm.isActive,
@@ -740,6 +742,7 @@ const RecruiterContacts: React.FC = () => {
         email: '',
         phone: '',
         jobTitle: '',
+        linkedinUrl: '',
         contactType: 'Unknown',
         isActive: true,
         tags: [],
@@ -1159,6 +1162,16 @@ const RecruiterContacts: React.FC = () => {
                   label="Job Title"
                   value={contactForm.jobTitle}
                   onChange={(e) => handleContactFormChange('jobTitle', e.target.value)}
+                  disabled={savingContact}
+                />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField
+                  fullWidth
+                  label="LinkedIn URL"
+                  placeholder="https://www.linkedin.com/in/username"
+                  value={contactForm.linkedinUrl}
+                  onChange={(e) => handleContactFormChange('linkedinUrl', e.target.value)}
                   disabled={savingContact}
                 />
               </Grid>

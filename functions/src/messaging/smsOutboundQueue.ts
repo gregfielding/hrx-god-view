@@ -35,14 +35,18 @@ export interface SmsOutboundRequest {
   id?: string;
   tenantId: string;
   threadId?: string;
+  // Recipient user id (preferred). If missing, worker may resolve via phone lookup.
+  recipientUserId?: string;
   toPhoneE164: string;
   fromPhoneE164?: string;
   fromMessagingServiceSid?: string;
   body: string;
   bodyRaw?: string; // Original template before resolution
   templateId?: string;
+  messageTypeId?: string; // Preferred: message type identifier for logging/governance
   source: OutboundRequestSource;
   requestedByUid?: string;
+  messageLogId?: string; // If provided, worker updates this log instead of creating a new one
   status: OutboundRequestStatus;
   attemptCount: number;
   lastError?: {
@@ -50,6 +54,9 @@ export interface SmsOutboundRequest {
     message: string;
     timestamp?: admin.firestore.Timestamp;
   };
+  // Dedupe support (best-effort). If provided, createOutboundRequest will dedupe within window.
+  dedupeKey?: string;
+  dedupeWindowHours?: number;
   createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
   scheduledFor?: admin.firestore.Timestamp;
   idempotencyKey: string;
@@ -94,19 +101,26 @@ export async function createOutboundRequest(
   params: {
     tenantId: string;
     threadId?: string;
+    recipientUserId?: string;
     toPhoneE164: string;
     fromPhoneE164?: string;
     fromMessagingServiceSid?: string;
     body: string;
     bodyRaw?: string;
     templateId?: string;
+    messageTypeId?: string;
     source: OutboundRequestSource;
     requestedByUid?: string;
+    messageLogId?: string;
+    dedupeKey?: string;
+    dedupeWindowHours?: number;
     scheduledFor?: admin.firestore.Timestamp;
     metadata?: SmsOutboundRequest['metadata'];
   }
 ): Promise<string> {
   try {
+    const nowTs = admin.firestore.Timestamp.now();
+
     const idempotencyKey = generateIdempotencyKey(
       params.tenantId,
       params.threadId,
@@ -115,37 +129,72 @@ export async function createOutboundRequest(
       params.scheduledFor,
       params.requestedByUid
     );
-    
-    // Check if request with same idempotency key already exists
-    const existingQuery = await db
-      .collection('tenants')
-      .doc(params.tenantId)
-      .collection('smsOutboundRequests')
-      .where('idempotencyKey', '==', idempotencyKey)
-      .where('status', 'in', ['queued', 'sending', 'sent'])
-      .limit(1)
-      .get();
-    
-    if (!existingQuery.empty) {
-      const existing = existingQuery.docs[0];
-      logger.info(`Duplicate outbound request detected (idempotency key: ${idempotencyKey}), returning existing request ${existing.id}`);
-      return existing.id;
+
+    // Dedupe (best-effort): If dedupeKey is provided, only dedupe within window.
+    // This is intentionally separate from idempotencyKey to avoid permanent dedupe for recurring system messages.
+    if (params.dedupeKey) {
+      const windowHours = params.dedupeWindowHours ?? 72;
+      const cutoff = admin.firestore.Timestamp.fromMillis(nowTs.toMillis() - windowHours * 60 * 60 * 1000);
+
+      const dedupeSnap = await db
+        .collection('tenants')
+        .doc(params.tenantId)
+        .collection('smsOutboundRequests')
+        .where('dedupeKey', '==', params.dedupeKey)
+        .orderBy('createdAt', 'desc')
+        .limit(1)
+        .get();
+
+      if (!dedupeSnap.empty) {
+        const existing = dedupeSnap.docs[0];
+        const existingData = existing.data() as SmsOutboundRequest;
+        const existingCreatedAt = (existingData.createdAt as admin.firestore.Timestamp | undefined);
+
+        if (existingCreatedAt && existingCreatedAt.toMillis && existingCreatedAt.toMillis() >= cutoff.toMillis()) {
+          logger.info(
+            `Duplicate outbound request detected (dedupeKey: ${params.dedupeKey}, windowHours: ${windowHours}), returning existing request ${existing.id}`
+          );
+          return existing.id;
+        }
+      }
+    } else {
+      // Legacy idempotency behavior (no time window).
+      // Used primarily to avoid duplicate enqueue calls (e.g. client retries).
+      const existingQuery = await db
+        .collection('tenants')
+        .doc(params.tenantId)
+        .collection('smsOutboundRequests')
+        .where('idempotencyKey', '==', idempotencyKey)
+        .where('status', 'in', ['queued', 'sending', 'sent'])
+        .limit(1)
+        .get();
+
+      if (!existingQuery.empty) {
+        const existing = existingQuery.docs[0];
+        logger.info(`Duplicate outbound request detected (idempotency key: ${idempotencyKey}), returning existing request ${existing.id}`);
+        return existing.id;
+      }
     }
     
     const requestData: Omit<SmsOutboundRequest, 'id'> = {
       tenantId: params.tenantId,
       threadId: params.threadId,
+      recipientUserId: params.recipientUserId,
       toPhoneE164: params.toPhoneE164,
       fromPhoneE164: params.fromPhoneE164,
       fromMessagingServiceSid: params.fromMessagingServiceSid,
       body: params.body,
       bodyRaw: params.bodyRaw,
       templateId: params.templateId,
+      messageTypeId: params.messageTypeId,
       source: params.source,
       requestedByUid: params.requestedByUid,
+      messageLogId: params.messageLogId,
       status: 'queued',
       attemptCount: 0,
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      dedupeKey: params.dedupeKey,
+      dedupeWindowHours: params.dedupeWindowHours,
+      createdAt: nowTs,
       scheduledFor: params.scheduledFor,
       idempotencyKey,
       metadata: params.metadata,
@@ -283,6 +332,22 @@ export const processSmsOutbound = onRequest(
       }
       
       const requestData = requestDoc.data() as SmsOutboundRequest;
+
+      // Resolve recipient user id (best-effort) for logging
+      let resolvedRecipientUserId: string | undefined = requestData.recipientUserId;
+      if (!resolvedRecipientUserId) {
+        try {
+          const usersQuery = await db.collection('users')
+            .where('phoneE164', '==', requestData.toPhoneE164)
+            .limit(1)
+            .get();
+          if (!usersQuery.empty) {
+            resolvedRecipientUserId = usersQuery.docs[0].id;
+          }
+        } catch (e) {
+          // Best-effort only; don't fail worker
+        }
+      }
       
       // Hard stop if status not queued (idempotent)
       if (requestData.status !== 'queued') {
@@ -318,6 +383,20 @@ export const processSmsOutbound = onRequest(
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
           },
         });
+        if (requestData.messageLogId) {
+          await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('messageLogs')
+            .doc(requestData.messageLogId)
+            .set(
+              {
+                status: 'failed',
+                failureReason: complianceCheck.reason,
+              },
+              { merge: true }
+            );
+        }
         logger.warn(`Compliance check failed for request ${requestId}: ${complianceCheck.reason}`);
         response.status(200).json({ success: false, error: complianceCheck.reason });
         return;
@@ -333,8 +412,8 @@ export const processSmsOutbound = onRequest(
         to: requestData.toPhoneE164,
         from: requestData.fromPhoneE164,
         body: finalBody,
-        messageTypeId: requestData.templateId || 'manual_sms',
-        userId: requestData.requestedByUid,
+        messageTypeId: requestData.messageTypeId || requestData.templateId || 'manual_sms',
+        userId: resolvedRecipientUserId,
         threadId: requestData.threadId,
       });
       
@@ -350,6 +429,22 @@ export const processSmsOutbound = onRequest(
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
           },
         });
+
+        // Update message log if provided (best-effort)
+        if (requestData.messageLogId && !isRetryable) {
+          await db
+            .collection('tenants')
+            .doc(tenantId)
+            .collection('messageLogs')
+            .doc(requestData.messageLogId)
+            .set(
+              {
+                status: 'failed',
+                failureReason: sendResult.errorMessage || sendResult.errorCode || 'Unknown error',
+              },
+              { merge: true }
+            );
+        }
         
         if (isRetryable) {
           logger.warn(`Retryable error sending SMS for request ${requestId}, will retry: ${sendResult.errorMessage}`);
@@ -405,22 +500,38 @@ export const processSmsOutbound = onRequest(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
       });
-      
-      // Log to unified message log
-      await logMessage({
-        userId: requestData.requestedByUid || 'system',
-        tenantId,
-        threadId: requestData.threadId,
-        messageTypeId: requestData.templateId || 'manual_sms',
-        channel: 'sms',
-        direction: 'outbound',
-        fromIdentity: requestData.requestedByUid ? 'recruiter' : 'system',
-        fromUserId: requestData.requestedByUid,
-        contentSent: finalBody,
-        language: null,
-        status: 'sent',
-        providerMessageId: sendResult.providerMessageId,
-      });
+
+      // Update existing message log if present; otherwise create one
+      if (requestData.messageLogId) {
+        await db
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('messageLogs')
+          .doc(requestData.messageLogId)
+          .set(
+            {
+              status: 'sent',
+              providerMessageId: sendResult.providerMessageId,
+              contentSent: finalBody,
+            },
+            { merge: true }
+          );
+      } else {
+        await logMessage({
+          userId: resolvedRecipientUserId || 'system',
+          tenantId,
+          threadId: requestData.threadId,
+          messageTypeId: requestData.messageTypeId || requestData.templateId || 'manual_sms',
+          channel: 'sms',
+          direction: 'outbound',
+          fromIdentity: requestData.requestedByUid ? 'recruiter' : 'system',
+          fromUserId: requestData.requestedByUid,
+          contentSent: finalBody,
+          language: null,
+          status: 'sent',
+          providerMessageId: sendResult.providerMessageId,
+        });
+      }
       
       const durationMs = Date.now() - startTime;
       logger.info(`Successfully processed SMS outbound request ${requestId} in ${durationMs}ms`, {
