@@ -655,6 +655,24 @@ async function deliverEmail(
   try {
     // Resolve sender identity
     let senderIdentity = await resolveSenderIdentity(context.tenantId, context);
+
+    // CRITICAL POLICY:
+    // User-composed emails must NEVER fall back to SendGrid/no-reply.
+    // If Gmail isn't connected/usable for the sender, fail loudly.
+    const isUserComposedEmail =
+      context.source === 'recruiter' ||
+      context.messageTypeId === 'direct_message' ||
+      context.variables?._directMessage === true;
+    if (isUserComposedEmail) {
+      if (senderIdentity.emailProvider !== 'gmail' || !senderIdentity.gmailUserId) {
+        return {
+          channel: 'email',
+          success: false,
+          error:
+            'Gmail connection required to send email. Please connect Gmail in Settings (no SendGrid fallback for user emails).',
+        };
+      }
+    }
     
     // Get appropriate email provider based on sender identity
     let emailProvider;
@@ -662,18 +680,11 @@ async function deliverEmail(
       emailProvider = getEmailProvider(senderIdentity);
     } catch (configError: any) {
       logger.warn(`Email provider not configured: ${configError.message}`);
-      // Fallback to system sender if Gmail fails
-      if (senderIdentity.emailProvider === 'gmail') {
-        logger.info('Falling back to SendGrid after Gmail provider error');
-        senderIdentity = await resolveSenderIdentity(context.tenantId, { metadata: { senderId: 'system' } });
-        emailProvider = getEmailProvider(senderIdentity);
-      } else {
-        return {
-          channel: 'email',
-          success: false,
-          error: 'Email provider not configured',
-        };
-      }
+      return {
+        channel: 'email',
+        success: false,
+        error: 'Email provider not configured',
+      };
     }
     
     // Import template functions
