@@ -219,28 +219,17 @@ export async function createInboundMessage(
   body: string,
   providerMessageId: string,
   options?: {
+    tenantId?: string;
     language?: 'en' | 'es';
     metadata?: Record<string, any>;
   }
 ): Promise<string> {
   try {
-    // Get thread to get tenantId
-    const threadDoc = await db
-      .collectionGroup('smsThreads')
-      .where(FieldPath.documentId(), '==', threadId)
-      .limit(1)
-      .get();
-    
-    if (threadDoc.empty) {
-      throw new Error(`Thread ${threadId} not found`);
-    }
-    
-    const thread = threadDoc.docs[0];
-    const threadData = thread.data() as SmsThread;
-    const resolvedTenantId = threadData.tenantId || thread.ref.parent.parent?.id;
-    
+    // For tenant-scoped messaging, the caller must provide tenantId.
+    // (CollectionGroup + documentId equality requires a full document path, not a bare threadId.)
+    const resolvedTenantId = options?.tenantId;
     if (!resolvedTenantId) {
-      throw new Error(`Could not determine tenantId for thread ${threadId}`);
+      throw new Error(`Missing tenantId for inbound message thread ${threadId}`);
     }
     
     const messageData: Omit<SmsMessage, 'id'> = {

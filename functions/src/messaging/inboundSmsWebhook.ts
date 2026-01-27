@@ -127,6 +127,7 @@ async function handleRegularInboundMessage(
 
     // Create inbound message in thread
     await createInboundMessage(thread.id, messageBody, messageSid, {
+      tenantId,
       language: (userData?.preferredLanguage || 'en') as 'en' | 'es',
     });
 
