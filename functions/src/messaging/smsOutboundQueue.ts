@@ -14,7 +14,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import crypto from 'crypto';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
-import { getTenantSmsConsent } from './tenantConsent';
+import { getTenantSmsConsent, updateTenantSmsConsent } from './tenantConsent';
 import { getSmsProvider } from './smsProviderFactory';
 import { createInboundMessage, SmsThread, SmsMessage } from './twoWayMessaging';
 import { logMessage } from './messageLogging';
@@ -30,7 +30,7 @@ const LOCATION = process.env.FUNCTIONS_REGION || 'us-central1';
 const SMS_QUEUE = process.env.SMS_QUEUE_NAME || 'sms-outbound';
 
 export type OutboundRequestSource = 'manual' | 'automation' | 'ai_sent';
-export type OutboundRequestStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'canceled';
+export type OutboundRequestStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'blocked' | 'canceled';
 
 export interface SmsOutboundRequest {
   id?: string;
@@ -434,6 +434,79 @@ export const processSmsOutbound = onRequest(
       });
       
       if (!sendResult.success) {
+        // Provider opt-out: Twilio 21610 indicates the recipient has replied STOP / is opted out.
+        // This is terminal: mark blocked, update consent, and do NOT retry.
+        if (sendResult.errorCode === '21610') {
+          await requestRef.update({
+            status: 'blocked',
+            lastError: {
+              code: sendResult.errorCode,
+              message: sendResult.errorMessage || 'Recipient opted out (Twilio 21610)',
+              timestamp: FieldValue.serverTimestamp(),
+            },
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+
+          // Best-effort: persist opt-out to consent docs so future sends are blocked before provider call
+          if (resolvedRecipientUserId) {
+            try {
+              await updateTenantSmsConsent(
+                tenantId,
+                resolvedRecipientUserId,
+                {
+                  phoneNumber: requestData.toPhoneE164,
+                  smsOptIn: false,
+                  smsBlockedSystem: true,
+                  source: 'system',
+                },
+                {
+                  type: 'OPT_OUT',
+                  source: 'system',
+                  previousValue: null,
+                  newValue: { smsOptIn: false, smsBlockedSystem: true },
+                  rawPayload: {
+                    provider: 'twilio',
+                    errorCode: '21610',
+                    requestId,
+                    providerMessageId: sendResult.providerMessageId || null,
+                  },
+                }
+              );
+            } catch (consentErr: any) {
+              logger.warn('Failed to update tenant SMS consent on Twilio 21610', {
+                tenantId,
+                userId: resolvedRecipientUserId,
+                requestId,
+                error: consentErr?.message,
+              });
+            }
+          }
+
+          // Update message log if provided (best-effort)
+          if (requestData.messageLogId) {
+            await db
+              .collection('tenants')
+              .doc(tenantId)
+              .collection('messageLogs')
+              .doc(requestData.messageLogId)
+              .set(
+                {
+                  status: 'failed',
+                  failureReason: sendResult.errorMessage || 'Recipient opted out (Twilio 21610)',
+                },
+                { merge: true }
+              );
+          }
+
+          logger.info(`Blocked SMS request ${requestId} due to Twilio opt-out (21610)`, {
+            tenantId,
+            requestId,
+            userId: resolvedRecipientUserId,
+          });
+          response.status(200).json({ success: false, blocked: true, error: 'Recipient opted out (21610)' });
+          return;
+        }
+
         // Retryable error - throw to trigger Cloud Tasks retry
         const isRetryable = isRetryableError(sendResult.errorCode);
         
@@ -689,6 +762,7 @@ function isRetryableError(errorCode: string | undefined): boolean {
     'SMS_NOT_CONSENTED',
     'INVALID_PHONE_NUMBER',
     'TWILIO_CONFIG_MISSING',
+    '21610', // Twilio opt-out / STOP
   ];
   
   return !nonRetryableCodes.includes(errorCode);
