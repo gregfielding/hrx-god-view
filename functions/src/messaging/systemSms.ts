@@ -13,6 +13,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { createOutboundRequest } from './smsOutboundQueue';
 import { getOrCreateThreadForUser } from './twoWayMessaging';
+import { Timestamp } from 'firebase-admin/firestore';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -53,7 +54,7 @@ function getTenantIdForUser(userData: any): string | null {
 }
 
 async function hasRecentWelcomeDedupe(tenantId: string, dedupeKey: string, windowHours = 72): Promise<boolean> {
-  const cutoff = admin.firestore.Timestamp.fromMillis(Date.now() - windowHours * 60 * 60 * 1000);
+  const cutoff = Timestamp.fromMillis(Date.now() - windowHours * 60 * 60 * 1000);
   const snap = await db
     .collection('tenants')
     .doc(tenantId)
