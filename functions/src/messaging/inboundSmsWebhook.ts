@@ -14,6 +14,7 @@ import { processInboundSms } from './stopHelpHandler';
 import { logMessage } from './messageLogging';
 import { findOrCreateThread, createInboundMessage } from './twoWayMessaging';
 import { createAIDraft, classifyInboundMessage } from './aiAssist';
+import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -31,6 +32,8 @@ export const handleInboundSms = onRequest(
   {
     cors: true,
     invoker: 'public', // Twilio webhooks are unauthenticated
+    // Needed for STOP/HELP confirmation sends via Twilio
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request, response) => {
     try {

@@ -13,6 +13,14 @@ import { logger } from 'firebase-functions/v2';
 
 let cachedProvider: SmsProvider | null = null;
 
+function maskE164(phone: string | undefined): string {
+  const s = String(phone || '').trim();
+  if (!s) return '(unset)';
+  const digits = s.replace(/[^\d+]/g, '');
+  const last4 = digits.replace(/[^\d]/g, '').slice(-4);
+  return last4 ? `***${last4}` : '(set)';
+}
+
 /**
  * Get the SMS provider instance (singleton)
  * 
@@ -26,6 +34,8 @@ export function getSmsProvider(): SmsProvider {
   }
 
   const mode = process.env.SMS_PROVIDER ?? 'mock';
+  const fromMasked = maskE164(process.env.TWILIO_MESSAGING_PHONE_NUMBER);
+  logger.info('[SMS] Provider selection', { mode, from: fromMasked });
 
   if (mode === 'twilio') {
     logger.info('Initializing TwilioSmsProvider (production mode)');

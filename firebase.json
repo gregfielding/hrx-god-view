@@ -44,7 +44,9 @@
       ],
       "environmentVariables": {
         "GNEWS_API_KEY": "82eb7721b0852a8dd71f5d0492c72596",
-        "SERP_API_KEY": "e449a4fafca55476b5bf9d07e90884c756f9512980bf5a0c1d72ea8d74627e20"
+        "SERP_API_KEY": "e449a4fafca55476b5bf9d07e90884c756f9512980bf5a0c1d72ea8d74627e20",
+        "SMS_PROVIDER": "twilio",
+        "TWILIO_MESSAGING_PHONE_NUMBER": "+18888058650"
       }
     }
   ],

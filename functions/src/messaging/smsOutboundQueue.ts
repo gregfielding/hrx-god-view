@@ -18,6 +18,7 @@ import { getTenantSmsConsent, updateTenantSmsConsent } from './tenantConsent';
 import { getSmsProvider } from './smsProviderFactory';
 import { createInboundMessage, SmsThread, SmsMessage } from './twoWayMessaging';
 import { logMessage } from './messageLogging';
+import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -320,6 +321,7 @@ export const processSmsOutbound = onRequest(
     region: LOCATION,
     cors: true,
     invoker: 'private', // Only callable by Cloud Tasks
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request, response) => {
     const startTime = Date.now();

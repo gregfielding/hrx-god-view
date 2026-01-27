@@ -104,6 +104,12 @@ export async function enqueueSystemWelcomeSms(params: {
 
   // Prefer a fixed Twilio number so replies map to the same thread.
   const twilioNumber = (process.env.TWILIO_MESSAGING_PHONE_NUMBER || '').trim();
+  const twilioMasked = twilioNumber ? `***${twilioNumber.replace(/[^\d]/g, '').slice(-4)}` : '(unset)';
+  logger.info('[SMS] Welcome enqueue runtime config', {
+    tenantId: resolvedTenantId,
+    mode: process.env.SMS_PROVIDER ?? 'mock',
+    from: twilioMasked,
+  });
 
   let threadId: string | undefined;
   if (twilioNumber) {

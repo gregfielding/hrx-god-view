@@ -9,18 +9,17 @@
 
 import { logger } from 'firebase-functions/v2';
 import twilio from 'twilio';
-import { defineSecret } from 'firebase-functions/params';
 import {
   SmsProvider,
   SmsSendParams,
   SmsSendResult,
 } from './SmsProvider';
-
-// Define secrets for Twilio credentials
-const twilioAccountSid = defineSecret('TWILIO_ACCOUNT_SID');
-const twilioAuthToken = defineSecret('TWILIO_AUTH_TOKEN');
-const messagingPhoneNumber = defineSecret('TWILIO_MESSAGING_PHONE_NUMBER');
-const a2pCampaign = defineSecret('TWILIO_A2P_CAMPAIGN');
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './twilioSecrets';
 
 export class TwilioSmsProvider implements SmsProvider {
   private client: twilio.Twilio | null = null;
@@ -29,8 +28,8 @@ export class TwilioSmsProvider implements SmsProvider {
   private initialize(): void {
     if (!this.initialized) {
       try {
-        const accountSid = twilioAccountSid.value() || process.env.TWILIO_ACCOUNT_SID;
-        const authToken = twilioAuthToken.value() || process.env.TWILIO_AUTH_TOKEN;
+        const accountSid = TWILIO_ACCOUNT_SID.value() || process.env.TWILIO_ACCOUNT_SID;
+        const authToken = TWILIO_AUTH_TOKEN.value() || process.env.TWILIO_AUTH_TOKEN;
 
         if (!accountSid || !authToken) {
           throw new Error('Twilio credentials not configured');
@@ -58,8 +57,8 @@ export class TwilioSmsProvider implements SmsProvider {
 
     try {
       // Get Twilio configuration
-      const fromNumber = messagingPhoneNumber.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
-      const messagingServiceSid = a2pCampaign.value() || process.env.TWILIO_A2P_CAMPAIGN;
+      const fromNumber = TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
+      const messagingServiceSid = TWILIO_A2P_CAMPAIGN.value() || process.env.TWILIO_A2P_CAMPAIGN;
 
       // Build message parameters
       const messageParams: any = {

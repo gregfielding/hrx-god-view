@@ -12,17 +12,19 @@ const db = admin.firestore();
 
 // Get Twilio configuration from environment variables
 import { defineSecret } from 'firebase-functions/params';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './messaging/twilioSecrets';
 
-// Define secrets for Twilio credentials
-const twilioAccountSid = defineSecret('TWILIO_ACCOUNT_SID');
-const twilioAuthToken = defineSecret('TWILIO_AUTH_TOKEN');
+// Twilio Verify is only used here (kept local)
 const verifyServiceSid = defineSecret('TWILIO_VERIFY_SERVICE_SID');
-const messagingPhoneNumber = defineSecret('TWILIO_MESSAGING_PHONE_NUMBER');
-const a2pCampaign = defineSecret('TWILIO_A2P_CAMPAIGN');
 
 // Helper to get Twilio client (lazy initialization)
 function getTwilioClient() {
-  return twilio(twilioAccountSid.value(), twilioAuthToken.value());
+  return twilio(TWILIO_ACCOUNT_SID.value(), TWILIO_AUTH_TOKEN.value());
 }
 
 function getVerifyServiceSid() {
@@ -30,11 +32,11 @@ function getVerifyServiceSid() {
 }
 
 function getMessagingPhoneNumber() {
-  return messagingPhoneNumber.value();
+  return TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
 }
 
 function getA2PCampaign() {
-  return a2pCampaign.value();
+  return TWILIO_A2P_CAMPAIGN.value() || process.env.TWILIO_A2P_CAMPAIGN;
 }
 
 // Initialize CORS middleware
@@ -45,7 +47,7 @@ const corsHandler = cors({ origin: true });
  */
 export const sendOtpHttp = onRequest(
   {
-    secrets: [twilioAccountSid, twilioAuthToken, verifyServiceSid],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid],
     invoker: 'public',
   },
   async (request, response) => {
@@ -104,7 +106,7 @@ export const sendOtpHttp = onRequest(
  */
 export const sendOtp = onCall(
   {
-    secrets: [twilioAccountSid, twilioAuthToken, verifyServiceSid],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid],
     cors: true,
     invoker: 'public', // Allow unauthenticated calls for now
   },
@@ -165,7 +167,7 @@ export const sendOtp = onCall(
  */
 export const checkOtp = onCall(
   {
-    secrets: [twilioAccountSid, twilioAuthToken, verifyServiceSid],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, verifyServiceSid],
     cors: true,
     invoker: 'public', // Allow unauthenticated calls for now
   },
@@ -607,7 +609,7 @@ export async function sendWorkerMessageInternal(
  */
 export const sendWorkerMessage = onCall(
   {
-    secrets: [twilioAccountSid, twilioAuthToken, messagingPhoneNumber, a2pCampaign],
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
     // Explicitly allow all ingress (Firebase callable functions handle auth automatically)
     // This ensures Cloud Run doesn't block requests before Firebase can process them
   },
