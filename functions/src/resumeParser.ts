@@ -8,6 +8,11 @@ import nlp from 'compromise';
 import OpenAI from 'openai';
 import { z } from 'zod';
 
+// Ensure default app exists (emulators + cold starts)
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
 // Add at the top for missing types
 // @ts-ignore
 const pdfParse = require('pdf-parse');
