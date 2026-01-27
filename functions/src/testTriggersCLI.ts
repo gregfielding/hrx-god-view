@@ -9,17 +9,6 @@
 
 import * as admin from 'firebase-admin';
 
-// Test against production since emulator triggers aren't firing
-// process.env.FIRESTORE_EMULATOR_HOST = 'localhost:8080';
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    projectId: 'hrx1-d3beb' // Replace with your project ID
-  });
-  console.log('✅ Firebase Admin initialized successfully');
-  console.log('🔧 Connected to Production Firebase (hrx1-d3beb)');
-}
-
 import { runFirestoreTriggerTests, checkTestCoverage } from './testFirestoreTriggers';
 export { runFirestoreTriggerTests };
 
@@ -32,6 +21,17 @@ async function main() {
   const checkCoverage = args.includes('--coverage') || args.includes('-c');
 
   // No need to initialize Firebase here, already done at the top
+  if (!admin.apps.length) {
+    const projectId = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || 'hrx1-d3beb';
+    admin.initializeApp({ projectId });
+
+    const isEmulator = !!process.env.FIRESTORE_EMULATOR_HOST || !!process.env.FIREBASE_EMULATOR_HUB;
+    console.log('✅ Firebase Admin initialized successfully');
+    console.log(`🔧 Connected to ${isEmulator ? 'Emulator' : 'Firebase'} (projectId: ${projectId})`);
+    if (process.env.FIRESTORE_EMULATOR_HOST) {
+      console.log(`   FIRESTORE_EMULATOR_HOST=${process.env.FIRESTORE_EMULATOR_HOST}`);
+    }
+  }
 
   if (checkCoverage) {
     // Run coverage check

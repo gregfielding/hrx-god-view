@@ -18,7 +18,7 @@ import { runAIScheduler, manualSchedulerRun } from './scheduler';
 import { getTraitsAndTags } from './utils/openaiHelper';
 import * as FirebaseFirestore from 'firebase-admin/firestore';
 import sgMail from '@sendgrid/mail';
-import { runFirestoreTriggerTests } from './testTriggersCLI';
+import { runFirestoreTriggerTests } from './testFirestoreTriggers';
 import type { TestResult } from './testFirestoreTriggers';
 import { logger } from './utils/logger';
 import { sendWorkerMessageInternal } from './twilio';
