@@ -126,11 +126,28 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
         } as ActivityLog);
       });
 
-      if (isRefresh) {
+      // React 18 StrictMode can run effects twice in dev, which can cause the first page
+      // to be appended twice (duplicate IDs -> duplicate React keys). Treat the first page
+      // as a replace, and also de-dupe whenever we append.
+      const isInitialPage = !isRefresh && !lastDoc;
+
+      if (isRefresh || isInitialPage) {
         setActivities(activitiesData);
         setPage(1);
       } else {
-        setActivities(prev => [...prev, ...activitiesData]);
+        setActivities((prev) => {
+          const seen = new Set<string>();
+          const merged: ActivityLog[] = [];
+
+          // Preserve order: existing first, then new; skip duplicates by id.
+          for (const a of [...prev, ...activitiesData]) {
+            if (seen.has(a.id)) continue;
+            seen.add(a.id);
+            merged.push(a);
+          }
+
+          return merged;
+        });
       }
 
       setLastDoc(querySnapshot.docs[querySnapshot.docs.length - 1] || null);

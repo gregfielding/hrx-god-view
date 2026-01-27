@@ -216,7 +216,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
         // Check Gmail connection
         try {
           const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
-          const gmailResult = await getGmailStatusFn({ userId: user.uid });
+          // Force=true to bypass sampling/rate-limit shortcuts that can incorrectly report disconnected.
+          const gmailResult = await getGmailStatusFn({ userId: user.uid, force: true });
           const gmailData = gmailResult.data as { connected?: boolean; email?: string };
           
           if (!gmailData?.connected) {
@@ -590,10 +591,6 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
 
     // Validate subject if email is selected
     if (channels.includes('email')) {
-              if (gmailConnected === false) {
-                setError('Gmail connection required to send email. Please connect Gmail in settings.');
-        return false;
-      }
       if (!subject.trim()) {
         setError('Subject is required');
         return false;

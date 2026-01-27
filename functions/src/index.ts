@@ -11269,7 +11269,7 @@ export { enqueueSmsOutbound, processSmsOutbound, createOutboundRequest } from '.
 export { testCreateOutboundRequest, testCheckRequestStatus, testIdempotency } from './messaging/testSmsQueueCallable';
 
 // Plan B Phase 1 - System welcome SMS (queue-first)
-export { enqueueWelcomeSmsOnUserCreated } from './messaging/systemSmsTriggers';
+export { enqueueWelcomeSmsOnUserCreated, enqueueWelcomeSmsOnRootUserCreated } from './messaging/systemSmsTriggers';
 
 // Unified Messaging Framework - Template Engine
 export {

@@ -113,14 +113,19 @@ import { ThemeModeProvider } from './theme/theme';
 
 const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement);
 
-root.render(
-  <React.StrictMode>
-    <HelmetProvider>
-      <ThemeModeProvider>
-        <App />
-      </ThemeModeProvider>
-    </HelmetProvider>
-  </React.StrictMode>
+// React 18 StrictMode double-invokes effects in development, which can create
+// duplicate Firestore listeners and (in rare cases) trigger SDK internal
+// assertion crashes (ca9/b815) in the watch stream. Keep dev stable by
+// disabling StrictMode locally.
+const appTree = (
+  <HelmetProvider>
+    <ThemeModeProvider>
+      <App />
+    </ThemeModeProvider>
+  </HelmetProvider>
 );
+
+const isDev = typeof process !== 'undefined' && process.env?.NODE_ENV === 'development';
+root.render(isDev ? appTree : <React.StrictMode>{appTree}</React.StrictMode>);
 
 reportWebVitals();

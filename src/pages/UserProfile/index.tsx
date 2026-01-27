@@ -494,12 +494,20 @@ const UserProfilePage = () => {
   useEffect(() => {
     if (!uid || !canAccessProfile()) return;
     
-    // Fetch skills data for SkillsTab
-    const userRef = doc(db, 'users', uid);
-    const unsubscribe = onSnapshot(userRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        setScoreSummary(normalizeScoreSummary((data as any).scoreSummary));
+    // Avoid always-on Firestore listeners on this page (can trigger rare SDK watch-stream crashes).
+    // One-time fetch is enough for the profile summary; tab-specific screens can fetch as needed.
+    let cancelled = false;
+
+    const fetchOnce = async () => {
+      try {
+        const userRef = doc(db, 'users', uid);
+        const docSnap = await getDoc(userRef);
+        if (cancelled) return;
+        if (!docSnap.exists()) return;
+
+        const data = docSnap.data() as any;
+        setScoreSummary(normalizeScoreSummary(data.scoreSummary));
+
         // Fetch E-Verify orders
         const eVerifyOrdersArray = Array.isArray(data.eVerifyOrders) ? data.eVerifyOrders : [];
         setEVerifyOrders(eVerifyOrdersArray.map((o: any) => ({
@@ -570,18 +578,9 @@ const UserProfilePage = () => {
           dateOfBirth: (() => {
             const dobValue = data.dob || data.dateOfBirth;
             if (!dobValue) return null;
-            // Handle Firestore Timestamp
-            if (dobValue?.toDate && typeof dobValue.toDate === 'function') {
-              return dobValue.toDate();
-            }
-            // Handle string or Date
-            if (typeof dobValue === 'string' || dobValue instanceof Date) {
-              return dobValue;
-            }
-            // Handle timestamp number
-            if (typeof dobValue === 'number') {
-              return new Date(dobValue);
-            }
+            if (dobValue?.toDate && typeof dobValue.toDate === 'function') return dobValue.toDate();
+            if (typeof dobValue === 'string' || dobValue instanceof Date) return dobValue;
+            if (typeof dobValue === 'number') return new Date(dobValue);
             return dobValue;
           })(),
           gender: data.gender || '',
@@ -598,7 +597,7 @@ const UserProfilePage = () => {
           emergencyContact: data.emergencyContact || null,
           transportMethod: data.transportMethod || null,
         });
-        
+
         // Load onboarding status
         setEmployeeOnboardStatus(data.employeeOnboardStatus);
         setContractorOnboardStatus(data.contractorOnboardStatus);
@@ -612,9 +611,13 @@ const UserProfilePage = () => {
         } catch {
           setOnboardingCompletionPct(0);
         }
+      } catch (e) {
+        console.warn('Failed to fetch user snapshot for profile summary:', e);
       }
-    });
-    return () => unsubscribe();
+    };
+
+    fetchOnce();
+    return () => { cancelled = true; };
   }, [uid, user, securityLevel]);
 
   // Fetch counts for tabs

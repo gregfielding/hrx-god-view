@@ -103,7 +103,8 @@ function generateDefaultSignature(data: EmailSignatureData): string {
     ? `<td style="padding-right:14px;vertical-align:top;">
           <img src="${escapeHtml(data.logoUrl)}"
                alt="Company logo"
-               style="height:60px;width:auto;border-radius:4px;display:block;" />
+               height="60"
+               style="height:60px;max-width:140px;width:auto;object-fit:contain;border-radius:4px;display:block;" />
        </td>`
     : '';
 

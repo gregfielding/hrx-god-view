@@ -265,7 +265,9 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
 
   const maybeLoadGmailAssetsForMessage = useCallback(
     async (msg: EmailMessage) => {
-      const gmailMessageId = (msg as any).gmailMessageId;
+      // Some paths store Gmail IDs as `providerMessageId` (older/outbound codepaths).
+      // Use either so inline images/attachments can still be resolved.
+      const gmailMessageId = (msg as any).gmailMessageId || (msg as any).providerMessageId;
       if (!gmailMessageId || !user?.uid) return;
       
       // Check if we've already requested (and it's still in progress)
@@ -347,7 +349,8 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
           setThread((prev) => {
             if (!prev) return prev;
             const nextMessages = (prev.messages || []).map((m) => {
-              if ((m as any).gmailMessageId !== gmailMessageId) return m;
+              const mGmailId = (m as any).gmailMessageId || (m as any).providerMessageId;
+              if (mGmailId !== gmailMessageId) return m;
               const existing = Array.isArray(m.attachments) ? m.attachments : [];
               const incoming = resultData.attachments as EmailAttachment[];
               const seen = new Set<string>();
@@ -1374,7 +1377,7 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
                           if (message.bodyHtml && /cid:/i.test(message.bodyHtml)) {
                             console.log('[EmailThreadView] Message has cid images:', {
                               messageId: message.id,
-                              gmailMessageId: (message as any).gmailMessageId,
+                              gmailMessageId: (message as any).gmailMessageId || (message as any).providerMessageId,
                               hasAttachments: !!message.attachments?.length,
                               attachmentCount: message.attachments?.length || 0,
                               attachments: message.attachments?.map(a => ({

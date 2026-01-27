@@ -32,14 +32,18 @@ export const db = (() => {
       if (existing) return existing;
 
       const isDev = typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development';
-      // NOTE: We intentionally avoid experimentalForceLongPolling here.
-      // It reduces some dev noise, but we've seen it correlate with rare watch-stream
-      // internal assertion errors (ca9/b815). Stability > noise.
-      const settings: any = { ignoreUndefinedProperties: true };
-      if (!isDev) {
-        // Production: allow fetch streams for performance
-        settings.useFetchStreams = true;
-      }
+      // Firestore can hit rare internal assertion failures in some network environments
+      // (especially with flaky HTTP/3 / QUIC). Long-polling is more resilient.
+      //
+      // IMPORTANT: We force long-polling for all browser sessions because these assertion
+      // failures are catastrophic (crash the app) and we've observed them in local dev.
+      const settings: any = {
+        ignoreUndefinedProperties: true,
+        experimentalAutoDetectLongPolling: true,
+        experimentalForceLongPolling: true,
+        // Keep fetch streams off for stability; they can interact poorly with some proxies.
+        useFetchStreams: false,
+      };
 
       const instance = initializeFirestore(app, settings as any);
       w.__HRX_FIRESTORE__ = instance;

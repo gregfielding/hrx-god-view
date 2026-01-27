@@ -193,10 +193,12 @@ const EmailBodyRenderer: React.FC<EmailBodyRendererProps> = ({
                 -moz-osx-font-smoothing: grayscale;
                 background: transparent;
               }
-              img { max-width: 100%; height: auto; }
+              img { max-width: 100%; height: auto; max-height: 600px; }
+              /* Signature logos: keep them compact even when inline images resolve */
+              img[alt="Company logo"] { height: 60px !important; max-width: 140px !important; width: auto !important; }
               a { color: #1976d2; text-decoration: underline; }
               a:hover { color: #1565c0; }
-              table { border-collapse: collapse; width: 100%; max-width: 100%; }
+              table { border-collapse: collapse; max-width: 100%; }
               pre { white-space: pre-wrap; word-break: break-word; overflow-x: auto; }
               p, div, span, td, th { word-break: break-word; overflow-wrap: break-word; }
               /* Thin, light scrollbar styling per spec */
