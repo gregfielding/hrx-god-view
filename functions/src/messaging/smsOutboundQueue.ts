@@ -13,6 +13,7 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import crypto from 'crypto';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { getTenantSmsConsent } from './tenantConsent';
 import { getSmsProvider } from './smsProviderFactory';
 import { createInboundMessage, SmsThread, SmsMessage } from './twoWayMessaging';
@@ -119,7 +120,7 @@ export async function createOutboundRequest(
   }
 ): Promise<string> {
   try {
-    const nowTs = admin.firestore.Timestamp.now();
+    const nowTs = Timestamp.now();
 
     const idempotencyKey = generateIdempotencyKey(
       params.tenantId,
@@ -134,7 +135,7 @@ export async function createOutboundRequest(
     // This is intentionally separate from idempotencyKey to avoid permanent dedupe for recurring system messages.
     if (params.dedupeKey) {
       const windowHours = params.dedupeWindowHours ?? 72;
-      const cutoff = admin.firestore.Timestamp.fromMillis(nowTs.toMillis() - windowHours * 60 * 60 * 1000);
+      const cutoff = Timestamp.fromMillis(nowTs.toMillis() - windowHours * 60 * 60 * 1000);
 
       const dedupeSnap = await db
         .collection('tenants')
@@ -303,7 +304,7 @@ export const enqueueSmsOutbound = onDocumentCreated(
           status: 'failed',
           lastError: {
             message: `Failed to enqueue task: ${error.message}`,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
           },
         });
     }
@@ -382,8 +383,8 @@ export const processSmsOutbound = onRequest(
         
         transaction.update(requestRef, {
           status: 'sending',
-          attemptCount: admin.firestore.FieldValue.increment(1),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          attemptCount: FieldValue.increment(1),
+          updatedAt: FieldValue.serverTimestamp(),
         });
       });
       
@@ -395,7 +396,7 @@ export const processSmsOutbound = onRequest(
           lastError: {
             code: complianceCheck.errorCode,
             message: complianceCheck.reason,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
           },
         });
         if (requestData.messageLogId) {
@@ -441,7 +442,7 @@ export const processSmsOutbound = onRequest(
           lastError: {
             code: sendResult.errorCode,
             message: sendResult.errorMessage || 'Unknown error',
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            timestamp: FieldValue.serverTimestamp(),
           },
         });
 
@@ -492,7 +493,7 @@ export const processSmsOutbound = onRequest(
             language: null,
             providerMessageId: sendResult.providerMessageId,
             status: 'sent',
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdAt: FieldValue.serverTimestamp(),
           };
           
           const messageRef = threadRef.collection('messages').doc();
@@ -500,10 +501,10 @@ export const processSmsOutbound = onRequest(
           
           // Update thread rollups
           transaction.update(threadRef, {
-            lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
-            lastOutboundAt: admin.firestore.FieldValue.serverTimestamp(),
+            lastMessageAt: FieldValue.serverTimestamp(),
+            lastOutboundAt: FieldValue.serverTimestamp(),
             lastMessageSnippet: finalBody.substring(0, 100),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
           });
         }
         
@@ -511,8 +512,8 @@ export const processSmsOutbound = onRequest(
         transaction.update(requestRef, {
           status: 'sent',
           twilioMessageSid: sendResult.providerMessageId,
-          sentAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          sentAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
         });
       });
 
@@ -577,7 +578,7 @@ export const processSmsOutbound = onRequest(
             status: 'queued', // Reset to queued for retry
             lastError: {
               message: error.message || 'Unknown error',
-              timestamp: admin.firestore.FieldValue.serverTimestamp(),
+              timestamp: FieldValue.serverTimestamp(),
             },
           });
         }
