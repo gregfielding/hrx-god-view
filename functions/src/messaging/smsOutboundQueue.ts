@@ -29,6 +29,8 @@ const tasksClient = new CloudTasksClient();
 const PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
 const LOCATION = process.env.FUNCTIONS_REGION || 'us-central1';
 const SMS_QUEUE = process.env.SMS_QUEUE_NAME || 'sms-outbound';
+const TASKS_INVOKER_SERVICE_ACCOUNT =
+  process.env.CLOUD_TASKS_INVOKER_SERVICE_ACCOUNT || (PROJECT ? `${PROJECT}@appspot.gserviceaccount.com` : '');
 
 export type OutboundRequestSource = 'manual' | 'automation' | 'ai_sent';
 export type OutboundRequestStatus = 'queued' | 'sending' | 'sent' | 'failed' | 'blocked' | 'canceled';
@@ -265,15 +267,26 @@ export const enqueueSmsOutbound = onDocumentCreated(
       const scheduledForMs = requestData.scheduledFor?.toMillis() || now;
       const delaySeconds = Math.max(0, Math.floor((scheduledForMs - now) / 1000));
       
+      const workerUrl = `https://${LOCATION}-${PROJECT}.cloudfunctions.net/processSmsOutbound`;
       const task: any = {
         name: taskName,
         httpRequest: {
           httpMethod: 'POST' as const,
-          url: `https://${LOCATION}-${PROJECT}.cloudfunctions.net/processSmsOutbound`,
+          url: workerUrl,
           // Note: For v2 functions, URL format is: https://{LOCATION}-{PROJECT}.cloudfunctions.net/{FUNCTION_NAME}
           headers: {
             'Content-Type': 'application/json',
           },
+          // Cloud Tasks must authenticate to a private v2 HTTPS function (Cloud Run).
+          // Use an OIDC token minted for a service account that has `run.invoker` on the target service.
+          ...(TASKS_INVOKER_SERVICE_ACCOUNT
+            ? {
+                oidcToken: {
+                  serviceAccountEmail: TASKS_INVOKER_SERVICE_ACCOUNT,
+                  audience: workerUrl,
+                },
+              }
+            : {}),
           body: Buffer.from(JSON.stringify({
             tenantId,
             requestId,
