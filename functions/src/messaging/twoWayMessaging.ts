@@ -11,6 +11,7 @@ import { logger } from 'firebase-functions/v2';
 import { logMessage, MessageLog } from './messageLogging';
 import { sendWorkerMessageInternal } from '../twilio';
 import { processInboundSms } from './stopHelpHandler';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 const db = admin.firestore();
 
@@ -44,18 +45,18 @@ export interface SmsThread {
   threadStatus?: ThreadStatus;         // NEW: Explicit thread status (open/closed/spam)
   assignedToUserId?: string;           // NEW: Assigned recruiter
   
-  lastMessageAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
-  lastInboundAt?: admin.firestore.Timestamp | admin.firestore.FieldValue; // NEW
-  lastOutboundAt?: admin.firestore.Timestamp | admin.firestore.FieldValue; // NEW
+  lastMessageAt: Timestamp | FieldValue;
+  lastInboundAt?: Timestamp | FieldValue; // NEW
+  lastOutboundAt?: Timestamp | FieldValue; // NEW
   lastMessageSnippet?: string;          // From spec
   
   // Unread tracking (NEW: per-user)
   unreadCountForRecruiter?: number;    // Legacy: single count
-  lastReadAtByUser?: { [uid: string]: admin.firestore.Timestamp | admin.firestore.FieldValue }; // NEW
+  lastReadAtByUser?: { [uid: string]: Timestamp | FieldValue }; // NEW
   unreadCountByUser?: { [uid: string]: number }; // NEW
   
-  createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
-  updatedAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  createdAt: Timestamp | FieldValue;
+  updatedAt: Timestamp | FieldValue;
   
   // Optional metadata
   jobOrderId?: string;
@@ -87,7 +88,7 @@ export interface SmsMessage {
   providerMessageId?: string;           // Twilio message SID
   status: 'queued' | 'sent' | 'delivered' | 'failed' | 'not_sent';
   failureReason?: string;               // From spec
-  createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  createdAt: Timestamp | FieldValue;
 }
 
 /**
@@ -159,9 +160,9 @@ export async function findOrCreateThread(
       status: 'open',
       threadStatus: 'open', // NEW: Explicit status
       assignedToUserId: options?.primaryRecruiterId || undefined, // NEW
-      lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastMessageAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
       jobOrderId: options?.jobOrderId,
       applicationId: options?.applicationId,
     };
@@ -252,7 +253,7 @@ export async function createInboundMessage(
       language: options?.language || null,
       providerMessageId,
       status: 'delivered',
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
     };
     
     // Implements: HRX Firestore Collections Spec §2 - /tenants/{tenantId}/smsThreads/{threadId}/messages/{messageId}
@@ -271,11 +272,11 @@ export async function createInboundMessage(
       .collection('smsThreads')
       .doc(threadId)
       .update({
-        lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastInboundAt: admin.firestore.FieldValue.serverTimestamp(), // NEW
+        lastMessageAt: FieldValue.serverTimestamp(),
+        lastInboundAt: FieldValue.serverTimestamp(), // NEW
         lastMessageSnippet: body.substring(0, 100),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        unreadCountForRecruiter: admin.firestore.FieldValue.increment(1), // Legacy
+        updatedAt: FieldValue.serverTimestamp(),
+        unreadCountForRecruiter: FieldValue.increment(1), // Legacy
         // NEW: Increment unread count for all users who have read this thread
         // (We'll update this more granularly when read tracking is implemented)
       });
@@ -514,7 +515,7 @@ export async function updateThreadStatus(
       .update({
         status,
         threadStatus: status, // NEW: Update explicit status field
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     logger.info(`Updated thread ${threadId} status to ${status}`);
   } catch (error: any) {
@@ -573,7 +574,7 @@ export async function assignThread(
           displayName: recruiterDisplayName,
         },
         primaryRecruiterUserId: recruiterId, // Legacy field
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
       });
     logger.info(`Assigned thread ${threadId} to recruiter ${recruiterId}`);
   } catch (error: any) {
@@ -619,8 +620,8 @@ export async function markThreadRead(
     
     // Update lastReadAtByUser
     await threadRef.update({
-      [`lastReadAtByUser.${userId}`]: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      [`lastReadAtByUser.${userId}`]: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
     });
     
     logger.info(`Marked thread ${threadId} as read for user ${userId}`);
