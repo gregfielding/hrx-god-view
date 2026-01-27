@@ -240,6 +240,21 @@ export const enqueueSmsOutbound = onDocumentCreated(
     }
     
     try {
+      // Local emulator safety:
+      // Cloud Tasks emulator is not configured here; avoid attempting real Cloud Tasks calls.
+      const isEmulator =
+        process.env.FUNCTIONS_EMULATOR === 'true' ||
+        !!process.env.FIREBASE_EMULATOR_HUB ||
+        !!process.env.FIRESTORE_EMULATOR_HOST;
+      if (isEmulator) {
+        logger.info(`[EMULATOR] Skipping Cloud Tasks enqueue for SMS request ${requestId}`, {
+          tenantId,
+          requestId,
+          queue: SMS_QUEUE,
+        });
+        return;
+      }
+
       const parent = tasksClient.queuePath(PROJECT, LOCATION, SMS_QUEUE);
       const taskName = `${parent}/tasks/sms-${requestId}-${Date.now()}`;
       
