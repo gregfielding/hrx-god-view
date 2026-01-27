@@ -8,6 +8,7 @@
 
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -25,7 +26,7 @@ export interface SmsConsent {
   smsOptIn: boolean;
   smsBlockedSystem: boolean; // Set true on STOP
   consentVersion?: string;    // e.g. "2025-01-27"
-  lastUpdatedAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  lastUpdatedAt: Timestamp | FieldValue;
   source: 'signup' | 'keyword' | 'admin' | 'import' | 'system';
 }
 
@@ -40,7 +41,7 @@ export interface ConsentEvent {
   type: 'OPT_IN' | 'OPT_OUT' | 'STOP' | 'START' | 'HELP' | 'ADMIN_UPDATE';
   previousValue?: any;
   newValue?: any;
-  createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  createdAt: Timestamp | FieldValue;
   source: 'signup' | 'keyword' | 'admin' | 'system';
   rawMessageSid?: string;
   rawPayload?: any;
@@ -105,7 +106,7 @@ export async function updateTenantSmsConsent(
       ...updates,
       userId,
       tenantId,
-      lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdatedAt: FieldValue.serverTimestamp(),
     };
     
     if (!consentDoc.exists) {
@@ -152,7 +153,7 @@ export async function updateTenantSmsConsent(
         type: event.type,
         previousValue: event.previousValue ?? existingConsent,
         newValue: event.newValue ?? updateData,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
         source: event.source,
         rawMessageSid: event.rawMessageSid,
         rawPayload: event.rawPayload,
