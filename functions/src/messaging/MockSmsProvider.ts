@@ -24,6 +24,21 @@ const db = admin.firestore();
 export class MockSmsProvider implements SmsProvider {
   async sendSms(params: SmsSendParams): Promise<SmsSendResult> {
     try {
+      // Test hook: force a Twilio opt-out error (21610) end-to-end in emulators.
+      // Use by including `FORCE_TWILIO_21610` in the message body.
+      if (String(params.body || '').includes('FORCE_TWILIO_21610')) {
+        logger.info('[MOCK SMS] Forcing Twilio 21610 opt-out error for testing', {
+          to: params.to,
+          tenantId: params.tenantId,
+          threadId: params.threadId,
+        });
+        return {
+          success: false,
+          errorCode: '21610',
+          errorMessage: 'The message was not sent because the recipient has opted out (mock 21610).',
+        };
+      }
+
       // Write debug log entry for visibility
       const debugRef = db
         .collection('test_logs')

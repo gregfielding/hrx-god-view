@@ -19,6 +19,7 @@ export type MessageStatus =
   | 'queued' 
   | 'sent' 
   | 'delivered' 
+  | 'blocked'
   | 'failed' 
   | 'bounced'              // Email-specific: message bounced (invalid address, mailbox full, etc.)
   | 'not_sent' 
@@ -336,6 +337,7 @@ export async function getMessageAnalytics(
         queued: 0,
         sent: 0,
         delivered: 0,
+        blocked: 0,
         failed: 0,
         bounced: 0,
         not_sent: 0,

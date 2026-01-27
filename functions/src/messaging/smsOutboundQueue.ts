@@ -437,11 +437,19 @@ export const processSmsOutbound = onRequest(
         // Provider opt-out: Twilio 21610 indicates the recipient has replied STOP / is opted out.
         // This is terminal: mark blocked, update consent, and do NOT retry.
         if (sendResult.errorCode === '21610') {
+          const failureCode = 'TWILIO_21610_OPT_OUT';
+          const providerErrorCode = '21610';
+          const providerErrorMessage = sendResult.errorMessage || 'Recipient opted out (Twilio 21610)';
+
           await requestRef.update({
             status: 'blocked',
+            failureCode,
+            providerErrorCode,
+            providerErrorMessage,
+            isRetryable: false,
             lastError: {
               code: sendResult.errorCode,
-              message: sendResult.errorMessage || 'Recipient opted out (Twilio 21610)',
+              message: providerErrorMessage,
               timestamp: FieldValue.serverTimestamp(),
             },
             updatedAt: FieldValue.serverTimestamp(),
@@ -491,8 +499,12 @@ export const processSmsOutbound = onRequest(
               .doc(requestData.messageLogId)
               .set(
                 {
-                  status: 'failed',
-                  failureReason: sendResult.errorMessage || 'Recipient opted out (Twilio 21610)',
+                  status: 'blocked',
+                  failureReason: 'opted_out_21610',
+                  failureCode,
+                  providerErrorCode,
+                  providerErrorMessage,
+                  isRetryable: false,
                 },
                 { merge: true }
               );
