@@ -9,6 +9,7 @@
 
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { FieldValue } from 'firebase-admin/firestore';
 import {
   SmsProvider,
   SmsSendParams,
@@ -39,7 +40,7 @@ export class MockSmsProvider implements SmsProvider {
         messageTypeId: params.messageTypeId,
         userId: params.userId ?? null,
         threadId: params.threadId ?? null,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: FieldValue.serverTimestamp(),
         provider: 'mock',
       });
 
