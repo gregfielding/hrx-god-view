@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -31,6 +31,7 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  TableSortLabel,
   FormControlLabel,
   Switch,
   Dialog,
@@ -3999,10 +4000,22 @@ const CompanyDashboardTab: React.FC<{
                     <Box
                       key={contact.id}
                       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/contacts/${contact.id}`)}
+                      onClick={() => {
+                        // Preserve current URL params when navigating to contact
+                        const currentParams = new URLSearchParams(window.location.search);
+                        currentParams.set('tab', '2'); // Ensure tab is set to contacts
+                        navigate(`/contacts/${contact.id}?returnTo=${encodeURIComponent(window.location.pathname + '?' + currentParams.toString())}`);
+                      }}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
+                      onKeyDown={(e) => { 
+                        if (e.key === 'Enter' || e.key === ' ') { 
+                          e.preventDefault(); 
+                          const currentParams = new URLSearchParams(window.location.search);
+                          currentParams.set('tab', '2');
+                          navigate(`/contacts/${contact.id}?returnTo=${encodeURIComponent(window.location.pathname + '?' + currentParams.toString())}`);
+                        } 
+                      }}
                     >
                       <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                         {contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
@@ -6157,6 +6170,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
 const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }> = ({ contacts, company, locations }) => {
   const navigate = useNavigate();
   const { tenantId, currentUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAddContactDialog, setShowAddContactDialog] = useState(false);
@@ -6164,10 +6178,104 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   const [success, setSuccess] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   
-  // Sorting and search state
-  const [sortField, setSortField] = useState<string>('');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-  const [searchQuery, setSearchQuery] = useState('');
+  // Favorites
+  const { isFavorite, toggleFavorite } = useFavorites('contacts');
+  
+  // Initialize state from URL params
+  const [sortField, setSortField] = useState<string>(searchParams.get('sortField') || '');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>((searchParams.get('sortDirection') as 'asc' | 'desc') || 'asc');
+  const [searchQuery, setSearchQuery] = useState<string>(searchParams.get('search') || '');
+  const [worksiteFilter, setWorksiteFilter] = useState<string>(searchParams.get('worksite') || '');
+  const [stateFilter, setStateFilter] = useState<string>(searchParams.get('state') || '');
+  
+  // Sync state from URL params when URL changes (e.g., when navigating back)
+  // Use a ref to prevent infinite loops
+  const isSyncingFromUrlRef = useRef(false);
+  useEffect(() => {
+    const urlSearch = searchParams.get('search') || '';
+    const urlWorksite = searchParams.get('worksite') || '';
+    const urlState = searchParams.get('state') || '';
+    const urlSortField = searchParams.get('sortField') || '';
+    const urlSortDirection = (searchParams.get('sortDirection') as 'asc' | 'desc') || 'asc';
+    
+    // Only update if values are different and we're not currently syncing
+    if (!isSyncingFromUrlRef.current) {
+      if (urlSearch !== searchQuery) setSearchQuery(urlSearch);
+      if (urlWorksite !== worksiteFilter) setWorksiteFilter(urlWorksite);
+      if (urlState !== stateFilter) setStateFilter(urlState);
+      if (urlSortField !== sortField) setSortField(urlSortField);
+      if (urlSortDirection !== sortDirection) setSortDirection(urlSortDirection);
+    }
+  }, [searchParams]); // Only depend on searchParams, not on state values to avoid loops
+  
+  // Update URL when filters change (debounced to avoid too many updates)
+  useEffect(() => {
+    const params = new URLSearchParams(searchParams);
+    let hasChanges = false;
+    
+    // Check and update search
+    const currentSearch = params.get('search') || '';
+    if (searchQuery !== currentSearch) {
+      if (searchQuery) {
+        params.set('search', searchQuery);
+      } else {
+        params.delete('search');
+      }
+      hasChanges = true;
+    }
+    
+    // Check and update worksite filter
+    const currentWorksite = params.get('worksite') || '';
+    if (worksiteFilter !== currentWorksite) {
+      if (worksiteFilter) {
+        params.set('worksite', worksiteFilter);
+      } else {
+        params.delete('worksite');
+      }
+      hasChanges = true;
+    }
+    
+    // Check and update state filter
+    const currentState = params.get('state') || '';
+    if (stateFilter !== currentState) {
+      if (stateFilter) {
+        params.set('state', stateFilter);
+      } else {
+        params.delete('state');
+      }
+      hasChanges = true;
+    }
+    
+    // Check and update sort
+    const currentSortField = params.get('sortField') || '';
+    const currentSortDirection = (params.get('sortDirection') as 'asc' | 'desc') || 'asc';
+    if (sortField !== currentSortField || sortDirection !== currentSortDirection) {
+      if (sortField) {
+        params.set('sortField', sortField);
+        params.set('sortDirection', sortDirection);
+      } else {
+        params.delete('sortField');
+        params.delete('sortDirection');
+      }
+      hasChanges = true;
+    }
+    
+    // Preserve the tab parameter
+    if (!params.get('tab')) {
+      params.set('tab', '2'); // Contacts tab is index 2
+      hasChanges = true;
+    }
+    
+    // Only update if there are actual changes
+    if (hasChanges) {
+      isSyncingFromUrlRef.current = true;
+      setSearchParams(params, { replace: true });
+      // Reset flag after a brief delay to allow state updates
+      setTimeout(() => {
+        isSyncingFromUrlRef.current = false;
+      }, 0);
+    }
+  }, [searchQuery, worksiteFilter, stateFilter, sortField, sortDirection, searchParams, setSearchParams]);
   
   // Contact form state
   const [contactForm, setContactForm] = useState({
@@ -6238,30 +6346,123 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
           return (location?.nickname || location?.name || 'Unknown Location').toLowerCase();
         }
         return 'zzz_no_location'; // Sort no location to the end
+      case 'city':
+        // First check contact's city field
+        if (contact.city) {
+          return contact.city.toLowerCase();
+        }
+        // Then check location's city
+        if (contact.locationId) {
+          const location = companyLocations.find(loc => loc.id === contact.locationId);
+          if (location?.city) {
+            return location.city.toLowerCase();
+          }
+        }
+        return 'zzz_no_city'; // Sort no city to the end
+      case 'state':
+        // First check contact's state field
+        if (contact.state) {
+          return contact.state.toLowerCase();
+        }
+        // Then check location's state
+        if (contact.locationId) {
+          const location = companyLocations.find(loc => loc.id === contact.locationId);
+          if (location?.state) {
+            return location.state.toLowerCase();
+          }
+        }
+        return 'zzz_no_state'; // Sort no state to the end
       default:
         return '';
     }
   };
 
-  // Filter contacts based on search query
+  // Get unique worksites and states for filter dropdowns
+  const availableWorksites = React.useMemo(() => {
+    const worksiteSet = new Set<string>();
+    contacts.forEach((contact: any) => {
+      if (contact.locationId) {
+        const location = companyLocations.find(loc => loc.id === contact.locationId);
+        if (location) {
+          const worksiteName = location.nickname || location.name;
+          if (worksiteName) {
+            worksiteSet.add(worksiteName);
+          }
+        }
+      }
+    });
+    return Array.from(worksiteSet).sort();
+  }, [contacts, companyLocations]);
+
+  const availableStates = React.useMemo(() => {
+    const stateSet = new Set<string>();
+    contacts.forEach((contact: any) => {
+      // Check contact's state field
+      if (contact.state) {
+        stateSet.add(contact.state);
+      }
+      // Also check location's state if contact has a location
+      if (contact.locationId) {
+        const location = companyLocations.find(loc => loc.id === contact.locationId);
+        if (location?.state) {
+          stateSet.add(location.state);
+        }
+      }
+    });
+    return Array.from(stateSet).sort();
+  }, [contacts, companyLocations]);
+
+  // Filter contacts based on search query, worksite, and state
   const filteredContacts = React.useMemo(() => {
-    if (!searchQuery.trim()) {
-      return contacts;
+    let result = contacts;
+    
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const searchLower = searchQuery.toLowerCase();
+      result = result.filter((contact: any) => {
+        const fullName = (contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
+        const firstName = (contact.firstName || '').toLowerCase();
+        const lastName = (contact.lastName || '').toLowerCase();
+        const email = (contact.email || '').toLowerCase();
+        
+        return fullName.includes(searchLower) || 
+               firstName.includes(searchLower) || 
+               lastName.includes(searchLower) || 
+               email.includes(searchLower);
+      });
     }
     
-    const searchLower = searchQuery.toLowerCase();
-    return contacts.filter((contact: any) => {
-      const fullName = (contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
-      const firstName = (contact.firstName || '').toLowerCase();
-      const lastName = (contact.lastName || '').toLowerCase();
-      const email = (contact.email || '').toLowerCase();
-      
-      return fullName.includes(searchLower) || 
-             firstName.includes(searchLower) || 
-             lastName.includes(searchLower) || 
-             email.includes(searchLower);
-    });
-  }, [contacts, searchQuery]);
+    // Apply worksite filter
+    if (worksiteFilter) {
+      result = result.filter((contact: any) => {
+        if (!contact.locationId) return false;
+        const location = companyLocations.find(loc => loc.id === contact.locationId);
+        if (!location) return false;
+        const worksiteName = location.nickname || location.name;
+        return worksiteName === worksiteFilter;
+      });
+    }
+    
+    // Apply state filter
+    if (stateFilter) {
+      result = result.filter((contact: any) => {
+        // Check contact's state field first
+        if (contact.state === stateFilter) {
+          return true;
+        }
+        // Also check location's state
+        if (contact.locationId) {
+          const location = companyLocations.find(loc => loc.id === contact.locationId);
+          if (location?.state === stateFilter) {
+            return true;
+          }
+        }
+        return false;
+      });
+    }
+    
+    return result;
+  }, [contacts, searchQuery, worksiteFilter, stateFilter, companyLocations]);
 
   const filteredAndSortedContacts = filteredContacts
     .sort((a: any, b: any) => {
@@ -6416,13 +6617,67 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
 
   return (
     <>
-      <Box sx={{ p: 0 }}>
+      <Box sx={{ p: 0, pt: 2 }}>
         {/* Header with Search and Add Contact Button */}
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 3, gap: 2 }}>
         <Typography variant="h6" fontWeight={700}>
           Contacts
         </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+          <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+            <Select
+              value={worksiteFilter}
+              onChange={(e) => setWorksiteFilter(e.target.value)}
+              displayEmpty
+              sx={{
+                height: 36,
+                fontSize: '0.875rem',
+                backgroundColor: 'white',
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#D1D5DB',
+                },
+              }}
+            >
+              <MenuItem value="">
+                <em>All Worksites</em>
+              </MenuItem>
+              {availableWorksites.map((worksite) => (
+                <MenuItem key={worksite} value={worksite}>
+                  {worksite}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControl size="small" sx={{ minWidth: 120, height: 36 }}>
+            <Select
+              value={stateFilter}
+              onChange={(e) => setStateFilter(e.target.value)}
+              displayEmpty
+              sx={{
+                height: 36,
+                fontSize: '0.875rem',
+                backgroundColor: 'white',
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#D1D5DB',
+                },
+              }}
+            >
+              <MenuItem value="">
+                <em>All States</em>
+              </MenuItem>
+              {availableStates.map((state) => (
+                <MenuItem key={state} value={state}>
+                  {state}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
           <TextField
             size="small"
             variant="outlined"
@@ -6499,24 +6754,62 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               }
             }}
           >
-            <Table sx={{ minWidth: 1200 }}>
+            <Table sx={{ minWidth: 1400 }}>
               <TableHead>
                 <TableRow sx={{ 
                   backgroundColor: 'grey.50',
                   borderBottom: '2px solid',
                   borderColor: 'divider'
                 }}>
-                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Name</TableCell>
+                  <TableCell sx={{ width: 48, py: 1.75, px: 1.5 }}></TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>
+                    <TableSortLabel
+                      active={sortField === 'name'}
+                      direction={sortField === 'name' ? sortDirection : 'asc'}
+                      onClick={() => handleSort('name')}
+                    >
+                      Name
+                    </TableSortLabel>
+                  </TableCell>
                   <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Title</TableCell>
                   <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Email</TableCell>
                   <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Phone</TableCell>
-                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>Location</TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>
+                    <TableSortLabel
+                      active={sortField === 'location'}
+                      direction={sortField === 'location' ? sortDirection : 'asc'}
+                      onClick={() => handleSort('location')}
+                    >
+                      Location
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>
+                    <TableSortLabel
+                      active={sortField === 'city'}
+                      direction={sortField === 'city' ? sortDirection : 'asc'}
+                      onClick={() => handleSort('city')}
+                    >
+                      City
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>
+                    <TableSortLabel
+                      active={sortField === 'state'}
+                      direction={sortField === 'state' ? sortDirection : 'asc'}
+                      onClick={() => handleSort('state')}
+                    >
+                      State
+                    </TableSortLabel>
+                  </TableCell>
                   <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.75, px: 1.5 }}>LinkedIn</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {[1, 2, 3].map((i) => (
                   <TableRow key={i}>
+                    <TableCell><Skeleton height={20} width={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
+                    <TableCell><Skeleton height={20} /></TableCell>
                     <TableCell><Skeleton height={20} /></TableCell>
                     <TableCell><Skeleton height={20} /></TableCell>
                     <TableCell><Skeleton height={20} /></TableCell>
@@ -6551,9 +6844,10 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
             boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)'
           }}
         >
-          <Table sx={{ minWidth: 1200 }}>
+          <Table sx={{ minWidth: 1400 }}>
             <TableHead>
               <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                <TableCell sx={{ width: 48, borderBottom: '1px solid #E5E7EB', py: 1.5 }}></TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
                   fontWeight: 600,
@@ -6563,7 +6857,18 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                   borderBottom: '1px solid #E5E7EB',
                   py: 1.5
                 }}>
-                  Name
+                  <TableSortLabel
+                    active={sortField === 'name'}
+                    direction={sortField === 'name' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('name')}
+                    sx={{
+                      '& .MuiTableSortLabel-icon': {
+                        color: sortField === 'name' ? 'inherit' : 'rgba(0, 0, 0, 0.26)',
+                      }
+                    }}
+                  >
+                    Name
+                  </TableSortLabel>
                 </TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
@@ -6607,7 +6912,62 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                   borderBottom: '1px solid #E5E7EB',
                   py: 1.5
                 }}>
-                  Location
+                  <TableSortLabel
+                    active={sortField === 'location'}
+                    direction={sortField === 'location' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('location')}
+                    sx={{
+                      '& .MuiTableSortLabel-icon': {
+                        color: sortField === 'location' ? 'inherit' : 'rgba(0, 0, 0, 0.26)',
+                      }
+                    }}
+                  >
+                    Location
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  <TableSortLabel
+                    active={sortField === 'city'}
+                    direction={sortField === 'city' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('city')}
+                    sx={{
+                      '& .MuiTableSortLabel-icon': {
+                        color: sortField === 'city' ? 'inherit' : 'rgba(0, 0, 0, 0.26)',
+                      }
+                    }}
+                  >
+                    City
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.05em',
+                  borderBottom: '1px solid #E5E7EB',
+                  py: 1.5
+                }}>
+                  <TableSortLabel
+                    active={sortField === 'state'}
+                    direction={sortField === 'state' ? sortDirection : 'asc'}
+                    onClick={() => handleSort('state')}
+                    sx={{
+                      '& .MuiTableSortLabel-icon': {
+                        color: sortField === 'state' ? 'inherit' : 'rgba(0, 0, 0, 0.26)',
+                      }
+                    }}
+                  >
+                    State
+                  </TableSortLabel>
                 </TableCell>
                 <TableCell sx={{
                   fontSize: '0.75rem',
@@ -6626,7 +6986,12 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
               {filteredAndSortedContacts.map((contact: any, index: number) => (
                 <TableRow 
                   key={contact.id}
-                  onClick={() => navigate(`/contacts/${contact.id}`)}
+                  onClick={() => {
+                    // Preserve current URL params when navigating to contact
+                    const currentParams = new URLSearchParams(window.location.search);
+                    currentParams.set('tab', '2'); // Ensure tab is set to contacts
+                    navigate(`/contacts/${contact.id}?returnTo=${encodeURIComponent(window.location.pathname + '?' + currentParams.toString())}`);
+                  }}
                   sx={{
                     height: '48px',
                     cursor: 'pointer',
@@ -6635,6 +7000,16 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                     }
                   }}
                 >
+                  <TableCell sx={{ py: 1, px: 1, width: 48 }} onClick={(e) => e.stopPropagation()}>
+                    <FavoriteButton
+                      itemId={contact.id}
+                      favoriteType="contacts"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
+                      size="small"
+                      showTooltip={true}
+                    />
+                  </TableCell>
                   <TableCell sx={{ py: 1, px: 2 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                         <Avatar
@@ -6679,6 +7054,42 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                             }
                           }
                           return 'No location';
+                        })()}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {(() => {
+                          // First check contact's city field
+                          if (contact.city) {
+                            return contact.city;
+                          }
+                          // Then check location's city
+                          if (contact.locationId) {
+                            const location = companyLocations.find(loc => loc.id === contact.locationId);
+                            if (location?.city) {
+                              return location.city;
+                            }
+                          }
+                          return '-';
+                        })()}
+                      </Typography>
+                    </TableCell>
+                    <TableCell sx={{ py: 1 }}>
+                      <Typography sx={{ variant: "body2", color: "#374151", fontSize: '0.875rem' }}>
+                        {(() => {
+                          // First check contact's state field
+                          if (contact.state) {
+                            return contact.state;
+                          }
+                          // Then check location's state
+                          if (contact.locationId) {
+                            const location = companyLocations.find(loc => loc.id === contact.locationId);
+                            if (location?.state) {
+                              return location.state;
+                            }
+                          }
+                          return '-';
                         })()}
                       </Typography>
                     </TableCell>

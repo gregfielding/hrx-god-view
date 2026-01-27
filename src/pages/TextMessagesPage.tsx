@@ -1,11 +1,11 @@
 /**
  * Text Messages Page
  * 
- * Dedicated SMS thread-based messenger interface.
- * Per decoupling spec: SMS-only, separate from inbox.
+ * Dedicated SMS thread-based messenger interface with inbox view.
+ * Shows thread list and messages with real-time updates.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -18,46 +18,109 @@ import {
   IconButton,
   Drawer,
   Divider,
+  TextField,
+  Avatar,
+  useTheme,
+  useMediaQuery,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  ListItemAvatar,
 } from '@mui/material';
 import SmsIcon from '@mui/icons-material/Sms';
 import ReplyIcon from '@mui/icons-material/Reply';
 import CloseIcon from '@mui/icons-material/Close';
+import SendIcon from '@mui/icons-material/Send';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
-import { collection, doc, getDoc } from 'firebase/firestore';
-import ReplyDrawer from '../components/ReplyDrawer';
+import { collection, doc, getDoc, onSnapshot, query, orderBy, QuerySnapshot, DocumentData } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
+import { useSmsThreadMessages } from '../hooks/useSmsThreadMessages';
+import { formatDistanceToNow, format } from 'date-fns';
 
 interface SmsThread {
   id: string;
   tenantId: string;
-  candidateId: string;
-  candidateName: string;
-  candidatePhoneMasked: string;
+  candidateUserId?: string;
+  candidatePhone?: string;
+  primaryRecruiterUserId?: string | null;
+  assignedToUserId?: string;
   twilioNumber: string;
   status: string;
   lastMessageAt: any;
   lastMessageSnippet?: string;
+  lastInboundAt?: any;
+  lastOutboundAt?: any;
+  participant?: {
+    id: string;
+    displayName?: string;
+    phoneE164?: string;
+  };
 }
 
 const TextMessagesPage: React.FC = () => {
   const { user, activeTenant } = useAuth();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const effectiveTenantId = activeTenant?.id || '';
   const [smsThreads, setSmsThreads] = useState<SmsThread[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedThread, setSelectedThread] = useState<SmsThread | null>(null);
-  const [replyDrawerOpen, setReplyDrawerOpen] = useState(false);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [replyMessage, setReplyMessage] = useState('');
+  const [sendingReply, setSendingReply] = useState(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean | null>(null);
   const [availableTwilioNumbers, setAvailableTwilioNumbers] = useState<Array<{ phoneNumber: string; sid: string; friendlyName: string }>>([]);
   const [showNumberSelection, setShowNumberSelection] = useState(false);
   const [loadingTwilioNumbers, setLoadingTwilioNumbers] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedThread = smsThreads.find(t => t.id === selectedThreadId);
+
+  // Real-time messages for selected thread
+  const { messages, loading: loadingMessages } = useSmsThreadMessages({
+    tenantId: effectiveTenantId,
+    threadId: selectedThreadId || '',
+    enabled: !!selectedThreadId && !!effectiveTenantId,
+  });
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages]);
 
   const formatDate = (date: any): string => {
     if (!date) return 'Unknown';
     const d = date?.toDate?.() || (date instanceof Date ? date : new Date(date));
-    return d.toLocaleString();
+    return formatDistanceToNow(d, { addSuffix: true });
+  };
+
+  const formatFullDate = (date: any): string => {
+    if (!date) return '';
+    const d = date?.toDate?.() || (date instanceof Date ? date : new Date(date));
+    return format(d, 'MMM d, yyyy h:mm a');
+  };
+
+  // Helper to get display name for a thread
+  const getThreadDisplayName = (thread: SmsThread): string => {
+    if (thread.participant?.displayName) {
+      return thread.participant.displayName;
+    }
+    // Fallback: try to get from candidateUserId if participant is missing
+    if (thread.candidateUserId) {
+      // For now, return a placeholder - could fetch user data if needed
+      return thread.candidatePhone ? `+${thread.candidatePhone.slice(-4)}` : 'Unknown';
+    }
+    return 'Unknown';
+  };
+
+  // Helper to get phone number for display
+  const getThreadPhone = (thread: SmsThread): string => {
+    return thread.participant?.phoneE164 || thread.candidatePhone || '';
   };
 
   // Check Twilio number assignment
@@ -99,61 +162,108 @@ const TextMessagesPage: React.FC = () => {
     checkTwilioNumber();
   }, [user?.uid, effectiveTenantId]);
 
-  // Load SMS threads
-  const loadSmsThreads = async () => {
-    if (!user?.uid || !effectiveTenantId) return;
+  // Real-time SMS threads listener
+  useEffect(() => {
+    if (!user?.uid || !effectiveTenantId) {
+      setSmsThreads([]);
+      setLoading(false);
+      return;
+    }
 
     setLoading(true);
+    const threadsRef = collection(db, 'tenants', effectiveTenantId, 'smsThreads');
+    // Query threads where this recruiter is the primary recruiter
+    const threadsQuery = query(
+      threadsRef,
+      orderBy('lastMessageAt', 'desc')
+    );
+
+    const unsubscribe = onSnapshot(
+      threadsQuery,
+      (snapshot: QuerySnapshot<DocumentData>) => {
+        const threadsList: SmsThread[] = [];
+        snapshot.forEach((doc) => {
+          const data = doc.data();
+          // Filter threads for this recruiter
+          // Show threads where they are the primary recruiter OR assigned to them
+          const isPrimaryRecruiter = data.primaryRecruiterUserId === user.uid;
+          const isAssigned = data.assignedToUserId === user.uid;
+          
+          if (isPrimaryRecruiter || isAssigned) {
+            // Ensure lastMessageAt exists (fallback to createdAt if missing)
+            const threadData = {
+              id: doc.id,
+              ...data,
+              lastMessageAt: data.lastMessageAt || data.createdAt || new Date(),
+            } as SmsThread;
+            threadsList.push(threadData);
+          }
+        });
+        // Sort by lastMessageAt in case orderBy didn't work properly
+        threadsList.sort((a, b) => {
+          const aDate = a.lastMessageAt?.toDate?.() || (a.lastMessageAt instanceof Date ? a.lastMessageAt : new Date(a.lastMessageAt || 0));
+          const bDate = b.lastMessageAt?.toDate?.() || (b.lastMessageAt instanceof Date ? b.lastMessageAt : new Date(b.lastMessageAt || 0));
+          return bDate.getTime() - aDate.getTime();
+        });
+        setSmsThreads(threadsList);
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Error listening to SMS threads:', err);
+        // Check if it's an index error
+        if (err.code === 'failed-precondition' || err.message?.includes('index')) {
+          setError('Database index is building. Please try again in a few minutes.');
+        } else {
+          setError('Failed to load SMS threads');
+        }
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user?.uid, effectiveTenantId]);
+
+  const handleSendReply = async () => {
+    if (!replyMessage.trim() || !selectedThreadId || !user?.uid) return;
+
+    if (replyMessage.length > 1600) {
+      setError('Message is too long (max 1600 characters)');
+      return;
+    }
+
+    setSendingReply(true);
     setError(null);
 
     try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL || 
         'https://us-central1-hrx1-d3beb.cloudfunctions.net';
       
-      const params = new URLSearchParams({
-        tenantId: effectiveTenantId,
-        candidateId: user.uid,
-        limit: '50',
-      });
-
       const response = await fetch(
-        `${API_BASE_URL}/listThreadsApi?${params.toString()}`,
+        `${API_BASE_URL}/sendThreadMessageApi?threadId=${encodeURIComponent(selectedThreadId)}`,
         {
-          method: 'GET',
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify({
+            body: replyMessage,
+            recruiterId: user.uid,
+            fromUserId: user.uid,
+          }),
         }
       );
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        if (response.status === 503 && errorData.error?.code === 'INDEX_BUILDING') {
-          setError('Database index is building. Please try again in a few minutes.');
-        } else {
-          throw new Error(errorData.error?.message || 'Failed to load SMS threads');
-        }
-        return;
+        const errorData = await response.json().catch(() => ({ error: { message: 'Failed to send message' } }));
+        throw new Error(errorData.error?.message || 'Failed to send message');
       }
 
-      const data = await response.json();
-      if (data.success) {
-        setSmsThreads(data.threads || []);
-      }
+      setReplyMessage('');
     } catch (err: any) {
-      setError(err.message || 'Failed to load SMS threads');
+      setError(err.message || 'Failed to send message');
     } finally {
-      setLoading(false);
+      setSendingReply(false);
     }
-  };
-
-  useEffect(() => {
-    loadSmsThreads();
-  }, [user?.uid, effectiveTenantId]);
-
-  const handleReply = (thread: SmsThread) => {
-    setSelectedThread(thread);
-    setReplyDrawerOpen(true);
   };
 
   const handleAssignTwilioNumber = async (twilioNumberSid: string) => {
@@ -171,7 +281,6 @@ const TextMessagesPage: React.FC = () => {
       if (data.success) {
         setShowNumberSelection(false);
         setHasTwilioNumber(true);
-        loadSmsThreads();
       } else {
         setError(data.message || 'Failed to assign Twilio number');
       }
@@ -183,164 +292,337 @@ const TextMessagesPage: React.FC = () => {
 
   if (loading && smsThreads.length === 0) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 64px)' }}>
         <CircularProgress />
       </Box>
     );
   }
 
   return (
-    <Box sx={{ p: 0, display: 'flex', flexDirection: 'column', height: 'calc(100vh - 64px)' }}>
+    <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
       {error && (
-        <Alert severity="error" sx={{ mb: 2, mx: 2 }} onClose={() => setError(null)}>
+        <Alert 
+          severity="error" 
+          sx={{ position: 'absolute', top: 16, left: 16, right: 16, zIndex: 1300 }} 
+          onClose={() => setError(null)}
+        >
           {error}
         </Alert>
       )}
 
-      <Box sx={{ flex: 1, overflow: 'auto', px: 2, py: 2 }}>
-        {/* Show number selection panel if no Twilio number is assigned */}
+      {/* Thread List Sidebar */}
+      <Box
+        sx={{
+          width: isMobile ? '100%' : 350,
+          borderRight: 1,
+          borderColor: 'divider',
+          display: 'flex',
+          flexDirection: 'column',
+          bgcolor: 'background.paper',
+        }}
+      >
+        {/* Header */}
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+          <Typography variant="h6" fontWeight={600}>
+            Text Messages
+          </Typography>
+        </Box>
+
+        {/* Number Selection */}
         {showNumberSelection && hasTwilioNumber === false && (
-          <Paper variant="outlined" sx={{ p: 4, mb: 2 }}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center' }}>
-              <SmsIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
-              <Typography variant="h6" sx={{ mb: 1, fontWeight: 600 }}>
-                Assign a Twilio Number
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3, maxWidth: 400 }}>
-                You need a Twilio number to send and receive SMS messages. Please select an available number below.
-              </Typography>
-              
-              {loadingTwilioNumbers ? (
-                <CircularProgress />
-              ) : availableTwilioNumbers.length > 0 ? (
-                <Box sx={{ width: '100%', maxWidth: 500 }}>
-                  <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
-                    Available Numbers:
-                  </Typography>
-                  <Stack spacing={1}>
-                    {availableTwilioNumbers.map((number) => (
-                      <Button
-                        key={number.sid}
-                        variant="outlined"
-                        fullWidth
-                        onClick={() => handleAssignTwilioNumber(number.sid)}
-                        sx={{ 
-                          textTransform: 'none',
-                          justifyContent: 'space-between',
-                          py: 1.5
-                        }}
-                      >
-                        <Box sx={{ textAlign: 'left' }}>
-                          <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                            {number.phoneNumber}
-                          </Typography>
-                          {number.friendlyName !== number.phoneNumber && (
-                            <Typography variant="caption" color="text.secondary">
-                              {number.friendlyName}
-                            </Typography>
-                          )}
-                        </Box>
-                      </Button>
-                    ))}
-                  </Stack>
-                </Box>
-              ) : (
-                <Typography variant="body2" color="text.secondary">
-                  No available Twilio numbers found. Please contact your administrator.
-                </Typography>
-              )}
-            </Box>
-          </Paper>
-        )}
-        
-        {hasTwilioNumber && (
-          <>
-            {smsThreads.length === 0 ? (
-              <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
-                <Typography variant="body2" color="text.secondary">
-                  No SMS threads found
-                </Typography>
-              </Paper>
-            ) : (
-              <Stack spacing={2}>
-                {smsThreads.map((thread) => (
-                  <Paper 
-                    key={thread.id} 
-                    variant="outlined" 
-                    sx={{ 
-                      p: 2,
-                      cursor: 'pointer',
-                      '&:hover': {
-                        bgcolor: 'action.hover',
-                      },
-                    }}
-                    onClick={() => handleReply(thread)}
+          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
+              Assign a Twilio Number
+            </Typography>
+            {loadingTwilioNumbers ? (
+              <CircularProgress size={20} />
+            ) : availableTwilioNumbers.length > 0 ? (
+              <Stack spacing={1}>
+                {availableTwilioNumbers.map((number) => (
+                  <Button
+                    key={number.sid}
+                    variant="outlined"
+                    fullWidth
+                    size="small"
+                    onClick={() => handleAssignTwilioNumber(number.sid)}
                   >
-                    <Stack direction="row" justifyContent="space-between" alignItems="flex-start">
-                      <Box sx={{ flex: 1 }}>
-                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-                          <SmsIcon fontSize="small" color="primary" />
-                          <Typography variant="subtitle2" fontWeight={600}>
-                            {thread.candidateName || 'Unknown'}
-                          </Typography>
-                          <Chip
-                            label={thread.status}
-                            size="small"
-                            color={thread.status === 'open' ? 'success' : 'default'}
-                          />
-                        </Stack>
-                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                          From: {thread.twilioNumber}
-                        </Typography>
-                        {thread.lastMessageSnippet && (
-                          <Typography variant="body2" sx={{ mb: 1 }}>
-                            {thread.lastMessageSnippet}
-                          </Typography>
-                        )}
-                        <Typography variant="caption" color="text.secondary">
-                          Last message: {formatDate(thread.lastMessageAt)}
-                        </Typography>
-                      </Box>
-                      <Button
-                        variant="outlined"
-                        startIcon={<ReplyIcon />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleReply(thread);
-                        }}
-                      >
-                        Reply
-                      </Button>
-                    </Stack>
-                  </Paper>
+                    {number.phoneNumber}
+                  </Button>
                 ))}
               </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                No available numbers
+              </Typography>
             )}
-          </>
+          </Box>
         )}
+
+        {/* Thread List */}
+        <Box sx={{ flex: 1, overflow: 'auto' }}>
+          {smsThreads.length === 0 ? (
+            <Box sx={{ p: 4, textAlign: 'center' }}>
+              <Typography variant="body2" color="text.secondary">
+                No SMS threads found
+              </Typography>
+            </Box>
+          ) : (
+            <List sx={{ p: 0 }}>
+              {smsThreads.map((thread) => (
+                <ListItem
+                  key={thread.id}
+                  disablePadding
+                  sx={{
+                    borderBottom: 1,
+                    borderColor: 'divider',
+                    bgcolor: selectedThreadId === thread.id ? 'action.selected' : 'transparent',
+                  }}
+                >
+                  <ListItemButton
+                    onClick={() => setSelectedThreadId(thread.id)}
+                    selected={selectedThreadId === thread.id}
+                  >
+                    <ListItemAvatar>
+                      <Avatar sx={{ bgcolor: 'primary.main' }}>
+                        <SmsIcon />
+                      </Avatar>
+                    </ListItemAvatar>
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Typography variant="subtitle2" fontWeight={600}>
+                            {getThreadDisplayName(thread)}
+                          </Typography>
+                          {thread.status === 'open' && (
+                            <Chip label="Open" size="small" color="success" sx={{ height: 20 }} />
+                          )}
+                        </Box>
+                      }
+                      secondary={
+                        <Box>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {thread.lastMessageSnippet || 'No messages'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatDate(thread.lastMessageAt)}
+                          </Typography>
+                        </Box>
+                      }
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </Box>
       </Box>
 
-      {selectedThread && (
-        <ReplyDrawer
-          open={replyDrawerOpen}
-          onClose={() => {
-            setReplyDrawerOpen(false);
-            setSelectedThread(null);
+      {/* Message View */}
+      {selectedThread && !isMobile ? (
+        <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          {/* Message Header */}
+          <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
+            <Typography variant="h6" fontWeight={600}>
+              {getThreadDisplayName(selectedThread)}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              {getThreadPhone(selectedThread)}
+            </Typography>
+          </Box>
+
+          {/* Messages */}
+          <Box sx={{ flex: 1, overflow: 'auto', p: 2, bgcolor: 'grey.50' }}>
+            {loadingMessages ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                <CircularProgress />
+              </Box>
+            ) : messages.length === 0 ? (
+              <Box sx={{ textAlign: 'center', p: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  No messages in this thread
+                </Typography>
+              </Box>
+            ) : (
+              <Stack spacing={2}>
+                {messages.map((msg) => (
+                  <Box
+                    key={msg.id}
+                    sx={{
+                      display: 'flex',
+                      justifyContent: msg.direction === 'outbound' ? 'flex-end' : 'flex-start',
+                    }}
+                  >
+                    <Paper
+                      elevation={1}
+                      sx={{
+                        p: 2,
+                        maxWidth: '70%',
+                        bgcolor: msg.direction === 'outbound' ? 'primary.main' : 'background.paper',
+                        color: msg.direction === 'outbound' ? 'primary.contrastText' : 'text.primary',
+                      }}
+                    >
+                      <Typography variant="body2" sx={{ mb: 0.5, whiteSpace: 'pre-wrap' }}>
+                        {msg.body}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          opacity: 0.7,
+                          display: 'block',
+                          textAlign: msg.direction === 'outbound' ? 'right' : 'left',
+                        }}
+                      >
+                        {formatFullDate(msg.createdAt)}
+                        {msg.status && ` • ${msg.status}`}
+                      </Typography>
+                    </Paper>
+                  </Box>
+                ))}
+                <div ref={messagesEndRef} />
+              </Stack>
+            )}
+          </Box>
+
+          {/* Reply Input */}
+          <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+            <Stack spacing={2}>
+              <TextField
+                label="Reply"
+                value={replyMessage}
+                onChange={(e) => setReplyMessage(e.target.value)}
+                fullWidth
+                multiline
+                rows={3}
+                placeholder="Type your reply..."
+                helperText={`${replyMessage.length}/1600 characters`}
+                disabled={sendingReply}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                    handleSendReply();
+                  }
+                }}
+              />
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <Button
+                  variant="contained"
+                  onClick={handleSendReply}
+                  disabled={sendingReply || !replyMessage.trim()}
+                  startIcon={sendingReply ? <CircularProgress size={20} /> : <SendIcon />}
+                >
+                  {sendingReply ? 'Sending...' : 'Send'}
+                </Button>
+              </Box>
+            </Stack>
+          </Box>
+        </Box>
+      ) : selectedThread && isMobile ? (
+        <Drawer
+          anchor="right"
+          open={!!selectedThread}
+          onClose={() => setSelectedThreadId(null)}
+          PaperProps={{
+            sx: { width: '100%' },
           }}
-          threadId={selectedThread.id}
-          tenantId={effectiveTenantId || ''}
-          candidateUserId={user?.uid || ''}
-          onReplySent={() => {
-            loadSmsThreads();
-            setReplyDrawerOpen(false);
-            setSelectedThread(null);
-          }}
-        />
+        >
+          <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Box>
+                <Typography variant="h6" fontWeight={600}>
+                  {getThreadDisplayName(selectedThread)}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {getThreadPhone(selectedThread)}
+                </Typography>
+              </Box>
+              <IconButton onClick={() => setSelectedThreadId(null)}>
+                <CloseIcon />
+              </IconButton>
+            </Box>
+            <Box sx={{ flex: 1, overflow: 'auto', p: 2, bgcolor: 'grey.50' }}>
+              {loadingMessages ? (
+                <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                  <CircularProgress />
+                </Box>
+              ) : messages.length === 0 ? (
+                <Box sx={{ textAlign: 'center', p: 4 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    No messages in this thread
+                  </Typography>
+                </Box>
+              ) : (
+                <Stack spacing={2}>
+                  {messages.map((msg) => (
+                    <Box
+                      key={msg.id}
+                      sx={{
+                        display: 'flex',
+                        justifyContent: msg.direction === 'outbound' ? 'flex-end' : 'flex-start',
+                      }}
+                    >
+                      <Paper
+                        elevation={1}
+                        sx={{
+                          p: 2,
+                          maxWidth: '70%',
+                          bgcolor: msg.direction === 'outbound' ? 'primary.main' : 'background.paper',
+                          color: msg.direction === 'outbound' ? 'primary.contrastText' : 'text.primary',
+                        }}
+                      >
+                        <Typography variant="body2" sx={{ mb: 0.5, whiteSpace: 'pre-wrap' }}>
+                          {msg.body}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            opacity: 0.7,
+                            display: 'block',
+                            textAlign: msg.direction === 'outbound' ? 'right' : 'left',
+                          }}
+                        >
+                          {formatFullDate(msg.createdAt)}
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  ))}
+                  <div ref={messagesEndRef} />
+                </Stack>
+              )}
+            </Box>
+            <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider', bgcolor: 'background.paper' }}>
+              <Stack spacing={2}>
+                <TextField
+                  label="Reply"
+                  value={replyMessage}
+                  onChange={(e) => setReplyMessage(e.target.value)}
+                  fullWidth
+                  multiline
+                  rows={3}
+                  placeholder="Type your reply..."
+                  helperText={`${replyMessage.length}/1600 characters`}
+                  disabled={sendingReply}
+                />
+                <Button
+                  variant="contained"
+                  onClick={handleSendReply}
+                  disabled={sendingReply || !replyMessage.trim()}
+                  startIcon={sendingReply ? <CircularProgress size={20} /> : <SendIcon />}
+                  fullWidth
+                >
+                  {sendingReply ? 'Sending...' : 'Send'}
+                </Button>
+              </Stack>
+            </Box>
+          </Box>
+        </Drawer>
+      ) : (
+        <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Typography variant="body2" color="text.secondary">
+            Select a thread to view messages
+          </Typography>
+        </Box>
       )}
     </Box>
   );
 };
 
 export default TextMessagesPage;
-
-

@@ -1110,7 +1110,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       }
 
       // Build the updated deal data structure
-      const updatedDealData = {
+      const updatedDealData: any = {
         // Basic deal information
         name: formData.jobOrderName,
         companyId: formData.companyId,
@@ -1124,9 +1124,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           return billRate * 2080 * workersNeeded;
         })(),
         notes: formData.notes,
-        
-        // Stage data structure
-        stageData: {
+      };
+
+      // Only include stageData if job order is created from a deal (has dealId) or updating existing job order with dealId
+      // Standalone job orders don't need stageData
+      const hasDealId = dealId || jobOrder?.dealId;
+      if (hasDealId) {
+        updatedDealData.stageData = {
           discovery: {
             currentStaffCount: parseInt(formData.currentStaffCount) || undefined,
             currentAgencyCount: parseInt(formData.currentAgencyCount) || undefined,
@@ -1205,15 +1209,17 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             rateSheetOnFile: formData.rateSheetOnFile,
             msaSigned: formData.msaSigned,
           },
-        },
-        
-        // CRITICAL: Preserve existing associations (contacts, salespeople, locations, etc.)
-        // Do NOT overwrite associations that were added via Deal Contacts dialog
-        associations: loadedJobOrderData?.deal?.associations || jobOrder?.deal?.associations || {},
-        
-        // Update timestamp
-        updatedAt: new Date(),
-      };
+        };
+      }
+      // For standalone job orders (not from a deal), don't include stageData at all
+      // The removeUndefinedValues function will ensure no undefined values slip through
+      
+      // CRITICAL: Preserve existing associations (contacts, salespeople, locations, etc.)
+      // Do NOT overwrite associations that were added via Deal Contacts dialog
+      updatedDealData.associations = loadedJobOrderData?.deal?.associations || jobOrder?.deal?.associations || {};
+      
+      // Update timestamp
+      updatedDealData.updatedAt = new Date();
 
       // Compute bill rate consistency
       const numericPayForCreate = parseFloat(String(formData.payRate || '')) || 0;
@@ -1394,7 +1400,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           headcountFilled: 0,
         };
 
-        await addDoc(jobOrdersRef, newJobOrderData);
+        // Remove undefined values before saving (Firestore doesn't allow undefined)
+        const cleanJobOrderData = removeUndefinedValues(newJobOrderData);
+
+        await addDoc(jobOrdersRef, cleanJobOrderData);
         setSuccess('Job order created successfully!');
       }
       

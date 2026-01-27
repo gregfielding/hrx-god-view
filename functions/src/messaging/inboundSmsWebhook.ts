@@ -24,8 +24,9 @@ const db = admin.firestore();
 /**
  * Twilio webhook handler for inbound SMS
  * 
+ * NOTE: This function is called by twilioInboundSmsWebhook wrapper.
  * Configure in Twilio Console:
- * - Webhook URL: https://us-central1-hrx1-d3beb.cloudfunctions.net/handleInboundSms
+ * - Webhook URL: https://us-central1-hrx1-d3beb.cloudfunctions.net/twilioInboundSmsWebhook
  * - Method: POST
  */
 export const handleInboundSms = onRequest(
@@ -36,6 +37,11 @@ export const handleInboundSms = onRequest(
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request, response) => {
+    logger.info('handleInboundSms called', {
+      method: request.method,
+      hasBody: !!request.body,
+      bodyKeys: request.body ? Object.keys(request.body) : [],
+    });
     try {
       // Twilio sends POST requests with form data
       const {

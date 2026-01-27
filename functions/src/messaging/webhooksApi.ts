@@ -35,6 +35,11 @@ export const twilioInboundSmsWebhook = onRequest(
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request, response) => {
+    logger.info('twilioInboundSmsWebhook called', {
+      method: request.method,
+      body: request.body,
+      headers: Object.keys(request.headers),
+    });
     // Delegate to existing handler
     return handleInboundSms(request, response);
   }
