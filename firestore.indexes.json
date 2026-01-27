@@ -569,6 +569,24 @@
       ]
     },
     {
+      "collectionGroup": "smsOutboundRequests",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "dedupeKey",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "createdAt",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "__name__",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "emailThreads",
       "queryScope": "COLLECTION",
       "fields": [
