@@ -26,7 +26,9 @@ export class MockSmsProvider implements SmsProvider {
     try {
       // Test hook: force a Twilio opt-out error (21610) end-to-end in emulators.
       // Use by including `FORCE_TWILIO_21610` in the message body.
-      if (String(params.body || '').includes('FORCE_TWILIO_21610')) {
+      const allowHooks =
+        process.env.ALLOW_SMS_TEST_HOOKS === 'true' && process.env.NODE_ENV !== 'production';
+      if (allowHooks && String(params.body || '').includes('FORCE_TWILIO_21610')) {
         logger.info('[MOCK SMS] Forcing Twilio 21610 opt-out error for testing', {
           to: params.to,
           tenantId: params.tenantId,

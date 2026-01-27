@@ -16,6 +16,7 @@ import { enqueueSystemWelcomeSms } from './systemSms';
 if (!admin.apps.length) {
   admin.initializeApp();
 }
+const db = admin.firestore();
 
 export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
   {
@@ -46,6 +47,30 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
 
       if (!tenantId) {
         logger.info('Skipping welcome SMS: tenantId missing', { userId });
+        return;
+      }
+
+      // Tenant kill-switch: default OFF unless explicitly enabled.
+      // Path: tenants/{tenantId}/settings/messaging { systemSmsEnabled: boolean }
+      try {
+        const settingsDoc = await db
+          .collection('tenants')
+          .doc(tenantId)
+          .collection('settings')
+          .doc('messaging')
+          .get();
+        const systemSmsEnabled = settingsDoc.exists ? !!settingsDoc.data()?.systemSmsEnabled : false;
+        if (!systemSmsEnabled) {
+          logger.info('Skipping welcome SMS: tenant messaging.systemSmsEnabled is false', { tenantId, userId });
+          return;
+        }
+      } catch (settingsErr: any) {
+        // Fail closed: if we can't read settings, do not send.
+        logger.warn('Skipping welcome SMS: failed to read tenant messaging settings (fail closed)', {
+          tenantId,
+          userId,
+          error: settingsErr?.message,
+        });
         return;
       }
 
