@@ -1488,7 +1488,7 @@ const PublicJobsBoard: React.FC = () => {
           No jobs found matching your criteria. Try adjusting your filters or search terms.
         </Alert>
       ) : (
-        <Grid container spacing={3}>
+        <Grid container spacing={3} sx={{ px: 2, pb: 2 }}>
           {filteredJobs.map((job) => (
             <Grid item xs={12} md={6} key={`${job.tenantId}-${job.id}`}>
               <Card

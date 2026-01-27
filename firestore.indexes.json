@@ -665,6 +665,50 @@
       ]
     },
     {
+      "collectionGroup": "smsThreads",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "candidatePhone",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "twilioNumber",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastMessageAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "smsThreads",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {
+          "fieldPath": "candidatePhone",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "twilioNumber",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "status",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "lastOutboundAt",
+          "order": "DESCENDING"
+        }
+      ]
+    },
+    {
       "collectionGroup": "dmThreads",
       "queryScope": "COLLECTION",
       "fields": [

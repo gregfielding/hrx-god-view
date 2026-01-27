@@ -94,35 +94,91 @@ async function handleRegularInboundMessage(
   messageSid: string
 ): Promise<void> {
   try {
-    // Find user (candidate) by phone number
-    const usersQuery = await db.collection('users')
-      .where('phoneE164', '==', fromPhoneE164)
+    // CRITICAL: Find the most recent thread that sent a message to this phone number
+    // This ensures replies go to the correct user when multiple users share the same phone
+    // Strategy: Query all tenants' smsThreads by candidatePhone + twilioNumber, order by lastMessageAt desc
+    
+    // First, try to find existing thread by phone + Twilio number
+    // CRITICAL: Order by lastOutboundAt (not lastMessageAt) to find the thread that
+    // most recently SENT a message to this phone, not the thread with most recent activity
+    // This ensures replies go to the correct thread when multiple users share a phone
+    const threadQuery = await db
+      .collectionGroup('smsThreads')
+      .where('candidatePhone', '==', fromPhoneE164)
+      .where('twilioNumber', '==', toNumber)
+      .where('status', '==', 'open')
+      .orderBy('lastOutboundAt', 'desc')
       .limit(1)
       .get();
 
-    if (usersQuery.empty) {
-      logger.warn(`Inbound message from unknown phone ${fromPhoneE164}`);
-      // Could create a new user or handle differently
+    let candidateId: string | null = null;
+    let tenantId: string | null = null;
+    let existingThread: any = null;
+
+    if (!threadQuery.empty) {
+      // Found existing thread - use its candidateUserId
+      existingThread = threadQuery.docs[0];
+      const threadData = existingThread.data();
+      candidateId = threadData.candidateUserId || threadData.participant?.id || null;
+      tenantId = threadData.tenantId || existingThread.ref.parent.parent?.id || null;
+      logger.info(`Found existing thread ${existingThread.id} for phone ${fromPhoneE164}, candidate ${candidateId}, tenant ${tenantId}`);
+    }
+
+    // If no thread found, fall back to finding user by phone number
+    if (!candidateId || !tenantId) {
+      logger.info(`No existing thread found for ${fromPhoneE164}, falling back to user lookup`);
+      const usersQuery = await db.collection('users')
+        .where('phoneE164', '==', fromPhoneE164)
+        .limit(1)
+        .get();
+
+      if (usersQuery.empty) {
+        logger.warn(`Inbound message from unknown phone ${fromPhoneE164}`);
+        // Could create a new user or handle differently
+        return;
+      }
+
+      const userDoc = usersQuery.docs[0];
+      candidateId = userDoc.id;
+      const userData = userDoc.data();
+      // Resolve tenantId using same pattern as systemSms.ts and systemSmsTriggers.ts
+      tenantId =
+        userData?.tenantId ||
+        userData?.activeTenantId ||
+        (userData?.tenantIds && typeof userData.tenantIds === 'object' ? Object.keys(userData.tenantIds)[0] : null) ||
+        'unknown';
+    }
+
+    if (!candidateId || !tenantId || tenantId === 'unknown') {
+      logger.error(`Could not determine candidateId or tenantId for inbound message from ${fromPhoneE164}`);
       return;
     }
 
-    const userDoc = usersQuery.docs[0];
-    const candidateId = userDoc.id;
-    const userData = userDoc.data();
-    const tenantId = userData?.tenantId || 'unknown';
+    // Get user data for language/preferences
+    const userDoc = await db.collection('users').doc(candidateId).get();
+    const userData = userDoc.exists ? userDoc.data() : {};
 
-    // Find or create thread
-    // TODO: Determine primaryRecruiterId based on routing rules
-    // For now, use last recruiter who messaged or null
-    const thread = await findOrCreateThread(
-      candidateId,
-      fromPhoneE164,
-      toNumber,
-      tenantId,
-      {
-        primaryRecruiterId: null, // Will be enhanced with routing logic
-      }
-    );
+    // Use existing thread if found, otherwise find or create
+    let thread: any;
+    if (existingThread) {
+      thread = {
+        id: existingThread.id,
+        ...existingThread.data(),
+      };
+    } else {
+      // Find or create thread
+      // TODO: Determine primaryRecruiterId based on routing rules
+      // For now, use last recruiter who messaged or null
+      thread = await findOrCreateThread(
+        candidateId,
+        fromPhoneE164,
+        toNumber,
+        tenantId,
+        {
+          primaryRecruiterId: null, // Will be enhanced with routing logic
+        }
+      );
+    }
 
     if (!thread.id) {
       throw new Error('Failed to create thread');

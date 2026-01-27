@@ -808,7 +808,7 @@ const JobPostingDetail: React.FC = () => {
   } as const;
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: isMobile ? 2 : 3 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0 }}>
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>{posting.postTitle} - {posting.companyName || 'HRX'}</title>

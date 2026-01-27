@@ -21,7 +21,7 @@ import {
   Paper,
 } from '@mui/material';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, getDoc } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, getDoc, Timestamp } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
 
@@ -34,6 +34,7 @@ const Apply: React.FC = () => {
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
+  const [dateOfBirth, setDateOfBirth] = useState('');
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -75,13 +76,25 @@ const Apply: React.FC = () => {
     return password.length >= 8 && /[A-Z]/.test(password) && /[a-z]/.test(password) && /\d/.test(password);
   };
 
+  const validateDateOfBirth = (dob: string): boolean => {
+    if (!dob) return false;
+    const birthDate = new Date(dob);
+    const today = new Date();
+    const age = today.getFullYear() - birthDate.getFullYear();
+    const monthDiff = today.getMonth() - birthDate.getMonth();
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+      return age - 1 >= 18;
+    }
+    return age >= 18;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setSuccess(false);
 
     // Validation
-    if (!firstName.trim() || !lastName.trim() || !email.trim() || !phone.trim() || !password.trim()) {
+    if (!firstName.trim() || !lastName.trim() || !email.trim() || !dateOfBirth || !phone.trim() || !password.trim()) {
       setError('All fields are required');
       return;
     }
@@ -104,6 +117,11 @@ const Apply: React.FC = () => {
 
     if (password !== confirmPassword) {
       setError('Passwords do not match');
+      return;
+    }
+
+    if (!validateDateOfBirth(dateOfBirth)) {
+      setError('You must be at least 18 years old to apply');
       return;
     }
 
@@ -130,6 +148,9 @@ const Apply: React.FC = () => {
 
       // Prepare user profile data
       const phoneE164 = `+1${phoneDigits}`;
+      // Convert date of birth string to Firestore Timestamp
+      const dobTimestamp = dateOfBirth ? Timestamp.fromDate(new Date(dateOfBirth)) : null;
+      
       const userProfile: any = {
         uid: user.uid,
         email: user.email,
@@ -166,7 +187,7 @@ const Apply: React.FC = () => {
         // Work status and eligibility
         workStatus: 'Active',
         workEligibility: false,
-        dob: null,
+        dob: dobTimestamp,
         phoneVerified: false,
         // Employment details
         employmentType: null,
@@ -302,6 +323,8 @@ const Apply: React.FC = () => {
     firstName.trim() &&
     lastName.trim() &&
     email.trim() &&
+    dateOfBirth &&
+    validateDateOfBirth(dateOfBirth) &&
     phone.replace(/\D/g, '').length === 10 &&
     password.trim() &&
     confirmPassword.trim() &&
@@ -377,6 +400,25 @@ const Apply: React.FC = () => {
               onChange={(e) => setEmail(e.target.value)}
               disabled={loading}
               required
+              size="medium"
+            />
+
+            {/* Date of Birth */}
+            <TextField
+              fullWidth
+              label="Date of Birth"
+              type="date"
+              value={dateOfBirth}
+              onChange={(e) => setDateOfBirth(e.target.value)}
+              disabled={loading}
+              required
+              InputLabelProps={{
+                shrink: true,
+              }}
+              inputProps={{
+                max: new Date().toISOString().split('T')[0], // Prevent future dates
+              }}
+              helperText="You must be at least 18 years old to apply"
               size="medium"
             />
 

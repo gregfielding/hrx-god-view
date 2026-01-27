@@ -11,6 +11,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { handleInboundSms } from './inboundSmsWebhook';
 import { updateMessageLogStatus } from './messageLogging';
+import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -30,6 +31,8 @@ export const twilioInboundSmsWebhook = onRequest(
   {
     cors: true,
     invoker: 'public', // Twilio webhooks are unauthenticated
+    // Bind secrets needed by handleInboundSms (for STOP/HELP confirmation sends)
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request, response) => {
     // Delegate to existing handler
