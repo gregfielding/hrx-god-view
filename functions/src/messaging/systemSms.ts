@@ -13,7 +13,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { createOutboundRequest } from './smsOutboundQueue';
 import { getOrCreateThreadForUser } from './twoWayMessaging';
-import { Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -145,7 +145,7 @@ export async function enqueueSystemWelcomeSms(params: {
     contentSent: body,
     language: null,
     status: 'queued',
-    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    createdAt: FieldValue.serverTimestamp(),
   });
 
   const requestId = await createOutboundRequest({
