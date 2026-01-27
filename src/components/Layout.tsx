@@ -1249,12 +1249,22 @@ const Layout: React.FC = React.memo(function Layout() {
                       ...(icon as any).props?.sx,
                       color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
                       fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
                       '& path': {
                         fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
                       },
                       '& .MuiSvgIcon-root': {
                         color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
                         fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& g': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& *': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
                       },
                     }
                   })

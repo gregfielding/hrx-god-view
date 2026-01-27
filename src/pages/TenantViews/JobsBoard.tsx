@@ -1175,8 +1175,9 @@ const JobsBoard: React.FC = () => {
               pt: 2,
             }
           : {
-              // User view: 16px padding on sides + bottom
+              // User view: 16px padding on all sides
               px: 2,
+              pt: 2,
               pb: 2,
             }),
       }}
