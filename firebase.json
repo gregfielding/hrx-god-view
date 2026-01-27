@@ -47,5 +47,12 @@
         "SERP_API_KEY": "e449a4fafca55476b5bf9d07e90884c756f9512980bf5a0c1d72ea8d74627e20"
       }
     }
-  ]
+  ],
+  "emulators": {
+    "firestore": { "port": 8085 },
+    "functions": { "port": 5005 },
+    "ui": { "port": 4005 },
+    "hub": { "port": 4405 },
+    "logging": { "port": 4505 }
+  }
 }
