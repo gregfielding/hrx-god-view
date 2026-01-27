@@ -12,6 +12,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { enqueueSystemWelcomeSms } from './systemSms';
+import { TWILIO_MESSAGING_PHONE_NUMBER } from './twilioSecrets';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -22,6 +23,8 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
   {
     document: 'users/{userId}',
     region: 'us-central1',
+    // Needed so `systemSms.ts` can read the configured "from" number for threading.
+    secrets: [TWILIO_MESSAGING_PHONE_NUMBER],
   },
   async (event) => {
     const userId = event.params.userId as string;
