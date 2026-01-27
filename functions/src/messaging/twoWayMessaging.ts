@@ -11,7 +11,7 @@ import { logger } from 'firebase-functions/v2';
 import { logMessage, MessageLog } from './messageLogging';
 import { sendWorkerMessageInternal } from '../twilio';
 import { processInboundSms } from './stopHelpHandler';
-import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, Timestamp } from 'firebase-admin/firestore';
 
 const db = admin.firestore();
 
@@ -227,7 +227,7 @@ export async function createInboundMessage(
     // Get thread to get tenantId
     const threadDoc = await db
       .collectionGroup('smsThreads')
-      .where(admin.firestore.FieldPath.documentId(), '==', threadId)
+      .where(FieldPath.documentId(), '==', threadId)
       .limit(1)
       .get();
     
@@ -306,7 +306,7 @@ export async function sendOutboundMessage(
     // Get thread - need to find tenant first
     const threadQuery = await db
       .collectionGroup('smsThreads')
-      .where(admin.firestore.FieldPath.documentId(), '==', threadId)
+      .where(FieldPath.documentId(), '==', threadId)
       .limit(1)
       .get();
     
@@ -388,7 +388,7 @@ export async function getThreadWithMessages(
       // Find thread to get tenantId
       const threadQuery = await db
         .collectionGroup('smsThreads')
-        .where(admin.firestore.FieldPath.documentId(), '==', threadId)
+        .where(FieldPath.documentId(), '==', threadId)
         .limit(1)
         .get();
       
@@ -491,7 +491,7 @@ export async function updateThreadStatus(
     if (!resolvedTenantId) {
       const threadQuery = await db
         .collectionGroup('smsThreads')
-        .where(admin.firestore.FieldPath.documentId(), '==', threadId)
+        .where(FieldPath.documentId(), '==', threadId)
         .limit(1)
         .get();
       
@@ -537,7 +537,7 @@ export async function assignThread(
     if (!resolvedTenantId) {
       const threadQuery = await db
         .collectionGroup('smsThreads')
-        .where(admin.firestore.FieldPath.documentId(), '==', threadId)
+        .where(FieldPath.documentId(), '==', threadId)
         .limit(1)
         .get();
       
@@ -596,7 +596,7 @@ export async function markThreadRead(
     if (!resolvedTenantId) {
       const threadQuery = await db
         .collectionGroup('smsThreads')
-        .where(admin.firestore.FieldPath.documentId(), '==', threadId)
+        .where(FieldPath.documentId(), '==', threadId)
         .limit(1)
         .get();
       
