@@ -844,6 +844,7 @@ const UserProfilePage = () => {
 
   const isAdminView = parseInt(securityLevel) >= 5;
   const viewerSecurityLevel = parseInt(securityLevel);
+  const isOwnProfile = user?.uid === uid;
   const canViewAdminContent = viewerSecurityLevel >= 5;
   const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
   // Slightly more yellow-orange + used for borders/text. Button gradient is set where needed.
@@ -1607,8 +1608,8 @@ const UserProfilePage = () => {
                         </Typography>
                       )}
                     </Box>
-                    {/* Line 4: User groups (if any) */}
-                    {headerUserGroups.length > 0 && (
+                    {/* Line 4: User groups (admin 5-7 only, and only on own profile) */}
+                    {headerUserGroups.length > 0 && isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
                         {headerUserGroups.map((g, idx) => {
                           const href = `/usergroups/${g.id}`;
@@ -1638,7 +1639,7 @@ const UserProfilePage = () => {
                       </Box>
                     )}
                     {/* Line 5: Status (Onboarding/Hired/Dismissed/etc.) */}
-                    {(statusLine?.text || interviewLine?.text) && (
+                    {!isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && (statusLine?.text || interviewLine?.text) && (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
                         {interviewLine?.text && (
                           <>

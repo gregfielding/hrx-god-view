@@ -211,6 +211,9 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const effectiveTenantId = tenantId || authTenantId || activeTenant?.id || '';
   const viewerLevel = parseInt(viewerSecurityLevel || '0');
   const canViewAdminContent = viewerLevel >= 5;
+  const isOwnProfile = !!user?.uid && user.uid === uid;
+  // Contact icons row should only show for admin viewers (5-7) and never on a user's own profile.
+  const canShowContactIconsRow = !isOwnProfile && viewerLevel >= 5 && viewerLevel <= 7;
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -807,7 +810,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           )}
 
           {/* Mobile: Contact Icons Row */}
-          {isAdminView && (phone || email || resume) && (
+          {canShowContactIconsRow && (phone || email || resume) && (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1, mt: 1 }}>
               {phone && (
                 <>
@@ -905,7 +908,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   </IconButton>
                 </Tooltip>
               )}
-              {isAdminView && (
+              {canShowContactIconsRow && (
                 <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
                   <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
                     <IconButton
@@ -1324,7 +1327,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           )}
           
           {/* Contact Icons Row - Phone, SMS, Email, Resume (Icon-only buttons) */}
-          {isAdminView && (phone || email || resume) && (
+          {canShowContactIconsRow && (phone || email || resume) && (
             <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, mb: 0.5 }}>
               {phone && (
                 <>
@@ -1457,7 +1460,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   </IconButton>
                 </Tooltip>
               )}
-              {isAdminView && (
+              {canShowContactIconsRow && (
                 <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
                   <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
                     <IconButton

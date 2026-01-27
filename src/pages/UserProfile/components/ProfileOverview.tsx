@@ -184,6 +184,10 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
     return false;
   };
   const { tenantId: activeTenantId, user, securityLevel, activeTenant } = useAuth();
+  const viewerSecurityLevel = parseInt(String(securityLevel || '0'), 10);
+  const isOwnProfile = !!user?.uid && user.uid === uid;
+  // Only show User Groups on a user's *own* profile, and only for admin security levels 5-7.
+  const canViewUserGroupsSection = isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7;
   const [form, setForm] = useState<UserProfileForm>({
     firstName: '',
     lastName: '',
@@ -547,12 +551,13 @@ const transportOptions: Array<{
     }
   };
 
-  // Load user groups when tenantId is available
+  // Load user groups only when viewer is allowed to see them
   useEffect(() => {
+    if (!canViewUserGroupsSection) return;
     if (tenantId && uid) {
       loadUserGroups(tenantId);
     }
-  }, [tenantId, uid]);
+  }, [tenantId, uid, canViewUserGroupsSection]);
 
   const loadUserGroups = async (tenantId: string) => {
     try {
@@ -1647,52 +1652,47 @@ const transportOptions: Array<{
             </Card>
           </Grid>
 
-          {/* User Groups Section */}
-          <Grid item xs={12}>
-            <Card variant="outlined" sx={{ p: cardPadding }}>
-              <CardHeader 
-                title={
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>User Groups</Typography>
+          {/* User Groups Section (admin 5-7 only, and only on own profile) */}
+          {canViewUserGroupsSection && (
+            <Grid item xs={12}>
+              <Card variant="outlined" sx={{ p: cardPadding }}>
+                <CardHeader
+                  title={
+                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                      <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                        User Groups
+                      </Typography>
+                    </Box>
+                  }
+                  titleTypographyProps={{ component: 'div' }}
+                  sx={cardHeaderPadding}
+                />
+                <CardContent sx={{ p: cardContentPadding, pt: 0 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      Manage which user groups this user belongs to. User groups help organize users and control access to specific features.
+                    </Typography>
+                    <Autocomplete
+                      multiple
+                      options={userGroups}
+                      getOptionLabel={(option) => option.title || option.id}
+                      value={userGroups.filter((g) => userGroupIds.includes(g.id))}
+                      onChange={handleUserGroupsChange}
+                      renderInput={(params) => (
+                        <TextField {...params} label="User Groups" placeholder="Select groups" fullWidth />
+                      )}
+                      renderTags={(value, getTagProps) =>
+                        value.map((option, index) => (
+                          <Chip label={option.title || option.id} {...getTagProps({ index })} key={option.id} />
+                        ))
+                      }
+                      isOptionEqualToValue={(option, value) => option.id === value.id}
+                    />
                   </Box>
-                }
-                titleTypographyProps={{ component: 'div' }}
-                sx={cardHeaderPadding}
-              />
-              <CardContent sx={{ p: cardContentPadding, pt: 0 }}>
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    Manage which user groups this user belongs to. User groups help organize users and control access to specific features.
-                  </Typography>
-                  <Autocomplete
-                    multiple
-                    options={userGroups}
-                    getOptionLabel={(option) => option.title || option.id}
-                    value={userGroups.filter((g) => userGroupIds.includes(g.id))}
-                    onChange={handleUserGroupsChange}
-                    renderInput={(params) => (
-                      <TextField 
-                        {...params} 
-                        label="User Groups" 
-                        placeholder="Select groups" 
-                        fullWidth 
-                      />
-                    )}
-                    renderTags={(value, getTagProps) =>
-                      value.map((option, index) => (
-                        <Chip
-                          label={option.title || option.id}
-                          {...getTagProps({ index })}
-                          key={option.id}
-                        />
-                      ))
-                    }
-                    isOptionEqualToValue={(option, value) => option.id === value.id}
-                  />
-                </Box>
-              </CardContent>
-            </Card>
-          </Grid>
+                </CardContent>
+              </Card>
+            </Grid>
+          )}
 
           {/* 📍 Employment Classification Section */}
           {/* Only show Employment Details for internal employees (security levels 5-7) */}

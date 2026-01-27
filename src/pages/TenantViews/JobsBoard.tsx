@@ -1174,7 +1174,11 @@ const JobsBoard: React.FC = () => {
               px: { xs: 2, md: 3 },
               pt: 2,
             }
-          : {}),
+          : {
+              // User view: 16px padding on sides + bottom
+              px: 2,
+              pb: 2,
+            }),
       }}
     >
       {!isFromRecruiter && (

@@ -1129,13 +1129,45 @@ const Layout: React.FC = React.memo(function Layout() {
                       backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
                       color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
                       '& svg': {
-                        fill: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)',
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& .MuiSvgIcon-root': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& path': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& g': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      },
+                      '& *': {
+                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
                       },
                       '&:hover': {
                         backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
                         color: isSelected ? '#FFFFFF' : '#FFFFFF',
                         '& svg': {
-                          fill: isSelected ? '#FFFFFF' : '#FFFFFF',
+                          fill: '#FFFFFF !important',
+                          color: '#FFFFFF !important',
+                        },
+                        '& .MuiSvgIcon-root': {
+                          fill: '#FFFFFF !important',
+                          color: '#FFFFFF !important',
+                        },
+                        '& path': {
+                          fill: '#FFFFFF !important',
+                          stroke: '#FFFFFF !important',
+                        },
+                        '& g': {
+                          fill: '#FFFFFF !important',
+                        },
+                        '& *': {
+                          fill: '#FFFFFF !important',
+                          color: '#FFFFFF !important',
                         },
                       },
                       transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
@@ -1149,9 +1181,25 @@ const Layout: React.FC = React.memo(function Layout() {
                         minWidth: 0,
                         justifyContent: 'center',
                         display: 'flex',
-                        color: 'inherit',
+                        color: isSelected ? '#FFFFFF !important' : 'inherit',
                         '& svg': {
-                          fill: 'inherit',
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& .MuiSvgIcon-root': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& path': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          stroke: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& g': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                        },
+                        '& *': {
+                          fill: isSelected ? '#FFFFFF !important' : 'inherit',
+                          color: isSelected ? '#FFFFFF !important' : 'inherit',
                         },
                       }}
                     >
@@ -1178,12 +1226,20 @@ const Layout: React.FC = React.memo(function Layout() {
               .map(({ text, to, icon }) => {
               const isInbox = text === 'Inbox';
               const showBadge = isInbox && inboxUnreadCount > 0;
-              // Only mark as selected if pathname exactly matches or starts with the route
-              // Don't mark ChatGPT as active when on dashboard
-              const isSelected = to && (
-                location.pathname === to || 
-                (location.pathname.startsWith(to + '/') && !(text === 'ChatGPT' && location.pathname.startsWith('/dashboard')))
-              );
+              const pathname = location.pathname;
+              const isUserDetailsPath =
+                pathname.includes('/users/') &&
+                !pathname.includes('/recruiter/users/') &&
+                pathname.split('/users/').length > 1;
+
+              // Only mark as selected if pathname exactly matches or starts with the route.
+              // Also treat `/users/{id}` as part of any `/.../users` list route (we redirect legacy detail routes).
+              // Don't mark ChatGPT as active when on dashboard.
+              const isSelected =
+                !!to &&
+                (pathname === to ||
+                  (pathname.startsWith(to + '/') && !(text === 'ChatGPT' && pathname.startsWith('/dashboard'))) ||
+                  (isUserDetailsPath && /\/users$/.test(to)));
               
               // Clone icon to add color prop directly - MUI icons inherit color from parent
               const iconWithColor = React.isValidElement(icon) 
