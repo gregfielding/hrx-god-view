@@ -28,7 +28,11 @@ import {
 import {
   Schedule as ScheduleIcon,
   CheckCircle as CheckCircleIcon,
-  Save as SaveIcon
+  Save as SaveIcon,
+  Business as BusinessIcon,
+  LocalOffer as LocalOfferIcon,
+  Person as PersonIcon,
+  WorkOutline as WorkOutlineIcon
 } from '@mui/icons-material';
 import { doc, getDoc } from 'firebase/firestore';
 
@@ -123,6 +127,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   const [associatedDeals, setAssociatedDeals] = useState<any[]>([]);
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
+  const [associatedUsers, setAssociatedUsers] = useState<any[]>([]);
   const [dealContacts, setDealContacts] = useState<any[]>([]);
   const [dealSalespeople, setDealSalespeople] = useState<any[]>([]);
 
@@ -182,6 +187,48 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
         });
         const contacts = (await Promise.all(contactPromises)).filter(Boolean);
         setAssociatedContacts(prev => [...prev, ...contacts.filter(c => !prev.find(p => p.id === c.id))]);
+      }
+
+      if (task.associations?.companies?.length > 0) {
+        const companyPromises = task.associations.companies.map(async (companyId: string) => {
+          try {
+            const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', companyId));
+            return companyDoc.exists() ? { id: companyDoc.id, ...companyDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading company:', companyId, err);
+            return null;
+          }
+        });
+        const companies = (await Promise.all(companyPromises)).filter(Boolean);
+        setAssociatedCompanies(prev => [...prev, ...companies.filter(c => !prev.find(p => p.id === c.id))]);
+      }
+
+      if (task.associations?.deals?.length > 0) {
+        const dealPromises = task.associations.deals.map(async (dealId: string) => {
+          try {
+            const dealDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_deals', dealId));
+            return dealDoc.exists() ? { id: dealDoc.id, ...dealDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading deal:', dealId, err);
+            return null;
+          }
+        });
+        const deals = (await Promise.all(dealPromises)).filter(Boolean);
+        setAssociatedDeals(prev => [...prev, ...deals.filter(d => !prev.find(p => p.id === d.id))]);
+      }
+
+      if (task.associations?.users?.length > 0) {
+        const userPromises = task.associations.users.map(async (uid: string) => {
+          try {
+            const userDoc = await getDoc(doc(db, 'users', uid));
+            return userDoc.exists() ? { id: userDoc.id, ...userDoc.data() } : null;
+          } catch (err) {
+            console.error('Error loading user:', uid, err);
+            return null;
+          }
+        });
+        const users = (await Promise.all(userPromises)).filter(Boolean);
+        setAssociatedUsers(prev => [...prev, ...users.filter(u => !prev.find(p => p.id === u.id))]);
       }
 
       if (task.associations?.salespeople?.length > 0) {
@@ -525,6 +572,44 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     );
   }
 
+  const openHref = (href: string) => {
+    try {
+      window.open(href, '_blank', 'noopener,noreferrer');
+    } catch {
+      window.open(href, '_blank');
+    }
+  };
+
+  const getPersonName = (u: any): string => {
+    return (
+      u?.fullName ||
+      u?.displayName ||
+      [u?.firstName, u?.lastName].filter(Boolean).join(' ') ||
+      u?.name ||
+      u?.email ||
+      u?.id ||
+      ''
+    );
+  };
+
+  const contactIds = toSelectValue((formData as any).associations?.contacts);
+  const companyIds = toSelectValue((formData as any).associations?.companies);
+  const dealIds = toSelectValue((formData as any).associations?.deals);
+  const userIds = toSelectValue((formData as any).associations?.users);
+
+  // Job order linkage (used by recruiting/checklist tasks)
+  const jobOrderId: string | undefined =
+    (task as any)?.jobOrderId ||
+    ((task as any)?.sourceType === 'recruiting' ? (task as any)?.sourceId : undefined);
+  const jobOrderName: string | undefined = (task as any)?.sourceName || (task as any)?.jobOrderName;
+
+  const hasAnyLinks =
+    contactIds.length > 0 ||
+    companyIds.length > 0 ||
+    dealIds.length > 0 ||
+    userIds.length > 0 ||
+    (typeof jobOrderId === 'string' && jobOrderId.trim().length > 0);
+
   return (
     <>
       <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
@@ -570,6 +655,94 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                   </Alert>
                 )}
               </Grid>
+
+              {/* Linked Entities */}
+              {hasAnyLinks && (
+                <Grid item xs={12}>
+                  <Box sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      Linked to
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {companyIds.map((id) => {
+                        const c = associatedCompanies.find((x) => x.id === id);
+                        const label = c?.name || c?.companyName || c?.displayName || id;
+                        return (
+                          <Tooltip key={`company_${id}`} title="Open company" arrow>
+                            <Chip
+                              icon={<BusinessIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/companies/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {dealIds.map((id) => {
+                        const d = associatedDeals.find((x) => x.id === id);
+                        const label = d?.name || d?.dealName || d?.title || id;
+                        return (
+                          <Tooltip key={`deal_${id}`} title="Open deal" arrow>
+                            <Chip
+                              icon={<LocalOfferIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/crm/deals/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {contactIds.map((id) => {
+                        const c = associatedContacts.find((x) => x.id === id);
+                        const label = c?.fullName || c?.name || c?.email || id;
+                        return (
+                          <Tooltip key={`contact_${id}`} title="Open contact" arrow>
+                            <Chip
+                              icon={<PersonIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/contacts/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {userIds.map((id) => {
+                        const u = associatedUsers.find((x) => x.id === id);
+                        const label = getPersonName(u) || id;
+                        return (
+                          <Tooltip key={`user_${id}`} title="Open user" arrow>
+                            <Chip
+                              icon={<PersonIcon />}
+                              label={label}
+                              size="small"
+                              clickable
+                              onClick={() => openHref(`/users/${id}`)}
+                            />
+                          </Tooltip>
+                        );
+                      })}
+
+                      {typeof jobOrderId === 'string' && jobOrderId.trim().length > 0 && (
+                        <Tooltip title="Open job order" arrow>
+                          <Chip
+                            icon={<WorkOutlineIcon />}
+                            label={jobOrderName ? `Job Order: ${jobOrderName}` : 'Job Order'}
+                            size="small"
+                            clickable
+                            onClick={() => openHref(`/recruiter/job-orders/${jobOrderId}`)}
+                          />
+                        </Tooltip>
+                      )}
+                    </Box>
+                  </Box>
+                </Grid>
+              )}
 
               {/* Basic Task Info */}
               <Grid item xs={12}>
