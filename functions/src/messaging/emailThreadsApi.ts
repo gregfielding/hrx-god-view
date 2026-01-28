@@ -168,6 +168,9 @@ async function buildStoredBodiesWithSignature(params: {
 export const listEmailThreadsApi = onRequest(
   {
     cors: true,
+    // Listing threads can touch a lot of docs; keep it stable under load.
+    // (We still optimize queries to avoid needing this, but it prevents 256MiB OOM crashes.)
+    memory: '512MiB',
   },
   async (request, response) => {
     // Set CORS headers immediately for all requests
@@ -203,7 +206,7 @@ export const listEmailThreadsApi = onRequest(
       const threads = await getUserEmailThreads(userId, tenantId, {
         status: status as 'active' | 'archived' | 'deleted' | undefined,
         unreadOnly: unreadOnly === 'true',
-        limit: limit ? Number(limit) : 50,
+        limit: Math.min(limit ? Number(limit) : 50, 500),
         category: category as string | undefined,
         sentOnly: sentOnly === 'true',
       });

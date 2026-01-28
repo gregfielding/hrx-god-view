@@ -63,6 +63,10 @@ export interface EmailThread {
   // Denormalized helpers for fast filtering (avoid per-thread message subcollection queries)
   // Threads where the user has sent at least one message can be queried via array-contains.
   sentByUserIds?: string[];
+  // Denormalized direction flags to avoid per-thread message subcollection queries.
+  // Used to exclude "sent-only" threads from category views without querying messages subcollections.
+  hasInbound?: boolean;
+  hasOutbound?: boolean;
   lastMessageAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
   lastMessageSnippet?: string;
   unreadCount: number;
@@ -418,6 +422,13 @@ export async function addMessageToThread(
       updates.unreadCount = (threadData.unreadCount || 0) + 1;
     }
 
+    // Denormalize direction flags (prevents expensive per-thread subcollection queries in list endpoints)
+    if (message.direction === 'inbound') {
+      updates.hasInbound = true;
+    } else if (message.direction === 'outbound') {
+      updates.hasOutbound = true;
+    }
+
     // Denormalize "sent by" for fast Sent view queries
     if (message.direction === 'outbound' && message.fromUserId) {
       const existing = Array.isArray(threadData.sentByUserIds) ? threadData.sentByUserIds : [];
@@ -721,7 +732,9 @@ export async function getUserEmailThreads(
     // Note: We filter unreadOnly in memory to avoid composite index requirements
     // Apply limit (get more to filter out deleted/unread in memory)
     if (options?.limit) {
-      threadsQuery = threadsQuery.limit(options.limit * 3); // Get more to filter out deleted/unread
+      // Avoid unbounded reads (e.g., limit=1000 -> 3000 docs) which can exceed memory/time.
+      const fetchLimit = Math.min(options.limit * 3, 600);
+      threadsQuery = threadsQuery.limit(fetchLimit);
     } else {
       threadsQuery = threadsQuery.limit(150); // Default limit (increased to account for filtering)
     }
@@ -746,7 +759,6 @@ export async function getUserEmailThreads(
     }
 
     // Filter by Gmail category in memory
-    // Note: Exclude sent-only threads from category filters (they should only appear in "Sent")
     if (options?.category) {
       // First, filter by category label
       let categoryFilteredThreads = threads.filter(thread => {
@@ -759,60 +771,11 @@ export async function getUserEmailThreads(
           return labels.includes(options.category!);
         }
       });
-      
-      // Then, exclude sent-only threads by checking for inbound messages
-      // Use parallel queries with timeout to avoid performance issues
-      const threadsWithCategory: EmailThread[] = [];
-      
-      // Limit the number of threads to check to prevent timeouts
-      const threadsToCheck = categoryFilteredThreads.slice(0, 50); // Reduced from 100 to 50 for better performance
-      const remainingThreads = categoryFilteredThreads.slice(50); // Include the rest without checking
-      
-      const checkPromises = threadsToCheck.map(async (thread) => {
-        if (!thread.id) return null;
-        
-        try {
-          // Use Promise.race with timeout to prevent hanging queries
-          const queryPromise = db
-            .collection('tenants')
-            .doc(tenantId)
-            .collection('emailThreads')
-            .doc(thread.id)
-            .collection('messages')
-            .where('direction', '==', 'inbound')
-            .limit(1)
-            .get();
-          
-          const timeoutPromise = new Promise<null>((resolve) => {
-            setTimeout(() => {
-              logger.warn(`Timeout checking inbound messages for thread ${thread.id}`);
-              resolve(null); // Resolve with null on timeout instead of rejecting
-            }, 1500); // Reduced timeout from 2s to 1.5s
-          });
-          
-          const inboundMessagesQuery = await Promise.race([queryPromise, timeoutPromise]);
-          
-          // Only include if thread has at least one inbound message (and no timeout occurred)
-          if (inboundMessagesQuery && !inboundMessagesQuery.empty) {
-            return thread;
-          }
-        } catch (err) {
-          // If query fails, exclude the thread (conservative approach)
-          logger.warn(`Failed to check inbound messages for thread ${thread.id}:`, err);
-          return null;
-        }
-        
-        return null;
-      });
-      
-      const results = await Promise.all(checkPromises);
-      threadsWithCategory.push(...results.filter((t): t is EmailThread => t !== null));
-      
-      // Include remaining threads without checking (to avoid timeout)
-      // This is a trade-off: we might include some sent-only threads, but it prevents timeouts
-      threadsWithCategory.push(...remainingThreads);
-      
-      threads = threadsWithCategory;
+
+      // Exclude "sent-only" threads from category views using denormalized flags.
+      // If hasInbound is missing (legacy threads), keep it to avoid hiding valid conversations.
+      categoryFilteredThreads = categoryFilteredThreads.filter((t) => t.hasInbound !== false);
+      threads = categoryFilteredThreads;
     }
 
     // Apply limit after filtering

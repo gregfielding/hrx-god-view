@@ -912,7 +912,10 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             <TableBody>
               {(applicantsSortBy === 'interview' ? sortedApplicants : applicants).map((applicant) => (
                 <TableRow 
-                  key={applicant.uid}
+                  key={
+                    applicant.applicationData?.id ||
+                    `${applicant.uid || 'unknown'}_${applicant.applicationData?.jobId || jobOrderId || 'unknown'}`
+                  }
                   hover
                   sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
                 >
