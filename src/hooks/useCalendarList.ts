@@ -43,7 +43,14 @@ export function useCalendarList({ userId, enabled = true }: UseCalendarListOptio
       const data = await listCalendars(userId);
       setCalendars(data);
     } catch (err: any) {
-      console.error('Error fetching calendar list:', err);
+      const isExpiredAccess =
+        err?.message?.includes('Google Calendar access has expired') ||
+        err?.message?.includes('access has expired');
+      if (isExpiredAccess) {
+        console.warn('Calendar access expired; reconnect Google account to restore calendar list.');
+      } else {
+        console.error('Error fetching calendar list:', err);
+      }
       setError(err instanceof Error ? err : new Error('Failed to fetch calendars'));
       setCalendars([]);
     } finally {

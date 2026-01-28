@@ -896,115 +896,130 @@ export const getGmailMailboxCounts = onCall(
     }
 
     const gmailTokens = userData?.gmailTokens;
+    const emptyCounts = {
+      inbox: { threadsTotal: 0, threadsUnread: 0, messagesUnread: 0 },
+      primary: { threadsTotal: 0, threadsUnread: 0 },
+      social: { threadsTotal: 0, threadsUnread: 0 },
+      promotions: { threadsTotal: 0, threadsUnread: 0 },
+      updates: { threadsTotal: 0, threadsUnread: 0 },
+      forums: { threadsTotal: 0, threadsUnread: 0 },
+      spam: { threadsTotal: 0, threadsUnread: 0 },
+      starred: { threadsTotal: 0, threadsUnread: 0 },
+      sent: { threadsTotal: 0, threadsUnread: 0 },
+    };
     if (!gmailTokens?.access_token) {
-      const empty = {
-        inbox: { threadsTotal: 0, threadsUnread: 0, messagesUnread: 0 },
-        primary: { threadsTotal: 0, threadsUnread: 0 },
-        social: { threadsTotal: 0, threadsUnread: 0 },
-        promotions: { threadsTotal: 0, threadsUnread: 0 },
-        updates: { threadsTotal: 0, threadsUnread: 0 },
-        forums: { threadsTotal: 0, threadsUnread: 0 },
-        spam: { threadsTotal: 0, threadsUnread: 0 },
-        starred: { threadsTotal: 0, threadsUnread: 0 },
-        sent: { threadsTotal: 0, threadsUnread: 0 },
-      };
-      return { success: true, counts: empty, connected: false };
+      return { success: true, counts: emptyCounts, connected: false };
     }
 
-    oauth2Client.setCredentials(gmailTokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    try {
+      oauth2Client.setCredentials(gmailTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    const fetchLabel = async (id: string) => {
-      const res = await gmail.users.labels.get({ userId: 'me', id });
-      return {
-        threadsTotal: Number(res.data.threadsTotal || 0),
-        threadsUnread: Number(res.data.threadsUnread || 0),
-        messagesUnread: Number(res.data.messagesUnread || 0),
+      const fetchLabel = async (id: string) => {
+        const res = await gmail.users.labels.get({ userId: 'me', id });
+        return {
+          threadsTotal: Number(res.data.threadsTotal || 0),
+          threadsUnread: Number(res.data.threadsUnread || 0),
+          messagesUnread: Number(res.data.messagesUnread || 0),
+        };
       };
-    };
 
-    // IMPORTANT:
-    // Gmail category labels (CATEGORY_PROMOTIONS, etc.) can remain on messages even after archiving,
-    // so `labels.get(...).threadsUnread` for those categories can drift from what Gmail/Mimestream show
-    // inside the Inbox. To match Gmail/Mimestream "Inbox tab" semantics, we compute category unread as:
-    //   UNREAD threads with labels: INBOX + CATEGORY_*
-    const fetchUnreadThreadsInInboxForCategory = async (categoryLabelId: string) => {
-      const res = await gmail.users.threads.list({
-        userId: 'me',
-        labelIds: ['INBOX', categoryLabelId],
-        q: 'is:unread',
-        maxResults: 1,
-      });
-      return Number((res.data as any)?.resultSizeEstimate || 0);
-    };
+      // IMPORTANT:
+      // Gmail category labels (CATEGORY_PROMOTIONS, etc.) can remain on messages even after archiving,
+      // so `labels.get(...).threadsUnread` for those categories can drift from what Gmail/Mimestream show
+      // inside the Inbox. To match Gmail/Mimestream "Inbox tab" semantics, we compute category unread as:
+      //   UNREAD threads with labels: INBOX + CATEGORY_*
+      const fetchUnreadThreadsInInboxForCategory = async (categoryLabelId: string) => {
+        const res = await gmail.users.threads.list({
+          userId: 'me',
+          labelIds: ['INBOX', categoryLabelId],
+          q: 'is:unread',
+          maxResults: 1,
+        });
+        return Number((res.data as any)?.resultSizeEstimate || 0);
+      };
 
-    const fetchUnreadThreadsForLabel = async (labelId: string) => {
-      const res = await gmail.users.threads.list({
-        userId: 'me',
-        labelIds: [labelId],
-        q: 'is:unread',
-        maxResults: 1,
-        // For SPAM, Gmail treats it like a system mailbox, not Inbox.
-        includeSpamTrash: labelId === 'SPAM' ? true : undefined,
-      } as any);
-      return Number((res.data as any)?.resultSizeEstimate || 0);
-    };
+      const fetchUnreadThreadsForLabel = async (labelId: string) => {
+        const res = await gmail.users.threads.list({
+          userId: 'me',
+          labelIds: [labelId],
+          q: 'is:unread',
+          maxResults: 1,
+          // For SPAM, Gmail treats it like a system mailbox, not Inbox.
+          includeSpamTrash: labelId === 'SPAM' ? true : undefined,
+        } as any);
+        return Number((res.data as any)?.resultSizeEstimate || 0);
+      };
 
-    // Gmail system label IDs:
-    // - INBOX
-    // - CATEGORY_PERSONAL / SOCIAL / PROMOTIONS / UPDATES / FORUMS
-    // - SPAM / STARRED / SENT
-    const [inbox, spamLabel, starredLabel, sentLabel] = await Promise.all([
-      fetchLabel('INBOX'),
-      fetchLabel('SPAM'),
-      fetchLabel('STARRED'),
-      fetchLabel('SENT'),
-    ]);
+      // Gmail system label IDs:
+      // - INBOX
+      // - CATEGORY_PERSONAL / SOCIAL / PROMOTIONS / UPDATES / FORUMS
+      // - SPAM / STARRED / SENT
+      const [inbox, spamLabel, starredLabel, sentLabel] = await Promise.all([
+        fetchLabel('INBOX'),
+        fetchLabel('SPAM'),
+        fetchLabel('STARRED'),
+        fetchLabel('SENT'),
+      ]);
 
-    const [
-      primaryUnreadInInbox,
-      socialUnreadInInbox,
-      promotionsUnreadInInbox,
-      updatesUnreadInInbox,
-      forumsUnreadInInbox,
-      spamUnread,
-    ] = await Promise.all([
-      fetchUnreadThreadsInInboxForCategory('CATEGORY_PERSONAL'),
-      fetchUnreadThreadsInInboxForCategory('CATEGORY_SOCIAL'),
-      fetchUnreadThreadsInInboxForCategory('CATEGORY_PROMOTIONS'),
-      fetchUnreadThreadsInInboxForCategory('CATEGORY_UPDATES'),
-      fetchUnreadThreadsInInboxForCategory('CATEGORY_FORUMS'),
-      fetchUnreadThreadsForLabel('SPAM'),
-    ]);
+      const [
+        primaryUnreadInInbox,
+        socialUnreadInInbox,
+        promotionsUnreadInInbox,
+        updatesUnreadInInbox,
+        forumsUnreadInInbox,
+        spamUnread,
+      ] = await Promise.all([
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_PERSONAL'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_SOCIAL'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_PROMOTIONS'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_UPDATES'),
+        fetchUnreadThreadsInInboxForCategory('CATEGORY_FORUMS'),
+        fetchUnreadThreadsForLabel('SPAM'),
+      ]);
 
-    const counts = {
-      inbox: {
-        threadsTotal: inbox.threadsTotal,
-        threadsUnread: inbox.threadsUnread,
-        messagesUnread: inbox.messagesUnread,
-      },
-      // Category counts = unread threads *within Inbox* (matches Gmail tab/Mimestream semantics)
-      primary: { threadsTotal: 0, threadsUnread: primaryUnreadInInbox },
-      social: { threadsTotal: 0, threadsUnread: socialUnreadInInbox },
-      promotions: { threadsTotal: 0, threadsUnread: promotionsUnreadInInbox },
-      updates: { threadsTotal: 0, threadsUnread: updatesUnreadInInbox },
-      forums: { threadsTotal: 0, threadsUnread: forumsUnreadInInbox },
-      // Spam is its own mailbox (not an Inbox tab)
-      spam: { threadsTotal: spamLabel.threadsTotal, threadsUnread: spamUnread },
-      // Not currently used for pills, but keep for completeness
-      starred: { threadsTotal: starredLabel.threadsTotal, threadsUnread: starredLabel.threadsUnread },
-      sent: { threadsTotal: sentLabel.threadsTotal, threadsUnread: sentLabel.threadsUnread },
-    };
+      const counts = {
+        inbox: {
+          threadsTotal: inbox.threadsTotal,
+          threadsUnread: inbox.threadsUnread,
+          messagesUnread: inbox.messagesUnread,
+        },
+        // Category counts = unread threads *within Inbox* (matches Gmail tab/Mimestream semantics)
+        primary: { threadsTotal: 0, threadsUnread: primaryUnreadInInbox },
+        social: { threadsTotal: 0, threadsUnread: socialUnreadInInbox },
+        promotions: { threadsTotal: 0, threadsUnread: promotionsUnreadInInbox },
+        updates: { threadsTotal: 0, threadsUnread: updatesUnreadInInbox },
+        forums: { threadsTotal: 0, threadsUnread: forumsUnreadInInbox },
+        // Spam is its own mailbox (not an Inbox tab)
+        spam: { threadsTotal: spamLabel.threadsTotal, threadsUnread: spamUnread },
+        // Not currently used for pills, but keep for completeness
+        starred: { threadsTotal: starredLabel.threadsTotal, threadsUnread: starredLabel.threadsUnread },
+        sent: { threadsTotal: sentLabel.threadsTotal, threadsUnread: sentLabel.threadsUnread },
+      };
 
-    await userRef.set(
-      {
-        gmailMailboxCounts: counts,
-        gmailMailboxCountsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+      await userRef.set(
+        {
+          gmailMailboxCounts: counts,
+          gmailMailboxCountsUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
 
-    return { success: true, counts, cached: false };
+      return { success: true, counts, cached: false };
+    } catch (err: any) {
+      const msg = (err?.message || String(err)).toLowerCase();
+      const isTokenError =
+        msg.includes('invalid_grant') ||
+        msg.includes('token has been expired') ||
+        msg.includes('token expired') ||
+        msg.includes('invalid credentials') ||
+        msg.includes('access has expired');
+      if (isTokenError) {
+        logger.info('getGmailMailboxCounts: Gmail token expired or invalid, returning empty counts', { userId });
+        return { success: true, counts: emptyCounts, connected: false };
+      }
+      throw err;
+    }
   }
 );
 
