@@ -49,7 +49,16 @@ const PageHeader: React.FC<PageHeaderProps> = ({
             gap: { xs: 1.5, md: 2 },
           }}
         >
-          <Box sx={{ minWidth: 0 }}>
+          <Box
+            sx={{
+              minWidth: 0,
+              // Critical: allow custom title nodes (that implement their own
+              // "title left / actions right" layout) to actually span the row.
+              // Without flex-grow, width: '100%' inside the title node can end
+              // up constrained and the "right" cluster appears centered.
+              flex: { xs: 'none', md: '1 1 auto' },
+            }}
+          >
             {typeof title === 'string' ? (
               <Typography
                 variant="h6"
@@ -124,6 +133,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
               sx={{
                 display: 'flex',
                 alignItems: 'center',
+                justifyContent: 'flex-end',
                 gap: 1.5, // 12px between search and CTA
                 width: '100%',
               }}

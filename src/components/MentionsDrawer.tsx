@@ -28,6 +28,7 @@ import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import { useAuth } from '../contexts/AuthContext';
 import { DashboardFeedItem } from '../types/dashboardFeed';
 import { getChannelColor } from '../utils/slackChannelUtils';
+import { formatSlackMentionsForCurrentUser } from '../utils/slackMentions';
 
 interface MentionsDrawerProps {
   open: boolean;
@@ -47,6 +48,19 @@ const MentionsDrawer: React.FC<MentionsDrawerProps> = ({
   const { user } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  const currentUserMentionLabel = useMemo(() => {
+    const displayName = (user as any)?.displayName as string | undefined;
+    const email = (user as any)?.email as string | undefined;
+    const first = (displayName || '').trim().split(/\s+/)[0];
+    if (first) return first;
+    const emailPrefix = (email || '').split('@')[0];
+    return emailPrefix || 'you';
+  }, [user]);
+
+  const formatSnippet = useMemo(() => {
+    return (text: string) => formatSlackMentionsForCurrentUser(text, currentUserMentionLabel);
+  }, [currentUserMentionLabel]);
 
   // Group mentions by channel
   const mentionsByChannel = useMemo(() => {
@@ -260,7 +274,7 @@ const MentionsDrawer: React.FC<MentionsDrawerProps> = ({
                                     wordBreak: 'break-word',
                                   }}
                                 >
-                                  {mention.snippet}
+                                  {formatSnippet(mention.snippet)}
                                 </Typography>
                               }
                             />

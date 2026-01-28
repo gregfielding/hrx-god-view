@@ -45,6 +45,79 @@ import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 
+// Canonical US states mapping (2-letter codes).
+const US_STATE_BY_CODE: Record<string, string> = {
+  AL: 'Alabama',
+  AK: 'Alaska',
+  AZ: 'Arizona',
+  AR: 'Arkansas',
+  CA: 'California',
+  CO: 'Colorado',
+  CT: 'Connecticut',
+  DE: 'Delaware',
+  FL: 'Florida',
+  GA: 'Georgia',
+  HI: 'Hawaii',
+  ID: 'Idaho',
+  IL: 'Illinois',
+  IN: 'Indiana',
+  IA: 'Iowa',
+  KS: 'Kansas',
+  KY: 'Kentucky',
+  LA: 'Louisiana',
+  ME: 'Maine',
+  MD: 'Maryland',
+  MA: 'Massachusetts',
+  MI: 'Michigan',
+  MN: 'Minnesota',
+  MS: 'Mississippi',
+  MO: 'Missouri',
+  MT: 'Montana',
+  NE: 'Nebraska',
+  NV: 'Nevada',
+  NH: 'New Hampshire',
+  NJ: 'New Jersey',
+  NM: 'New Mexico',
+  NY: 'New York',
+  NC: 'North Carolina',
+  ND: 'North Dakota',
+  OH: 'Ohio',
+  OK: 'Oklahoma',
+  OR: 'Oregon',
+  PA: 'Pennsylvania',
+  RI: 'Rhode Island',
+  SC: 'South Carolina',
+  SD: 'South Dakota',
+  TN: 'Tennessee',
+  TX: 'Texas',
+  UT: 'Utah',
+  VT: 'Vermont',
+  VA: 'Virginia',
+  WA: 'Washington',
+  WV: 'West Virginia',
+  WI: 'Wisconsin',
+  WY: 'Wyoming',
+};
+
+const US_STATE_CODE_BY_NAME: Record<string, string> = Object.fromEntries(
+  Object.entries(US_STATE_BY_CODE).map(([code, name]) => [name.toLowerCase(), code]),
+);
+
+function normalizeUsStateCode(raw: string | null | undefined): string | null {
+  const v = (raw || '').toString().trim();
+  if (!v) return null;
+  const upper = v.toUpperCase();
+
+  // Two-letter code.
+  if (/^[A-Z]{2}$/.test(upper) && US_STATE_BY_CODE[upper]) return upper;
+
+  // Full state name (case-insensitive).
+  const byName = US_STATE_CODE_BY_NAME[v.toLowerCase()];
+  if (byName) return byName;
+
+  return null;
+}
+
 interface Contact {
   id: string;
   fullName: string;
@@ -103,7 +176,11 @@ const RecruiterContacts: React.FC = () => {
   const [companyFilter, setCompanyFilter] = useState<string>(cacheState.companyFilter || 'all');
   const [roleFilter, setRoleFilter] = useState<string>(cacheState.roleFilter || 'all');
   const [statusFilter, setStatusFilter] = useState<string>(cacheState.statusFilter || 'all');
-  const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
+  const [stateFilter, setStateFilter] = useState<string>(() => {
+    const raw = cacheState.stateFilter || 'all';
+    if (raw === 'all') return 'all';
+    return normalizeUsStateCode(raw) || 'all';
+  });
   const [sortField, setSortField] = useState<string>(cacheState.sortField || 'fullName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'asc');
   const [page, setPage] = useState(0);
@@ -594,10 +671,13 @@ const RecruiterContacts: React.FC = () => {
     
     // Apply state filter (requires loading company data)
     if (stateFilter !== 'all') {
+      const selectedCode = normalizeUsStateCode(stateFilter);
       filtered = filtered.filter(contact => {
         const company = companies.find(c => c.id === contact.companyId);
-        const state = company?.state || company?.address?.state || '';
-        return state === stateFilter;
+        const rawState = company?.state || company?.address?.state || '';
+        const companyCode = normalizeUsStateCode(rawState);
+        // Match both "NV" and "Nevada" (and ignore invalid state values like city names)
+        return !!selectedCode && companyCode === selectedCode;
       });
     }
     
@@ -776,9 +856,8 @@ const RecruiterContacts: React.FC = () => {
     const states = new Set<string>();
     companies.forEach(company => {
       const state = company.state || company.address?.state;
-      if (state) {
-        states.add(state);
-      }
+      const code = normalizeUsStateCode(state);
+      if (code) states.add(code);
     });
     return Array.from(states).sort();
   }, [companies]);

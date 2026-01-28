@@ -25,6 +25,8 @@ import { useNavigate } from 'react-router-dom';
 import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 const Dashboard: React.FC = () => {
   const { user, activeTenant, securityLevel, currentClaimsSecurityLevel } = useAuth();
@@ -137,8 +139,18 @@ const Dashboard: React.FC = () => {
   };
 
   // Handle mention click - open the specific Slack channel
-  const handleMentionClick = (mention: DashboardFeedItem) => {
+  const handleMentionClick = async (mention: DashboardFeedItem) => {
     if (mention.mentionMetadata?.origin === 'slack' && mention.drawerScope.channelId) {
+      if (mention?.id && mention.isUnread) {
+        try {
+          await updateDoc(doc(db, 'dashboardFeed', mention.id), {
+            isUnread: false,
+            readAt: serverTimestamp(),
+          } as any);
+        } catch (err) {
+          console.warn('[Dashboard] Failed to mark mention as read:', err);
+        }
+      }
       handleOpenSlackChannelDrawer({ channelId: mention.drawerScope.channelId });
       setMentionsDrawerOpen(false);
     }

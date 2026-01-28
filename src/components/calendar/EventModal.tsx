@@ -28,7 +28,7 @@ import {
   Stack,
 } from '@mui/material';
 import VideocamIcon from '@mui/icons-material/Videocam';
-import { format, parseISO } from 'date-fns';
+import { addDays, format, parseISO, subDays } from 'date-fns';
 import { CalendarEvent, CalendarEventInput, CalendarSummary } from '../../types/calendar';
 import { useCalendarList } from '../../hooks/useCalendarList';
 import { useCalendarEventMutations } from '../../hooks/useCalendarEventMutations';
@@ -66,7 +66,8 @@ const EventModal: React.FC<EventModalProps> = ({
   const [title, setTitle] = useState('');
   const [selectedCalendarId, setSelectedCalendarId] = useState<string>('');
   const [allDay, setAllDay] = useState(false);
-  const [date, setDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  const [endDate, setEndDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('10:00');
   const [location, setLocation] = useState('');
@@ -100,15 +101,23 @@ const EventModal: React.FC<EventModalProps> = ({
 
       if (initialEvent.start.date) {
         // All-day event
-        setDate(initialEvent.start.date);
+        setStartDate(initialEvent.start.date);
+        // Google Calendar all-day events use an exclusive end date. Convert to inclusive for the UI.
+        if (initialEvent.end?.date) {
+          const inclusive = format(subDays(parseISO(initialEvent.end.date), 1), 'yyyy-MM-dd');
+          setEndDate(inclusive);
+        } else {
+          setEndDate(initialEvent.start.date);
+        }
         setStartTime('09:00');
         setEndTime('10:00');
       } else if (initialEvent.start.dateTime) {
         // Timed event
         const start = parseISO(initialEvent.start.dateTime);
-        setDate(format(start, 'yyyy-MM-dd'));
+        setStartDate(format(start, 'yyyy-MM-dd'));
         setStartTime(format(start, 'HH:mm'));
         const end = initialEvent.end.dateTime ? parseISO(initialEvent.end.dateTime) : start;
+        setEndDate(format(end, 'yyyy-MM-dd'));
         setEndTime(format(end, 'HH:mm'));
       }
 
@@ -127,14 +136,16 @@ const EventModal: React.FC<EventModalProps> = ({
       setValidationError(null);
 
       if (defaultStart) {
-        setDate(format(defaultStart, 'yyyy-MM-dd'));
+        setStartDate(format(defaultStart, 'yyyy-MM-dd'));
         setStartTime(format(defaultStart, 'HH:mm'));
         const end = new Date(defaultStart);
         end.setHours(end.getHours() + 1);
+        setEndDate(format(end, 'yyyy-MM-dd'));
         setEndTime(format(end, 'HH:mm'));
       } else {
         const now = new Date();
-        setDate(format(now, 'yyyy-MM-dd'));
+        setStartDate(format(now, 'yyyy-MM-dd'));
+        setEndDate(format(now, 'yyyy-MM-dd'));
         setStartTime('09:00');
         setEndTime('10:00');
       }
@@ -193,10 +204,6 @@ const EventModal: React.FC<EventModalProps> = ({
         setValidationError('Start and end time are required (or choose All-day)');
         return;
       }
-      if (endTime <= startTime) {
-        setValidationError('End time must be after start time');
-        return;
-      }
     }
 
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -206,16 +213,35 @@ const EventModal: React.FC<EventModalProps> = ({
     let end: { dateTime?: string; date?: string; timeZone?: string };
 
     if (allDay) {
-      const startDate = date;
-      const endDateObj = new Date(`${date}T00:00:00`);
-      endDateObj.setDate(endDateObj.getDate() + 1);
-      const endDate = format(endDateObj, 'yyyy-MM-dd');
+      if (!startDate || !endDate) {
+        setValidationError('Start date and end date are required');
+        return;
+      }
+      if (endDate < startDate) {
+        setValidationError('End date must be on or after start date');
+        return;
+      }
 
+      // Google Calendar expects all-day end.date to be exclusive (day AFTER the final day)
+      const endExclusive = format(addDays(parseISO(endDate), 1), 'yyyy-MM-dd');
       start = { date: startDate, timeZone };
-      end = { date: endDate, timeZone };
+      end = { date: endExclusive, timeZone };
     } else {
-      const startDateTime = new Date(`${date}T${startTime}`);
-      const endDateTime = new Date(`${date}T${endTime}`);
+      if (!startDate || !endDate) {
+        setValidationError('Start date and end date are required');
+        return;
+      }
+      const startDateTime = new Date(`${startDate}T${startTime}`);
+      const endDateTime = new Date(`${endDate}T${endTime}`);
+
+      if (Number.isNaN(startDateTime.getTime()) || Number.isNaN(endDateTime.getTime())) {
+        setValidationError('Please enter valid start and end date/time');
+        return;
+      }
+      if (endDateTime.getTime() <= startDateTime.getTime()) {
+        setValidationError('End must be after start');
+        return;
+      }
 
       start = { dateTime: startDateTime.toISOString(), timeZone };
       end = { dateTime: endDateTime.toISOString(), timeZone };
@@ -398,13 +424,28 @@ const EventModal: React.FC<EventModalProps> = ({
               </Select>
             </FormControl>
 
-            {/* Date & All-day toggle */}
+            {/* Dates & All-day toggle */}
             <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
               <TextField
-                label="Date"
+                label="Start date"
                 type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+                value={startDate}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setStartDate(v);
+                  // Keep end date >= start date by default
+                  if (endDate < v) setEndDate(v);
+                }}
+                InputLabelProps={{ shrink: true }}
+                sx={{ flex: 1, minWidth: 180 }}
+                disabled={isLoading}
+                required
+              />
+              <TextField
+                label="End date"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
                 InputLabelProps={{ shrink: true }}
                 sx={{ flex: 1, minWidth: 180 }}
                 disabled={isLoading}

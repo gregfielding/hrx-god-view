@@ -29,9 +29,11 @@ import PageHeader from '../components/PageHeader';
 import { SlackChannelView } from '../types/slackChannels';
 import { DashboardFeedItem } from '../types/dashboardFeed';
 import { httpsCallable } from 'firebase/functions';
-import { functions } from '../firebase';
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { db, functions } from '../firebase';
 import { useSlackChannelLastActivityFallback } from '../hooks/useSlackChannelLastActivityFallback';
 import { getChannelColor } from '../utils/slackChannelUtils';
+import { formatSlackMentionsForCurrentUser } from '../utils/slackMentions';
 
 const SlackPage: React.FC = () => {
   const { user, activeTenant, currentClaimsSecurityLevel, securityLevel } = useAuth();
@@ -46,6 +48,10 @@ const SlackPage: React.FC = () => {
   // Get mentions for the Mentions tab
   const { feedItems } = useDashboardFeed({ limit: 500 });
   const mentions = feedItems.filter((item) => item.sourceType === 'mention');
+  const unreadMentionsCount = useMemo(
+    () => mentions.reduce((acc, m) => acc + (m.isUnread ? 1 : 0), 0),
+    [mentions],
+  );
   
   // Mentions drawer state
   const [mentionsDrawerOpen, setMentionsDrawerOpen] = useState(false);
@@ -181,9 +187,32 @@ const SlackPage: React.FC = () => {
     setSearchParams(params);
   };
 
+  const currentUserMentionLabel = useMemo(() => {
+    const displayName = (user as any)?.displayName as string | undefined;
+    const email = (user as any)?.email as string | undefined;
+    const first = (displayName || '').trim().split(/\s+/)[0];
+    if (first) return first;
+    const emailPrefix = (email || '').split('@')[0];
+    return emailPrefix || 'you';
+  }, [user]);
+
+  const markMentionAsRead = async (mention: DashboardFeedItem) => {
+    if (!mention?.id || !mention.isUnread) return;
+    try {
+      await updateDoc(doc(db, 'dashboardFeed', mention.id), {
+        isUnread: false,
+        readAt: serverTimestamp(),
+      } as any);
+    } catch (err) {
+      // Non-blocking: still allow opening the thread/channel.
+      console.warn('[SlackPage] Failed to mark mention as read:', err);
+    }
+  };
+
   // Handle mention click - open the specific Slack channel
-  const handleMentionClick = (mention: DashboardFeedItem) => {
+  const handleMentionClick = async (mention: DashboardFeedItem) => {
     if (mention.mentionMetadata?.origin === 'slack' && mention.drawerScope.channelId) {
+      await markMentionAsRead(mention);
       const channel = channels.find((c) => c.id === mention.drawerScope.channelId);
       if (channel) {
         handleRowClick(channel);
@@ -332,7 +361,7 @@ const SlackPage: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <AlternateEmailIcon sx={{ fontSize: '1.2rem' }} />
                 Mentions
-                {mentions.length > 0 && (
+                {unreadMentionsCount > 0 && (
                   <Box
                     sx={{
                       minWidth: 20,
@@ -348,7 +377,7 @@ const SlackPage: React.FC = () => {
                       px: 0.75,
                     }}
                   >
-                    {mentions.length > 99 ? '99+' : mentions.length}
+                    {unreadMentionsCount > 99 ? '99+' : unreadMentionsCount}
                   </Box>
                 )}
               </Box>
@@ -385,7 +414,7 @@ const SlackPage: React.FC = () => {
               <Box>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
                   <Typography variant="h6" gutterBottom sx={{ mb: 0 }}>
-                    All Mentions ({mentions.length})
+                    All Mentions{unreadMentionsCount > 0 ? ` (${unreadMentionsCount})` : ''}
                   </Typography>
                   <Button
                     variant="outlined"
@@ -435,6 +464,10 @@ const SlackPage: React.FC = () => {
                     const [channelId, channelName] = channelKey.split(':');
                     const sortedMentions = [...channelMentions].sort((a, b) => b.timestamp - a.timestamp);
                     const channelColor = getChannelColor(channelName);
+                    const channelUnreadCount = sortedMentions.reduce(
+                      (acc, m) => acc + (m.isUnread ? 1 : 0),
+                      0,
+                    );
 
                     return (
                       <Box key={channelKey} sx={{ mb: 3 }}>
@@ -454,24 +487,26 @@ const SlackPage: React.FC = () => {
                           <Typography variant="subtitle2" fontWeight={600}>
                             {channelName}
                           </Typography>
-                          <Box
-                            sx={{
-                              minWidth: 24,
-                              height: 24,
-                              borderRadius: '12px',
-                              bgcolor: 'primary.main',
-                              color: 'white',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '0.75rem',
-                              fontWeight: 600,
-                              px: 1,
-                              ml: 'auto',
-                            }}
-                          >
-                            {sortedMentions.length}
-                          </Box>
+                          {channelUnreadCount > 0 && (
+                            <Box
+                              sx={{
+                                minWidth: 24,
+                                height: 24,
+                                borderRadius: '12px',
+                                bgcolor: 'primary.main',
+                                color: 'white',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: '0.75rem',
+                                fontWeight: 600,
+                                px: 1,
+                                ml: 'auto',
+                              }}
+                            >
+                              {channelUnreadCount}
+                            </Box>
+                          )}
                         </Box>
                         {sortedMentions.map((mention) => (
                           <Box
@@ -510,7 +545,7 @@ const SlackPage: React.FC = () => {
                               )}
                             </Box>
                             <Typography variant="body2" color="text.secondary">
-                              {mention.snippet}
+                              {formatSlackMentionsForCurrentUser(mention.snippet, currentUserMentionLabel)}
                             </Typography>
                           </Box>
                         ))}

@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -25,7 +25,6 @@ import {
   useTheme,
   Paper,
   Divider,
-  Tooltip,
   CircularProgress,
 } from '@mui/material';
 import {
@@ -34,14 +33,14 @@ import {
   Today as TodayIcon,
   Add as AddIcon,
   Menu as MenuIcon,
-  Event as EventIcon,
 } from '@mui/icons-material';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, endOfDay, addDays, subDays, addWeeks, subWeeks, addMonths, subMonths, isSameDay, isSameMonth, isToday, eachDayOfInterval, parseISO, isValid as isValidDate } from 'date-fns';
+import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, endOfDay, addDays, subDays, addWeeks, subWeeks, addMonths, subMonths, isSameDay, isSameMonth, isToday, eachDayOfInterval, parseISO, isValid as isValidDate, differenceInCalendarDays } from 'date-fns';
 import { useAuth } from '../contexts/AuthContext';
 import { useCalendarList } from '../hooks/useCalendarList';
 import { useCalendarEvents } from '../hooks/useCalendarEvents';
+import { useGigJobOrdersCalendar, getGigJobOrdersCalendarSummary, getColorForJobOrderId } from '../hooks/useGigJobOrdersCalendar';
 import EventModal from '../components/calendar/EventModal';
-import type { CalendarEvent, CalendarView } from '../types/calendar';
+import type { CalendarEvent, CalendarView, CalendarSummary } from '../types/calendar';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
@@ -81,6 +80,7 @@ const CalendarPage: React.FC = () => {
   const isMobile = useMediaQuery(theme.breakpoints.down('lg')); // < 1024px
   const isDesktop = useMediaQuery(theme.breakpoints.up('lg'));
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   // View state
   const [view, setView] = useState<CalendarView>('month');
@@ -90,16 +90,31 @@ const CalendarPage: React.FC = () => {
   // Deep-link handling: highlighted event ID and refs for scrolling
   const [highlightedEventId, setHighlightedEventId] = useState<string | null>(null);
   const eventRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const debugLoggedEventIds = useRef<Set<string>>(new Set());
 
   // Calendar list and selection
-  const { calendars, loading: calendarsLoading } = useCalendarList({ userId, enabled: !!userId });
+  const { calendars: googleCalendars, loading: calendarsLoading } = useCalendarList({ userId, enabled: !!userId });
   const [selectedCalendarIds, setSelectedCalendarIds] = useState<Set<string>>(new Set());
   const [calendarPrefsLoaded, setCalendarPrefsLoaded] = useState(false);
+  const [primarySelectionExplicit, setPrimarySelectionExplicit] = useState(false);
+  const userModifiedSelectionRef = useRef(false);
+  const saveCalendarPrefsTimerRef = useRef<number | null>(null);
+
+  // Add Gig Job Orders calendar to the list
+  const calendars = useMemo(() => {
+    const gigCalendar = getGigJobOrdersCalendarSummary();
+    return [...(googleCalendars || []), gigCalendar as CalendarSummary];
+  }, [googleCalendars]);
 
   const primaryCalendarId = useMemo(() => {
     if (!calendars || calendars.length === 0) return '';
     return calendars.find((c) => c.isPrimary)?.id || calendars[0]?.id || '';
   }, [calendars]);
+
+  const primaryCalendar = useMemo(() => {
+    if (!primaryCalendarId) return null;
+    return (calendars || []).find((c) => c.id === primaryCalendarId) || null;
+  }, [calendars, primaryCalendarId]);
 
   const isOwnCalendar = useCallback(
     (calendar: any) => {
@@ -125,14 +140,40 @@ const CalendarPage: React.FC = () => {
   // Calculate date range for current view
   const dateRange = useMemo(() => getCalendarRange(view, currentDate), [view, currentDate]);
 
+  // Check if Gig Job Orders calendar is selected
+  const isGigJobOrdersSelected = selectedCalendarIds.has('gig-job-orders');
+  
+  // Check if Gig Job Orders feature is disabled due to Firestore errors
+  const gigJobOrdersDisabled = React.useMemo(() => {
+    if (!tenantId) return false;
+    return !!sessionStorage.getItem(`firestore_error_${tenantId}`);
+  }, [tenantId]);
+
   // Fetch events for selected calendars and date range
-  const { events, loading: eventsLoading, refetch: refetchEvents } = useCalendarEvents({
+  const selectedGoogleCalendarIds = useMemo(() => {
+    return Array.from(selectedCalendarIds).filter((id) => id && id !== 'gig-job-orders');
+  }, [selectedCalendarIds]);
+
+  const { events: googleEvents, loading: eventsLoading, refetch: refetchEvents } = useCalendarEvents({
     userId,
-    calendarIds: Array.from(selectedCalendarIds),
+    calendarIds: selectedGoogleCalendarIds,
     timeMin: dateRange.start,
     timeMax: dateRange.end,
-    enabled: selectedCalendarIds.size > 0 && !!userId,
+    enabled: selectedGoogleCalendarIds.length > 0 && !!userId,
   });
+
+  // Fetch Gig job orders as calendar events (only if not disabled)
+  const { events: gigJobOrderEvents, loading: gigJobOrdersLoading } = useGigJobOrdersCalendar({
+    tenantId,
+    timeMin: dateRange.start,
+    timeMax: dateRange.end,
+    enabled: isGigJobOrdersSelected && !!tenantId && !gigJobOrdersDisabled,
+  });
+
+  // Merge all events
+  const events = useMemo(() => {
+    return [...googleEvents, ...gigJobOrderEvents];
+  }, [googleEvents, gigJobOrderEvents]);
 
   // Load persisted calendar subscriptions from the user doc
   useEffect(() => {
@@ -143,9 +184,18 @@ const CalendarPage: React.FC = () => {
         const snap = await getDoc(doc(db, 'users', userId));
         const data = snap.data() as any;
         const saved = (data?.calendarSettings?.subscribedCalendarIds || []) as string[];
+        const explicit = !!data?.calendarSettings?.primarySelectionExplicit;
         if (!cancelled) {
-          // We defer applying until calendars have loaded so we can normalize IDs safely.
-          setSelectedCalendarIds(new Set(saved.filter(Boolean)));
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('[Calendar prefs] loaded', { saved, explicit });
+          }
+          // If the user has already changed selection this session, don't overwrite it
+          // with a late-arriving Firestore read.
+          if (!userModifiedSelectionRef.current) {
+            // We defer applying until calendars have loaded so we can normalize IDs safely.
+            setSelectedCalendarIds(new Set(saved.filter(Boolean)));
+            setPrimarySelectionExplicit(explicit);
+          }
           setCalendarPrefsLoaded(true);
         }
       } catch (e) {
@@ -161,9 +211,48 @@ const CalendarPage: React.FC = () => {
     };
   }, [userId]);
 
+  const persistCalendarPrefs = useCallback(
+    (nextSelected: Set<string>) => {
+      if (!userId) return;
+      // Debounce rapid toggles
+      if (saveCalendarPrefsTimerRef.current) {
+        window.clearTimeout(saveCalendarPrefsTimerRef.current);
+      }
+      saveCalendarPrefsTimerRef.current = window.setTimeout(() => {
+        const toSave = Array.from(nextSelected).filter(Boolean).sort();
+        void (async () => {
+          try {
+            await setDoc(
+              doc(db, 'users', userId),
+              { calendarSettings: { subscribedCalendarIds: toSave, primarySelectionExplicit: true } },
+              { merge: true }
+            );
+            if (process.env.NODE_ENV !== 'production') {
+              console.log('[Calendar prefs] saved', { toSave });
+            }
+          } catch (e: any) {
+            if (
+              e?.message?.includes('INTERNAL ASSERTION') ||
+              e?.message?.includes('Unexpected state') ||
+              e?.message?.includes('FIRESTORE')
+            ) {
+              console.warn('CalendarPage: Firestore internal error when persisting subscriptions, skipping');
+              return;
+            }
+            console.warn('CalendarPage: failed to persist calendar subscriptions', e);
+          }
+        })();
+      }, 250);
+    },
+    [userId]
+  );
+
   // Normalize selection once calendars are loaded, always include primary, and avoid duplicate "own" calendar IDs
   useEffect(() => {
     if (!calendarPrefsLoaded) return;
+    // Wait until calendars have actually loaded; otherwise we'd "clean" out valid IDs
+    // that simply aren't in the list yet (and end up saving only gig-job-orders).
+    if (calendarsLoading) return;
     if (!calendars || calendars.length === 0) return;
     if (!primaryCalendarId) return;
 
@@ -182,33 +271,230 @@ const CalendarPage: React.FC = () => {
       const validIds = new Set((calendars || []).map((c) => c.id));
       const cleaned = normalized.filter((id) => id && validIds.has(id));
 
-      // Always include primary exactly once
-      const next = new Set<string>([primaryCalendarId, ...cleaned]);
+      // Back-compat: historically primary was always implied and not stored.
+      // If the user has not explicitly configured primary selection, keep it enabled.
+      const next = new Set<string>(cleaned);
+      if (!primarySelectionExplicit) {
+        next.add(primaryCalendarId);
+      }
+
+      // If nothing selected at all, default to primary to avoid an empty calendar.
+      if (next.size === 0) {
+        next.add(primaryCalendarId);
+      }
       return next;
     });
-  }, [calendarPrefsLoaded, calendars, primaryCalendarId, userEmail]);
+  }, [calendarPrefsLoaded, calendarsLoading, calendars, primaryCalendarId, userEmail, primarySelectionExplicit]);
 
-  // Persist subscriptions (excluding primary, since it's always implied)
+  // Persist subscriptions (including primary so it can be toggled off)
   useEffect(() => {
-    if (!calendarPrefsLoaded) return;
     if (!userId) return;
-    if (!primaryCalendarId) return;
+    // Avoid wiping prefs on initial mount before we load them.
+    // But if the user toggles any checkbox, persist immediately.
+    if (!calendarPrefsLoaded && !userModifiedSelectionRef.current) return;
+    // Also avoid auto-saving right after load/normalize unless the user actually changed something.
+    if (!userModifiedSelectionRef.current) return;
+    persistCalendarPrefs(selectedCalendarIds);
+  }, [calendarPrefsLoaded, userId, selectedCalendarIds]);
 
-    const toSave = Array.from(selectedCalendarIds)
-      .filter((id) => id && id !== primaryCalendarId);
+  // Helper to calculate relative luminance (for contrast checking)
+  const getLuminance = useCallback((hex: string): number => {
+    // Remove # if present
+    const rgb = hex.replace('#', '');
+    const r = parseInt(rgb.substring(0, 2), 16) / 255;
+    const g = parseInt(rgb.substring(2, 4), 16) / 255;
+    const b = parseInt(rgb.substring(4, 6), 16) / 255;
+    
+    // Apply gamma correction
+    const [rLin, gLin, bLin] = [r, g, b].map(val => 
+      val <= 0.03928 ? val / 12.92 : Math.pow((val + 0.055) / 1.055, 2.4)
+    );
+    
+    // Calculate relative luminance
+    return 0.2126 * rLin + 0.7152 * gLin + 0.0722 * bLin;
+  }, []);
 
-    // Fire-and-forget; this is preference data
-    void setDoc(
-      doc(db, 'users', userId),
-      { calendarSettings: { subscribedCalendarIds: toSave } },
-      { merge: true }
-    ).catch((e) => {
-      console.warn('CalendarPage: failed to persist calendar subscriptions', e);
-    });
-  }, [calendarPrefsLoaded, userId, primaryCalendarId, selectedCalendarIds]);
+  // Helper to darken a color to ensure minimum contrast with white text
+  const ensureMinimumDarkness = useCallback((hex: string, minLuminance = 0.3): string => {
+    const luminance = getLuminance(hex);
+    
+    // If color is already dark enough, return as-is
+    if (luminance <= minLuminance) {
+      return hex;
+    }
+    
+    // Darken the color by reducing RGB values proportionally
+    const rgb = hex.replace('#', '');
+    let r = parseInt(rgb.substring(0, 2), 16);
+    let g = parseInt(rgb.substring(2, 4), 16);
+    let b = parseInt(rgb.substring(4, 6), 16);
+    
+    // Calculate how much to darken (target luminance ratio)
+    const darkenFactor = minLuminance / luminance;
+    
+    // Apply darkening
+    r = Math.max(0, Math.floor(r * darkenFactor));
+    g = Math.max(0, Math.floor(g * darkenFactor));
+    b = Math.max(0, Math.floor(b * darkenFactor));
+    
+    // Convert back to hex
+    return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
+  }, [getLuminance]);
+
+  // Helper to convert event dateTime to local timezone Date
+  // This matches the exact logic used in EventModal for consistency
+  const getEventLocalDate = useCallback((event: CalendarEvent, useStart = true): Date | null => {
+    const dateTimeStr = useStart
+      ? (event.start.dateTime || event.start.date)
+      : (event.end.dateTime || event.end.date);
+    if (!dateTimeStr) return null;
+    
+    // For all-day events (date only, no time) - match EventModal logic
+    if (dateTimeStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
+      return new Date(dateTimeStr + 'T00:00:00');
+    }
+    
+    // Parse exactly the same way as the modal does:
+    // `parseISO()` returns a Date for the instant; `getHours()` etc. reflect the viewer's local timezone.
+    let parsed = parseISO(dateTimeStr);
+    
+    // If parseISO failed or the date is invalid, try alternative parsing
+    if (!isValidDate(parsed)) {
+      // Try standard Date constructor as fallback
+      parsed = new Date(dateTimeStr);
+    }
+    
+    // Ensure we have a valid date
+    if (!isValidDate(parsed)) {
+      console.warn('Failed to parse event dateTime:', dateTimeStr, event);
+      return null;
+    }
+    
+    return parsed;
+  }, []);
+
+  type EventLayout = {
+    col: number;
+    colCount: number;
+  };
+
+  const getTimedEventRangeMinutes = useCallback(
+    (event: CalendarEvent): { start: number; end: number } | null => {
+      const startDate = getEventLocalDate(event, true);
+      if (!startDate) return null;
+      const endDate = getEventLocalDate(event, false) || startDate;
+
+      const start = startDate.getHours() * 60 + startDate.getMinutes();
+      let end = endDate.getHours() * 60 + endDate.getMinutes();
+
+      // Guard against weird/zero/negative durations (and same-minute events)
+      if (!Number.isFinite(end) || end <= start) end = start + 30;
+
+      // Clamp into the day
+      return {
+        start: Math.max(0, Math.min(24 * 60, start)),
+        end: Math.max(0, Math.min(24 * 60, end)),
+      };
+    },
+    [getEventLocalDate]
+  );
+
+  const layoutOverlappingTimedEvents = useCallback(
+    (timedEventsForDay: CalendarEvent[]): Map<string, EventLayout> => {
+      const items = timedEventsForDay
+        .map((event) => {
+          const range = getTimedEventRangeMinutes(event);
+          if (!range) return null;
+          return { event, ...range };
+        })
+        .filter(
+          (x): x is { event: CalendarEvent; start: number; end: number } => x !== null
+        )
+        .sort((a, b) => (a.start - b.start) || (b.end - a.end));
+
+      // Partition into overlap clusters (transitive overlaps)
+      const clusters: Array<Array<{ event: CalendarEvent; start: number; end: number }>> = [];
+      let current: Array<{ event: CalendarEvent; start: number; end: number }> = [];
+      let currentMaxEnd = -Infinity;
+
+      for (const item of items) {
+        if (current.length === 0) {
+          current = [item];
+          currentMaxEnd = item.end;
+          continue;
+        }
+
+        if (item.start < currentMaxEnd) {
+          current.push(item);
+          currentMaxEnd = Math.max(currentMaxEnd, item.end);
+        } else {
+          clusters.push(current);
+          current = [item];
+          currentMaxEnd = item.end;
+        }
+      }
+      if (current.length > 0) clusters.push(current);
+
+      const result = new Map<string, EventLayout>();
+
+      for (const cluster of clusters) {
+        // Greedy column assignment
+        type Active = { end: number; col: number };
+        const active: Active[] = [];
+        const assignedCols: Array<{ id: string; col: number }> = [];
+        let maxCol = -1;
+
+        for (const item of cluster) {
+          // Remove ended
+          for (let i = active.length - 1; i >= 0; i--) {
+            if (active[i].end <= item.start) active.splice(i, 1);
+          }
+
+          const used = new Set(active.map((a) => a.col));
+          let col = 0;
+          while (used.has(col)) col++;
+
+          active.push({ end: item.end, col });
+          assignedCols.push({ id: item.event.id, col });
+          maxCol = Math.max(maxCol, col);
+        }
+
+        const colCount = Math.max(1, maxCol + 1);
+        for (const a of assignedCols) {
+          result.set(a.id, { col: a.col, colCount });
+        }
+      }
+
+      return result;
+    },
+    [getTimedEventRangeMinutes]
+  );
+
+  // Helper to get event color from calendar
+  const getEventColor = useCallback((event: CalendarEvent) => {
+    let backgroundColor: string;
+    
+    // For Gig job order shifts, use the color based on jobOrderId (stored in colorId)
+    if (event.calendarId === 'gig-job-orders' && event.colorId) {
+      backgroundColor = getColorForJobOrderId(event.colorId);
+    } else {
+      // For regular calendar events, use the calendar's color
+      const eventCalendar = calendars.find((c) => c.id === event.calendarId);
+      backgroundColor = eventCalendar?.backgroundColor || '#1976d2';
+    }
+    
+    // Ensure minimum darkness for readability with white text
+    backgroundColor = ensureMinimumDarkness(backgroundColor, 0.3);
+    
+    return {
+      backgroundColor,
+      foregroundColor: '#ffffff',
+    };
+  }, [calendars, ensureMinimumDarkness, getColorForJobOrderId]);
 
   // Toggle calendar visibility
   const toggleCalendar = useCallback((calendarId: string) => {
+    userModifiedSelectionRef.current = true;
     setSelectedCalendarIds((prev) => {
       const next = new Set(prev);
       if (next.has(calendarId)) {
@@ -216,9 +502,10 @@ const CalendarPage: React.FC = () => {
       } else {
         next.add(calendarId);
       }
+      persistCalendarPrefs(next);
       return next;
     });
-  }, []);
+  }, [persistCalendarPrefs]);
 
   // Navigation
   const goToToday = () => {
@@ -255,6 +542,54 @@ const CalendarPage: React.FC = () => {
   };
 
   const openEditModal = (event: CalendarEvent) => {
+    // DEV-only diagnostics for timezone mismatches (prints once per event id)
+    if (process.env.NODE_ENV !== 'production' && !debugLoggedEventIds.current.has(event.id)) {
+      debugLoggedEventIds.current.add(event.id);
+      try {
+        const startStr = event.start?.dateTime || event.start?.date;
+        const endStr = event.end?.dateTime || event.end?.date;
+        const startParsed = startStr ? parseISO(startStr) : null;
+        const endParsed = endStr ? parseISO(endStr) : null;
+        console.log('[Calendar debug] openEditModal event', {
+          id: event.id,
+          summary: event.summary,
+          calendarId: event.calendarId,
+          start: event.start,
+          end: event.end,
+          startStr,
+          endStr,
+          startParsed: startParsed ? startParsed.toString() : null,
+          endParsed: endParsed ? endParsed.toString() : null,
+          startHHmm: startParsed && isValidDate(startParsed) ? format(startParsed, 'HH:mm') : null,
+          endHHmm: endParsed && isValidDate(endParsed) ? format(endParsed, 'HH:mm') : null,
+        });
+      } catch (e) {
+        console.log('[Calendar debug] openEditModal event (failed to log)', e);
+      }
+    }
+
+    // If it's a Gig job order shift event, navigate to the job order instead
+    if (event.calendarId === 'gig-job-orders') {
+      if (event.id.startsWith('gig-shift-')) {
+        // Extract jobOrderId from event ID: gig-shift-{jobOrderId}-{shiftId}
+        const parts = event.id.replace('gig-shift-', '').split('-');
+        if (parts.length >= 1) {
+          // The jobOrderId is everything except the last part (shiftId)
+          // But actually, jobOrderId might contain dashes, so we need a better approach
+          // Use colorId which we stored with the jobOrderId
+          if (event.colorId) {
+            navigate(`/recruiter/job-orders/${event.colorId}`);
+            return;
+          }
+        }
+      } else if (event.id.startsWith('gig-job-order-')) {
+        // Legacy: old job order events
+        const jobOrderId = event.id.replace('gig-job-order-', '');
+        navigate(`/recruiter/job-orders/${jobOrderId}`);
+        return;
+      }
+    }
+    
     setSelectedEvent(event);
     setEventModalMode('edit');
     setEventModalOpen(true);
@@ -265,19 +600,21 @@ const CalendarPage: React.FC = () => {
     refetchEvents();
   };
 
+  // Combined loading state
+  const combinedLoading = eventsLoading || gigJobOrdersLoading;
+
   // Get upcoming events for sidebar (next 5-10 events)
   const upcomingEvents = useMemo(() => {
     const now = new Date();
     return events
       .filter((event) => {
-        const startStr = event.start.dateTime || event.start.date;
-        if (!startStr) return false;
-        const startDate = parseISO(startStr);
+        const startDate = getEventLocalDate(event, true);
+        if (!startDate) return false;
         return startDate >= now;
       })
       .sort((a, b) => {
-        const aStart = parseISO(a.start.dateTime || a.start.date || '');
-        const bStart = parseISO(b.start.dateTime || b.start.date || '');
+        const aStart = getEventLocalDate(a, true) || new Date(0);
+        const bStart = getEventLocalDate(b, true) || new Date(0);
         return aStart.getTime() - bStart.getTime();
       })
       .slice(0, 10);
@@ -335,13 +672,12 @@ const CalendarPage: React.FC = () => {
   const getEventsForDay = useCallback(
     (day: Date): CalendarEvent[] => {
       return events.filter((event) => {
-        const startStr = event.start.dateTime || event.start.date;
-        if (!startStr) return false;
-        const startDate = parseISO(startStr);
+        const startDate = getEventLocalDate(event, true);
+        if (!startDate) return false;
         return isSameDay(startDate, day);
       });
     },
-    [events]
+    [events, getEventLocalDate]
   );
 
   // Render month view (simplest, start with this)
@@ -352,12 +688,35 @@ const CalendarPage: React.FC = () => {
     const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
     const calendarDays = eachDayOfInterval({ start: calendarStart, end: calendarEnd });
 
+    // Multi-day event logic (render as spanning bars like Google Calendar)
+    const getEventSpanDays = (event: CalendarEvent): { startDay: Date; endDay: Date } | null => {
+      const start = getEventLocalDate(event, true);
+      if (!start) return null;
+      const end = getEventLocalDate(event, false) || start;
+
+      // Treat end as exclusive for day-span calculations (Google style),
+      // so an all-day event with end at next midnight is still 1 day.
+      const endInclusive = end.getTime() > start.getTime() ? new Date(end.getTime() - 1) : start;
+      return { startDay: startOfDay(start), endDay: startOfDay(endInclusive) };
+    };
+
+    const isMultiDayEvent = (event: CalendarEvent): boolean => {
+      const span = getEventSpanDays(event);
+      if (!span) return false;
+      return !isSameDay(span.startDay, span.endDay);
+    };
+
+    const multiDayEvents = events.filter(isMultiDayEvent);
+    const multiDayEventIds = new Set(multiDayEvents.map((e) => e.id));
+
+    const weeks: Date[][] = [];
+    for (let i = 0; i < calendarDays.length; i += 7) {
+      weeks.push(calendarDays.slice(i, i + 7));
+    }
+
     return (
       <Box
         sx={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(7, 1fr)',
-          gap: 0,
           border: '1px solid',
           borderColor: 'divider',
           borderRadius: 1,
@@ -365,98 +724,222 @@ const CalendarPage: React.FC = () => {
         }}
       >
         {/* Day headers */}
-        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-          <Box
-            key={day}
-            sx={{
-              p: 1.5,
-              textAlign: 'center',
-              fontWeight: 600,
-              fontSize: '0.875rem',
-              color: 'text.secondary',
-              bgcolor: 'grey.50',
-              borderBottom: '1px solid',
-              borderColor: 'divider',
-            }}
-          >
-            {day}
-          </Box>
-        ))}
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
+          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
+            <Box
+              key={day}
+              sx={{
+                p: 1.5,
+                textAlign: 'center',
+                fontWeight: 600,
+                fontSize: '0.875rem',
+                color: 'text.secondary',
+                bgcolor: 'grey.50',
+                borderBottom: '1px solid',
+                borderColor: 'divider',
+                minWidth: 0, // prevent long content from widening columns
+              }}
+            >
+              {day}
+            </Box>
+          ))}
+        </Box>
 
-        {/* Calendar days */}
-        {calendarDays.map((day, index) => {
-          const dayEvents = getEventsForDay(day);
-          const isCurrentMonth = isSameMonth(day, currentDate);
-          const isTodayDate = isToday(day);
+        {/* Weeks */}
+        {weeks.map((weekDays, weekIndex) => {
+          const weekStart = weekDays[0];
+          const weekEnd = weekDays[6];
+
+          // Build multi-day segments for this week, clipped to week boundaries
+          type Segment = {
+            event: CalendarEvent;
+            startIdx: number; // 0-6
+            endIdx: number; // 0-6 inclusive
+            row: number;
+          };
+
+          const rawSegments: Omit<Segment, 'row'>[] = [];
+          for (const event of multiDayEvents) {
+            const span = getEventSpanDays(event);
+            if (!span) continue;
+            if (span.endDay < weekStart || span.startDay > weekEnd) continue;
+
+            const segStartDay = span.startDay < weekStart ? weekStart : span.startDay;
+            const segEndDay = span.endDay > weekEnd ? weekEnd : span.endDay;
+            const startIdx = Math.max(0, Math.min(6, differenceInCalendarDays(segStartDay, weekStart)));
+            const endIdx = Math.max(0, Math.min(6, differenceInCalendarDays(segEndDay, weekStart)));
+            rawSegments.push({ event, startIdx, endIdx });
+          }
+
+          rawSegments.sort((a, b) => (a.startIdx - b.startIdx) || ((b.endIdx - b.startIdx) - (a.endIdx - a.startIdx)));
+
+          const rowEnds: number[] = [];
+          const segments: Segment[] = [];
+          for (const seg of rawSegments) {
+            let row = 0;
+            while (row < rowEnds.length && rowEnds[row] >= seg.startIdx) row++;
+            if (row === rowEnds.length) rowEnds.push(seg.endIdx);
+            else rowEnds[row] = seg.endIdx;
+            segments.push({ ...seg, row });
+          }
+
+          const dayHeaderHeight = 22; // px
+          const barHeight = 18; // px
+          const barGap = 4; // px
+          const barsTop = dayHeaderHeight + 4; // px
+          const stripHeight = rowEnds.length > 0 ? (rowEnds.length * barHeight + Math.max(0, rowEnds.length - 1) * barGap + 8) : 0;
 
           return (
             <Box
-              key={index}
-              onClick={() => openCreateModal(day)}
+              key={`week-${weekIndex}-${weekStart.toISOString()}`}
               sx={{
-                minHeight: 120,
-                p: 1,
-                border: '1px solid',
+                position: 'relative',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+                borderBottom: weekIndex === weeks.length - 1 ? 'none' : '1px solid',
                 borderColor: 'divider',
-                bgcolor: isCurrentMonth ? 'background.paper' : 'grey.50',
-                cursor: 'pointer',
-                '&:hover': {
-                  bgcolor: 'action.hover',
-                },
+                minWidth: 0,
               }}
             >
-              <Typography
-                variant="body2"
-                sx={{
-                  fontWeight: isTodayDate ? 700 : 400,
-                  color: isTodayDate ? 'primary.main' : isCurrentMonth ? 'text.primary' : 'text.disabled',
-                  mb: 0.5,
-                }}
-              >
-                {format(day, 'd')}
-              </Typography>
+              {/* Multi-day overlay bars */}
+              {segments.length > 0 && (
+                <Box
+                  sx={{
+                    position: 'absolute',
+                    top: `${barsTop}px`,
+                    left: 0,
+                    right: 0,
+                    px: 1,
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(7, minmax(0, 1fr))',
+                    gridAutoRows: `${barHeight}px`,
+                    rowGap: `${barGap}px`,
+                    pointerEvents: 'none',
+                    zIndex: 2,
+                    minWidth: 0,
+                  }}
+                >
+                  {segments.map((seg) => {
+                    const eventColor = getEventColor(seg.event);
+                    return (
+                      <Box
+                        key={`seg-${seg.event.id}-${seg.startIdx}-${seg.endIdx}-${seg.row}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditModal(seg.event);
+                        }}
+                        sx={{
+                          gridColumn: `${seg.startIdx + 1} / ${seg.endIdx + 2}`,
+                          gridRow: `${seg.row + 1}`,
+                          mx: 0.5,
+                          px: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          bgcolor: eventColor.backgroundColor,
+                          color: eventColor.foregroundColor,
+                          borderRadius: 0.5,
+                          fontSize: '0.75rem',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          cursor: 'pointer',
+                          pointerEvents: 'auto',
+                          minWidth: 0, // allow ellipsis instead of widening grid column
+                          boxShadow:
+                            seg.event.id === highlightedEventId ? '0 0 0 2px rgba(59, 130, 246, 0.9)' : 'none',
+                          '&:hover': { opacity: 0.9 },
+                        }}
+                      >
+                        {seg.event.summary}
+                      </Box>
+                    );
+                  })}
+                </Box>
+              )}
 
-              {/* Event chips */}
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                {dayEvents.slice(0, 3).map((event) => (
+              {/* Day cells */}
+              {weekDays.map((day) => {
+                const isCurrentMonth = isSameMonth(day, currentDate);
+                const isTodayDate = isToday(day);
+                const allEventsForDay = getEventsForDay(day);
+                const dayEvents = allEventsForDay.filter((e) => !multiDayEventIds.has(e.id));
+
+                return (
                   <Box
-                    key={event.id}
-                    ref={(el: HTMLDivElement | null) => {
-                      if (el) eventRefs.current[event.id] = el;
-                    }}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      openEditModal(event);
-                    }}
+                    key={day.toISOString()}
+                    onClick={() => openCreateModal(day)}
                     sx={{
-                      px: 1,
-                      py: 0.5,
-                      bgcolor: 'primary.main',
-                      color: 'primary.contrastText',
-                      borderRadius: 0.5,
-                      fontSize: '0.75rem',
+                      minHeight: 120,
+                      p: 1,
+                      borderRight: '1px solid',
+                      borderColor: 'divider',
+                      bgcolor: isCurrentMonth ? 'background.paper' : 'grey.50',
                       cursor: 'pointer',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      boxShadow: event.id === highlightedEventId 
-                        ? '0 0 0 2px rgba(59, 130, 246, 0.9)' 
-                        : 'none',
-                      transition: 'box-shadow 0.2s ease-in-out',
-                      '&:hover': {
-                        bgcolor: 'primary.dark',
-                      },
+                      '&:hover': { bgcolor: 'action.hover' },
+                      position: 'relative',
+                      minWidth: 0, // keep equal column widths
                     }}
                   >
-                    {event.summary}
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        height: `${dayHeaderHeight}px`,
+                        lineHeight: `${dayHeaderHeight}px`,
+                        fontWeight: isTodayDate ? 700 : 400,
+                        color: isTodayDate ? 'primary.main' : isCurrentMonth ? 'text.primary' : 'text.disabled',
+                        mb: 0,
+                      }}
+                    >
+                      {format(day, 'd')}
+                    </Typography>
+
+                    {/* Reserve space for multi-day bars so per-day events don't overlap */}
+                    {stripHeight > 0 && <Box sx={{ height: `${stripHeight}px` }} />}
+
+                    {/* Single-day event chips */}
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.5 }}>
+                      {dayEvents.slice(0, 3).map((event) => {
+                        const eventColor = getEventColor(event);
+                        return (
+                          <Box
+                            key={event.id}
+                            ref={(el: HTMLDivElement | null) => {
+                              if (el) eventRefs.current[event.id] = el;
+                            }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openEditModal(event);
+                            }}
+                            sx={{
+                              px: 1,
+                              py: 0.5,
+                              bgcolor: eventColor.backgroundColor,
+                              color: eventColor.foregroundColor,
+                              borderRadius: 0.5,
+                              fontSize: '0.75rem',
+                              cursor: 'pointer',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                              boxShadow:
+                                event.id === highlightedEventId ? '0 0 0 2px rgba(59, 130, 246, 0.9)' : 'none',
+                              transition: 'box-shadow 0.2s ease-in-out',
+                              '&:hover': { opacity: 0.9, transform: 'scale(1.02)' },
+                            }}
+                          >
+                            {event.summary}
+                          </Box>
+                        );
+                      })}
+                      {dayEvents.length > 3 && (
+                        <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
+                          +{dayEvents.length - 3} more
+                        </Typography>
+                      )}
+                    </Box>
                   </Box>
-                ))}
-                {dayEvents.length > 3 && (
-                  <Typography variant="caption" color="text.secondary" sx={{ px: 1 }}>
-                    +{dayEvents.length - 3} more
-                  </Typography>
-                )}
-              </Box>
+                );
+              })}
             </Box>
           );
         })}
@@ -490,40 +973,80 @@ const CalendarPage: React.FC = () => {
             <Box sx={{ width: 60, flexShrink: 0 }} />
             {weekDays.map((day) => {
               const dayAllDayEvents = allDayEvents.filter((event) => {
-                const startStr = event.start.date || event.start.dateTime;
-                if (!startStr) return false;
-                return isSameDay(parseISO(startStr), day);
+                const startDate = getEventLocalDate(event, true);
+                if (!startDate) return false;
+                return isSameDay(startDate, day);
               });
 
               return (
                 <Box key={day.toISOString()} sx={{ flex: 1, borderRight: '1px solid', borderColor: 'divider', p: 0.5 }}>
-                  {dayAllDayEvents.map((event) => (
-                    <Box
-                      key={event.id}
-                      onClick={() => openEditModal(event)}
-                      sx={{
-                        px: 1,
-                        py: 0.5,
-                        mb: 0.5,
-                        bgcolor: 'primary.main',
-                        color: 'primary.contrastText',
-                        borderRadius: 0.5,
-                        fontSize: '0.75rem',
-                        cursor: 'pointer',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                        '&:hover': { bgcolor: 'primary.dark' },
-                      }}
-                    >
-                      {event.summary}
-                    </Box>
-                  ))}
+                  {dayAllDayEvents.map((event) => {
+                    const eventColor = getEventColor(event);
+                    return (
+                      <Box
+                        key={event.id}
+                        onClick={() => openEditModal(event)}
+                        sx={{
+                          px: 1,
+                          py: 0.5,
+                          mb: 0.5,
+                          bgcolor: eventColor.backgroundColor,
+                          color: '#ffffff', // Always use white text in week view
+                          borderRadius: 0.5,
+                          fontSize: '0.75rem',
+                          cursor: 'pointer',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          '&:hover': { opacity: 0.9, transform: 'scale(1.02)' },
+                        }}
+                      >
+                        <Typography variant="caption" sx={{ color: '#ffffff' }}>
+                          {event.summary}
+                        </Typography>
+                      </Box>
+                    );
+                  })}
                 </Box>
               );
             })}
           </Box>
         )}
+
+        {/* Day headers */}
+        <Box sx={{ display: 'flex', borderBottom: '2px solid', borderColor: 'divider' }}>
+          <Box sx={{ width: 60, flexShrink: 0 }} /> {/* Spacer for hour labels */}
+          {weekDays.map((day) => {
+            const isTodayDate = isToday(day);
+            return (
+              <Box
+                key={day.toISOString()}
+                sx={{
+                  flex: 1,
+                  minWidth: 0, // prevent content from widening a column
+                  borderRight: '1px solid',
+                  borderColor: 'divider',
+                  p: 1,
+                  textAlign: 'center',
+                  bgcolor: isTodayDate ? 'action.selected' : 'background.paper',
+                }}
+              >
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                  {format(day, 'EEE')}
+                </Typography>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: isTodayDate ? 700 : 400,
+                    color: isTodayDate ? 'primary.main' : 'text.primary',
+                  }}
+                >
+                  {format(day, 'd')}
+                </Typography>
+              </Box>
+            );
+          })}
+        </Box>
 
         {/* Hourly grid */}
         <Box sx={{ flex: 1, overflow: 'auto', display: 'flex' }}>
@@ -554,16 +1077,18 @@ const CalendarPage: React.FC = () => {
           {weekDays.map((day) => {
             const dayTimedEvents = events.filter((event) => {
               if (event.isAllDay) return false;
-              const startStr = event.start.dateTime;
-              if (!startStr) return false;
-              return isSameDay(parseISO(startStr), day);
+              const startDate = getEventLocalDate(event, true);
+              if (!startDate) return false;
+              return isSameDay(startDate, day);
             });
+            const dayLayout = layoutOverlappingTimedEvents(dayTimedEvents);
 
             return (
               <Box
                 key={day.toISOString()}
                 sx={{
                   flex: 1,
+                  minWidth: 0, // lock equal day widths
                   borderRight: '1px solid',
                   borderColor: 'divider',
                   position: 'relative',
@@ -590,21 +1115,26 @@ const CalendarPage: React.FC = () => {
 
                 {/* Event blocks positioned absolutely */}
                 {dayTimedEvents.map((event) => {
-                  const startStr = event.start.dateTime;
-                  if (!startStr) return null;
-                  const startDate = parseISO(startStr);
-                  const endStr = event.end.dateTime || startStr;
-                  const endDate = parseISO(endStr);
+                  const startDate = getEventLocalDate(event, true);
+                  if (!startDate) return null;
+                  const endDate = getEventLocalDate(event, false) || startDate;
 
                   const startHour = startDate.getHours() + startDate.getMinutes() / 60;
                   const endHour = endDate.getHours() + endDate.getMinutes() / 60;
-                  const duration = endHour - startHour;
+                  const durationMinutes = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 60000));
 
-                  // Only show events within visible hours (6 AM - 11 PM)
-                  if (startHour < 6 || startHour >= 24) return null;
+                  // Show events that overlap with visible hours (6 AM - 11 PM)
+                  // Include events that start before 6 AM but end after 6 AM
+                  // Include events that start before 11 PM (even if they end after)
+                  if (endHour < 6 || startHour >= 24) return null;
 
-                  const topPercent = ((startHour - 6) / 18) * 100;
-                  const heightPercent = (duration / 18) * 100;
+                  // Use pixel-perfect positioning to match the 60px/hour grid exactly.
+                  const topPx = Math.max(0, (startHour - 6) * 60);
+                  const heightPx = Math.max(20, (durationMinutes / 60) * 60);
+                  const eventColor = getEventColor(event);
+                  const layout = dayLayout.get(event.id) || { col: 0, colCount: 1 };
+                  const widthPct = 100 / layout.colCount;
+                  const leftPct = layout.col * widthPct;
 
                   return (
                     <Box
@@ -615,28 +1145,34 @@ const CalendarPage: React.FC = () => {
                       }}
                       sx={{
                         position: 'absolute',
-                        top: `${Math.max(0, topPercent)}%`,
-                        left: 4,
-                        right: 4,
-                        height: `${Math.max(3, heightPercent)}%`,
+                        top: `${topPx}px`,
+                        left: `calc(${leftPct}% + 4px)`,
+                        width: `calc(${widthPct}% - 8px)`,
+                        height: `${heightPx}px`,
                         minHeight: 20,
-                        bgcolor: 'primary.main',
-                        color: 'primary.contrastText',
+                        bgcolor: eventColor.backgroundColor,
+                        color: '#ffffff', // Always use white text in week view
                         borderRadius: 0.5,
                         p: 0.5,
                         fontSize: '0.75rem',
                         cursor: 'pointer',
                         overflow: 'hidden',
                         zIndex: 1,
-                        '&:hover': { bgcolor: 'primary.dark', zIndex: 2 },
+                        '&:hover': { opacity: 0.9, zIndex: 2 },
                       }}
                     >
-                      <Typography variant="caption" fontWeight={600} noWrap>
-                        {event.summary}
-                      </Typography>
-                      <Typography variant="caption" sx={{ opacity: 0.9 }}>
-                        {format(startDate, 'h:mm a')} - {format(endDate, 'h:mm a')}
-                      </Typography>
+                    <Typography variant="caption" fontWeight={600} noWrap sx={{ color: '#ffffff' }}>
+                      {event.summary}
+                    </Typography>
+                    <Typography variant="caption" sx={{ opacity: 0.9, color: '#ffffff' }}>
+                      {(() => {
+                        const localStart = getEventLocalDate(event, true);
+                        const localEnd = getEventLocalDate(event, false);
+                        if (!localStart) return '';
+                        if (!localEnd) return format(localStart, 'h:mm a');
+                        return `${format(localStart, 'h:mm a')} - ${format(localEnd, 'h:mm a')}`;
+                      })()}
+                    </Typography>
                     </Box>
                   );
                 })}
@@ -650,10 +1186,40 @@ const CalendarPage: React.FC = () => {
 
   // Render day view
   const renderDayView = () => {
-    const hours = Array.from({ length: 18 }, (_, i) => i + 6); // 6 AM to 11 PM
     const dayEvents = getEventsForDay(currentDate);
     const allDayEvents = dayEvents.filter((event) => event.isAllDay);
     const timedEvents = dayEvents.filter((event) => !event.isAllDay);
+    const dayLayout = layoutOverlappingTimedEvents(timedEvents);
+    
+    // Calculate the time range needed to show all events
+    // Find the earliest and latest event times
+    let minHour = 6; // Default start
+    let maxHour = 23; // Default end
+    
+    if (timedEvents.length > 0) {
+      const eventHours = timedEvents
+        .map((event) => {
+          const startDate = getEventLocalDate(event, true);
+          const endDate = getEventLocalDate(event, false);
+          if (!startDate) return null;
+          return {
+            startHour: startDate.getHours() + startDate.getMinutes() / 60,
+            endHour: endDate ? (endDate.getHours() + endDate.getMinutes() / 60) : (startDate.getHours() + startDate.getMinutes() / 60 + 1),
+          };
+        })
+        .filter((h): h is { startHour: number; endHour: number } => h !== null);
+      
+      if (eventHours.length > 0) {
+        minHour = Math.min(6, Math.floor(Math.min(...eventHours.map(h => h.startHour))));
+        maxHour = Math.max(23, Math.ceil(Math.max(...eventHours.map(h => h.endHour))));
+        // Ensure we have at least 6 AM to 11 PM visible
+        minHour = Math.min(minHour, 6);
+        maxHour = Math.max(maxHour, 23);
+      }
+    }
+    
+    // Generate hours array based on the range needed
+    const hours = Array.from({ length: maxHour - minHour + 1 }, (_, i) => i + minHour);
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -667,32 +1233,35 @@ const CalendarPage: React.FC = () => {
               p: 1,
             }}
           >
-            {allDayEvents.map((event) => (
-              <Box
-                key={event.id}
-                ref={(el: HTMLDivElement | null) => {
-                  if (el) eventRefs.current[event.id] = el;
-                }}
-                onClick={() => openEditModal(event)}
-                sx={{
-                  px: 1.5,
-                  py: 0.75,
-                  mb: 0.5,
-                  bgcolor: 'primary.main',
-                  color: 'primary.contrastText',
-                  borderRadius: 0.5,
-                  fontSize: '0.875rem',
-                  cursor: 'pointer',
-                  boxShadow: event.id === highlightedEventId 
-                    ? '0 0 0 2px rgba(59, 130, 246, 0.9)' 
-                    : 'none',
-                  transition: 'box-shadow 0.2s ease-in-out',
-                  '&:hover': { bgcolor: 'primary.dark' },
-                }}
-              >
-                {event.summary}
-              </Box>
-            ))}
+            {allDayEvents.map((event) => {
+              const eventColor = getEventColor(event);
+              return (
+                <Box
+                  key={event.id}
+                  ref={(el: HTMLDivElement | null) => {
+                    if (el) eventRefs.current[event.id] = el;
+                  }}
+                  onClick={() => openEditModal(event)}
+                  sx={{
+                    px: 1.5,
+                    py: 0.75,
+                    mb: 0.5,
+                    bgcolor: eventColor.backgroundColor,
+                    color: eventColor.foregroundColor,
+                    borderRadius: 0.5,
+                    fontSize: '0.875rem',
+                    cursor: 'pointer',
+                    boxShadow: event.id === highlightedEventId 
+                      ? '0 0 0 2px rgba(59, 130, 246, 0.9)' 
+                      : 'none',
+                    transition: 'box-shadow 0.2s ease-in-out',
+                    '&:hover': { opacity: 0.9, transform: 'scale(1.02)' },
+                  }}
+                >
+                  {event.summary}
+                </Box>
+              );
+            })}
           </Box>
         )}
 
@@ -744,21 +1313,51 @@ const CalendarPage: React.FC = () => {
 
             {/* Event blocks */}
             {timedEvents.map((event) => {
-              const startStr = event.start.dateTime;
-              if (!startStr) return null;
-              const startDate = parseISO(startStr);
-              const endStr = event.end.dateTime || startStr;
-              const endDate = parseISO(endStr);
+              const startDate = getEventLocalDate(event, true);
+              if (!startDate) return null;
+              const endDate = getEventLocalDate(event, false) || startDate;
 
               const startHour = startDate.getHours() + startDate.getMinutes() / 60;
               const endHour = endDate.getHours() + endDate.getMinutes() / 60;
-              const duration = endHour - startHour;
+              const durationMinutes = Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / 60000));
 
-              // Only show events within visible hours
-              if (startHour < 6 || startHour >= 24) return null;
+              // Show all events for the day - calculate position based on visible hour range
+              // Use pixel-perfect positioning to match the 60px/hour grid exactly.
+              const topPx = Math.max(0, (startHour - minHour) * 60);
+              const heightPx = Math.max(32, (durationMinutes / 60) * 60);
+              const eventColor = getEventColor(event);
+              const layout = dayLayout.get(event.id) || { col: 0, colCount: 1 };
+              const widthPct = 100 / layout.colCount;
+              const leftPct = layout.col * widthPct;
 
-              const topPercent = ((startHour - 6) / 18) * 100;
-              const heightPercent = (duration / 18) * 100;
+              // DEV-only diagnostics for timezone mismatches (prints once per event id)
+              if (process.env.NODE_ENV !== 'production' && !debugLoggedEventIds.current.has(`day-${event.id}`)) {
+                debugLoggedEventIds.current.add(`day-${event.id}`);
+                try {
+                  const startStr = event.start?.dateTime || event.start?.date;
+                  const endStr = event.end?.dateTime || event.end?.date;
+                  console.log('[Calendar debug] day block placement', {
+                    id: event.id,
+                    summary: event.summary,
+                    start: event.start,
+                    end: event.end,
+                    startStr,
+                    endStr,
+                    startLocal: startDate.toString(),
+                    endLocal: endDate.toString(),
+                    startHHmm: format(startDate, 'HH:mm'),
+                    endHHmm: format(endDate, 'HH:mm'),
+                    minHour,
+                    maxHour,
+                    startHour,
+                    endHour,
+                    topPx,
+                    heightPx,
+                  });
+                } catch (e) {
+                  console.log('[Calendar debug] day block placement (failed to log)', e);
+                }
+              }
 
               return (
                 <Box
@@ -772,13 +1371,13 @@ const CalendarPage: React.FC = () => {
                   }}
                   sx={{
                     position: 'absolute',
-                    top: `${Math.max(0, topPercent)}%`,
-                    left: 8,
-                    right: 8,
-                    height: `${Math.max(4, heightPercent)}%`,
+                    top: `${topPx}px`,
+                    left: `calc(${leftPct}% + 8px)`,
+                    width: `calc(${widthPct}% - 16px)`,
+                    height: `${heightPx}px`,
                     minHeight: 32,
-                    bgcolor: 'primary.main',
-                    color: 'primary.contrastText',
+                    bgcolor: eventColor.backgroundColor,
+                    color: eventColor.foregroundColor,
                     borderRadius: 1,
                     p: 1,
                     cursor: 'pointer',
@@ -788,14 +1387,20 @@ const CalendarPage: React.FC = () => {
                       ? '0 0 0 3px rgba(59, 130, 246, 0.9)' 
                       : 1,
                     transition: 'box-shadow 0.2s ease-in-out',
-                    '&:hover': { bgcolor: 'primary.dark', zIndex: 2, boxShadow: 2 },
+                    '&:hover': { opacity: 0.9, zIndex: 2, boxShadow: 2 },
                   }}
                 >
                   <Typography variant="body2" fontWeight={600} noWrap>
                     {event.summary}
                   </Typography>
                   <Typography variant="caption" sx={{ opacity: 0.9 }}>
-                    {format(startDate, 'h:mm a')} - {format(endDate, 'h:mm a')}
+                    {(() => {
+                      const localStart = getEventLocalDate(event, true);
+                      const localEnd = getEventLocalDate(event, false);
+                      if (!localStart) return '';
+                      if (!localEnd) return format(localStart, 'h:mm a');
+                      return `${format(localStart, 'h:mm a')} - ${format(localEnd, 'h:mm a')}`;
+                    })()}
                   </Typography>
                   {event.location && (
                     <Typography variant="caption" sx={{ opacity: 0.8, display: 'block', mt: 0.5 }}>
@@ -823,6 +1428,45 @@ const CalendarPage: React.FC = () => {
           <CircularProgress size={20} />
         ) : (
           <List dense sx={{ py: 0 }}>
+            {primaryCalendar && (
+              <ListItem key={primaryCalendar.id} disablePadding>
+                <ListItemButton
+                  onClick={() => toggleCalendar(primaryCalendar.id)}
+                  sx={{ py: 0.5, px: 1 }}
+                >
+                  <Checkbox
+                    edge="start"
+                    checked={selectedCalendarIds.has(primaryCalendar.id)}
+                    tabIndex={-1}
+                    disableRipple
+                    size="small"
+                  />
+                  <Box
+                    sx={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: '50%',
+                      bgcolor: primaryCalendar.backgroundColor || '#7986cb',
+                      mr: 1,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <ListItemText
+                    primary="My Calendar"
+                    primaryTypographyProps={{ variant: 'body2', noWrap: true }}
+                  />
+                  {selectedCalendarIds.has(primaryCalendar.id) && (
+                    <Chip
+                      label="Subscribed"
+                      size="small"
+                      color="primary"
+                      variant="outlined"
+                      sx={{ ml: 1 }}
+                    />
+                  )}
+                </ListItemButton>
+              </ListItem>
+            )}
             {visibleCalendars.map((calendar) => (
               <ListItem key={calendar.id} disablePadding>
                 <ListItemButton
@@ -869,11 +1513,36 @@ const CalendarPage: React.FC = () => {
       <Divider />
 
       {/* Upcoming Events */}
-      <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+      <Box 
+        sx={{ 
+          flex: 1, 
+          overflow: 'auto', 
+          p: 2,
+          // Thin, light scrollbar styling per spec
+          '&::-webkit-scrollbar': {
+            width: '8px',
+            height: '8px',
+          },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': {
+              background: 'rgba(0, 0, 0, 0.25)',
+            },
+          },
+          // Firefox scrollbar styling
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+        }}
+      >
         <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
           Upcoming
         </Typography>
-        {eventsLoading ? (
+        {combinedLoading ? (
           <CircularProgress size={20} />
         ) : upcomingEvents.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
@@ -882,8 +1551,7 @@ const CalendarPage: React.FC = () => {
         ) : (
           <List dense>
             {upcomingEvents.map((event) => {
-              const startStr = event.start.dateTime || event.start.date;
-              const startDate = startStr ? parseISO(startStr) : new Date();
+              const startDate = getEventLocalDate(event, true) || new Date();
               const isTodayEvent = isToday(startDate);
               const timeLabel = isTodayEvent
                 ? `Today ${format(startDate, 'h:mm a')}`
@@ -950,6 +1618,16 @@ const CalendarPage: React.FC = () => {
           )}
           <Typography variant="h5" fontWeight={700}>
             Calendar
+          </Typography>
+          {/* Date display based on view */}
+          <Typography variant="h6" fontWeight={500} sx={{ ml: 2, color: 'text.secondary' }}>
+            {view === 'month' && format(currentDate, 'MMMM, yyyy')}
+            {view === 'week' && (() => {
+              const weekStart = startOfWeek(currentDate, { weekStartsOn: 0 });
+              const weekEnd = endOfWeek(currentDate, { weekStartsOn: 0 });
+              return `${format(weekStart, 'EEEE MMM do')} - ${format(weekEnd, 'EEEE MMM do')}`;
+            })()}
+            {view === 'day' && format(currentDate, 'EEEE, MMMM do')}
           </Typography>
         </Box>
 

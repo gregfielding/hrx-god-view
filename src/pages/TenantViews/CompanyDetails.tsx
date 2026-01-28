@@ -6284,7 +6284,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     email: '',
     phone: '',
     jobTitle: '',
-    linkedinUrl: '',
+    linkedInUrl: '',
     contactType: 'Unknown',
     tags: [],
     isActive: true,
@@ -6487,10 +6487,11 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
       const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
       const { db } = await import('../../firebase');
       
+      const { linkedInUrl, ...restForm } = contactForm;
       const contactData = {
-        ...contactForm,
+        ...restForm,
         fullName: `${contactForm.firstName} ${contactForm.lastName}`,
-        linkedinUrl: (contactForm.linkedinUrl || '').trim(),
+        linkedInUrl: (linkedInUrl || '').trim(),
         tenantId,
         companyId: company.id,
         companyName: company.companyName || company.name,
@@ -6510,7 +6511,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
         email: '',
         phone: '',
         jobTitle: '',
-        linkedinUrl: '',
+        linkedInUrl: '',
         contactType: 'Unknown',
         tags: [],
         isActive: true,
@@ -7181,8 +7182,8 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 fullWidth
                 label="LinkedIn URL"
                 placeholder="https://www.linkedin.com/in/username"
-                value={contactForm.linkedinUrl}
-                onChange={(e) => handleContactFormChange('linkedinUrl', e.target.value)}
+                value={contactForm.linkedInUrl}
+                onChange={(e) => handleContactFormChange('linkedInUrl', e.target.value)}
               />
             </Grid>
             <Grid item xs={12} sm={6}>

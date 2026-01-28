@@ -63,6 +63,9 @@ export function useCalendarEvents({
   const fetchEvents = useCallback(async () => {
     const params = latestParamsRef.current;
     if (!params.userId || !params.enabled || params.calendarIds.length === 0) {
+      // Important: clear stale events when user deselects calendars.
+      setEvents([]);
+      setNextSyncToken(undefined);
       setLoading(false);
       return;
     }
@@ -94,6 +97,9 @@ export function useCalendarEvents({
 
   useEffect(() => {
     if (!userId || !enabled || calendarIds.length === 0) {
+      // Important: clear stale events when disabled/empty.
+      setEvents([]);
+      setNextSyncToken(undefined);
       setLoading(false);
       return;
     }
