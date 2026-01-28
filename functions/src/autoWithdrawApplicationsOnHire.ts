@@ -14,6 +14,31 @@ function extractDateFromShiftDate(shiftDate: string): string {
   return shiftDate.split('T')[0];
 }
 
+function parseLocalYyyyMmDd(dateStr: string): Date | null {
+  const d = extractDateFromShiftDate(dateStr || '');
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const [y, m, day] = d.split('-').map(Number);
+  const dt = new Date(y, m - 1, day);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function expandDateRangeInclusive(startDate: string, endDate: string): string[] {
+  const start = parseLocalYyyyMmDd(startDate);
+  const end = parseLocalYyyyMmDd(endDate);
+  if (!start || !end) return [];
+
+  const maxDays = 400;
+  const dates: string[] = [];
+  const cur = new Date(start);
+  let count = 0;
+  while (cur <= end && count < maxDays) {
+    dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`);
+    cur.setDate(cur.getDate() + 1);
+    count++;
+  }
+  return dates;
+}
+
 /**
  * Get shift date(s) from an application document
  */
@@ -54,10 +79,13 @@ async function getShiftDatesFromApplication(
         if (shiftSnap.exists) {
           const shiftData = shiftSnap.data();
           if (shiftData?.shiftDate) {
-            const dateStr = extractDateFromShiftDate(shiftData.shiftDate);
-            if (!shiftDates.includes(dateStr)) {
-              shiftDates.push(dateStr);
-            }
+            const start = extractDateFromShiftDate(shiftData.shiftDate);
+            const end = shiftData?.endDate ? extractDateFromShiftDate(shiftData.endDate) : start;
+            const isMulti = shiftData?.shiftMode === 'multi' && !!end && end !== start;
+            const expanded = isMulti ? expandDateRangeInclusive(start, end) : [start];
+            expanded.forEach((dateStr) => {
+              if (dateStr && !shiftDates.includes(dateStr)) shiftDates.push(dateStr);
+            });
           }
         }
       } catch (error) {
@@ -80,10 +108,13 @@ async function getShiftDatesFromApplication(
           if (shiftSnap.exists) {
             const shiftData = shiftSnap.data();
             if (shiftData?.shiftDate) {
-              const dateStr = extractDateFromShiftDate(shiftData.shiftDate);
-              if (!shiftDates.includes(dateStr)) {
-                shiftDates.push(dateStr);
-              }
+              const start = extractDateFromShiftDate(shiftData.shiftDate);
+              const end = shiftData?.endDate ? extractDateFromShiftDate(shiftData.endDate) : start;
+              const isMulti = shiftData?.shiftMode === 'multi' && !!end && end !== start;
+              const expanded = isMulti ? expandDateRangeInclusive(start, end) : [start];
+              expanded.forEach((dateStr) => {
+                if (dateStr && !shiftDates.includes(dateStr)) shiftDates.push(dateStr);
+              });
             }
           }
         } catch (error) {

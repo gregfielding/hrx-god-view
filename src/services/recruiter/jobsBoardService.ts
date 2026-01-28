@@ -32,7 +32,14 @@ const removeUndefinedValues = (obj: any): any => {
 export interface JobBoardShift {
   shiftId: string; // Reference to shifts/{shiftId} in Firestore
   shiftTitle: string; // "Wednesday Cleaners"
-  shiftDate: string; // ISO date string "2025-10-28"
+  shiftDate: string; // ISO date string "2025-10-28" (start date for multi-day)
+  endDate?: string; // ISO date string (only for multi-day)
+  shiftMode?: 'single' | 'multi';
+  /**
+   * Optional weekly schedule for multi-day shifts.
+   * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
+   */
+  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
   startTime: string; // "08:00" (HH:mm format)
   endTime: string; // "17:30" (HH:mm format)
   staffNeeded: number; // Total positions for this shift
@@ -319,15 +326,24 @@ export class JobsBoardService {
       };
 
       // Convert Firestore shifts to JobBoardShift format
-      const shifts: JobBoardShift[] = snapshot.docs.map(doc => {
-        const data = doc.data();
+      const shifts: JobBoardShift[] = [];
+      snapshot.docs.forEach((d) => {
+        const data: any = d.data();
+
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
-        
-        return {
-          shiftId: doc.id,
+
+        const startDate = (data.shiftDate || '').toString();
+        const endDate = (data.endDate || '').toString();
+        const isMulti = data?.shiftMode === 'multi' && !!endDate && endDate !== startDate;
+
+        shifts.push({
+          shiftId: d.id,
           shiftTitle: data.shiftTitle || 'Unnamed Shift',
-          shiftDate: data.shiftDate, // ISO date string
+          shiftDate: startDate, // ISO date string
+          endDate: isMulti ? endDate : undefined,
+          shiftMode: isMulti ? 'multi' : 'single',
+          weeklySchedule: isMulti ? (data.weeklySchedule || undefined) : undefined,
           startTime: data.defaultStartTime, // HH:mm format
           endTime: data.defaultEndTime, // HH:mm format
           staffNeeded: data.totalStaffRequested || 1,
@@ -338,7 +354,7 @@ export class JobsBoardService {
           shiftDescription: data.shiftDescription,
           defaultJobTitle: defaultJobTitle,
           payRate: payRate,
-        };
+        });
       });
 
       // Sort by date
@@ -403,31 +419,45 @@ export class JobsBoardService {
       };
 
       // Convert and filter shifts
-      const shifts: JobBoardShift[] = snapshot.docs
-        .map(doc => {
-          const data = doc.data();
-          const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
-          const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
-          
-          return {
-            shiftId: doc.id,
-            shiftTitle: data.shiftTitle || 'Unnamed Shift',
-            shiftDate: data.shiftDate, // ISO date string
-            startTime: data.defaultStartTime, // HH:mm format
-            endTime: data.defaultEndTime, // HH:mm format
-            staffNeeded: data.totalStaffRequested || 1,
-            staffFilled: 0, // TODO: Calculate from assignments
-            spotsRemaining: data.totalStaffRequested || 1, // TODO: Calculate
-            showStaffNeeded: data.showStaffNeeded || false,
-            poNumber: data.poNumber,
-            shiftDescription: data.shiftDescription,
-            defaultJobTitle: defaultJobTitle,
-            payRate: payRate,
-          };
+      const shiftsRaw: JobBoardShift[] = [];
+      snapshot.docs.forEach((d) => {
+        const data: any = d.data();
+
+        const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
+        const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
+
+        const startDate = (data.shiftDate || '').toString();
+        const endDate = (data.endDate || '').toString();
+        const isMulti = data?.shiftMode === 'multi' && !!endDate && endDate !== startDate;
+
+        shiftsRaw.push({
+          shiftId: d.id,
+          shiftTitle: data.shiftTitle || 'Unnamed Shift',
+          shiftDate: startDate, // ISO date string
+          endDate: isMulti ? endDate : undefined,
+          shiftMode: isMulti ? 'multi' : 'single',
+          weeklySchedule: isMulti ? (data.weeklySchedule || undefined) : undefined,
+          startTime: data.defaultStartTime, // HH:mm format
+          endTime: data.defaultEndTime, // HH:mm format
+          staffNeeded: data.totalStaffRequested || 1,
+          staffFilled: 0, // TODO: Calculate from assignments
+          spotsRemaining: data.totalStaffRequested || 1, // TODO: Calculate
+          showStaffNeeded: data.showStaffNeeded || false,
+          poNumber: data.poNumber,
+          shiftDescription: data.shiftDescription,
+          defaultJobTitle: defaultJobTitle,
+          payRate: payRate,
+        });
+      });
+
+      const shifts = shiftsRaw
+        // Multi-day aware overlap filter: include if the shift range overlaps [todayISO, cutoffISO]
+        .filter((shift) => {
+          const start = (shift.shiftDate || '').toString();
+          const end = (shift.endDate || shift.shiftDate || '').toString();
+          if (!start) return false;
+          return end >= todayISO && start <= cutoffISO;
         })
-        // Filter: only include shifts >= today and <= cutoff
-        .filter(shift => shift.shiftDate >= todayISO && shift.shiftDate <= cutoffISO)
-        // Sort by date (earliest first)
         .sort((a, b) => a.shiftDate.localeCompare(b.shiftDate));
 
       return shifts;

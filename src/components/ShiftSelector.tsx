@@ -17,6 +17,7 @@ import {
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import { JobBoardShift } from '../services/recruiter/jobsBoardService';
+import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 
 interface ShiftSelectorProps {
   shifts: JobBoardShift[];
@@ -52,6 +53,12 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     return `${displayHour}:${minutes} ${ampm}`;
   };
 
+  const isOvernight = (start: string, end: string) => {
+    if (!start || !end) return false;
+    // Lex compare works for HH:mm
+    return end < start;
+  };
+
   const formatDate = (dateString: string) => {
     try {
       // Parse date string in local time to avoid timezone issues
@@ -68,9 +75,18 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     }
   };
 
+  const formatDateRange = (start: string, end: string) => {
+    if (!start) return 'Date TBD';
+    if (!end || end === start) return formatDate(start);
+    // Slightly more compact for ranges: "Mon, Jan 08 – Fri, Jan 12"
+    return `${formatDate(start)} – ${formatDate(end)}`;
+  };
+
   if (!shifts || shifts.length === 0) {
     return null;
   }
+
+  const hasMultiDay = shifts.some((s) => !!s.endDate && s.endDate !== s.shiftDate);
 
   const handleApply = (shiftId: string) => {
     if (onApplyToShift) {
@@ -87,8 +103,13 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
         Available Shifts
       </Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
-        Each shift is a separate application. Click "Apply" on the shifts you want to apply for.
+        Each schedule is a separate application. Click "Apply" on the schedule(s) you want.
       </Typography>
+      {hasMultiDay && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+          Some schedules span multiple days. The date range shows coverage, and the time line shows the day-by-day pattern.
+        </Typography>
+      )}
 
       <Stack spacing={1.5} sx={{ mt: 2 }}>
         {shifts.map((shift) => {
@@ -129,7 +150,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       <Stack direction="row" spacing={0.5} alignItems="center">
                         <CalendarIcon fontSize="small" color="action" />
                         <Typography variant="body2" color="text.secondary">
-                          {formatDate(shift.shiftDate)}
+                          {shift.endDate && shift.endDate !== shift.shiftDate
+                            ? formatDateRange(shift.shiftDate, shift.endDate)
+                            : formatDate(shift.shiftDate)}
                         </Typography>
                       </Stack>
 
@@ -137,7 +160,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       <Stack direction="row" spacing={0.5} alignItems="center">
                         <TimeIcon fontSize="small" color="action" />
                         <Typography variant="body2" color="text.secondary">
-                          {formatTime(shift.startTime)} - {formatTime(shift.endTime)}
+                          {shift.weeklySchedule && shift.endDate && shift.endDate !== shift.shiftDate
+                            ? formatWeeklyScheduleSummary(shift.weeklySchedule) || `${formatTime(shift.startTime)} - ${formatTime(shift.endTime)}`
+                            : `${formatTime(shift.startTime)} - ${formatTime(shift.endTime)}${isOvernight(shift.startTime, shift.endTime) ? ' (+1 day)' : ''}`}
                         </Typography>
                       </Stack>
 

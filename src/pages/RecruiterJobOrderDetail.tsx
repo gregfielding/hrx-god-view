@@ -90,7 +90,7 @@ import ManageContactsDialog from '../components/ManageContactsDialog';
 import StaffInstructionCard from '../components/recruiter/StaffInstructionCard';
 import ShiftSetupTab from '../components/recruiter/ShiftSetupTab';
 import CRMNotesTab from '../components/CRMNotesTab';
-import GigJobsBoardToggle from '../components/recruiter/GigJobsBoardToggle';
+// Jobs Board Visibility tab removed: all controls live in Jobs Board tab
 import PlacementsTab from '../components/recruiter/PlacementsTab';
 import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -2901,13 +2901,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
               { label: 'Staff Instructions', index: 3 },
               { label: 'Jobs Board', index: 4 },
               { label: 'Shift Setup', index: 5 },
-              ...(jobOrder?.jobType === 'gig'
-                ? [{ label: 'Job Board Visibility', index: 6 }]
-                : []),
-              { label: 'Applications', index: jobOrder?.jobType === 'gig' ? 7 : 6 },
-              { label: 'Placements', index: jobOrder?.jobType === 'gig' ? 8 : 7 },
-              { label: 'Notes', index: jobOrder?.jobType === 'gig' ? 9 : 8 },
-              { label: 'Activity', index: jobOrder?.jobType === 'gig' ? 10 : 9 },
+              { label: 'Applications', index: 6 },
+              { label: 'Placements', index: 7 },
+              { label: 'Notes', index: 8 },
+              { label: 'Activity', index: 9 },
             ].map((t) => {
               const isActive = activeTab === t.index;
                 return (
@@ -3756,23 +3753,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      {/* Job Board Visibility Tab - Only for Gig jobs */}
-      {jobOrder?.jobType === 'gig' && (
-        <TabPanel value={activeTab} index={6}>
-          <Box sx={{ maxWidth: 800, mx: 'auto', mt: 3 }}>
-            <GigJobsBoardToggle
-              jobOrder={jobOrder}
-              onPostUpdated={(post) => {
-                if (post) {
-                  loadConnectedJobPosts(jobOrder.id);
-                }
-              }}
-            />
-          </Box>
-        </TabPanel>
-      )}
-
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 7 : 6}>
+      <TabPanel value={activeTab} index={6}>
         {/* Applications Tab */}
         <ApplicantsTable 
           jobOrderId={jobOrderId || ''} 
@@ -3784,7 +3765,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 8 : 7}>
+      <TabPanel value={activeTab} index={7}>
         {/* Placements Tab */}
         <PlacementsTab
           tenantId={tenantId || ''}
@@ -3793,7 +3774,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 9 : 8}>
+      <TabPanel value={activeTab} index={8}>
         {/* Notes Tab */}
         <CRMNotesTab
           entityId={jobOrderId || ''}
@@ -3803,7 +3784,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={jobOrder?.jobType === 'gig' ? 10 : 9}>
+      <TabPanel value={activeTab} index={9}>
         {/* Activity Tab */}
         <Card>
           <CardContent>

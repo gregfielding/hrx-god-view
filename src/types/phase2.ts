@@ -124,6 +124,11 @@ export interface Assignment {
   status: AssignmentStatus;
   startDate: string; // ISO date
   endDate?: string; // Optional, blank if indefinite
+  /**
+   * Optional weekly schedule for multi-day assignments.
+   * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
+   */
+  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
   payRate: number; // Decimal, tenant currency
   billRate: number; // Decimal, tenant currency
   worksite: string; // Ref to company_locations/{id}
@@ -143,6 +148,7 @@ export interface AssignmentFormData {
   status: AssignmentStatus;
   startDate: string;
   endDate?: string;
+  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
   payRate: number;
   billRate: number;
   worksite: string;

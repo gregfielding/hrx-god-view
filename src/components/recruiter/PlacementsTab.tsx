@@ -732,6 +732,40 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         setLoading(false);
         return;
       }
+
+      // ========================================================================
+      // CHECK FOR DATE RANGE OVERLAPS (multi-day aware)
+      // ========================================================================
+      const newStart = ((shift as any).shiftDate || '').toString().split('T')[0];
+      const newEnd = (((shift as any).endDate || (shift as any).shiftDate) || '').toString().split('T')[0];
+      if (newStart && newEnd) {
+        const userAssignmentsQuery = query(assignmentsRef, where('userId', '==', worker.id));
+        const userAssignmentsSnap = await getDocs(userAssignmentsQuery);
+
+        const blockingStatuses = new Set(['proposed', 'confirmed', 'active']);
+        const overlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) => {
+          const s1 = aStart <= aEnd ? aStart : aEnd;
+          const e1 = aStart <= aEnd ? aEnd : aStart;
+          const s2 = bStart <= bEnd ? bStart : bEnd;
+          const e2 = bStart <= bEnd ? bEnd : bStart;
+          return s1 <= e2 && s2 <= e1;
+        };
+
+        for (const aDoc of userAssignmentsSnap.docs) {
+          const a = aDoc.data() as any;
+          if (!blockingStatuses.has((a.status || '').toString())) continue;
+          const aStart = (a.startDate || '').toString().split('T')[0];
+          const aEnd = ((a.endDate || a.startDate) || '').toString().split('T')[0];
+          if (!aStart || !aEnd) continue;
+          if (overlap(newStart, newEnd, aStart, aEnd)) {
+            setError(
+              `Worker ${worker.displayName} already has an active assignment overlapping ${newStart} – ${newEnd}.`,
+            );
+            setLoading(false);
+            return;
+          }
+        }
+      }
       
       // ========================================================================
       // CREATE ACTUAL ASSIGNMENT DOCUMENT with all required denormalized fields
@@ -774,8 +808,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         
         // Status and dates
         status: 'confirmed', // Placements start as confirmed
-        startDate: shift.shiftDate || '',
-        endDate: shift.shiftDate || '', // Gig jobs typically single-day
+        startDate: (shift as any).shiftDate || '',
+        endDate: (shift as any).endDate || (shift as any).shiftDate || '', // Multi-day shifts store endDate
+        // Multi-day weekly schedule (optional)
+        weeklySchedule: (shift as any).weeklySchedule || undefined,
         
         // Rates (from shift or job order)
         payRate: (shift as any).payRate || jobOrderData.payRate || 0,
@@ -818,25 +854,29 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       console.log(`✅ Assignment created for worker ${worker.id} on shift ${shift.id}`);
 
       // Get shift details for SMS
-      const shiftDate: any = shift.shiftDate;
+      const startDateAny: any = (shift as any).shiftDate;
+      const endDateAny: any = (shift as any).endDate;
       let formattedDate = '';
-      if (shiftDate) {
-        let date: Date;
-        if (shiftDate instanceof Date) {
-          date = shiftDate;
-        } else if (typeof shiftDate === 'string') {
-          date = new Date(shiftDate);
-        } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
-          date = shiftDate.toDate();
-        } else {
-          date = new Date();
-        }
-        formattedDate = date.toLocaleDateString('en-US', { 
-          weekday: 'long', 
-          year: 'numeric', 
-          month: 'long', 
-          day: 'numeric' 
-        });
+      const toDateObj = (d: any): Date | null => {
+        if (!d) return null;
+        if (d instanceof Date) return d;
+        if (typeof d === 'string') return new Date(d);
+        if (d?.toDate && typeof d.toDate === 'function') return d.toDate();
+        return null;
+      };
+      const startD = toDateObj(startDateAny);
+      const endD = toDateObj(endDateAny);
+      if (startD) {
+        const fmt = (dt: Date) =>
+          dt.toLocaleDateString('en-US', {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric',
+          });
+        formattedDate = endD && endD.toISOString().slice(0, 10) !== startD.toISOString().slice(0, 10)
+          ? `${fmt(startD)} – ${fmt(endD)}`
+          : fmt(startD);
       }
 
       // Format time

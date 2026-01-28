@@ -6,7 +6,63 @@ import { useState, useEffect, useMemo } from 'react';
 import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { CalendarEvent } from '../types/calendar';
-import { format, parseISO, isValid, parse } from 'date-fns';
+import { eachDayOfInterval, format, isValid, parse, parseISO } from 'date-fns';
+import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
+
+function parseLocalYyyyMmDd(dateStr: string): Date | null {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function formatLocalYyyyMmDd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function shiftToRangeBarEvent(shift: any, jobOrder: any, jobOrderColor: string): CalendarEvent | null {
+  const start = (shift?.shiftDate || '').toString();
+  const end = (shift?.endDate || '').toString();
+  if (!start || !end || end === start) return null;
+  const startD = parseLocalYyyyMmDd(start);
+  const endD = parseLocalYyyyMmDd(end);
+  if (!startD || !endD || !isValid(startD) || !isValid(endD)) return null;
+
+  // Google all-day end dates are exclusive: add 1 day for the end.date
+  const endExclusive = new Date(endD);
+  endExclusive.setDate(endExclusive.getDate() + 1);
+
+  const title = jobOrder?.jobOrderName || jobOrder?.jobTitle || shift.shiftTitle || 'Gig Shift';
+  const scheduleSummary = formatWeeklyScheduleSummary(shift.weeklySchedule);
+  const description = scheduleSummary ? `Schedule: ${scheduleSummary}` : undefined;
+
+  return {
+    id: `gig-shift-range-${jobOrder?.id || 'unknown'}-${shift.id}`,
+    calendarId: GIG_JOB_ORDERS_CALENDAR_ID,
+    status: 'confirmed',
+    summary: title,
+    description,
+    start: { date: start, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { date: formatLocalYyyyMmDd(endExclusive), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    isAllDay: true,
+    isRecurringInstance: false,
+    createdAt: shift.createdAt instanceof Timestamp
+      ? shift.createdAt.toDate().toISOString()
+      : shift.createdAt instanceof Date
+        ? shift.createdAt.toISOString()
+        : new Date().toISOString(),
+    updatedAt: shift.updatedAt instanceof Timestamp
+      ? shift.updatedAt.toDate().toISOString()
+      : shift.updatedAt instanceof Date
+        ? shift.updatedAt.toISOString()
+        : new Date().toISOString(),
+    colorId: jobOrder?.id || shift.jobOrderId || undefined,
+    hrx: {
+      gigShiftId: shift.id,
+      gigShiftRange: true,
+    },
+  };
+}
 
 interface UseGigJobOrdersCalendarOptions {
   tenantId: string;
@@ -23,31 +79,47 @@ interface UseGigJobOrdersCalendarReturn {
 
 const GIG_JOB_ORDERS_CALENDAR_ID = 'gig-job-orders';
 
-// Color palette for gig job orders (one color per job order)
-const GIG_COLORS = [
-  '#FF9800', // Orange
-  '#F44336', // Red
-  '#9C27B0', // Purple
-  '#3F51B5', // Indigo
-  '#009688', // Teal
-  '#4CAF50', // Green
-  '#FF5722', // Deep Orange
-  '#E91E63', // Pink
-  '#00BCD4', // Cyan
-  '#8BC34A', // Light Green
-];
+function hslToHex(h: number, s: number, l: number): string {
+  // h: 0-360, s/l: 0-100
+  const _h = ((h % 360) + 360) % 360;
+  const _s = Math.max(0, Math.min(100, s)) / 100;
+  const _l = Math.max(0, Math.min(100, l)) / 100;
+
+  const c = (1 - Math.abs(2 * _l - 1)) * _s;
+  const x = c * (1 - Math.abs(((_h / 60) % 2) - 1));
+  const m = _l - c / 2;
+
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (_h < 60) [r, g, b] = [c, x, 0];
+  else if (_h < 120) [r, g, b] = [x, c, 0];
+  else if (_h < 180) [r, g, b] = [0, c, x];
+  else if (_h < 240) [r, g, b] = [0, x, c];
+  else if (_h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+
+  const toHex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, '0');
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
 
 /**
  * Generate a consistent color for a job order ID
  */
 function getColorForJobOrder(jobOrderId: string): string {
-  // Simple hash function to get consistent color per job order
+  // Deterministic "random" color per job order (stable for the same ID).
+  // We intentionally keep the lightness low so white text remains readable.
   let hash = 0;
   for (let i = 0; i < jobOrderId.length; i++) {
     hash = jobOrderId.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const index = Math.abs(hash) % GIG_COLORS.length;
-  return GIG_COLORS[index];
+  const seed = Math.abs(hash);
+
+  const hue = seed % 360; // 0..359
+  const sat = 70 + (seed % 16); // 70..85
+  const light = 28 + ((seed >> 4) % 10); // 28..37 (dark)
+
+  return hslToHex(hue, sat, light);
 }
 
 /**
@@ -320,47 +392,83 @@ export function useGigJobOrdersCalendar({
           }
           const jobOrderColor = jobOrderColors.get(jobOrder.id)!;
 
-          // Parse shift date to check if it's in range
           if (!shift.shiftDate) continue;
 
-          let shiftDate: Date;
-          try {
-            // Parse YYYY-MM-DD format
-            const [year, month, day] = shift.shiftDate.split('-').map(Number);
-            shiftDate = new Date(year, month - 1, day);
-          } catch (e) {
-            console.warn('Invalid shift date format:', shift.shiftDate);
-            continue;
+          const isMulti =
+            (shift as any)?.shiftMode === 'multi' &&
+            !!(shift as any)?.endDate &&
+            (shift as any).endDate !== shift.shiftDate;
+
+          // For month view spanning bars, emit a single all-day "range" event
+          // and hide the per-day occurrences in month view (handled in CalendarPage).
+          if (isMulti) {
+            const rangeEvent = shiftToRangeBarEvent(shift, jobOrder, jobOrderColor);
+            if (rangeEvent) calendarEvents.push(rangeEvent);
           }
 
-          if (!isValid(shiftDate)) continue;
+          const occurrences: Array<{ dateStr: string; startTime: string; endTime: string }> = [];
 
-          // Check if shift overlaps with the date range
-          // We need to check the full datetime range, not just the date
-          const shiftStartTime = shift.defaultStartTime || '00:00';
-          const shiftEndTime = shift.defaultEndTime || '23:59';
-          
-          const [startHour, startMin] = shiftStartTime.split(':').map(Number);
-          const [endHour, endMin] = shiftEndTime.split(':').map(Number);
-          
-          const shiftStartDateTime = new Date(shiftDate);
-          shiftStartDateTime.setHours(startHour, startMin, 0, 0);
-          
-          let shiftEndDateTime = new Date(shiftDate);
-          shiftEndDateTime.setHours(endHour, endMin, 0, 0);
-          
-          // If end time is before start time, assume next day
-          if (shiftEndDateTime < shiftStartDateTime) {
-            shiftEndDateTime = new Date(shiftEndDateTime);
-            shiftEndDateTime.setDate(shiftEndDateTime.getDate() + 1);
+          if (isMulti) {
+            const startD = parseLocalYyyyMmDd(shift.shiftDate);
+            const endD = parseLocalYyyyMmDd((shift as any).endDate);
+            if (!startD || !endD || !isValid(startD) || !isValid(endD)) continue;
+
+            for (const day of eachDayOfInterval({ start: startD, end: endD })) {
+              const dateStr = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+              const dowKey = String(day.getDay()); // 0=Sun..6=Sat
+              const sched = (shift as any).weeklySchedule?.[dowKey];
+              if (sched && sched.enabled === false) continue;
+
+              occurrences.push({
+                dateStr,
+                startTime: (sched?.startTime || shift.defaultStartTime || '00:00') as string,
+                endTime: (sched?.endTime || shift.defaultEndTime || '23:59') as string,
+              });
+            }
+          } else {
+            occurrences.push({
+              dateStr: shift.shiftDate,
+              startTime: shift.defaultStartTime || '00:00',
+              endTime: shift.defaultEndTime || '23:59',
+            });
           }
 
-          // Check if shift overlaps with the requested time range
-          const overlaps = shiftStartDateTime <= timeMax && shiftEndDateTime >= timeMin;
+          for (const occ of occurrences) {
+            const occDate = parseLocalYyyyMmDd(occ.dateStr);
+            if (!occDate || !isValid(occDate)) continue;
 
-          if (overlaps) {
-            const event = shiftToCalendarEvent(shift, jobOrder, jobOrderColor);
+            const [startHour, startMin] = occ.startTime.split(':').map(Number);
+            const [endHour, endMin] = occ.endTime.split(':').map(Number);
+
+            const shiftStartDateTime = new Date(occDate);
+            shiftStartDateTime.setHours(startHour, startMin, 0, 0);
+
+            let shiftEndDateTime = new Date(occDate);
+            shiftEndDateTime.setHours(endHour, endMin, 0, 0);
+
+            // If end time is before start time, assume next day
+            if (shiftEndDateTime < shiftStartDateTime) {
+              shiftEndDateTime = new Date(shiftEndDateTime);
+              shiftEndDateTime.setDate(shiftEndDateTime.getDate() + 1);
+            }
+
+            const overlaps = shiftStartDateTime <= timeMax && shiftEndDateTime >= timeMin;
+            if (!overlaps) continue;
+
+            // Ensure unique IDs per day for a single multi-day shift
+            const syntheticShift = {
+              ...shift,
+              id: `${shift.id}_${occ.dateStr}`,
+              shiftDate: occ.dateStr,
+              defaultStartTime: occ.startTime,
+              defaultEndTime: occ.endTime,
+            };
+            const event = shiftToCalendarEvent(syntheticShift, jobOrder, jobOrderColor);
             if (event) {
+              event.hrx = {
+                gigShiftId: shift.id,
+                gigShiftRange: false,
+              };
               calendarEvents.push(event);
             }
           }

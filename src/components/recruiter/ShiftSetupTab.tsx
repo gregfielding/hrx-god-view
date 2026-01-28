@@ -21,6 +21,7 @@ import {
   MenuItem,
   Checkbox,
   FormControlLabel,
+  Switch,
   IconButton,
   Chip,
   Stack,
@@ -40,7 +41,17 @@ import {
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
-import { collection, query, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  deleteField,
+  doc,
+  getDocs,
+  query,
+  serverTimestamp,
+  updateDoc,
+} from 'firebase/firestore';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
@@ -53,7 +64,14 @@ interface Shift {
   totalStaffRequested: number;
   showStaffNeeded?: boolean; // Show staff count on jobs board
   poNumber?: string;
-  shiftDate: string; // ISO date string
+  shiftDate: string; // ISO date string (single-day date, or start date for multi-day)
+  shiftMode?: 'single' | 'multi';
+  endDate?: string; // ISO date string (only for multi-day)
+  /**
+   * Weekly schedule for multi-day shifts.
+   * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
+   */
+  weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
   defaultStartTime: string; // HH:mm format
   defaultEndTime: string; // HH:mm format
   shiftDescription?: string;
@@ -70,6 +88,31 @@ interface Shift {
   updatedAt: any;
 }
 
+const DOWS: Array<{ dow: number; label: string; short: string }> = [
+  { dow: 1, label: 'Monday', short: 'Mon' },
+  { dow: 2, label: 'Tuesday', short: 'Tue' },
+  { dow: 3, label: 'Wednesday', short: 'Wed' },
+  { dow: 4, label: 'Thursday', short: 'Thu' },
+  { dow: 5, label: 'Friday', short: 'Fri' },
+  { dow: 6, label: 'Saturday', short: 'Sat' },
+  { dow: 0, label: 'Sunday', short: 'Sun' },
+];
+
+function buildDefaultWeeklySchedule(start: string, end: string): Record<string, { enabled: boolean; startTime: string; endTime: string }> {
+  const schedule: Record<string, { enabled: boolean; startTime: string; endTime: string }> = {};
+  for (const { dow } of DOWS) {
+    schedule[String(dow)] = { enabled: true, startTime: start, endTime: end };
+  }
+  return schedule;
+}
+
+function parseLocalYyyyMmDd(dateStr: string): Date | null {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const d = new Date(year, month - 1, day);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 interface Position {
   jobTitle: string;
   payRate: string;
@@ -84,6 +127,7 @@ interface ShiftSetupTabProps {
 
 const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, jobOrder }) => {
   const { user } = useAuth();
+  const isGigJob = jobOrder?.jobType === 'gig';
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -94,7 +138,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     totalStaffRequested: 1,
     showStaffNeeded: false,
     poNumber: '',
+    shiftMode: 'single' as 'single' | 'multi',
     shiftDate: '',
+    endDate: '',
+    weeklySchedule: buildDefaultWeeklySchedule('', ''),
     defaultStartTime: '',
     defaultEndTime: '',
     shiftDescription: '',
@@ -153,7 +200,11 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
       })) as Shift[];
       
       // Sort by date
-      shiftsData.sort((a, b) => new Date(a.shiftDate).getTime() - new Date(b.shiftDate).getTime());
+      shiftsData.sort((a, b) => {
+        const aDate = (a.shiftDate || a.endDate || '').toString();
+        const bDate = (b.shiftDate || b.endDate || '').toString();
+        return new Date(aDate).getTime() - new Date(bDate).getTime();
+      });
       
       setShifts(shiftsData);
     } catch (err) {
@@ -167,13 +218,22 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
   const handleOpenDialog = (shift?: Shift) => {
     if (shift) {
       setEditingShift(shift);
+      const mode: 'single' | 'multi' = shift.shiftMode === 'multi' ? 'multi' : 'single';
+      const weeklySchedule =
+        mode === 'multi'
+          ? (shift.weeklySchedule || buildDefaultWeeklySchedule(shift.defaultStartTime || '', shift.defaultEndTime || ''))
+          : buildDefaultWeeklySchedule('', '');
       setFormData({
         shiftTitle: shift.shiftTitle,
         defaultJobTitle: shift.defaultJobTitle || '',
         totalStaffRequested: shift.totalStaffRequested,
         showStaffNeeded: shift.showStaffNeeded || false,
         poNumber: shift.poNumber || '',
+        shiftMode: mode,
         shiftDate: shift.shiftDate,
+        // Gig: multi-day uses an end date. Career: multi-day is an open-ended weekly schedule.
+        endDate: mode === 'multi' ? (isGigJob ? (shift.endDate || shift.shiftDate) : '') : '',
+        weeklySchedule,
         defaultStartTime: shift.defaultStartTime,
         defaultEndTime: shift.defaultEndTime,
         shiftDescription: shift.shiftDescription || '',
@@ -194,7 +254,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         totalStaffRequested: 1,
         showStaffNeeded: false,
         poNumber: '',
+        shiftMode: 'single',
         shiftDate: '',
+        endDate: '',
+        weeklySchedule: buildDefaultWeeklySchedule('', ''),
         defaultStartTime: '',
         defaultEndTime: '',
         shiftDescription: '',
@@ -218,10 +281,6 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         setError('Shift title is required');
         return;
       }
-      if (!formData.shiftDate) {
-        setError('Shift date is required');
-        return;
-      }
       if (!formData.defaultStartTime || !formData.defaultEndTime) {
         setError('Start and end times are required');
         return;
@@ -231,16 +290,82 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         return;
       }
 
-      const shiftData = {
-        ...formData,
+      // Normalize mode:
+      // - Gig multi-day requires an end date and spans a date range.
+      // - Career "multi-day" means an open-ended weekly schedule (no end date).
+      const isSchedule = formData.shiftMode === 'multi' && (!isGigJob || (!!formData.endDate && formData.endDate !== formData.shiftDate));
+
+      if (!formData.shiftDate) {
+        setError(isSchedule ? 'Start date is required' : 'Shift date is required');
+        return;
+      }
+      if (isGigJob && isSchedule && !formData.endDate) {
+        setError('End date is required');
+        return;
+      }
+      if (isGigJob && isSchedule && formData.endDate < formData.shiftDate) {
+        setError('End date must be on or after start date');
+        return;
+      }
+
+      // Validate weekly schedule for multi-day shifts
+      if (isSchedule) {
+        const schedule = formData.weeklySchedule || {};
+        const enabledDays = Object.values(schedule).filter((d) => d?.enabled);
+        if (enabledDays.length === 0) {
+          setError('Select at least one day of the week for this multi-day shift');
+          return;
+        }
+        for (const [k, d] of Object.entries(schedule)) {
+          if (!d?.enabled) continue;
+          if (!d.startTime || !d.endTime) {
+            setError(`Start and end times are required for ${DOWS.find((x) => String(x.dow) === k)?.label || 'a selected day'}`);
+            return;
+          }
+        }
+      }
+
+      const baseShiftData: any = {
+        shiftTitle: formData.shiftTitle,
+        defaultJobTitle: formData.defaultJobTitle,
+        totalStaffRequested: formData.totalStaffRequested,
+        showStaffNeeded: formData.showStaffNeeded,
+        poNumber: formData.poNumber,
+        shiftDate: formData.shiftDate, // single-day date OR start date for multi
+        defaultStartTime: formData.defaultStartTime,
+        defaultEndTime: formData.defaultEndTime,
+        shiftDescription: formData.shiftDescription,
+        emailIntro: formData.emailIntro,
+        sendNotification: formData.sendNotification,
         tenantId,
         jobOrderId,
         updatedAt: serverTimestamp(),
-        ...(editingShift ? {} : {
-          createdAt: serverTimestamp(),
-          createdBy: user?.uid || 'unknown',
-        }),
+        ...(editingShift
+          ? {}
+          : {
+              createdAt: serverTimestamp(),
+              createdBy: user?.uid || 'unknown',
+            }),
       };
+
+      const shiftData: any = {
+        ...baseShiftData,
+        shiftMode: isSchedule ? 'multi' : 'single',
+      };
+
+      if (isSchedule) {
+        if (isGigJob) {
+          shiftData.endDate = formData.endDate;
+        } else {
+          // Open-ended schedule: no endDate stored
+          shiftData.endDate = deleteField();
+        }
+        shiftData.weeklySchedule = formData.weeklySchedule || buildDefaultWeeklySchedule(formData.defaultStartTime, formData.defaultEndTime);
+      } else {
+        // Ensure multi-day fields are removed when switching back to single-day.
+        shiftData.endDate = deleteField();
+        shiftData.weeklySchedule = deleteField();
+      }
 
       if (editingShift) {
         // Update existing shift
@@ -323,6 +448,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     }
 
     try {
+      if (shiftToDuplicate.shiftMode === 'multi') {
+        setError('Multi-day shifts can’t be duplicated by date yet. Create a new multi-day shift instead.');
+        return;
+      }
       const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
       
       // Create a shift for each selected date
@@ -442,18 +571,33 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                         {(() => {
                           try {
                             // Parse date string in local time to avoid timezone issues
-                            const dateStr = shift.shiftDate;
-                            if (dateStr && dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-                              const [year, month, day] = dateStr.split('-').map(Number);
-                              const date = new Date(year, month - 1, day); // month is 0-indexed
-                              return format(date, 'MMM dd, yyyy');
+                            const startStr = shift.shiftDate;
+                            const endStr =
+                              shift.shiftMode === 'multi' && shift.endDate && shift.endDate !== shift.shiftDate
+                                ? shift.endDate
+                                : null;
+
+                            const startLocal = parseLocalYyyyMmDd(startStr) || new Date(startStr);
+                            const endLocal = endStr ? (parseLocalYyyyMmDd(endStr) || new Date(endStr)) : null;
+
+                            if (endLocal) {
+                              return `${format(startLocal, 'MMM dd, yyyy')} – ${format(endLocal, 'MMM dd, yyyy')}`;
                             }
-                            return format(new Date(shift.shiftDate), 'MMM dd, yyyy');
+                            if (shift.shiftMode === 'multi' && !shift.endDate) {
+                              return `Starts ${format(startLocal, 'MMM dd, yyyy')}`;
+                            }
+                            return format(startLocal, 'MMM dd, yyyy');
                           } catch {
                             return shift.shiftDate || 'N/A';
                           }
                         })()}
                       </Typography>
+                      {shift.shiftMode === 'multi' && shift.endDate && shift.endDate !== shift.shiftDate && (
+                        <Chip size="small" label="Multi-day" sx={{ ml: 0.5 }} />
+                      )}
+                      {shift.shiftMode === 'multi' && !shift.endDate && (
+                        <Chip size="small" label="Schedule" sx={{ ml: 0.5 }} />
+                      )}
                     </Stack>
                   </TableCell>
                   <TableCell>
@@ -621,16 +765,95 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               onChange={(e) => setFormData({ ...formData, poNumber: e.target.value })}
             />
 
-            {/* Select Day */}
-            <TextField
-              fullWidth
-              label="Select day"
-              type="date"
-              value={formData.shiftDate}
-              onChange={(e) => setFormData({ ...formData, shiftDate: e.target.value })}
-              InputLabelProps={{ shrink: true }}
-              required
+            {/* Single-day vs Multi-day */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={formData.shiftMode === 'multi'}
+                  onChange={(e) => {
+                    const nextMode: 'single' | 'multi' = e.target.checked ? 'multi' : 'single';
+                    const nextStart = formData.shiftDate;
+                    const nextEnd =
+                      nextMode === 'multi'
+                        ? (isGigJob ? (formData.endDate || nextStart) : '')
+                        : '';
+                    const nextSchedule =
+                      nextMode === 'multi'
+                        ? (formData.weeklySchedule && Object.keys(formData.weeklySchedule).length > 0
+                            ? formData.weeklySchedule
+                            : buildDefaultWeeklySchedule(formData.defaultStartTime, formData.defaultEndTime))
+                        : buildDefaultWeeklySchedule('', '');
+                    setFormData({
+                      ...formData,
+                      shiftMode: nextMode,
+                      endDate: nextEnd,
+                      weeklySchedule: nextSchedule,
+                    });
+                  }}
+                />
+              }
+              label={
+                isGigJob
+                  ? 'Multi-day shift (one assignment covering multiple days)'
+                  : 'Weekly schedule (recurring)'
+              }
             />
+
+            {/* Dates */}
+            {isGigJob ? (
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label={formData.shiftMode === 'multi' ? 'Start date' : 'Select day'}
+                    type="date"
+                    value={formData.shiftDate}
+                    onChange={(e) => {
+                      const nextStart = e.target.value;
+                      let nextEnd = formData.endDate;
+                      if (formData.shiftMode === 'multi') {
+                        if (!nextEnd) nextEnd = nextStart;
+                        if (nextEnd && nextStart && nextEnd < nextStart) nextEnd = nextStart;
+                      } else {
+                        nextEnd = '';
+                      }
+                      setFormData({ ...formData, shiftDate: nextStart, endDate: nextEnd });
+                    }}
+                    InputLabelProps={{ shrink: true }}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  {formData.shiftMode === 'multi' ? (
+                    <TextField
+                      fullWidth
+                      label="End date"
+                      type="date"
+                      value={formData.endDate}
+                      onChange={(e) => {
+                        const nextEnd = e.target.value;
+                        const nextStart = formData.shiftDate;
+                        setFormData({ ...formData, endDate: nextStart && nextEnd && nextEnd < nextStart ? nextStart : nextEnd });
+                      }}
+                      InputLabelProps={{ shrink: true }}
+                      required
+                    />
+                  ) : (
+                    <Box />
+                  )}
+                </Grid>
+              </Grid>
+            ) : (
+              <TextField
+                fullWidth
+                label="Start date"
+                type="date"
+                value={formData.shiftDate}
+                onChange={(e) => setFormData({ ...formData, shiftDate: e.target.value, endDate: '' })}
+                InputLabelProps={{ shrink: true }}
+                required
+              />
+            )}
 
             {/* Time Fields */}
             <Box sx={{ display: 'flex', gap: 2 }}>
@@ -639,7 +862,22 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                 label="Default Start Time"
                 type="time"
                 value={formData.defaultStartTime}
-                onChange={(e) => setFormData({ ...formData, defaultStartTime: e.target.value })}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  const nextSchedule =
+                    formData.shiftMode === 'multi'
+                      ? (() => {
+                          const prev = formData.weeklySchedule || {};
+                          const out: typeof prev = { ...prev };
+                          for (const k of Object.keys(out)) {
+                            if (!out[k]) continue;
+                            if (!out[k].startTime) out[k] = { ...out[k], startTime: next };
+                          }
+                          return out;
+                        })()
+                      : formData.weeklySchedule;
+                  setFormData({ ...formData, defaultStartTime: next, weeklySchedule: nextSchedule });
+                }}
                 InputLabelProps={{ shrink: true }}
                 required
               />
@@ -648,11 +886,109 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                 label="Default End Time"
                 type="time"
                 value={formData.defaultEndTime}
-                onChange={(e) => setFormData({ ...formData, defaultEndTime: e.target.value })}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  const nextSchedule =
+                    formData.shiftMode === 'multi'
+                      ? (() => {
+                          const prev = formData.weeklySchedule || {};
+                          const out: typeof prev = { ...prev };
+                          for (const k of Object.keys(out)) {
+                            if (!out[k]) continue;
+                            if (!out[k].endTime) out[k] = { ...out[k], endTime: next };
+                          }
+                          return out;
+                        })()
+                      : formData.weeklySchedule;
+                  setFormData({ ...formData, defaultEndTime: next, weeklySchedule: nextSchedule });
+                }}
                 InputLabelProps={{ shrink: true }}
                 required
               />
             </Box>
+
+            {/* Weekly schedule:
+                - Gig: show only when the date range spans > 1 day.
+                - Career: show whenever "Weekly schedule" is enabled. */}
+            {formData.shiftMode === 'multi' && (!isGigJob || (formData.endDate && formData.endDate !== formData.shiftDate)) && (
+              <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 2 }}>
+                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                  Weekly schedule {isGigJob ? '(applies to dates within the range)' : ''}
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Choose which days are worked and set start/end times per day (e.g., Wed 10–6).
+                </Typography>
+
+                <Grid container spacing={1} sx={{ alignItems: 'center' }}>
+                  {DOWS.map(({ dow, label, short }) => {
+                    const key = String(dow);
+                    const day = formData.weeklySchedule?.[key] || { enabled: false, startTime: formData.defaultStartTime, endTime: formData.defaultEndTime };
+                    return (
+                      <React.Fragment key={key}>
+                        <Grid item xs={12} md={3}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={!!day.enabled}
+                                onChange={(e) => {
+                                  const enabled = e.target.checked;
+                                  const nextSchedule = {
+                                    ...(formData.weeklySchedule || {}),
+                                    [key]: {
+                                      enabled,
+                                      startTime: day.startTime || formData.defaultStartTime,
+                                      endTime: day.endTime || formData.defaultEndTime,
+                                    },
+                                  };
+                                  setFormData({ ...formData, weeklySchedule: nextSchedule });
+                                }}
+                              />
+                            }
+                            label={`${short}`}
+                          />
+                        </Grid>
+                        <Grid item xs={6} md={4.5}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Start"
+                            type="time"
+                            value={day.startTime || ''}
+                            onChange={(e) => {
+                              const nextSchedule = {
+                                ...(formData.weeklySchedule || {}),
+                                [key]: { ...day, startTime: e.target.value },
+                              };
+                              setFormData({ ...formData, weeklySchedule: nextSchedule });
+                            }}
+                            InputLabelProps={{ shrink: true }}
+                            disabled={!day.enabled}
+                          />
+                        </Grid>
+                        <Grid item xs={6} md={4.5}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="End"
+                            type="time"
+                            value={day.endTime || ''}
+                            onChange={(e) => {
+                              const nextSchedule = {
+                                ...(formData.weeklySchedule || {}),
+                                [key]: { ...day, endTime: e.target.value },
+                              };
+                              setFormData({ ...formData, weeklySchedule: nextSchedule });
+                            }}
+                            InputLabelProps={{ shrink: true }}
+                            disabled={!day.enabled}
+                          />
+                        </Grid>
+                      </React.Fragment>
+                    );
+                  })}
+                </Grid>
+              </Box>
+            )}
 
             {/* Shift Description */}
             <TextField
@@ -684,7 +1020,13 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
           <Button 
             variant="contained" 
             onClick={handleSubmit}
-            disabled={!formData.shiftTitle || !formData.shiftDate || !formData.defaultStartTime || !formData.defaultEndTime}
+            disabled={
+              !formData.shiftTitle ||
+              !formData.shiftDate ||
+              !formData.defaultStartTime ||
+              !formData.defaultEndTime ||
+              (isGigJob && formData.shiftMode === 'multi' && (!formData.endDate || formData.endDate < formData.shiftDate))
+            }
           >
             {editingShift ? 'Update Shift' : 'Add Shift'}
           </Button>

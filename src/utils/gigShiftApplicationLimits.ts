@@ -34,6 +34,32 @@ export function extractDateFromShiftDate(shiftDate: string): string {
   return shiftDate.split('T')[0];
 }
 
+function parseLocalYyyyMmDd(dateStr: string): Date | null {
+  const d = extractDateFromShiftDate(dateStr || '');
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+  const [y, m, day] = d.split('-').map(Number);
+  const dt = new Date(y, m - 1, day);
+  return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function expandDateRangeInclusive(startDate: string, endDate: string): string[] {
+  const start = parseLocalYyyyMmDd(startDate);
+  const end = parseLocalYyyyMmDd(endDate);
+  if (!start || !end) return [];
+
+  // Guard: prevent pathological ranges
+  const maxDays = 400;
+  const dates: string[] = [];
+  const cur = new Date(start);
+  let count = 0;
+  while (cur <= end && count < maxDays) {
+    dates.push(`${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`);
+    cur.setDate(cur.getDate() + 1);
+    count++;
+  }
+  return dates;
+}
+
 /**
  * Check if a user has an active application for a shift on the same date
  * 
@@ -140,9 +166,14 @@ async function getShiftDatesForApplication(
     
     if (shiftSnap.exists()) {
       const shiftData = shiftSnap.data();
-      if (shiftData.shiftDate) {
-        return [shiftData.shiftDate];
+      const start = shiftData.shiftDate ? extractDateFromShiftDate(shiftData.shiftDate) : null;
+      const end = shiftData.endDate ? extractDateFromShiftDate(shiftData.endDate) : null;
+      const isMulti = shiftData.shiftMode === 'multi' && !!end && !!start && end !== start;
+
+      if (isMulti && start && end) {
+        return expandDateRangeInclusive(start, end);
       }
+      if (start) return [start];
     }
     
     // If shift document doesn't exist or doesn't have shiftDate, return empty
@@ -175,15 +206,11 @@ export async function checkMultipleShiftDateConflicts(
   
   for (const shiftId of shiftIds) {
     try {
-      const shiftRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', shiftId);
-      const shiftSnap = await getDoc(shiftRef);
-      
-      if (shiftSnap.exists()) {
-        const shiftData = shiftSnap.data();
-        if (shiftData.shiftDate) {
-          shiftDates.push(shiftData.shiftDate);
-        }
-      }
+      const dates = await getShiftDatesForApplication(tenantId, jobOrderId, shiftId);
+      dates.forEach((d) => {
+        const ds = extractDateFromShiftDate(d);
+        if (ds) shiftDates.push(ds);
+      });
     } catch (error) {
       console.error(`Error getting shift date for ${shiftId}:`, error);
     }

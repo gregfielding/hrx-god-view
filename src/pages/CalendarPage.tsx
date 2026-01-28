@@ -709,6 +709,14 @@ const CalendarPage: React.FC = () => {
     const multiDayEvents = events.filter(isMultiDayEvent);
     const multiDayEventIds = new Set(multiDayEvents.map((e) => e.id));
 
+    // For gig multi-day shifts, we render a single spanning "range bar" event.
+    // Hide the per-day child occurrences in month view to avoid duplicates.
+    const gigMultiDayShiftIds = new Set(
+      multiDayEvents
+        .filter((e) => e.calendarId === 'gig-job-orders' && e.hrx?.gigShiftRange && e.hrx?.gigShiftId)
+        .map((e) => e.hrx!.gigShiftId as string),
+    );
+
     const weeks: Date[][] = [];
     for (let i = 0; i < calendarDays.length; i += 7) {
       weeks.push(calendarDays.slice(i, i + 7));
@@ -862,7 +870,16 @@ const CalendarPage: React.FC = () => {
                 const isCurrentMonth = isSameMonth(day, currentDate);
                 const isTodayDate = isToday(day);
                 const allEventsForDay = getEventsForDay(day);
-                const dayEvents = allEventsForDay.filter((e) => !multiDayEventIds.has(e.id));
+                const dayEvents = allEventsForDay
+                  .filter((e) => !multiDayEventIds.has(e.id))
+                  .filter((e) => {
+                    if (e.calendarId !== 'gig-job-orders') return true;
+                    const gigShiftId = e.hrx?.gigShiftId;
+                    if (!gigShiftId) return true;
+                    // Keep the range bar (multi-day), but hide child occurrences.
+                    if (e.hrx?.gigShiftRange) return true;
+                    return !gigMultiDayShiftIds.has(gigShiftId);
+                  });
 
                 return (
                   <Box
@@ -955,7 +972,8 @@ const CalendarPage: React.FC = () => {
     const hours = Array.from({ length: 18 }, (_, i) => i + 6); // 6 AM to 11 PM
 
     // Get all-day events for the week
-    const allDayEvents = events.filter((event) => event.isAllDay);
+    // (Hide gig multi-day range bars here; month view renders them spanning correctly.)
+    const allDayEvents = events.filter((event) => event.isAllDay && !event.hrx?.gigShiftRange);
 
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -1187,7 +1205,7 @@ const CalendarPage: React.FC = () => {
   // Render day view
   const renderDayView = () => {
     const dayEvents = getEventsForDay(currentDate);
-    const allDayEvents = dayEvents.filter((event) => event.isAllDay);
+    const allDayEvents = dayEvents.filter((event) => event.isAllDay && !event.hrx?.gigShiftRange);
     const timedEvents = dayEvents.filter((event) => !event.isAllDay);
     const dayLayout = layoutOverlappingTimedEvents(timedEvents);
     

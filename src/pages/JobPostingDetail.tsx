@@ -36,6 +36,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { formatDistanceToNow } from 'date-fns';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
+import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -55,6 +56,7 @@ const JobPostingDetail: React.FC = () => {
   const [selectedShifts, setSelectedShifts] = useState<string[]>([]);
   const [dynamicShifts, setDynamicShifts] = useState<any[]>([]);
   const [loadingShifts, setLoadingShifts] = useState(false);
+  const [careerWeeklyScheduleSummary, setCareerWeeklyScheduleSummary] = useState<string>('');
   const [appliedShifts, setAppliedShifts] = useState<string[]>([]);
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
@@ -318,6 +320,36 @@ const JobPostingDetail: React.FC = () => {
     };
 
     loadDynamicShifts();
+  }, [posting]);
+
+  // Load career weekly schedule (from job order shifts)
+  useEffect(() => {
+    const loadCareerSchedule = async () => {
+      if (!posting || posting.jobType !== 'career' || !posting.jobOrderId || !posting.tenantId) {
+        setCareerWeeklyScheduleSummary('');
+        return;
+      }
+
+      try {
+        const shiftsRef = collection(db, 'tenants', posting.tenantId, 'job_orders', posting.jobOrderId, 'shifts');
+        const snap = await getDocs(query(shiftsRef));
+        if (snap.empty) {
+          setCareerWeeklyScheduleSummary('');
+          return;
+        }
+
+        const shifts = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
+        // Prefer the "weekly schedule" shift (career multi-day has no endDate)
+        const weekly = shifts.find((s) => s.shiftMode === 'multi' && s.weeklySchedule && !s.endDate) || shifts.find((s) => s.weeklySchedule);
+        const summary = weekly?.weeklySchedule ? formatWeeklyScheduleSummary(weekly.weeklySchedule) : '';
+        setCareerWeeklyScheduleSummary(summary || '');
+      } catch (err) {
+        console.warn('Error loading career weekly schedule:', err);
+        setCareerWeeklyScheduleSummary('');
+      }
+    };
+
+    void loadCareerSchedule();
   }, [posting]);
 
   const toggleShift = (shiftId: string) => {
@@ -928,7 +960,11 @@ const JobPostingDetail: React.FC = () => {
                   return (
                     <Chip 
                       icon={<ScheduleIcon />}
-                      label={`Starts ${formatDate(posting.startDate)}`} 
+                      label={
+                        posting.jobType === 'career'
+                          ? `Estimated Start: ${formatDate(posting.startDate)}`
+                          : `Starts ${formatDate(posting.startDate)}`
+                      } 
                       size="small"
                       variant="outlined"
                     />
@@ -1394,10 +1430,25 @@ const JobPostingDetail: React.FC = () => {
                   {posting.startDate && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
-                        Start Date
+                        {posting.jobType === 'career' ? 'Estimated Start Date' : 'Start Date'}
                       </Typography>
                       <Typography variant="body1" fontWeight="medium">
                         {formatDate(posting.startDate)}
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {posting.jobType === 'career' && careerWeeklyScheduleSummary && (
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
+                      <Typography variant="body2" color="text.secondary">
+                        Weekly Schedule
+                      </Typography>
+                      <Typography
+                        variant="body1"
+                        fontWeight="medium"
+                        sx={{ textAlign: 'right', whiteSpace: 'pre-wrap' }}
+                      >
+                        {careerWeeklyScheduleSummary}
                       </Typography>
                     </Box>
                   )}

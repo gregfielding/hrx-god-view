@@ -58,6 +58,20 @@ export interface CalendarEvent {
   hangoutLink?: string; // Google Meet link
   htmlLink?: string; // "Open in Google Calendar" link
   colorId?: string;
+  /**
+   * HRX-specific metadata (non-Google fields) used internally for rendering and navigation.
+   */
+  hrx?: {
+    /**
+     * Gig shift identifier (Firestore shift doc id) for gig calendar events.
+     * Child occurrences and the multi-day range bar share the same `gigShiftId`.
+     */
+    gigShiftId?: string;
+    /**
+     * True when this event represents a multi-day shift "range bar" (month view).
+     */
+    gigShiftRange?: boolean;
+  };
   isAllDay: boolean;
   isRecurringInstance: boolean;
   createdAt: string; // ISO timestamp
