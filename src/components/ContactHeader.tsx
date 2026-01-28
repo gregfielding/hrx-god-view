@@ -38,6 +38,7 @@ import { httpsCallable } from 'firebase/functions';
 import FavoriteButton from './FavoriteButton';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
 import { useAuth } from '../contexts/AuthContext';
+import ImageCropDialog from './common/ImageCropDialog';
 
 interface NavigationLink {
   type: 'company' | 'location' | 'deal' | 'jobOrder';
@@ -136,6 +137,9 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
   const navigate = useNavigate();
   const { user } = useAuth();
   const [avatarLoading, setAvatarLoading] = useState(false);
+  const [avatarHover, setAvatarHover] = useState(false);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [pendingImageSrc, setPendingImageSrc] = useState<string | null>(null);
   const avatarFileInputRef = useRef<HTMLInputElement | null>(null);
   const [gmailConnected, setGmailConnected] = useState<boolean>(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
@@ -309,18 +313,44 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
     }
 
     try {
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      setPendingImageSrc(src);
+      setCropOpen(true);
+    } catch (error) {
+      console.error('Error preparing avatar crop:', error);
+      if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
+    }
+  };
+
+  const handleConfirmCroppedAvatar = async (blob: Blob) => {
+    if (!onAvatarUpload) return;
+    try {
       setAvatarLoading(true);
-      const storageRef = ref(storage, `contacts/${tenantId}/${contact.id}/avatar.${file.name.split('.').pop()}`);
-      await uploadBytes(storageRef, file);
+
+      // Best-effort delete previous avatar to avoid storage leaks
+      if (contact.avatar) {
+        try {
+          await deleteObject(ref(storage, contact.avatar));
+        } catch {}
+      }
+
+      const storageRef = ref(storage, `contacts/${tenantId}/${contact.id}/avatar.jpg`);
+      await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(storageRef);
       await onAvatarUpload(downloadURL);
+
+      setCropOpen(false);
+      setPendingImageSrc(null);
+      if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
     } catch (error) {
-      console.error('Error uploading avatar:', error);
+      console.error('Error uploading cropped avatar:', error);
     } finally {
       setAvatarLoading(false);
-      if (avatarFileInputRef.current) {
-        avatarFileInputRef.current.value = '';
-      }
     }
   };
 
@@ -330,12 +360,8 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
 
     try {
       setAvatarLoading(true);
-      // Delete from storage
-      const urlParts = contact.avatar.split('/');
-      const fileName = urlParts[urlParts.length - 1];
-      const fileExtension = fileName.split('.').pop() || 'png';
-      const storageRef = ref(storage, `contacts/${tenantId}/${contact.id}/avatar.${fileExtension}`);
-      await deleteObject(storageRef);
+      // Delete from storage (supports both gs:// and https:// refs)
+      await deleteObject(ref(storage, contact.avatar));
       await onAvatarDelete();
     } catch (error) {
       console.error('Error deleting avatar:', error);
@@ -578,7 +604,11 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
           {/* Contact Avatar */}
           {onAvatarUpload && (
-            <Box sx={{ position: 'relative' }}>
+            <Box
+              sx={{ position: 'relative' }}
+              onMouseEnter={() => setAvatarHover(true)}
+              onMouseLeave={() => setAvatarHover(false)}
+            >
               <Avatar
                 src={contact.avatar}
                 alt={getDisplayName()}
@@ -624,7 +654,8 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                         bgcolor: 'grey.400'
                       },
                       width: 28,
-                      height: 28
+                      height: 28,
+                      display: avatarHover ? 'inline-flex' : 'none'
                     }}
                     disabled={avatarLoading}
                   >
@@ -648,7 +679,8 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                         bgcolor: 'grey.400'
                       },
                       width: 28,
-                      height: 28
+                      height: 28,
+                      display: avatarHover ? 'inline-flex' : 'none'
                     }}
                   >
                     {avatarLoading ? (
@@ -1834,6 +1866,23 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
         onSend={() => {
           setMessageDrawerOpen(false);
         }}
+      />
+
+      <ImageCropDialog
+        open={cropOpen}
+        title="Edit contact photo"
+        imageSrc={pendingImageSrc}
+        cropShape="round"
+        aspect={1}
+        confirmLabel={avatarLoading ? 'Saving…' : 'Save'}
+        loading={avatarLoading}
+        onCancel={() => {
+          if (avatarLoading) return;
+          setCropOpen(false);
+          setPendingImageSrc(null);
+          if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
+        }}
+        onConfirm={handleConfirmCroppedAvatar}
       />
     </Box>
   );

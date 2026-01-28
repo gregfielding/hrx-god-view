@@ -31,6 +31,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 import { doc, updateDoc } from 'firebase/firestore';
 import { db, storage } from '../firebase';
 import FavoriteButton from './FavoriteButton';
+import ImageCropDialog from './common/ImageCropDialog';
 
 interface NavigationLink {
   type: 'company';
@@ -155,6 +156,9 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
   const navigate = useNavigate();
   const logoInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [logoHover, setLogoHover] = useState(false);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [pendingImageSrc, setPendingImageSrc] = useState<string | null>(null);
   
   const companyName = company.companyName || company.name || 'Company';
   
@@ -192,18 +196,44 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
     }
     
     try {
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      setPendingImageSrc(src);
+      setCropOpen(true);
+    } catch (error) {
+      console.error('Error preparing logo crop:', error);
+      if (logoInputRef.current) logoInputRef.current.value = '';
+    }
+  };
+
+  const handleConfirmCroppedLogo = async (blob: Blob) => {
+    if (!onAvatarUpload) return;
+    try {
       setUploading(true);
-      const logoRef = ref(storage, `tenants/${tenantId}/companies/${company.id}/logo/${file.name}`);
-      await uploadBytes(logoRef, file);
+
+      // Best-effort delete previous logo blob to avoid storage leaks
+      if (company.logo) {
+        try {
+          await deleteObject(ref(storage, company.logo));
+        } catch {}
+      }
+
+      const logoRef = ref(storage, `tenants/${tenantId}/companies/${company.id}/logo/logo.jpg`);
+      await uploadBytes(logoRef, blob, { contentType: blob.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(logoRef);
       await onAvatarUpload(downloadURL);
+
+      setCropOpen(false);
+      setPendingImageSrc(null);
+      if (logoInputRef.current) logoInputRef.current.value = '';
     } catch (error) {
-      console.error('Error uploading logo:', error);
+      console.error('Error uploading cropped logo:', error);
     } finally {
       setUploading(false);
-      if (logoInputRef.current) {
-        logoInputRef.current.value = '';
-      }
     }
   };
   
@@ -449,7 +479,11 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
       }}>
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 3 }}>
           {/* Company Logo/Avatar */}
-          <Box sx={{ position: 'relative' }}>
+          <Box
+            sx={{ position: 'relative' }}
+            onMouseEnter={() => setLogoHover(true)}
+            onMouseLeave={() => setLogoHover(false)}
+          >
             <Avatar
               src={company.logo}
               alt={companyName}
@@ -496,7 +530,8 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                             bgcolor: 'grey.400'
                           },
                           width: 28,
-                          height: 28
+                          height: 28,
+                          display: logoHover ? 'inline-flex' : 'none'
                         }}
                         disabled={uploading}
                       >
@@ -521,7 +556,8 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
                         bgcolor: 'grey.400'
                       },
                       width: 28,
-                      height: 28
+                      height: 28,
+                      display: logoHover ? 'inline-flex' : 'none'
                     }}
                   >
                     {uploading ? (
@@ -1613,6 +1649,23 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
           </Typography>
         )}
       </Box>
+
+      <ImageCropDialog
+        open={cropOpen}
+        title="Edit company logo"
+        imageSrc={pendingImageSrc}
+        cropShape="rect"
+        aspect={1}
+        confirmLabel={uploading ? 'Saving…' : 'Save'}
+        loading={uploading}
+        onCancel={() => {
+          if (uploading) return;
+          setCropOpen(false);
+          setPendingImageSrc(null);
+          if (logoInputRef.current) logoInputRef.current.value = '';
+        }}
+        onConfirm={handleConfirmCroppedLogo}
+      />
     </Box>
   );
 };

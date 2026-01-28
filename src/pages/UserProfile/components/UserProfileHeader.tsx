@@ -47,6 +47,7 @@ import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
 import StartOnboardingDialog from './StartOnboardingDialog';
 import { isOnboardingInProgress, getActiveOnboardingType, cancelOnboarding } from '../utils/onboardingHelpers';
+import ImageCropDialog from '../../../components/common/ImageCropDialog';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -200,6 +201,9 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [pendingImageSrc, setPendingImageSrc] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [showCertificationsModal, setShowCertificationsModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
@@ -320,35 +324,14 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       try {
-        console.log('🔄 Starting avatar upload...');
-        console.log('User ID:', uid);
-        console.log('File name:', file.name);
-        console.log('File size:', file.size);
-        
-        // Check authentication
-        const auth = getAuth();
-        const currentUser = auth.currentUser;
-        console.log('Current authenticated user:', currentUser?.uid);
-        console.log('Is user authenticated?', !!currentUser);
-        
-        if (!currentUser) {
-          throw new Error('User not authenticated');
-        }
-        
-        const storageRef = ref(storage, `avatars/${uid}.jpg`);
-        console.log('Storage path:', `avatars/${uid}.jpg`);
-        
-        await uploadBytes(storageRef, file);
-        console.log('✅ File uploaded successfully');
-        
-        const downloadURL = await getDownloadURL(storageRef);
-        console.log('✅ Download URL obtained:', downloadURL);
-        
-        await updateDoc(doc(db, 'users', uid), { avatar: downloadURL });
-        console.log('✅ Firestore document updated');
-        
-        onAvatarUpdated(downloadURL);
-        console.log('✅ Avatar update complete');
+        const src = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = () => reject(new Error('Failed to read file'));
+          reader.readAsDataURL(file);
+        });
+        setPendingImageSrc(src);
+        setCropOpen(true);
       } catch (err) {
         console.error('❌ Error uploading avatar:', err);
         console.error('Error details:', {
@@ -360,10 +343,41 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     }
   };
 
+  const handleConfirmCroppedAvatar = async (blob: Blob) => {
+    setAvatarBusy(true);
+    try {
+      // Check authentication
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
+      if (!currentUser) throw new Error('User not authenticated');
+
+      const storageRef = ref(storage, `avatars/${uid}.jpg`);
+      await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, 'users', uid), { avatar: downloadURL });
+      onAvatarUpdated(downloadURL);
+      setCropOpen(false);
+      setPendingImageSrc(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      console.error('❌ Error saving cropped avatar:', err);
+    } finally {
+      setAvatarBusy(false);
+    }
+  };
+
   const handleDeleteAvatar = async () => {
     try {
-      const storageRef = ref(storage, `avatars/${uid}.jpg`);
-      await deleteObject(storageRef);
+      // Prefer deleting by URL (works for both gs:// and https://)
+      if (avatarUrl) {
+        try {
+          await deleteObject(ref(storage, avatarUrl));
+        } catch {
+          await deleteObject(ref(storage, `avatars/${uid}.jpg`));
+        }
+      } else {
+        await deleteObject(ref(storage, `avatars/${uid}.jpg`));
+      }
       await updateDoc(doc(db, 'users', uid), { avatar: '' });
       onAvatarUpdated('');
     } catch (err) {
@@ -644,10 +658,11 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 display: 'flex',
                 gap: 0.5
               }}>
-                {hover && !avatarUrl && (
+                {hover && (
                   <IconButton
                     size="small"
                     onClick={handleAvatarClick}
+                    disabled={avatarBusy}
                     sx={{
                       bgcolor: 'grey.300',
                       color: 'grey.700',
@@ -666,6 +681,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   <IconButton
                     size="small"
                     onClick={handleDeleteAvatar}
+                    disabled={avatarBusy}
                     sx={{
                       bgcolor: 'grey.300',
                       color: 'grey.700',
@@ -1227,10 +1243,11 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 display: 'flex',
                 gap: 0.5
               }}>
-                {hover && !avatarUrl && (
+                {hover && (
                   <IconButton
                     size="small"
                     onClick={handleAvatarClick}
+                    disabled={avatarBusy}
                     sx={{
                       bgcolor: 'grey.300',
                       color: 'grey.700',
@@ -1249,6 +1266,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   <IconButton
                     size="small"
                     onClick={handleDeleteAvatar}
+                    disabled={avatarBusy}
                     sx={{
                       bgcolor: 'grey.300',
                       color: 'grey.700',
@@ -1781,6 +1799,23 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         open={showCertificationsModal}
         onClose={() => setShowCertificationsModal(false)}
         certifications={certifications}
+      />
+
+      <ImageCropDialog
+        open={cropOpen}
+        title="Edit profile photo"
+        imageSrc={pendingImageSrc}
+        cropShape="round"
+        aspect={1}
+        confirmLabel={avatarBusy ? 'Saving…' : 'Save'}
+        loading={avatarBusy}
+        onCancel={() => {
+          if (avatarBusy) return;
+          setCropOpen(false);
+          setPendingImageSrc(null);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        }}
+        onConfirm={handleConfirmCroppedAvatar}
       />
       
       {/* Copy Success Snackbar */}
