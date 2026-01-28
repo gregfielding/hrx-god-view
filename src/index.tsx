@@ -90,6 +90,10 @@ import { ThemeModeProvider } from './theme/theme';
       const errMsg = (event as any).error?.message ? String((event as any).error?.message) : '';
       if (shouldSuppress(msg) || shouldSuppress(fname) || shouldSuppress(errMsg)) {
         event.preventDefault();
+        // CRA's dev error overlay attaches its own listeners; stop propagation so we don't
+        // show a full-screen red error for known-benign Firestore SDK internal assertions.
+        // (This does not "fix" the SDK bug, but prevents it from taking down the UI.)
+        try { (event as any).stopImmediatePropagation?.(); } catch {}
       }
     } catch {}
   }, true);
@@ -106,6 +110,7 @@ import { ThemeModeProvider } from './theme/theme';
       }
       if (shouldSuppress(String(text))) {
         event.preventDefault();
+        try { (event as any).stopImmediatePropagation?.(); } catch {}
       }
     } catch {}
   }, true);
