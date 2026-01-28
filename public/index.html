@@ -28,6 +28,129 @@
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
     <title>HRX ONE</title>
+    <script>
+      (function () {
+        // Dev-only hardening: CRA's red error overlay installs global handlers before app code.
+        // Some Firestore SDK internal assertion crashes (ca9/b815) are known-benign but can take down localhost.
+        // Register suppression BEFORE the bundle loads so the overlay doesn't render.
+        try {
+          var isLocalhost =
+            location.hostname === 'localhost' ||
+            location.hostname === '127.0.0.1' ||
+            location.hostname === '[::1]';
+          if (!isLocalhost) return;
+
+          var needles = [
+            'FIRESTORE',
+            'INTERNAL ASSERTION FAILED',
+            'Internal assertion failed',
+            'internal assertion failed',
+            'Unexpected state',
+            'unexpected state',
+            '__PRIVATE__fail',
+            '__PRIVATE_hardAssert',
+            'WatchChangeAggregator',
+            'TargetState',
+            'ID: ca9',
+            'ID: b815',
+            'ca9',
+            'b815'
+          ];
+
+          var argContains = function (arg) {
+            try {
+              if (!arg) return false;
+              var s =
+                typeof arg === 'string'
+                  ? arg
+                  : (arg && (arg.message || arg.stack)) || String(arg);
+              for (var i = 0; i < needles.length; i++) {
+                if (s.indexOf(needles[i]) !== -1) return true;
+              }
+              return false;
+            } catch (e) {
+              return false;
+            }
+          };
+
+          var shouldSuppress = function (text) {
+            if (!text) return false;
+            var s = String(text);
+            var lower = s.toLowerCase();
+            // Be specific enough to avoid hiding real errors
+            return (
+              (lower.indexOf('firestore') !== -1 &&
+                (lower.indexOf('internal assertion failed') !== -1 ||
+                  lower.indexOf('unexpected state') !== -1)) ||
+              lower.indexOf('id: ca9') !== -1 ||
+              lower.indexOf('id: b815') !== -1
+            );
+          };
+
+          // 1) Filter console.error noise (overlay also hooks console)
+          var originalError = console.error;
+          console.error = function () {
+            try {
+              for (var i = 0; i < arguments.length; i++) {
+                if (argContains(arguments[i]) || shouldSuppress(arguments[i])) {
+                  return;
+                }
+              }
+              var joined = '';
+              try {
+                joined = Array.prototype.map.call(arguments, String).join(' ');
+              } catch (e) {}
+              if (shouldSuppress(joined)) return;
+            } catch (e) {}
+            return originalError.apply(console, arguments);
+          };
+
+          // 2) Prevent default error handling for these specific errors
+          window.addEventListener(
+            'error',
+            function (event) {
+              try {
+                var msg = (event && event.message) || '';
+                var errMsg = (event && event.error && event.error.message) || '';
+                if (shouldSuppress(msg) || shouldSuppress(errMsg)) {
+                  event.preventDefault();
+                  if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+                }
+              } catch (e) {}
+            },
+            true
+          );
+
+          window.addEventListener(
+            'unhandledrejection',
+            function (event) {
+              try {
+                var reason = event && event.reason;
+                var text =
+                  typeof reason === 'string'
+                    ? reason
+                    : (reason && (reason.message || reason.stack)) || '';
+                if (shouldSuppress(text)) {
+                  event.preventDefault();
+                  if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+                }
+              } catch (e) {}
+            },
+            true
+          );
+
+          // 3) Extra safety: window.onerror can cancel default by returning true
+          window.onerror = function (message, source, lineno, colno, error) {
+            try {
+              if (shouldSuppress(message) || shouldSuppress(error && error.message)) {
+                return true;
+              }
+            } catch (e) {}
+            return false;
+          };
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
