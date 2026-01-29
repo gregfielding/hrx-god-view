@@ -1473,15 +1473,6 @@ const CalendarPage: React.FC = () => {
                     primary="My Calendar"
                     primaryTypographyProps={{ variant: 'body2', noWrap: true }}
                   />
-                  {selectedCalendarIds.has(primaryCalendar.id) && (
-                    <Chip
-                      label="Subscribed"
-                      size="small"
-                      color="primary"
-                      variant="outlined"
-                      sx={{ ml: 1 }}
-                    />
-                  )}
                 </ListItemButton>
               </ListItem>
             )}
@@ -1512,15 +1503,6 @@ const CalendarPage: React.FC = () => {
                     primary={calendar.summary}
                     primaryTypographyProps={{ variant: 'body2', noWrap: true }}
                   />
-                  {selectedCalendarIds.has(calendar.id) && (
-                    <Chip
-                      label="Subscribed"
-                      size="small"
-                      color="primary"
-                      variant="outlined"
-                      sx={{ ml: 1 }}
-                    />
-                  )}
                 </ListItemButton>
               </ListItem>
             ))}

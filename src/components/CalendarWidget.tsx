@@ -394,12 +394,15 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
 
   // Load Google Calendar events (from activities collection and direct API)
   useEffect(() => {
-    if (!userId || !tenantId) return;
+    // Google Calendar events are scoped to the user and do NOT require a tenantId.
+    // Dashboard can render before activeTenant is resolved; don't block loading.
+    if (!userId) return;
 
     const unsubscribeFunctions: (() => void)[] = [];
 
     const loadGoogleCalendarEvents = async () => {
-      const cacheKeySession = `calendarWidget.googleEvents.v1:${userId}:${tenantId}:${googleFetchRange.start.toISOString().slice(0, 10)}:${googleFetchRange.end.toISOString().slice(0, 10)}`;
+      const tenantKey = tenantId || 'no-tenant';
+      const cacheKeySession = `calendarWidget.googleEvents.v1:${userId}:${tenantKey}:${googleFetchRange.start.toISOString().slice(0, 10)}:${googleFetchRange.end.toISOString().slice(0, 10)}`;
 
       // Hydrate from sessionStorage immediately (stale-while-revalidate) to avoid flicker.
       try {
@@ -510,7 +513,7 @@ const CalendarWidget: React.FC<CalendarWidgetProps> = ({
       try {
         enableActivitiesFallback = localStorage.getItem('feature.calendarActivitiesFallback') === 'true';
       } catch {}
-      if (enableActivitiesFallback) {
+      if (enableActivitiesFallback && tenantId) {
         const activitiesRef = collection(db, 'tenants', tenantId, 'activities');
         const activitiesQuery = query(
           activitiesRef,
