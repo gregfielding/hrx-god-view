@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
 
@@ -164,6 +164,15 @@ function UsersRedirect() {
 function RecruiterUserGroupsRedirect() {
   const { groupId } = useParams();
   return <Navigate to={`/usergroups/${groupId}`} replace />;
+}
+
+function CrmCompaniesRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  const target = `/companies${suffix}${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
 }
 
 function UsersPageWrapper() {
@@ -488,6 +497,16 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="companies/:companyId/locations/:locationId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="3">
+              <CRMAccessGuard>
+                <LocationDetails />
+              </CRMAccessGuard>
+            </ProtectedRoute>
+          }
+        />
         <Route path="users" element={
           <ProtectedRoute requiredSecurityLevel="5">
             <RecruiterAccessGuard>
@@ -498,6 +517,9 @@ function App() {
           <Route index element={<RecruiterUsers />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>
+
+        {/* Legacy CRM companies URLs → canonical /companies/... */}
+        <Route path="crm/companies/*" element={<CrmCompaniesRedirect />} />
         <Route path="crm/companies/:companyId" element={
           <ProtectedRoute requiredSecurityLevel="3">
             <CRMAccessGuard>

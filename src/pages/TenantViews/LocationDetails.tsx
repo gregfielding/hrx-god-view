@@ -21,8 +21,6 @@ import {
   Chip,
   Link as MUILink,
   Paper,
-  Tabs,
-  Tab,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -35,7 +33,10 @@ import {
   TableRow,
   TableCell,
   TableBody,
+  TableSortLabel,
   Autocomplete,
+  Tooltip,
+  InputAdornment,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -44,6 +45,7 @@ import {
   Cancel as CancelIcon,
   Delete as DeleteIcon,
   Add as AddIcon,
+  AddTask as AddTaskIcon,
   Business as BusinessIcon,
   LocationOn as LocationIcon,
   Language as LanguageIcon,
@@ -52,11 +54,15 @@ import {
   Facebook as FacebookIcon,
   Dashboard as DashboardIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
   Timeline as TimelineIcon,
   Phone as PhoneIcon,
   Event as EventIcon,
   Email as EmailIcon,
   AttachMoney as DealIcon,
+  Person as PersonIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -67,8 +73,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import ActivityLogTab from '../../components/ActivityLogTab';
-import { BreadcrumbNav } from '../../components/BreadcrumbNav';
-import LocationHeader from '../../components/LocationHeader';
+import PageHeader from '../../components/PageHeader';
+import CreateTaskDialog from '../../components/CreateTaskDialog';
+import { useFavorites } from '../../hooks/useFavorites';
+import FavoriteButton from '../../components/FavoriteButton';
 
 interface LocationData {
   id: string;
@@ -287,13 +295,13 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
 };
 
 const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
-  const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
+  // Fallback center (Las Vegas area based on the image)
+  const fallbackCenter = { lat: 36.1699, lng: -115.1398 };
+  // Always render a marker; start at fallback and then snap to real coordinates when available.
+  const [center, setCenter] = useState<{ lat: number; lng: number }>(fallbackCenter);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
   // Using MarkerF for reliable rendering within React
   
-  // Fallback center (Las Vegas area based on the image)
-  const fallbackCenter = { lat: 36.1699, lng: -115.1398 };
-
   useEffect(() => {
     console.log('LocationMap: location data:', location);
     console.log('LocationMap: coordinates:', location.coordinates);
@@ -311,6 +319,13 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
         lat: location.coordinates.latitude,
         lng: location.coordinates.longitude
       });
+    } else if (location.coordinates?._lat != null && location.coordinates?._long != null) {
+      // Firestore GeoPoint-like serialization
+      console.log('LocationMap: Using existing coordinates (_lat/_long)');
+      setCenter({
+        lat: Number(location.coordinates._lat),
+        lng: Number(location.coordinates._long),
+      });
     } else if (location.address || location.city || location.state) {
       // Try to geocode the address
       const address = [
@@ -323,6 +338,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
       console.log('LocationMap: Geocoding address:', address);
       
       if (address) {
+        if (!(window as any).google?.maps?.Geocoder) return;
         const geocoder = new google.maps.Geocoder();
         geocoder.geocode({ address }, (results, status) => {
           console.log('LocationMap: Geocoding result:', status, results);
@@ -347,18 +363,6 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
     );
   }
 
-  if (!center) {
-    console.log('LocationMap: No center found, using fallback');
-    return (
-      <GoogleMap
-        mapContainerStyle={{ width: '100%', height: '360px' }}
-        center={fallbackCenter}
-        zoom={12}
-      >
-      </GoogleMap>
-    );
-  }
-
   console.log('LocationMap: Rendering map with center:', center);
   
   
@@ -372,21 +376,19 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
       onUnmount={() => setMapInstance(null)}
     >
       {/* Render marker at center */}
-      {center && (
-        <MarkerF 
-          key={`${center.lat},${center.lng}`}
-          position={center}
-          onClick={() => {
-            try {
-              if (mapInstance) {
-                mapInstance.panTo(center);
-                const currentZoom = mapInstance.getZoom() || 12;
-                if (currentZoom < 14) mapInstance.setZoom(14);
-              }
-            } catch {}
-          }}
-        />
-      )}
+      <MarkerF
+        key={`${center.lat},${center.lng}`}
+        position={center}
+        onClick={() => {
+          try {
+            if (mapInstance) {
+              mapInstance.panTo(center);
+              const currentZoom = mapInstance.getZoom() || 12;
+              if (currentZoom < 14) mapInstance.setZoom(14);
+            }
+          } catch {}
+        }}
+      />
     </GoogleMap>
   );
 };
@@ -782,13 +784,16 @@ const LocationActivityTab: React.FC<{ location: LocationData; tenantId: string; 
 const LocationDetails: React.FC = () => {
   const { companyId, locationId } = useParams<{ companyId: string; locationId: string }>();
   const navigate = useNavigate();
-  const { tenantId } = useAuth();
+  const { tenantId, currentUser } = useAuth();
+  const { isFavorite, toggleFavorite } = useFavorites('contacts');
   
   const [location, setLocation] = useState<LocationData | null>(null);
   const [company, setCompany] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
+  const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [locationContacts, setLocationContacts] = useState<any[]>([]);
   const [locationDeals, setLocationDeals] = useState<any[]>([]);
   const [companyDivisions, setCompanyDivisions] = useState<string[]>([]);
@@ -801,6 +806,63 @@ const LocationDetails: React.FC = () => {
   const [isEditingLocationDetails, setIsEditingLocationDetails] = useState(false);
   const [jobOrders, setJobOrders] = useState<any[]>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
+
+  const opportunitiesSectionRef = useRef<HTMLDivElement | null>(null);
+  const jobOrdersSectionRef = useRef<HTMLDivElement | null>(null);
+
+  // Contacts tab state (match Company > Contacts layout)
+  const [contactsSearchQuery, setContactsSearchQuery] = useState('');
+  const [contactsSortField, setContactsSortField] = useState<string>('name');
+  const [contactsSortDirection, setContactsSortDirection] = useState<'asc' | 'desc'>('asc');
+  const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
+  const [savingContact, setSavingContact] = useState(false);
+  const [contactsError, setContactsError] = useState<string | null>(null);
+  const [contactsSuccess, setContactsSuccess] = useState(false);
+  const [contactsSuccessMessage, setContactsSuccessMessage] = useState('');
+  const [contactForm, setContactForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    jobTitle: '',
+    linkedInUrl: '',
+    contactType: 'Unknown',
+    tags: [] as string[],
+    isActive: true,
+    notes: '',
+  });
+
+  const scrollToDashboardSection = (ref: React.RefObject<HTMLDivElement | null>) => {
+    setTabValue(0);
+    // Wait for tab content to render before scrolling
+    window.setTimeout(() => {
+      ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  };
+
+  const getInitials = (name: string) => {
+    const cleaned = (name || '').trim();
+    if (!cleaned) return '?';
+    const parts = cleaned.split(/\s+/);
+    if (parts.length >= 2) return `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase();
+    return cleaned[0].toUpperCase();
+  };
+
+  const getAvatarColor = (name: string) => {
+    // Match the soft deterministic palette used elsewhere
+    const colors = [
+      { bg: '#EEF2FF', fg: '#3730A3' },
+      { bg: '#ECFDF5', fg: '#047857' },
+      { bg: '#FFFBEB', fg: '#B45309' },
+      { bg: '#FEE2E2', fg: '#B91C1C' },
+      { bg: '#E0F2FE', fg: '#0369A1' },
+      { bg: '#F3E8FF', fg: '#6D28D9' },
+    ];
+    let hash = 0;
+    for (let i = 0; i < (name || '').length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+    const c = colors[hash % colors.length];
+    return { backgroundColor: c.bg, color: c.fg };
+  };
 
   useEffect(() => {
     if (!companyId || !locationId || !tenantId) {
@@ -991,10 +1053,6 @@ const LocationDetails: React.FC = () => {
     navigate(`/crm/companies/${companyId}?tab=1`);
   };
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-    setTabValue(newValue);
-  };
-
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
@@ -1038,79 +1096,337 @@ const LocationDetails: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: 0 }}>
-      {/* Breadcrumbs */}
-      <Box sx={{ mb: 2, pt: 1 }}>
-        <BreadcrumbNav
-          items={[
-            { label: 'CRM', href: '/crm' },
-            { label: 'Companies', onClick: () => navigate('/companies') },
-            { label: company?.companyName || company?.name || 'Company', href: `/crm/companies/${companyId}` },
-            { label: location.name },
-          ]}
-        />
-      </Box>
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+      {/* Record-spec header + tab pills */}
+      <PageHeader
+        title={
+          <Box>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+              {/* Avatar - match record pages (Company/Contact) */}
+              <Avatar
+                src={company?.logo || undefined}
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: company?.logo ? 'transparent' : 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 600,
+                  flexShrink: 0,
+                }}
+              >
+                {((company?.companyName || company?.name || 'C') as string).charAt(0).toUpperCase()}
+              </Avatar>
 
-      {/* Location Header */}
-      <LocationHeader
-        location={location}
-        company={company}
-        companyId={companyId!}
-        routePrefix="crm"
-        onAddNote={() => setShowAddNoteDialog(true)}
-        ensureUrlProtocol={(url: string) => {
-          if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            return 'https://' + url;
-          }
-          return url;
-        }}
+              {/* Three-line content area - matches avatar height */}
+              <Box
+                sx={{
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'space-between',
+                  minHeight: 108,
+                }}
+              >
+                {/* Line 1: Location Name + Type chip */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0, flexWrap: 'wrap' }}>
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {location.name}
+                  </Typography>
+                  {!!location.type && (
+                    <Chip
+                      label={location.type}
+                      size="small"
+                      sx={{ height: 28, borderRadius: 1, fontWeight: 500, fontSize: '0.8125rem' }}
+                    />
+                  )}
+                </Box>
+
+                {/* Line 2: Address line (right below title) */}
+                {(() => {
+                  const parts = [location.address, location.city, location.state, location.zipCode].filter(Boolean);
+                  const full = parts.join(', ');
+                  if (!full) return null;
+                  return (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                      <LocationIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)' }} noWrap>
+                        {full}
+                      </Typography>
+                    </Box>
+                  );
+                })()}
+
+                {/* Line 3: Icon row (own row, below address) */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                  <Tooltip title="Add Task">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowCreateTaskDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <AddTaskIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Add Note">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <NoteIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                  {!!company?.website && (
+                    <Tooltip title="Visit website">
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          const raw = String(company.website || '');
+                          const url = raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`;
+                          window.open(url, '_blank');
+                        }}
+                        sx={{
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          },
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <LanguageIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                  {!!location.phone && (
+                    <Tooltip title="Call location">
+                      <IconButton
+                        size="small"
+                        onClick={() => window.open(`tel:${location.phone}`, '_blank')}
+                        sx={{
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          },
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <PhoneIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
+                </Box>
+
+                {/* Line 4: Associations row (Company / Contacts / Opportunities / Job Orders) */}
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                  {!!company && (
+                    <>
+                      <BusinessIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 600,
+                          color: 'rgb(74, 144, 226)',
+                          cursor: 'pointer',
+                          '&:hover': { textDecoration: 'underline' },
+                        }}
+                        onClick={() => navigate(`/crm/companies/${companyId}`)}
+                      >
+                        {company?.companyName || company?.name || 'Company'}
+                      </Typography>
+                      <Typography variant="body2" sx={{ color: 'rgba(0,0,0,0.35)', mx: 0.25 }}>
+                        •
+                      </Typography>
+                    </>
+                  )}
+
+                  <PersonIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      color: 'rgb(74, 144, 226)',
+                      cursor: 'pointer',
+                      '&:hover': { textDecoration: 'underline' },
+                    }}
+                    onClick={() => setTabValue(1)}
+                  >
+                    Contacts ({locationContacts?.length ?? 0})
+                  </Typography>
+
+                  <Typography variant="body2" sx={{ color: 'rgba(0,0,0,0.35)', mx: 0.25 }}>
+                    •
+                  </Typography>
+
+                  <DealIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      color: 'rgb(74, 144, 226)',
+                      cursor: 'pointer',
+                      '&:hover': { textDecoration: 'underline' },
+                    }}
+                    onClick={() => scrollToDashboardSection(opportunitiesSectionRef)}
+                  >
+                    Opportunities ({locationDeals?.length ?? 0})
+                  </Typography>
+
+                  <Typography variant="body2" sx={{ color: 'rgba(0,0,0,0.35)', mx: 0.25 }}>
+                    •
+                  </Typography>
+
+                  <WorkIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      fontSize: '14px',
+                      fontWeight: 600,
+                      color: 'rgb(74, 144, 226)',
+                      cursor: 'pointer',
+                      '&:hover': { textDecoration: 'underline' },
+                    }}
+                    onClick={() => scrollToDashboardSection(jobOrdersSectionRef)}
+                  >
+                    Job Orders ({jobOrders?.length ?? 0})
+                  </Typography>
+                </Box>
+              </Box>
+            </Box>
+          </Box>
+        }
+        filters={
+          <Box sx={{ display: 'flex', gap: 1 }}>
+            <Button
+              variant={tabValue === 0 ? 'contained' : 'text'}
+              onClick={() => setTabValue(0)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 0
+                  ? { bgcolor: '#0057B8', color: 'white', fontWeight: 500 }
+                  : { bgcolor: 'rgba(0, 0, 0, 0.04)', color: 'rgba(0, 0, 0, 0.7)', fontWeight: 400 }),
+              }}
+              startIcon={<DashboardIcon fontSize="small" />}
+            >
+              Dashboard
+            </Button>
+            <Button
+              variant={tabValue === 1 ? 'contained' : 'text'}
+              onClick={() => setTabValue(1)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 1
+                  ? { bgcolor: '#0057B8', color: 'white', fontWeight: 500 }
+                  : { bgcolor: 'rgba(0, 0, 0, 0.04)', color: 'rgba(0, 0, 0, 0.7)', fontWeight: 400 }),
+              }}
+              startIcon={<PersonIcon fontSize="small" />}
+            >
+              Contacts
+            </Button>
+            <Button
+              variant={tabValue === 2 ? 'contained' : 'text'}
+              onClick={() => setTabValue(2)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 2
+                  ? { bgcolor: '#0057B8', color: 'white', fontWeight: 500 }
+                  : { bgcolor: 'rgba(0, 0, 0, 0.04)', color: 'rgba(0, 0, 0, 0.7)', fontWeight: 400 }),
+              }}
+              startIcon={<NotesIcon fontSize="small" />}
+            >
+              Notes
+            </Button>
+            <Button
+              variant={tabValue === 3 ? 'contained' : 'text'}
+              onClick={() => setTabValue(3)}
+              sx={{
+                borderRadius: '999px',
+                fontSize: '14px',
+                px: 1.5,
+                py: 0.75,
+                ...(tabValue === 3
+                  ? { bgcolor: '#0057B8', color: 'white', fontWeight: 500 }
+                  : { bgcolor: 'rgba(0, 0, 0, 0.04)', color: 'rgba(0, 0, 0, 0.7)', fontWeight: 400 }),
+              }}
+              startIcon={<TimelineIcon fontSize="small" />}
+            >
+              Activity
+            </Button>
+          </Box>
+        }
+        rightActions={
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+            <Button variant="outlined" startIcon={<ArrowBackIcon />} onClick={navigateBackToCompany}>
+              Back
+            </Button>
+          </Box>
+        }
       />
 
-      {/* Tabs Navigation */}
-      <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
-        <Tabs
-          value={tabValue}
-          onChange={handleTabChange}
-          indicatorColor="primary"
-          textColor="primary"
-          variant="scrollable"
-          scrollButtons="auto"
-          aria-label="Location details tabs"
-        >
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <DashboardIcon fontSize="small" />
-                Dashboard
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <NotesIcon fontSize="small" />
-                Notes
-              </Box>
-            } 
-          />
-          <Tab 
-            label={
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TimelineIcon fontSize="small" />
-                Activity
-              </Box>
-            } 
-          />
-        </Tabs>
-      </Paper>
-
-      {/* Tab Panels */}
-            <TabPanel value={tabValue} index={0}>
+      {/* Main Content */}
+      <Box sx={{ px: { xs: 2, md: 3 }, pt: 2, pb: 3, flex: 1, minHeight: 0, overflow: 'auto' }}>
+        {/* Tab Panels */}
+        <TabPanel value={tabValue} index={0}>
         <Grid container spacing={3}>
-          {/* Left Column - Location Details */}
-          <Grid item xs={12} md={4}>
+          {/* Main column (left + center) */}
+          <Grid item xs={12} md={9}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Location Details */}
+              {/* Location Details (full width of main column) */}
               <Card>
                 <CardHeader 
                   title="Location Details" 
@@ -1390,24 +1706,7 @@ const LocationDetails: React.FC = () => {
                   )}
                 </CardContent>
               </Card>
-            </Box>
-          </Grid>
-
-          {/* Center Column - Location Intelligence */}
-          <Grid item xs={12} md={5}>
-            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Recent Activity */}
-              <Card>
-                <CardHeader 
-                  title="Recent Activity" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  <RecentActivityWidget location={location} tenantId={tenantId} />
-                </CardContent>
-              </Card>
-
-              {/* Location Map */}
+              {/* Location Map (below Location Details) */}
               <Card>
                 <CardHeader title="Location Map" />
                 <CardContent>
@@ -1415,103 +1714,77 @@ const LocationDetails: React.FC = () => {
                 </CardContent>
               </Card>
 
-
+              {/* Opportunities (location-scoped) */}
+              <Box ref={opportunitiesSectionRef}>
+                <Card>
+                  <CardHeader title="Opportunities" titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }} />
+                  <CardContent sx={{ p: 2 }}>
+                    {locationDeals && locationDeals.length > 0 ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {locationDeals
+                          .slice()
+                          .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
+                          .slice(0, 5)
+                          .map((deal: any) => (
+                            <Box
+                              key={deal.id}
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 1,
+                                p: 1,
+                                borderRadius: 1,
+                                bgcolor: 'grey.50',
+                                cursor: 'pointer',
+                                '&:hover': { bgcolor: 'grey.100' },
+                              }}
+                              onClick={() => navigate(`/crm/deals/${deal.id}`)}
+                              role="button"
+                              tabIndex={0}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  navigate(`/crm/deals/${deal.id}`);
+                                }
+                              }}
+                            >
+                              <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                                <BusinessIcon sx={{ fontSize: 16 }} />
+                              </Avatar>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" fontWeight="medium">
+                                  {deal.name || deal.title || 'Unknown Deal'}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}
+                                  {deal.stage ? ` • ${deal.stage}` : ''}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          ))}
+                      </Box>
+                    ) : (
+                      <Typography variant="body2" color="text.secondary">
+                        No location-specific opportunities
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
+              </Box>
             </Box>
           </Grid>
 
-          {/* Right Column - Opportunities + Contacts + Salespeople */}
+          {/* Right Column - Activity + Salespeople + Job Orders */}
           <Grid item xs={12} md={3}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Opportunities (location-scoped) */}
+              {/* Recent Activity (top of right column) */}
               <Card>
                 <CardHeader 
-                  title="Opportunities" 
+                  title="Recent Activity" 
                   titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
                 />
                 <CardContent sx={{ p: 2 }}>
-                  {locationDeals && locationDeals.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {locationDeals
-                        .slice()
-                        .sort((a: any, b: any) => (b.expectedRevenue || 0) - (a.expectedRevenue || 0))
-                        .slice(0, 5)
-                        .map((deal: any) => (
-                          <Box
-                            key={deal.id}
-                            sx={{ 
-                              display: 'flex', 
-                              alignItems: 'center', 
-                              gap: 1, 
-                              p: 1, 
-                              borderRadius: 1, 
-                              bgcolor: 'grey.50', 
-                              cursor: 'pointer' 
-                            }}
-                            onClick={() => navigate(`/crm/deals/${deal.id}`)}
-                            role="button"
-                            tabIndex={0}
-                            onKeyDown={(e) => { 
-                              if (e.key === 'Enter' || e.key === ' ') { 
-                                e.preventDefault(); 
-                                navigate(`/crm/deals/${deal.id}`); 
-                              } 
-                            }}
-                          >
-                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
-                              <BusinessIcon sx={{ fontSize: 16 }} />
-                            </Avatar>
-                            <Box sx={{ flex: 1 }}>
-                              <Typography variant="body2" fontWeight="medium">
-                                {deal.name || deal.title || 'Unknown Deal'}
-                              </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                {(deal.expectedRevenue ? `$${Number(deal.expectedRevenue).toLocaleString()}` : '')}{deal.stage ? ` • ${deal.stage}` : ''}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        ))}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">No location-specific opportunities</Typography>
-                  )}
-                </CardContent>
-              </Card>
-
-              {/* Contacts at this Location */}
-              <Card>
-                <CardHeader 
-                  title="Contacts at this Location" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {locationContacts && locationContacts.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {locationContacts.slice(0, 5).map((c: any) => (
-                        <Box
-                          key={c.id}
-                          sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/contacts/${c.id}`)}
-                          role="button"
-                          tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${c.id}`); } }}
-                        >
-                          <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
-                            {c.firstName?.charAt(0) || c.name?.charAt(0) || 'C'}
-                          </Avatar>
-                          <Box sx={{ flex: 1 }}>
-                            <Typography variant="body2" fontWeight="medium">
-                              {c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unknown Contact'}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {c.jobTitle || c.title || ''}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      ))}
-                    </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">No contacts associated to this location</Typography>
-                  )}
+                  <RecentActivityWidget location={location} tenantId={tenantId} />
                 </CardContent>
               </Card>
 
@@ -1595,74 +1868,73 @@ const LocationDetails: React.FC = () => {
               </Card>
 
               {/* Job Orders */}
-              <Card>
-                <CardHeader 
-                  title="Job Orders" 
-                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-                />
-                <CardContent sx={{ p: 2 }}>
-                  {loadingJobOrders ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                      <Skeleton variant="rectangular" height={32} />
-                    </Box>
-                  ) : jobOrders.length > 0 ? (
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {jobOrders
-                        .sort((a: any, b: any) => {
-                          // Sort by status priority (open > draft > on_hold > filled > cancelled)
-                          const statusPriority: Record<string, number> = {
-                            'open': 5,
-                            'draft': 4,
-                            'on_hold': 3,
-                            'filled': 2,
-                            'completed': 2,
-                            'cancelled': 1
-                          };
-                          const aPriority = statusPriority[a.status] || 0;
-                          const bPriority = statusPriority[b.status] || 0;
-                          if (aPriority !== bPriority) {
-                            return bPriority - aPriority;
-                          }
-                          // Then sort by created date (newest first)
-                          const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
-                          const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
-                          return bDate.getTime() - aDate.getTime();
-                        })
-                        .slice(0, 5)
-                        .map((jobOrder: any) => {
-                          // Format status
-                          const statusLabels: Record<string, string> = {
-                            'open': 'Open',
-                            'draft': 'Draft',
-                            'on_hold': 'On Hold',
-                            'filled': 'Filled',
-                            'completed': 'Completed',
-                            'cancelled': 'Cancelled'
-                          };
-                          const statusLabel = statusLabels[jobOrder.status] || jobOrder.status || 'Unknown';
-                          
-                          // Format job order number
-                          const jobOrderNumber = jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
-                          
-                          return (
-                            <Box 
-                              key={jobOrder.id} 
-                              sx={{ 
-                                display: 'flex', 
-                                alignItems: 'center', 
-                                gap: 1, 
-                                p: 1, 
-                                borderRadius: 1, 
-                                bgcolor: 'grey.50',
-                                cursor: 'pointer',
-                                '&:hover': {
-                                  bgcolor: 'grey.100'
-                                }
-                              }}
-                              onClick={() => navigate(`/crm/job-orders/${jobOrder.id}`)}
-                              role="button"
+              <Box ref={jobOrdersSectionRef}>
+                <Card>
+                  <CardHeader title="Job Orders" titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }} />
+                  <CardContent sx={{ p: 2 }}>
+                    {loadingJobOrders ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        <Skeleton variant="rectangular" height={32} />
+                        <Skeleton variant="rectangular" height={32} />
+                        <Skeleton variant="rectangular" height={32} />
+                      </Box>
+                    ) : jobOrders.length > 0 ? (
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {jobOrders
+                          .sort((a: any, b: any) => {
+                            // Sort by status priority (open > draft > on_hold > filled > cancelled)
+                            const statusPriority: Record<string, number> = {
+                              open: 5,
+                              draft: 4,
+                              on_hold: 3,
+                              filled: 2,
+                              completed: 2,
+                              cancelled: 1,
+                            };
+                            const aPriority = statusPriority[a.status] || 0;
+                            const bPriority = statusPriority[b.status] || 0;
+                            if (aPriority !== bPriority) {
+                              return bPriority - aPriority;
+                            }
+                            // Then sort by created date (newest first)
+                            const aDate = a.createdAt?.toDate ? a.createdAt.toDate() : new Date(a.createdAt || 0);
+                            const bDate = b.createdAt?.toDate ? b.createdAt.toDate() : new Date(b.createdAt || 0);
+                            return bDate.getTime() - aDate.getTime();
+                          })
+                          .slice(0, 5)
+                          .map((jobOrder: any) => {
+                            // Format status
+                            const statusLabels: Record<string, string> = {
+                              open: 'Open',
+                              draft: 'Draft',
+                              on_hold: 'On Hold',
+                              filled: 'Filled',
+                              completed: 'Completed',
+                              cancelled: 'Cancelled',
+                            };
+                            const statusLabel = statusLabels[jobOrder.status] || jobOrder.status || 'Unknown';
+
+                            // Format job order number
+                            const jobOrderNumber =
+                              jobOrder.jobOrderNumber || jobOrder.jobOrderSeq?.toString().padStart(4, '0') || 'N/A';
+
+                            return (
+                              <Box
+                                key={jobOrder.id}
+                                sx={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 1,
+                                  p: 1,
+                                  borderRadius: 1,
+                                  bgcolor: 'grey.50',
+                                  cursor: 'pointer',
+                                  '&:hover': {
+                                    bgcolor: 'grey.100',
+                                  },
+                                }}
+                                onClick={() => navigate(`/crm/job-orders/${jobOrder.id}`)}
+                                role="button"
                               tabIndex={0}
                               onKeyDown={(e) => { 
                                 if (e.key === 'Enter' || e.key === ' ') { 
@@ -1692,11 +1964,335 @@ const LocationDetails: React.FC = () => {
                 </CardContent>
               </Card>
             </Box>
+            </Box>
           </Grid>
         </Grid>
       </TabPanel>
 
       <TabPanel value={tabValue} index={1}>
+        <Box sx={{ p: 0, pt: 2 }}>
+          {/* Header with Search and Add Contact Button (match Company > Contacts) */}
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mt: 0, mb: 1, py: 0, px: 0, gap: 2 }}>
+            <Typography variant="h6" fontWeight={700}>
+              Contacts
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {/* Keep the same control footprint as Company Contacts tab; pinned to this location */}
+              <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+                <Select
+                  value={location?.name || ''}
+                  disabled
+                  displayEmpty
+                  sx={{
+                    height: 36,
+                    fontSize: '0.875rem',
+                    backgroundColor: 'white',
+                    '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
+                  }}
+                >
+                  <MenuItem value={location?.name || ''}>
+                    <em>{location?.name || 'This Location'}</em>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 120, height: 36 }}>
+                <Select
+                  value={location?.state || ''}
+                  disabled
+                  displayEmpty
+                  sx={{
+                    height: 36,
+                    fontSize: '0.875rem',
+                    backgroundColor: 'white',
+                    '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' },
+                  }}
+                >
+                  <MenuItem value={location?.state || ''}>
+                    <em>{location?.state || 'State'}</em>
+                  </MenuItem>
+                </Select>
+              </FormControl>
+              <TextField
+                size="small"
+                variant="outlined"
+                placeholder="Search by name or email..."
+                value={contactsSearchQuery}
+                onChange={(e) => setContactsSearchQuery(e.target.value)}
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                    </InputAdornment>
+                  ),
+                  endAdornment: contactsSearchQuery && (
+                    <InputAdornment position="end">
+                      <IconButton size="small" onClick={() => setContactsSearchQuery('')} sx={{ p: 0.5 }}>
+                        <ClearIcon fontSize="small" />
+                      </IconButton>
+                    </InputAdornment>
+                  ),
+                }}
+                sx={{
+                  width: 280,
+                  height: 36,
+                  '& .MuiOutlinedInput-root': {
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
+                    fontSize: '0.875rem',
+                    '& fieldset': { borderColor: '#E5E7EB' },
+                    '&:hover fieldset': { borderColor: '#D1D5DB' },
+                  },
+                }}
+              />
+              <Button variant="contained" startIcon={<AddIcon />} onClick={() => setContactsDialogOpen(true)}>
+                Add Contact
+              </Button>
+            </Box>
+          </Box>
+
+          {/* Error Display */}
+          {contactsError && (
+            <Alert severity="error" sx={{ mb: 2 }} onClose={() => setContactsError(null)}>
+              {contactsError}
+            </Alert>
+          )}
+
+          {(() => {
+            const base = Array.isArray(locationContacts) ? locationContacts : [];
+            const q = contactsSearchQuery.trim().toLowerCase();
+            let filtered = base;
+            if (q) {
+              filtered = filtered.filter((c: any) => {
+                const name = (c.fullName || c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim() || '').toLowerCase();
+                const email = (c.email || '').toLowerCase();
+                return name.includes(q) || email.includes(q);
+              });
+            }
+
+            const getSortableValue = (c: any, field: string) => {
+              switch (field) {
+                case 'name':
+                  return (c.fullName || c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim() || '').toLowerCase();
+                case 'location':
+                  return (location?.name || '').toLowerCase();
+                case 'city':
+                  return ((c.city || location?.city || '') as string).toLowerCase();
+                case 'state':
+                  return ((c.state || location?.state || '') as string).toLowerCase();
+                default:
+                  return '';
+              }
+            };
+
+            const sorted = filtered.slice().sort((a: any, b: any) => {
+              const av = getSortableValue(a, contactsSortField);
+              const bv = getSortableValue(b, contactsSortField);
+              if (av < bv) return contactsSortDirection === 'asc' ? -1 : 1;
+              if (av > bv) return contactsSortDirection === 'asc' ? 1 : -1;
+              return 0;
+            });
+
+            const handleSort = (field: string) => {
+              if (contactsSortField === field) {
+                setContactsSortDirection(contactsSortDirection === 'asc' ? 'desc' : 'asc');
+              } else {
+                setContactsSortField(field);
+                setContactsSortDirection('asc');
+              }
+            };
+
+            if (sorted.length === 0) {
+              return (
+                <Box py={4} textAlign="center">
+                  <PersonIcon sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+                  <Typography variant="h6" color="text.secondary" gutterBottom>
+                    {q ? 'No contacts match your search' : 'No Contacts Found'}
+                  </Typography>
+                  {q && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      Try adjusting your search terms
+                    </Typography>
+                  )}
+                </Box>
+              );
+            }
+
+            return (
+              <TableContainer
+                component={Paper}
+                variant="outlined"
+                sx={{
+                  overflowX: 'auto',
+                  borderRadius: '8px',
+                  boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06)',
+                }}
+              >
+                <Table sx={{ minWidth: 1400 }}>
+                  <TableHead>
+                    <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                      <TableCell sx={{ width: 48, borderBottom: '1px solid #E5E7EB', py: 1.5 }} />
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        <TableSortLabel
+                          active={contactsSortField === 'name'}
+                          direction={contactsSortField === 'name' ? contactsSortDirection : 'asc'}
+                          onClick={() => handleSort('name')}
+                        >
+                          Name
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Title
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Email
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Phone
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        <TableSortLabel
+                          active={contactsSortField === 'location'}
+                          direction={contactsSortField === 'location' ? contactsSortDirection : 'asc'}
+                          onClick={() => handleSort('location')}
+                        >
+                          Location
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        <TableSortLabel
+                          active={contactsSortField === 'city'}
+                          direction={contactsSortField === 'city' ? contactsSortDirection : 'asc'}
+                          onClick={() => handleSort('city')}
+                        >
+                          City
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        <TableSortLabel
+                          active={contactsSortField === 'state'}
+                          direction={contactsSortField === 'state' ? contactsSortDirection : 'asc'}
+                          onClick={() => handleSort('state')}
+                        >
+                          State
+                        </TableSortLabel>
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        LinkedIn
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {sorted.map((c: any) => (
+                      <TableRow
+                        key={c.id}
+                        onClick={() => {
+                          const currentParams = new URLSearchParams(window.location.search);
+                          currentParams.set('tab', '1'); // Contacts tab
+                          navigate(`/contacts/${c.id}?returnTo=${encodeURIComponent(window.location.pathname + '?' + currentParams.toString())}`);
+                        }}
+                        sx={{
+                          height: '48px',
+                          cursor: 'pointer',
+                          '&:hover': { backgroundColor: '#F9FAFB' },
+                        }}
+                      >
+                        <TableCell sx={{ py: 1, px: 1, width: 48 }} onClick={(e) => e.stopPropagation()}>
+                          <FavoriteButton
+                            itemId={c.id}
+                            favoriteType="contacts"
+                            isFavorite={isFavorite}
+                            toggleFavorite={toggleFavorite}
+                            size="small"
+                            showTooltip={true}
+                          />
+                        </TableCell>
+                        <TableCell sx={{ py: 1, px: 2 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                            <Avatar
+                              src={c.avatar}
+                              sx={{
+                                width: 36,
+                                height: 36,
+                                fontWeight: 600,
+                                fontSize: '0.875rem',
+                                ...(c.avatar ? {} : getAvatarColor(c.fullName || c.name || c.firstName || c.lastName || 'Unknown')),
+                              }}
+                            >
+                              {!c.avatar && getInitials(c.fullName || c.name || c.firstName || c.lastName || 'Unknown')}
+                            </Avatar>
+                            <Typography sx={{ fontWeight: 600, color: '#111827', fontSize: '0.9375rem' }}>
+                              {c.fullName || c.name || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'Unnamed Contact'}
+                            </Typography>
+                          </Box>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ color: '#374151', fontSize: '0.875rem' }}>
+                            {c.jobTitle || c.title || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ color: '#374151', fontSize: '0.875rem' }}>
+                            {c.email || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ color: '#374151', fontSize: '0.875rem' }}>
+                            {c.phone || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ color: '#374151', fontSize: '0.875rem' }}>
+                            {location?.name || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ color: '#374151', fontSize: '0.875rem' }}>
+                            {c.city || location?.city || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ color: '#374151', fontSize: '0.875rem' }}>
+                            {c.state || location?.state || '-'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          {(() => {
+                            const linkedinUrl = c.linkedinUrl || c.linkedin || c.linkedInUrl || c.linkedIn;
+                            if (linkedinUrl) {
+                              return (
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    window.open(linkedinUrl, '_blank');
+                                  }}
+                                  color="primary"
+                                  title="Open LinkedIn Profile"
+                                  sx={{ fontSize: 16, color: '#0077B5' }}
+                                >
+                                  <LinkedInIcon />
+                                </IconButton>
+                              );
+                            }
+                            return (
+                              <Typography sx={{ color: '#9CA3AF', fontSize: '0.875rem' }}>
+                                -
+                              </Typography>
+                            );
+                          })()}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            );
+          })()}
+        </Box>
+      </TabPanel>
+
+      <TabPanel value={tabValue} index={2}>
         <CRMNotesTab
           entityId={location.id}
           entityType="location"
@@ -1705,7 +2301,7 @@ const LocationDetails: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={tabValue} index={2}>
+      <TabPanel value={tabValue} index={3}>
         <LocationActivityTab location={location} tenantId={tenantId} companyId={companyId!} />
       </TabPanel>
 
@@ -1724,6 +2320,266 @@ const LocationDetails: React.FC = () => {
           title: c.jobTitle || c.title || ''
         }))}
       />
+
+      {/* Add Contact Dialog (preselect Company + Location) */}
+      <Dialog open={contactsDialogOpen} onClose={() => setContactsDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Add New Contact</DialogTitle>
+        <DialogContent>
+          <Grid container spacing={2} sx={{ mt: 1 }}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Company"
+                value={company?.companyName || company?.name || ''}
+                disabled
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Location"
+                value={location?.name || ''}
+                disabled
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="First Name"
+                value={contactForm.firstName}
+                onChange={(e) => setContactForm((p) => ({ ...p, firstName: e.target.value }))}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Last Name"
+                value={contactForm.lastName}
+                onChange={(e) => setContactForm((p) => ({ ...p, lastName: e.target.value }))}
+                required
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Email"
+                type="email"
+                value={contactForm.email}
+                onChange={(e) => setContactForm((p) => ({ ...p, email: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Phone"
+                value={contactForm.phone}
+                onChange={(e) => setContactForm((p) => ({ ...p, phone: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="Job Title"
+                value={contactForm.jobTitle}
+                onChange={(e) => setContactForm((p) => ({ ...p, jobTitle: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                label="LinkedIn URL"
+                placeholder="https://www.linkedin.com/in/username"
+                value={contactForm.linkedInUrl}
+                onChange={(e) => setContactForm((p) => ({ ...p, linkedInUrl: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <FormControl fullWidth>
+                <InputLabel>Contact Type</InputLabel>
+                <Select
+                  value={contactForm.contactType}
+                  label="Contact Type"
+                  onChange={(e) => setContactForm((p) => ({ ...p, contactType: String(e.target.value) }))}
+                >
+                  <MenuItem value="Decision Maker">Decision Maker</MenuItem>
+                  <MenuItem value="Influencer">Influencer</MenuItem>
+                  <MenuItem value="Gatekeeper">Gatekeeper</MenuItem>
+                  <MenuItem value="Referrer">Referrer</MenuItem>
+                  <MenuItem value="Evaluator">Evaluator</MenuItem>
+                  <MenuItem value="Unknown">Unknown</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <Box sx={{ display: 'flex', alignItems: 'center', height: '100%' }}>
+                <Typography variant="body2" color="text.secondary">
+                  Active Contact is set automatically.
+                </Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12}>
+              <TextField
+                fullWidth
+                label="Notes"
+                multiline
+                rows={3}
+                value={contactForm.notes}
+                onChange={(e) => setContactForm((p) => ({ ...p, notes: e.target.value }))}
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <Alert severity="info">
+                <Typography variant="body2">
+                  This contact will be automatically associated with{' '}
+                  <strong>{company?.companyName || company?.name || 'Company'}</strong>
+                  {' '}and{' '}
+                  <strong>{location?.name || 'this location'}</strong>.
+                </Typography>
+              </Alert>
+            </Grid>
+          </Grid>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setContactsDialogOpen(false)}>Cancel</Button>
+          <Button
+            onClick={async () => {
+              if (!tenantId || !companyId || !locationId) return;
+              if (!contactForm.firstName || !contactForm.lastName) {
+                setContactsError('First name and last name are required');
+                return;
+              }
+              setSavingContact(true);
+              setContactsError(null);
+              try {
+                const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+                const { db } = await import('../../firebase');
+
+                const contactData: any = {
+                  firstName: contactForm.firstName,
+                  lastName: contactForm.lastName,
+                  email: contactForm.email,
+                  phone: contactForm.phone,
+                  jobTitle: contactForm.jobTitle,
+                  linkedInUrl: (contactForm.linkedInUrl || '').trim(),
+                  contactType: contactForm.contactType,
+                  tags: [],
+                  isActive: true,
+                  notes: contactForm.notes,
+                  fullName: `${contactForm.firstName} ${contactForm.lastName}`.trim(),
+                  tenantId,
+                  companyId,
+                  companyName: company?.companyName || company?.name || '',
+                  locationId,
+                  locationName: location?.name || '',
+                  associations: {
+                    companies: [companyId],
+                    locations: [locationId],
+                  },
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp(),
+                  salesOwnerId: currentUser?.uid || null,
+                  accountOwnerId: currentUser?.uid || null,
+                };
+
+                const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+                const docRef = await addDoc(contactsRef, contactData);
+
+                // Update list immediately so the new contact appears without refresh
+                setLocationContacts((prev) => [
+                  { id: docRef.id, ...contactData, createdAt: new Date(), updatedAt: new Date() },
+                  ...(Array.isArray(prev) ? prev : []),
+                ]);
+
+                setContactForm({
+                  firstName: '',
+                  lastName: '',
+                  email: '',
+                  phone: '',
+                  jobTitle: '',
+                  linkedInUrl: '',
+                  contactType: 'Unknown',
+                  tags: [],
+                  isActive: true,
+                  notes: '',
+                });
+                setContactsDialogOpen(false);
+                setContactsSuccessMessage('Contact added successfully!');
+                setContactsSuccess(true);
+              } catch (e: any) {
+                console.error('Error adding contact:', e);
+                setContactsError(e?.message || 'Failed to add contact');
+              } finally {
+                setSavingContact(false);
+              }
+            }}
+            variant="contained"
+            disabled={savingContact || !contactForm.firstName || !contactForm.lastName}
+            startIcon={savingContact ? <CircularProgress size={16} /> : null}
+          >
+            {savingContact ? 'Saving...' : 'Save Contact'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Contacts success snackbar */}
+      <Snackbar open={contactsSuccess} autoHideDuration={6000} onClose={() => setContactsSuccess(false)}>
+        <Alert onClose={() => setContactsSuccess(false)} severity="success">
+          {contactsSuccessMessage}
+        </Alert>
+      </Snackbar>
+
+      {/* Create Task Dialog */}
+      {showCreateTaskDialog && (
+        <CreateTaskDialog
+          open={showCreateTaskDialog}
+          onClose={() => setShowCreateTaskDialog(false)}
+          loading={taskSubmitting}
+          currentUserId={currentUser?.uid || ''}
+          contacts={locationContacts}
+          salespeople={[]}
+          prefilledData={{
+            assignedTo: currentUser?.uid || '',
+            associations: {
+              companies: companyId ? [companyId] : [],
+              locations: locationId ? [locationId] : [],
+              contacts: locationContacts.map((c: any) => c.id).filter(Boolean),
+              deals: [],
+              salespeople: currentUser?.uid ? [currentUser.uid] : [],
+            },
+          }}
+          onSubmit={async (taskData) => {
+            if (!tenantId || taskSubmitting) return;
+            setTaskSubmitting(true);
+            try {
+              const { TaskService } = await import('../../utils/taskService');
+              const taskService = TaskService.getInstance();
+
+              const assignedTo = currentUser?.uid
+                || (Array.isArray((taskData as any).assignedTo) ? (taskData as any).assignedTo[0] : (taskData as any).assignedTo)
+                || '';
+
+              await taskService.createTask({
+                ...(taskData as any),
+                tenantId,
+                createdBy: currentUser?.uid || '',
+                assignedTo,
+                associations: {
+                  ...(taskData as any).associations,
+                  companies: companyId ? [companyId] : [],
+                  locations: locationId ? [locationId] : [],
+                  contacts: locationContacts.map((c: any) => c.id).filter(Boolean),
+                },
+              });
+            } catch (e) {
+              console.error('Error creating task:', e);
+            } finally {
+              setTaskSubmitting(false);
+              setShowCreateTaskDialog(false);
+            }
+          }}
+        />
+      )}
 
       {/* Delete Contact Button - Bottom of page */}
       <Box sx={{ 
@@ -1783,6 +2639,7 @@ const LocationDetails: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      </Box>
     </Box>
   );
 };
