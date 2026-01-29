@@ -179,6 +179,14 @@ export { backfillShiftIdsInApplications };
 export { archiveAllCrmDeals };
 export { backfillJobPostingLocations } from './backfillJobPostingLocations';
 export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
+export { onJobOrderShiftCancelledCascadeAssignments } from './shiftAssignmentCascades';
+export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
+export {
+  onAssignmentWriteRecomputeShiftFill,
+  onAssignmentUpdateRecomputeShiftFill,
+  onAssignmentDeleteRecomputeShiftFill,
+  onJobOrderShiftUpdatedRecomputeFill,
+} from './shiftFillAutomation';
 export { autoWithdrawApplicationsOnHire } from './autoWithdrawApplicationsOnHire';
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };

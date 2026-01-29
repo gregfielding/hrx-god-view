@@ -55,13 +55,17 @@ import {
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
+export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
+
 interface Shift {
   id: string;
   tenantId: string;
   jobOrderId: string;
   shiftTitle: string;
+  status?: ShiftStatus; // open | closed | filled | cancelled; default open. Only Open show on Jobs Board.
   defaultJobTitle?: string;
   totalStaffRequested: number;
+  overstaffCount?: number; // Optional padding used for auto-filled logic (assignments target = totalStaffRequested + overstaffCount)
   showStaffNeeded?: boolean; // Show staff count on jobs board
   poNumber?: string;
   shiftDate: string; // ISO date string (single-day date, or start date for multi-day)
@@ -132,13 +136,32 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<{
+    shiftTitle: string;
+    status: ShiftStatus;
+    defaultJobTitle: string;
+    totalStaffRequested: number;
+    overstaffCount: number;
+    showStaffNeeded: boolean;
+    poNumber: string;
+    shiftMode: 'single' | 'multi';
+    shiftDate: string;
+    endDate: string;
+    weeklySchedule: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    defaultStartTime: string;
+    defaultEndTime: string;
+    shiftDescription: string;
+    emailIntro: string;
+    sendNotification: boolean;
+  }>({
     shiftTitle: '',
+    status: 'open',
     defaultJobTitle: '',
     totalStaffRequested: 1,
+    overstaffCount: 0,
     showStaffNeeded: false,
     poNumber: '',
-    shiftMode: 'single' as 'single' | 'multi',
+    shiftMode: 'single',
     shiftDate: '',
     endDate: '',
     weeklySchedule: buildDefaultWeeklySchedule('', ''),
@@ -225,8 +248,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
           : buildDefaultWeeklySchedule('', '');
       setFormData({
         shiftTitle: shift.shiftTitle,
+        status: (shift.status || 'open') as ShiftStatus,
         defaultJobTitle: shift.defaultJobTitle || '',
         totalStaffRequested: shift.totalStaffRequested,
+        overstaffCount: Math.max(0, Number((shift as any).overstaffCount ?? 0) || 0),
         showStaffNeeded: shift.showStaffNeeded || false,
         poNumber: shift.poNumber || '',
         shiftMode: mode,
@@ -250,8 +275,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
       
       setFormData({
         shiftTitle: '',
+        status: 'open',
         defaultJobTitle: defaultJobTitle,
         totalStaffRequested: 1,
+        overstaffCount: 0,
         showStaffNeeded: false,
         poNumber: '',
         shiftMode: 'single',
@@ -327,8 +354,10 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
 
       const baseShiftData: any = {
         shiftTitle: formData.shiftTitle,
+        status: formData.status,
         defaultJobTitle: formData.defaultJobTitle,
         totalStaffRequested: formData.totalStaffRequested,
+        overstaffCount: Math.max(0, Number(formData.overstaffCount || 0)),
         showStaffNeeded: formData.showStaffNeeded,
         poNumber: formData.poNumber,
         shiftDate: formData.shiftDate, // single-day date OR start date for multi
@@ -460,6 +489,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         const shiftData = {
           ...shiftToDuplicate,
           shiftDate,
+          status: 'open' as const,
           createdAt: serverTimestamp(),
           createdBy: user?.uid || 'unknown',
           updatedAt: serverTimestamp(),
@@ -684,15 +714,34 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
           )}
 
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 2 }}>
-            {/* Shift Title */}
-            <TextField
-              fullWidth
-              label="Shift Title"
-              placeholder="(ex: Night Shift Janitor)"
-              value={formData.shiftTitle}
-              onChange={(e) => setFormData({ ...formData, shiftTitle: e.target.value })}
-              required
-            />
+            {/* Shift Title (left) + Status (right) */}
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label="Shift Title"
+                  placeholder="(ex: Night Shift Janitor)"
+                  value={formData.shiftTitle}
+                  onChange={(e) => setFormData({ ...formData, shiftTitle: e.target.value })}
+                  required
+                />
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel>Status</InputLabel>
+                  <Select
+                    label="Status"
+                    value={formData.status}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value as ShiftStatus })}
+                  >
+                    <MenuItem value="open">Open</MenuItem>
+                    <MenuItem value="closed">Closed</MenuItem>
+                    <MenuItem value="filled">Filled</MenuItem>
+                    <MenuItem value="cancelled">Cancelled</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+            </Grid>
 
             {/* Default Job for Shift - Autocomplete (limited to positions from Overview tab) */}
             <Autocomplete
@@ -730,9 +779,9 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               disabled={availablePositions.length === 0}
             />
 
-            {/* Total Staff Requested with Toggle */}
+            {/* Total Staff Requested + Overstaff + Toggle */}
             <Grid container spacing={2}>
-              <Grid item xs={12} md={6}>
+              <Grid item xs={12} md={4}>
                 <TextField
                   fullWidth
                   label="Total Staff Requested"
@@ -743,7 +792,18 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                   required
                 />
               </Grid>
-              <Grid item xs={12} md={6}>
+              <Grid item xs={12} md={4}>
+                <TextField
+                  fullWidth
+                  label="Overstaff (extra)"
+                  type="number"
+                  value={formData.overstaffCount}
+                  onChange={(e) => setFormData({ ...formData, overstaffCount: parseInt(e.target.value) || 0 })}
+                  inputProps={{ min: 0 }}
+                  helperText={`Filled target: ${Math.max(1, (formData.totalStaffRequested || 1) + (formData.overstaffCount || 0))} assignments`}
+                />
+              </Grid>
+              <Grid item xs={12} md={4}>
                 <FormControlLabel
                   control={
                     <Checkbox

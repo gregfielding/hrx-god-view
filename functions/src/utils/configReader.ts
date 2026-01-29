@@ -121,6 +121,8 @@ export const CONFIG = {
   ENABLE_CONTINUOUS_LEARNING: readBooleanConfig('enable_continuous_learning', false),
   ENABLE_JSI_REPORTS: readBooleanConfig('enable_jsi_reports', false),
   ENABLE_SCHEDULED_CHECKINS: readBooleanConfig('enable_scheduled_checkins', false),
+  ENABLE_AUTO_CLOSE_GIG_SHIFTS: readBooleanConfig('enable_auto_close_gig_shifts', true),
+  ENABLE_AUTO_CLOSE_COMPLETED_ASSIGNMENTS: readBooleanConfig('enable_auto_close_completed_assignments', true),
   ENABLE_SCHEDULED_TESTS: readBooleanConfig('enable_scheduled_tests', false),
   ENABLE_AI_SCHEDULER: readBooleanConfig('enable_ai_scheduler', false),
   ENABLE_WEEKLY_ENRICHMENT: readBooleanConfig('enable_weekly_enrichment', false),

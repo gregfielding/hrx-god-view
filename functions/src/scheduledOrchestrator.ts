@@ -175,6 +175,228 @@ async function runScheduledCheckins(): Promise<SubtaskResult> {
   }
 }
 
+/**
+ * Auto-close gig shifts that ended 24+ hours ago
+ * Only applies to gig jobs (not career jobs)
+ */
+async function runAutoCloseGigShifts(): Promise<SubtaskResult> {
+  const start = Date.now();
+  let closed = 0;
+  let errors = 0;
+  
+  try {
+    const now = new Date();
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
+    // Get all tenants to iterate through their shifts
+    const tenantsSnapshot = await db.collection('tenants').limit(100).get();
+    
+    for (const tenantDoc of tenantsSnapshot.docs) {
+      const tenantId = tenantDoc.id;
+      
+      try {
+        // Get all job orders for this tenant
+        const jobOrdersSnapshot = await db.collection('tenants')
+          .doc(tenantId)
+          .collection('job_orders')
+          .get();
+        
+        for (const jobOrderDoc of jobOrdersSnapshot.docs) {
+          const jobOrderData = jobOrderDoc.data();
+          const jobOrderId = jobOrderDoc.id;
+          
+          // Only process gig jobs
+          if (jobOrderData.jobType !== 'gig') {
+            continue;
+          }
+          
+          // Get shifts for this job order
+          const shiftsRef = db.collection('tenants')
+            .doc(tenantId)
+            .collection('job_orders')
+            .doc(jobOrderId)
+            .collection('shifts');
+          
+          const shiftsSnapshot = await shiftsRef.get();
+          
+          for (const shiftDoc of shiftsSnapshot.docs) {
+            try {
+              const shiftData = shiftDoc.data();
+              
+              // Skip if already closed or cancelled
+              const status = (shiftData.status || 'open').toLowerCase();
+              if (status === 'closed' || status === 'cancelled') {
+                continue;
+              }
+              
+              // Calculate shift end time
+              let shiftEndTime: Date | null = null;
+              
+              if (shiftData.shiftMode === 'multi' && shiftData.endDate) {
+                // Multi-day shift: use endDate + defaultEndTime
+                const endDateStr = shiftData.endDate.toString();
+                const endTimeStr = shiftData.defaultEndTime || '23:59';
+                
+                // Parse date (YYYY-MM-DD) and time (HH:mm)
+                const [year, month, day] = endDateStr.split('-').map(Number);
+                const [hour, minute] = endTimeStr.split(':').map(Number);
+                
+                shiftEndTime = new Date(year, month - 1, day, hour || 23, minute || 59);
+                
+                // If end time is before start time, assume next day
+                const startTimeStr = shiftData.defaultStartTime || '00:00';
+                const [startHour] = startTimeStr.split(':').map(Number);
+                if (hour < startHour) {
+                  shiftEndTime.setDate(shiftEndTime.getDate() + 1);
+                }
+              } else {
+                // Single-day shift: use shiftDate + defaultEndTime
+                const shiftDateStr = shiftData.shiftDate?.toString();
+                if (!shiftDateStr) continue;
+                
+                const endTimeStr = shiftData.defaultEndTime || '23:59';
+                
+                // Parse date (YYYY-MM-DD) and time (HH:mm)
+                const [year, month, day] = shiftDateStr.split('-').map(Number);
+                const [hour, minute] = endTimeStr.split(':').map(Number);
+                
+                shiftEndTime = new Date(year, month - 1, day, hour || 23, minute || 59);
+                
+                // If end time is before start time, assume next day
+                const startTimeStr = shiftData.defaultStartTime || '00:00';
+                const [startHour] = startTimeStr.split(':').map(Number);
+                if (hour < startHour) {
+                  shiftEndTime.setDate(shiftEndTime.getDate() + 1);
+                }
+              }
+              
+              if (!shiftEndTime || isNaN(shiftEndTime.getTime())) {
+                continue;
+              }
+              
+              // Check if shift ended 24+ hours ago
+              if (shiftEndTime <= twentyFourHoursAgo) {
+                // Mark as closed
+                await shiftDoc.ref.update({
+                  status: 'closed',
+                  updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                  autoClosedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+                closed++;
+                logger.info('Auto-closed gig shift', {
+                  tenantId,
+                  jobOrderId,
+                  shiftId: shiftDoc.id,
+                  shiftEndTime: shiftEndTime.toISOString()
+                });
+              }
+            } catch (error: any) {
+              errors++;
+              logger.error('Error processing shift', {
+                tenantId,
+                jobOrderId,
+                shiftId: shiftDoc.id,
+                error: error.message
+              });
+            }
+          }
+        }
+      } catch (error: any) {
+        errors++;
+        logger.error('Error processing tenant', { tenantId, error: error.message });
+      }
+    }
+    
+    return {
+      success: true,
+      durationMs: Date.now() - start,
+      itemsProcessed: closed,
+      errors
+    };
+  } catch (error: any) {
+    logger.error('runAutoCloseGigShifts error:', error);
+    return {
+      success: false,
+      durationMs: Date.now() - start,
+      message: error.message,
+      errors
+    };
+  }
+}
+
+/**
+ * Auto-close assignments: completed -> ended after 24 hours.
+ * Uses completedAt (stamped by onAssignmentCompletedStampCompletedAt).
+ */
+async function runAutoCloseCompletedAssignments(): Promise<SubtaskResult> {
+  const start = Date.now();
+  let ended = 0;
+  let errors = 0;
+
+  try {
+    const now = new Date();
+    const cutoff = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+
+    // Iterate tenants (bounded) to avoid collectionGroup index requirements.
+    const tenantsSnapshot = await db.collection('tenants').limit(100).get();
+
+    for (const tenantDoc of tenantsSnapshot.docs) {
+      const tenantId = tenantDoc.id;
+      try {
+        const assignmentsRef = db.collection(`tenants/${tenantId}/assignments`);
+        const q = assignmentsRef
+          .where('status', '==', 'completed')
+          .where('completedAt', '<=', cutoff)
+          .limit(500);
+
+        const snap = await q.get();
+        if (snap.empty) continue;
+
+        const nowTs = admin.firestore.FieldValue.serverTimestamp();
+
+        for (let i = 0; i < snap.docs.length; i += 450) {
+          const batch = db.batch();
+          const slice = snap.docs.slice(i, i + 450);
+
+          for (const docSnap of slice) {
+            batch.update(docSnap.ref, {
+              status: 'ended', // "closed" in business language
+              endedAt: nowTs,
+              endReason: 'auto_closed_24h_after_completed',
+              updatedAt: nowTs,
+              updatedBy: 'system',
+            });
+          }
+
+          await batch.commit();
+          ended += slice.length;
+        }
+      } catch (err: any) {
+        errors += 1;
+        logger.error('Error auto-closing completed assignments for tenant', {
+          tenantId,
+          error: err?.message || String(err),
+        });
+      }
+    }
+
+    return {
+      success: true,
+      durationMs: Date.now() - start,
+      itemsProcessed: ended,
+      errors,
+    };
+  } catch (error: any) {
+    logger.error('runAutoCloseCompletedAssignments error:', error);
+    return {
+      success: false,
+      durationMs: Date.now() - start,
+      message: error.message,
+      errors,
+    };
+  }
+}
+
 // Subtask registry
 const SUBTASKS: SubtaskConfig[] = [
   {
@@ -215,6 +437,22 @@ const SUBTASKS: SubtaskConfig[] = [
     envFlag: 'ENABLE_SCHEDULED_CHECKINS',
     handler: runScheduledCheckins,
     maxDurationMs: 30000,
+    runParallel: true
+  },
+  {
+    name: 'auto_close_gig_shifts',
+    enabled: isFeatureEnabled('auto_close_gig_shifts', CONFIG.ENABLE_AUTO_CLOSE_GIG_SHIFTS),
+    envFlag: 'ENABLE_AUTO_CLOSE_GIG_SHIFTS',
+    handler: runAutoCloseGigShifts,
+    maxDurationMs: 60000, // 1 minute max
+    runParallel: true
+  },
+  {
+    name: 'auto_close_completed_assignments',
+    enabled: isFeatureEnabled('auto_close_completed_assignments', CONFIG.ENABLE_AUTO_CLOSE_COMPLETED_ASSIGNMENTS),
+    envFlag: 'ENABLE_AUTO_CLOSE_COMPLETED_ASSIGNMENTS',
+    handler: runAutoCloseCompletedAssignments,
+    maxDurationMs: 60000,
     runParallel: true
   }
 ];

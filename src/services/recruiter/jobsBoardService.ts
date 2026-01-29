@@ -326,9 +326,15 @@ export class JobsBoardService {
       };
 
       // Convert Firestore shifts to JobBoardShift format
+      // Jobs Board should show:
+      // - Open shifts (normal)
+      // - Filled shifts (as "Accepting Backups" in UI)
+      // It should NOT show closed/cancelled shifts.
       const shifts: JobBoardShift[] = [];
       snapshot.docs.forEach((d) => {
         const data: any = d.data();
+        const status = (data.status || 'open').toLowerCase();
+        if (status !== 'open' && status !== 'filled') return;
 
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
@@ -418,10 +424,12 @@ export class JobsBoardService {
         return undefined;
       };
 
-      // Convert and filter shifts
+      // Convert and filter shifts (Open + Filled show on Jobs Board; Closed/Cancelled hidden)
       const shiftsRaw: JobBoardShift[] = [];
       snapshot.docs.forEach((d) => {
         const data: any = d.data();
+        const status = (data.status || 'open').toLowerCase();
+        if (status !== 'open' && status !== 'filled') return;
 
         const defaultJobTitle = data.defaultJobTitle || jobOrderData?.jobTitle;
         const payRate = getPayRateForJobTitle(defaultJobTitle) || jobOrderData?.payRate;
