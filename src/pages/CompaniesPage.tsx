@@ -49,6 +49,12 @@ const CompaniesPage: React.FC = () => {
       companyFilter: 'all',
       locationStateFilter: 'all',
       showFavoritesOnly: false,
+      // Table UI state (so back navigation restores your spot)
+      sortField: 'companyName',
+      sortDirection: 'asc',
+      page: 0,
+      rowsPerPage: 20,
+      scrollTop: 0,
     },
   });
   
@@ -68,8 +74,20 @@ const CompaniesPage: React.FC = () => {
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(cacheState.showFavoritesOnly || false);
   
   // Pagination state for inbox spec
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [page, setPage] = useState<number>(() => {
+    const v = Number((cacheState as any).page ?? 0);
+    return Number.isFinite(v) && v >= 0 ? v : 0;
+  });
+  const [rowsPerPage, setRowsPerPage] = useState<number>(() => {
+    const v = Number((cacheState as any).rowsPerPage ?? 20);
+    return Number.isFinite(v) && v > 0 ? v : 20;
+  });
+
+  // Sorting state - default to ascending alphabetical by company name
+  const [sortField, setSortField] = useState<string>(() => (cacheState as any).sortField || 'companyName');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(() => {
+    return (cacheState as any).sortDirection === 'desc' ? 'desc' : 'asc';
+  });
   
   // Add Company Dialog state
   const [showAddCompanyDialog, setShowAddCompanyDialog] = useState(false);
@@ -90,6 +108,9 @@ const CompaniesPage: React.FC = () => {
   const filtersRef = useRef<HTMLDivElement | null>(null);
   const [filtersHeight, setFiltersHeight] = useState<number>(0);
   const [isScrolled, setIsScrolled] = useState(false);
+  const restoreScrollOnceRef = useRef(false);
+  const skipResetPageOnceRef = useRef(false);
+  const scrollSaveTimerRef = useRef<number | null>(null);
 
   // Measure filters height
   useEffect(() => {
@@ -103,11 +124,26 @@ const CompaniesPage: React.FC = () => {
   useEffect(() => {
     const el = contentRef.current;
     if (!el) return;
-    const onScroll = () => setIsScrolled(el.scrollTop > 0);
+    const onScroll = () => {
+      setIsScrolled(el.scrollTop > 0);
+      // Debounce persisting scrollTop to avoid hot-loop writes.
+      if (scrollSaveTimerRef.current) {
+        window.clearTimeout(scrollSaveTimerRef.current);
+      }
+      scrollSaveTimerRef.current = window.setTimeout(() => {
+        updateCache({ scrollTop: el.scrollTop });
+      }, 150);
+    };
     onScroll();
     el.addEventListener('scroll', onScroll, { passive: true } as any);
-    return () => el.removeEventListener('scroll', onScroll as any);
-  }, []);
+    return () => {
+      el.removeEventListener('scroll', onScroll as any);
+      if (scrollSaveTimerRef.current) {
+        window.clearTimeout(scrollSaveTimerRef.current);
+        scrollSaveTimerRef.current = null;
+      }
+    };
+  }, [updateCache]);
 
   // Load companies
   const loadCompanies = useCallback(async (searchQuery = '', startDoc: any = null, append = false, filterByUser = false, stateOverride?: string) => {
@@ -491,18 +527,40 @@ const CompaniesPage: React.FC = () => {
     }
   }, [tenantId, companyFilter, locationStateFilter, loadCompanies, getCachedResults]);
 
-  // Sorting state - default to ascending alphabetical by company name
-  const [sortField, setSortField] = useState<string>('companyName');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
-
   const handleSort = (field: string) => {
     if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortField(field);
-      setSortDirection('asc');
+      const nextDir = sortDirection === 'asc' ? 'desc' : 'asc';
+      setSortDirection(nextDir);
+      updateCache({ sortField: field, sortDirection: nextDir });
+      return;
     }
+    setSortField(field);
+    setSortDirection('asc');
+    updateCache({ sortField: field, sortDirection: 'asc' });
   };
+
+  // Persist pagination state
+  useEffect(() => {
+    updateCache({ page, rowsPerPage });
+  }, [page, rowsPerPage, updateCache]);
+
+  // Restore scroll position once after data is available (e.g. navigating back from detail).
+  useEffect(() => {
+    if (restoreScrollOnceRef.current) return;
+    if (companiesLoading) return;
+    const el = contentRef.current;
+    if (!el) return;
+    const st = Number((cacheState as any).scrollTop ?? 0);
+    if (!Number.isFinite(st) || st <= 0) {
+      restoreScrollOnceRef.current = true;
+      return;
+    }
+    restoreScrollOnceRef.current = true;
+    // Wait a tick so layout/pagination renders before applying scroll.
+    window.requestAnimationFrame(() => {
+      el.scrollTop = st;
+    });
+  }, [companiesLoading, cacheState]);
 
   // Helper functions
   const getCompanyContacts = (companyId: string) => {
@@ -693,6 +751,11 @@ const CompaniesPage: React.FC = () => {
 
   // Reset page when search or filters change
   useEffect(() => {
+    // Don't clobber restored page on first mount/back navigation.
+    if (!skipResetPageOnceRef.current) {
+      skipResetPageOnceRef.current = true;
+      return;
+    }
     setPage(0);
   }, [search, showFavoritesOnly, locationStateFilter, companyFilter]);
 
@@ -710,6 +773,14 @@ const CompaniesPage: React.FC = () => {
   }, [search, tenantId, companyFilter, locationStateFilter, loadCompanies]);
 
   const handleViewCompany = (company: any) => {
+    // Persist the user's current table position so Back returns to the same spot.
+    updateCache({
+      page,
+      rowsPerPage,
+      sortField,
+      sortDirection,
+      scrollTop: contentRef.current?.scrollTop ?? 0,
+    });
     navigate(`/companies/${company.id}`);
   };
 
