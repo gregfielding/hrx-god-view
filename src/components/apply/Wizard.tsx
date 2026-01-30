@@ -43,6 +43,30 @@ type DraftApplication = {
   data: any;
 };
 
+// Firestore does not allow `undefined` anywhere in a document (including nested objects).
+// This helper removes undefined values deeply while preserving non-plain objects (Dates, Timestamps, FieldValue, etc).
+const deepStripUndefined = (value: any): any => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => deepStripUndefined(v))
+      .filter((v) => v !== undefined);
+  }
+  if (typeof value === 'object') {
+    // Only recurse into plain objects
+    const isPlainObject = value?.constructor === Object;
+    if (!isPlainObject) return value;
+    const out: any = {};
+    for (const [k, v] of Object.entries(value)) {
+      const cleanedV = deepStripUndefined(v);
+      if (cleanedV !== undefined) out[k] = cleanedV;
+    }
+    return out;
+  }
+  return value;
+};
+
 const steps = ['Personal Info', 'Address', 'Work Eligibility', 'Profile Picture', 'Resume', 'Skills', 'Education', 'Licenses and Certifications', 'Work Experience', 'Bio', 'Preferences', 'Requirements'];
 
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid }) => {
@@ -1164,7 +1188,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             tenantId,
             jobId,
             uid: effectiveUid,
-            data: formData || {},
+            data: deepStripUndefined(formData || {}) || {},
           };
           localStorage.setItem(key, JSON.stringify(draft));
         } catch {}
@@ -1492,7 +1516,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           }
           
-          await setDoc(tRef, {
+        const safeFormData = deepStripUndefined(formData || {}) || {};
+        await setDoc(tRef, {
             userId: effectiveUid,
             tenantId,
             jobId,
@@ -1501,7 +1526,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             appliedAt: serverTimestamp(),
             submittedAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-            data: formData,
+          data: safeFormData,
             applicant: {
               firstName: personal.firstName || null,
               lastName: personal.lastName || null,
