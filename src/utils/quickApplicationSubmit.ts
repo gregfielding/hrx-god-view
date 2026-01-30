@@ -1,7 +1,8 @@
-import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { logJobApplicationActivity } from './activityLogger';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from './gigShiftApplicationLimits';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 
 /**
  * Check if user has existing application data (has applied before)
@@ -108,6 +109,29 @@ export async function submitQuickApplication(
     }
     
     const userData = userSnap.data();
+
+    // Ensure tenant membership is set for this tenant (applicants should have tenantIds + activeTenantId)
+    try {
+      const existingTenantMeta = (userData as any)?.tenantIds?.[tenantId] || {};
+      await setDoc(
+        userRef,
+        {
+          activeTenantId: (userData as any)?.activeTenantId || tenantId,
+          tenantIds: {
+            ...((userData as any)?.tenantIds || {}),
+            [tenantId]: {
+              ...existingTenantMeta,
+              role: existingTenantMeta?.role || 'Applicant',
+              securityLevel: existingTenantMeta?.securityLevel || '2',
+              addedAt: existingTenantMeta?.addedAt || serverTimestamp(),
+            },
+          },
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn('Quick apply: failed to ensure tenant membership', e);
+    }
     
     // Validate required fields
     if (!userData.firstName || !userData.lastName || !userData.email || !userData.phone) {
@@ -233,6 +257,7 @@ export async function submitQuickApplication(
       jobId,
       jobOrderId: jobPosting?.jobOrderId || null,
       status: 'submitted',
+      appliedAt: serverTimestamp(),
       submittedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       data: {
@@ -277,6 +302,43 @@ export async function submitQuickApplication(
       ...(shiftDates.length > 0 ? { shiftDates: [...new Set(shiftDates)] } : {}),
       ...(Object.keys(shiftAssignments).length > 0 ? { shiftAssignments } : {}),
     }, { merge: true });
+
+    // Auto-add to user groups if specified in job posting (matches wizard behavior)
+    try {
+      const groupIdsToAdd: string[] = [];
+      if (Array.isArray(jobPosting?.autoAddToUserGroups) && jobPosting.autoAddToUserGroups.length > 0) {
+        groupIdsToAdd.push(...jobPosting.autoAddToUserGroups);
+      } else if (typeof jobPosting?.autoAddToUserGroup === 'string' && jobPosting.autoAddToUserGroup.trim()) {
+        groupIdsToAdd.push(jobPosting.autoAddToUserGroup.trim());
+      }
+
+      // Fallback: resolve groups by jobOrderId if missing on the passed posting
+      if (groupIdsToAdd.length === 0 && jobPosting?.jobOrderId) {
+        const q = query(
+          collection(db, 'tenants', tenantId, 'job_postings'),
+          where('jobOrderId', '==', jobPosting.jobOrderId),
+          limit(1)
+        );
+        const qsnap = await getDocs(q);
+        if (!qsnap.empty) {
+          const p = qsnap.docs[0].data() as any;
+          if (Array.isArray(p?.autoAddToUserGroups) && p.autoAddToUserGroups.length > 0) {
+            groupIdsToAdd.push(...p.autoAddToUserGroups);
+          } else if (typeof p?.autoAddToUserGroup === 'string' && p.autoAddToUserGroup.trim()) {
+            groupIdsToAdd.push(p.autoAddToUserGroup.trim());
+          }
+        }
+      }
+
+      if (groupIdsToAdd.length > 0) {
+        const functions = getFunctions();
+        const addUsersToGroups = httpsCallable(functions as any, 'addUsersToGroups');
+        await addUsersToGroups({ userId, groupIds: groupIdsToAdd, tenantId });
+      }
+    } catch (e) {
+      // Don't fail the application if group add fails, but log it loudly.
+      console.error('Quick apply: failed to auto-add user to groups', e);
+    }
     
     // Log job application activity
     try {

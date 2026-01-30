@@ -1007,9 +1007,10 @@ const PublicJobsBoard: React.FC = () => {
 
 
   const handleApply = async (job: PublicJobPosting) => {
+    const jobOrderIdParam = (job as any)?.jobOrderId ? `jobOrderId=${encodeURIComponent(String((job as any).jobOrderId))}` : '';
     if (!user) {
       // Not logged in - navigate to login/signup
-      navigate(`/apply/${job.tenantId}/${job.id}?returnTo=/c1/jobs-board/${job.id}`);
+      navigate(`/apply/${job.tenantId}/${job.id}?returnTo=/c1/jobs-board/${job.id}${jobOrderIdParam ? `&${jobOrderIdParam}` : ''}`);
       return;
     }
     
@@ -1048,7 +1049,7 @@ const PublicJobsBoard: React.FC = () => {
           } else {
             // Error - show alert and navigate to wizard
             alert(result.error || 'Failed to submit application. Please try again.');
-            navigate(`/apply/${job.tenantId}/${job.id}`);
+            navigate(`/apply/${job.tenantId}/${job.id}${jobOrderIdParam ? `?${jobOrderIdParam}` : ''}`);
             return;
           }
         } else {
@@ -1057,8 +1058,9 @@ const PublicJobsBoard: React.FC = () => {
           const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
             ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
             : [];
-          const shiftsParam = shiftsToUse.length > 0 ? `&shifts=${shiftsToUse.join(',')}` : '';
-          navigate(`/apply/${job.tenantId}/${job.id}?step=7${shiftsParam}`);
+          const shiftsParam = shiftsToUse.length > 0 ? `shifts=${encodeURIComponent(shiftsToUse.join(','))}` : '';
+          const params = [`step=7`, shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
+          navigate(`/apply/${job.tenantId}/${job.id}?${params}`);
           handleCloseDialog(); // Close dialog when navigating
           return;
         }
@@ -1067,8 +1069,9 @@ const PublicJobsBoard: React.FC = () => {
         const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
           ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
           : [];
-        const shiftsParam = shiftsToUse.length > 0 ? `?shifts=${shiftsToUse.join(',')}` : '';
-        navigate(`/apply/${job.tenantId}/${job.id}${shiftsParam}`);
+        const shiftsParam = shiftsToUse.length > 0 ? `shifts=${encodeURIComponent(shiftsToUse.join(','))}` : '';
+        const params = [shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
+        navigate(`/apply/${job.tenantId}/${job.id}${params ? `?${params}` : ''}`);
         handleCloseDialog(); // Close dialog when navigating
         return;
       }
@@ -1078,8 +1081,9 @@ const PublicJobsBoard: React.FC = () => {
       const shiftsToUse = (job as any).jobType === 'gig' && selectedJobShifts.length > 0
         ? selectedJobShifts.map((s: any) => s.id || s).filter(Boolean)
         : [];
-      const shiftsParam = shiftsToUse.length > 0 ? `?shifts=${shiftsToUse.join(',')}` : '';
-      navigate(`/apply/${job.tenantId}/${job.id}${shiftsParam}`);
+      const shiftsParam = shiftsToUse.length > 0 ? `shifts=${encodeURIComponent(shiftsToUse.join(','))}` : '';
+      const params = [shiftsParam, jobOrderIdParam].filter(Boolean).join('&');
+      navigate(`/apply/${job.tenantId}/${job.id}${params ? `?${params}` : ''}`);
     }
   };
 

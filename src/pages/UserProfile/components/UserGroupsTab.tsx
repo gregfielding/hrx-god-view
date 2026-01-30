@@ -16,19 +16,21 @@ import { useAuth } from '../../../contexts/AuthContext';
 
 interface UserGroupsTabProps {
   uid: string;
+  tenantId?: string;
 }
 
-const UserGroupsTab: React.FC<UserGroupsTabProps> = ({ uid }) => {
+const UserGroupsTab: React.FC<UserGroupsTabProps> = ({ uid, tenantId }) => {
   const { tenantId: activeTenantId } = useAuth();
   const [userGroups, setUserGroups] = useState<any[]>([]);
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
   const [tenantName, setTenantName] = useState<string>('');
 
   useEffect(() => {
-    if (activeTenantId) {
-      loadUserGroups(activeTenantId);
+    const tid = tenantId || activeTenantId;
+    if (tid) {
+      loadUserGroups(tid);
     }
-  }, [activeTenantId]);
+  }, [activeTenantId, tenantId]);
 
   const loadUserGroups = async (tenantId: string) => {
     try {
@@ -43,7 +45,12 @@ const UserGroupsTab: React.FC<UserGroupsTabProps> = ({ uid }) => {
       const userSnap = await getDoc(userRef);
       if (userSnap.exists()) {
         const userData = userSnap.data();
-        setUserGroupIds(userData.userGroupIds || []);
+        const nested = (userData as any)?.tenantIds?.[tenantId]?.userGroupIds;
+        const ids =
+          (Array.isArray(nested) ? nested : null) ||
+          (Array.isArray((userData as any)?.userGroupIds) ? (userData as any).userGroupIds : null) ||
+          [];
+        setUserGroupIds(ids);
       }
     } catch (error) {
       console.error('Error loading user groups:', error);

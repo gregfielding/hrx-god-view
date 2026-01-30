@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Button, Divider, Stack, Step, StepLabel, Stepper, Typography, Alert, Snackbar, LinearProgress, useMediaQuery, useTheme, Paper, TextField, Backdrop, CircularProgress } from '@mui/material';
-import { addDoc, arrayUnion, collection, doc, getDoc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
+import { addDoc, arrayUnion, collection, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, updateDoc, where } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
@@ -216,8 +216,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
           await setDoc(tRef, {
             status: 'in_progress',
-            uid,
+            userId: uid,
             jobId,
+            appliedAt: serverTimestamp(),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           }, { merge: true });
@@ -230,6 +231,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   // Load job posting requirements (fallback merges can be added later)
   useEffect(() => {
+    const jobOrderIdOverride = (() => {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const v = params.get('jobOrderId');
+        return v && v.trim() ? v.trim() : null;
+      } catch {
+        return null;
+      }
+    })();
+
     const loadPosting = async () => {
       try {
         
@@ -237,14 +248,55 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           
           return;
         }
-        const postRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
-        
-        const snap = await getDoc(postRef);
-        if (!snap.exists()) {
-          
-          return;
+        // Primary: job_postings/{jobId} (normal case)
+        let data: any | null = null;
+        try {
+          const postRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
+          const snap = await getDoc(postRef);
+          if (snap.exists()) data = snap.data() as any;
+        } catch {}
+
+        // Fallback: if jobId is actually a jobOrderId, find a posting by jobOrderId
+        if (!data) {
+          try {
+            const q = query(
+              collection(db, 'tenants', tenantId, 'job_postings'),
+              where('jobOrderId', '==', jobId),
+              limit(1)
+            );
+            const qsnap = await getDocs(q);
+            if (!qsnap.empty) {
+              data = qsnap.docs[0].data() as any;
+            }
+          } catch {}
         }
-        const data = snap.data() as any;
+
+        // Last resort: job order doc (still allows saving the application with a jobOrderId)
+        if (!data) {
+          try {
+            const joRef = doc(db, 'tenants', tenantId, 'job_orders', jobId);
+            const joSnap = await getDoc(joRef);
+            if (joSnap.exists()) {
+              const jo = joSnap.data() as any;
+              data = {
+                jobOrderId: jobId,
+                jobTitle: jo.jobTitle || jo.jobOrderName || jo.name || 'Job',
+                postTitle: jo.jobOrderName || jo.name || jo.jobTitle || 'Job',
+                jobType: jo.jobType || 'career',
+                companyId: jo.companyId,
+                worksiteId: jo.worksiteId,
+                worksiteName: jo.locationName || jo.worksiteName,
+                city: jo.city,
+                state: jo.state,
+                payRate: jo.payRate,
+                startDate: jo.startDate,
+                endDate: jo.endDate,
+              };
+            }
+          } catch {}
+        }
+
+        if (!data) return;
         
         const merged = {
           licenses: Array.isArray(data?.licensesCerts) ? data.licensesCerts.filter(Boolean) : [],
@@ -259,7 +311,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           physical: Array.isArray(data?.physicalRequirements) ? data.physicalRequirements.filter(Boolean) : [],
         };
         setRequirements(merged);
-        setPosting(data);
+        setPosting({
+          ...data,
+          // Ensure jobOrderId can be carried from the Jobs Board link even if the posting doc is missing it.
+          ...(jobOrderIdOverride && !data?.jobOrderId ? { jobOrderId: jobOrderIdOverride } : {}),
+        });
         
         
 
@@ -1395,6 +1451,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       // Create final submitted application in tenants/{tenantId}/applications
       try {
         if (tenantId && effectiveUid && jobId) {
+          const jobOrderIdOverride = (() => {
+            try {
+              const params = new URLSearchParams(window.location.search);
+              const v = params.get('jobOrderId');
+              return v && v.trim() ? v.trim() : null;
+            } catch {
+              return null;
+            }
+          })();
+
           const tidAppId = `${effectiveUid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
           
@@ -1402,10 +1468,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           let shiftDate: string | null = null;
           const shiftDates: string[] = [];
           
-          if (selectedShifts.length > 0 && posting?.jobOrderId) {
+          const effectiveJobOrderId = posting?.jobOrderId || jobOrderIdOverride;
+          if (selectedShifts.length > 0 && effectiveJobOrderId) {
             for (const shiftId of selectedShifts) {
               try {
-                const shiftRef = doc(db, 'tenants', tenantId, 'job_orders', posting.jobOrderId, 'shifts', shiftId);
+                const shiftRef = doc(db, 'tenants', tenantId, 'job_orders', effectiveJobOrderId, 'shifts', shiftId);
                 const shiftSnap = await getDoc(shiftRef);
                 
                 if (shiftSnap.exists()) {
@@ -1429,8 +1496,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             userId: effectiveUid,
             tenantId,
             jobId,
-            jobOrderId: posting?.jobOrderId || null, // CRITICAL: Link to job order if posting is connected
+            jobOrderId: posting?.jobOrderId || jobOrderIdOverride || null, // CRITICAL: Link to job order if posting is connected
             status: 'submitted',
+            appliedAt: serverTimestamp(),
             submittedAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
             data: formData,
@@ -1561,6 +1629,33 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             groupIdsToAdd.push(posting.autoAddToUserGroup);
             console.log('✅ Found legacy autoAddToUserGroup:', posting.autoAddToUserGroup);
           }
+
+          // Fallback: if posting wasn't loaded, try resolving by jobOrderId from URL
+          if (groupIdsToAdd.length === 0) {
+            try {
+              const params = new URLSearchParams(window.location.search);
+              const jobOrderIdOverride = params.get('jobOrderId');
+              const joid = jobOrderIdOverride && jobOrderIdOverride.trim() ? jobOrderIdOverride.trim() : null;
+              if (joid && tenantId) {
+                const q = query(
+                  collection(db, 'tenants', tenantId, 'job_postings'),
+                  where('jobOrderId', '==', joid),
+                  limit(1)
+                );
+                const qsnap = await getDocs(q);
+                if (!qsnap.empty) {
+                  const p = qsnap.docs[0].data() as any;
+                  if (Array.isArray(p?.autoAddToUserGroups) && p.autoAddToUserGroups.length > 0) {
+                    groupIdsToAdd.push(...p.autoAddToUserGroups);
+                    console.log('✅ Fallback found autoAddToUserGroups:', p.autoAddToUserGroups);
+                  } else if (typeof p?.autoAddToUserGroup === 'string' && p.autoAddToUserGroup.trim()) {
+                    groupIdsToAdd.push(p.autoAddToUserGroup.trim());
+                    console.log('✅ Fallback found legacy autoAddToUserGroup:', p.autoAddToUserGroup);
+                  }
+                }
+              }
+            } catch {}
+          }
           
           if (groupIdsToAdd.length > 0) {
             console.log(`🚀 Adding user ${effectiveUid} to ${groupIdsToAdd.length} group(s):`, groupIdsToAdd);
@@ -1592,6 +1687,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }
       } catch (e) {
         console.error('Error saving application:', e);
+        // Don't redirect if we didn't actually save the application doc.
+        throw e;
       }
 
       try {

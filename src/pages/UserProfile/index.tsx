@@ -29,6 +29,7 @@ import { useFavorites } from '../../hooks/useFavorites';
 
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
+import UserGroupsTab from './components/UserGroupsTab';
 import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
 import SkillsOnlyTab from './components/SkillsOnlyTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
@@ -275,6 +276,7 @@ const UserProfilePage = () => {
       { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
+      { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
       { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount }, // Hidden for 0-4
@@ -314,8 +316,10 @@ const UserProfilePage = () => {
           setLastName(data.lastName || '');
           setPreferredName(data.preferredName || '');
           setAvatarUrl(data.avatar || '');
-          // Get effective tenant ID first
+          // Get effective tenant ID first (target user's tenant, if present)
           const effectiveTenantId = data.activeTenantId || data.tenantId || null;
+          // Fallback to viewer tenant when target user has no tenantId set (common for older docs / applicants)
+          const tenantForGroups = effectiveTenantId || authTenantId || activeTenant?.id || null;
           
           // Fetch tenant-dependent fields from nested structure first, then fallback to direct fields
           const tenantData = effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
@@ -331,13 +335,26 @@ const UserProfilePage = () => {
           setCustomerId(effectiveTenantId || null);
           // Resolve header user groups (ids -> titles)
           try {
-            const userGroupIds = Array.isArray((data as any)?.userGroupIds) ? (data as any).userGroupIds : [];
-            if (effectiveTenantId && userGroupIds.length > 0) {
+            const rawGroupIds =
+              (Array.isArray((tenantData as any)?.userGroupIds) ? (tenantData as any).userGroupIds : null) ||
+              (Array.isArray((data as any)?.userGroupIds) ? (data as any).userGroupIds : null) ||
+              (Array.isArray((data as any)?.tenantIds?.[effectiveTenantId as any]?.userGroupIds)
+                ? (data as any).tenantIds[effectiveTenantId as any].userGroupIds
+                : null) ||
+              [];
+
+            const userGroupIds = Array.from(new Set((rawGroupIds as any[]).filter(Boolean))).slice(0, 25);
+            if (userGroupIds.length > 0) {
+              // If we can't resolve titles (no tenant), still show IDs so the header isn't blank.
+              if (!tenantForGroups) {
+                setHeaderUserGroups(userGroupIds.map((id: string) => ({ id, title: id })));
+                return;
+              }
               const groupDocs = await Promise.all(
-                userGroupIds.slice(0, 25).map(async (groupId: string) => {
+                userGroupIds.map(async (groupId: string) => {
                   try {
-                    const gSnap = await getDoc(doc(db, 'tenants', effectiveTenantId, 'userGroups', groupId));
-                    if (!gSnap.exists()) return null;
+                    const gSnap = await getDoc(doc(db, 'tenants', tenantForGroups, 'userGroups', groupId));
+                    if (!gSnap.exists()) return { id: groupId, title: groupId };
                     const g = gSnap.data() as any;
                     return {
                       id: groupId,
@@ -1050,6 +1067,7 @@ const UserProfilePage = () => {
           preferredName={preferredName}
           avatarUrl={avatarUrl}
           onAvatarUpdated={setAvatarUrl}
+          headerUserGroups={headerUserGroups}
           showBackButton={(isRecruiterRoute || user?.uid !== uid) && !isWorkforceRoute}
           onBack={() => {
             if (isRecruiterRoute) {
@@ -1608,9 +1626,16 @@ const UserProfilePage = () => {
                         </Typography>
                       )}
                     </Box>
-                    {/* Line 4: User groups (admin 5-7 only, and only on own profile) */}
-                    {headerUserGroups.length > 0 && isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && (
+                    {/* Line 4: User groups (member of) */}
+                    {headerUserGroups.length > 0 && viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7 && (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
+                        <Typography
+                          component="span"
+                          variant="body2"
+                          sx={{ fontSize: '14px', fontWeight: 500, color: 'rgba(0, 0, 0, 0.55)' }}
+                        >
+                          Member of:
+                        </Typography>
                         {headerUserGroups.map((g, idx) => {
                           const href = `/usergroups/${g.id}`;
                           return (
@@ -1626,7 +1651,7 @@ const UserProfilePage = () => {
                                 underline="hover"
                                 sx={{
                                   fontSize: '14px',
-                                  fontWeight: 500,
+                                  fontWeight: 600,
                                   color: '#0057B8',
                                   cursor: 'pointer',
                                 }}
@@ -1968,6 +1993,8 @@ const UserProfilePage = () => {
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
                 return <UserAssignmentsTab userId={uid} />;
+              case 'User Groups':
+                return <UserGroupsTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || undefined} />;
               case 'Onboarding':
                 return <OnboardingTab uid={uid} tenantId={tenantId || ''} />;
               case 'Backgrounds':

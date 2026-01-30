@@ -2072,6 +2072,50 @@ const ContactDetails: React.FC = () => {
                   </Tooltip>
                 </Stack>
                 
+                {/* Address line (City, State) */}
+                {(() => {
+                  const direct = [contact.city, contact.state].filter(Boolean).join(', ');
+                  if (direct) {
+                    return (
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '14px',
+                          fontWeight: 400,
+                          color: 'rgba(0, 0, 0, 0.55)',
+                          mt: 0,
+                          mb: 0.5,
+                        }}
+                      >
+                        {direct}
+                      </Typography>
+                    );
+                  }
+
+                  const fallback = contact.formattedAddress || contact.address || '';
+                  const parts = fallback
+                    .split(',')
+                    .map((p) => p.trim())
+                    .filter(Boolean);
+                  const guess = parts.length >= 2 ? `${parts[0]}, ${parts[1]}` : '';
+                  if (!guess) return null;
+
+                  return (
+                    <Typography
+                      variant="body2"
+                      sx={{
+                        fontSize: '14px',
+                        fontWeight: 400,
+                        color: 'rgba(0, 0, 0, 0.55)',
+                        mt: 0,
+                        mb: 0.5,
+                      }}
+                    >
+                      {guess}
+                    </Typography>
+                  );
+                })()}
+
                 {/* Line 3: Connections (replaces email/ID/date row) */}
                 <Stack
                   direction="row"

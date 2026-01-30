@@ -2742,7 +2742,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     component="button"
                     type="button"
                           underline="hover"
-                    onClick={() => navigate(`/recruiter/companies/${displayCompanyId}`)}
+                    onClick={() => navigate(`/companies/${displayCompanyId}`)}
                     sx={{
                       fontSize: '0.875rem',
                       fontWeight: 600,
@@ -2767,7 +2767,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                         type="button"
                               underline="hover"
                         onClick={() =>
-                          navigate(`/recruiter/companies/${displayCompanyId}/locations/${displayLocationId}`)
+                          navigate(`/companies/${displayCompanyId}/locations/${displayLocationId}`)
                         }
                         sx={{
                           fontSize: '0.875rem',
@@ -2785,11 +2785,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     )}
                   </>
                 )}
-
-                <BriefcaseIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
-                <Typography sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}>
-                  {jobOrder.jobOrderName || 'Job Order'}
-                        </Typography>
               </Stack>
 
               {/* Line 4: Checklist progress */}
