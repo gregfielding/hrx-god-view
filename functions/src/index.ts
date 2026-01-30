@@ -9605,30 +9605,49 @@ export const addUsersToGroups = onCall({
     
     const db = admin.firestore();
     
-    // Update each group's memberIds array
+    // Update each group's membership.
+    // NOTE: We support both legacy `members` (array or map) and current `memberIds` (array).
     const groupUpdatePromises = groupIds.map(async (groupId: string) => {
       const userGroupRef = db
         .collection('tenants')
         .doc(tenantId)
         .collection('userGroups')
         .doc(groupId);
-      
-      await userGroupRef.update({
+
+      const snap = await userGroupRef.get();
+      const data = snap.exists ? (snap.data() as any) : {};
+      const updates: any = {
         memberIds: admin.firestore.FieldValue.arrayUnion(userId),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      
+      };
+
+      // Maintain legacy `members` field for codepaths that still read it (e.g. group messaging).
+      if (Array.isArray(data?.members) || data?.members == null) {
+        updates.members = admin.firestore.FieldValue.arrayUnion(userId);
+      } else if (typeof data?.members === 'object') {
+        // members as a map/object; groupMessaging extracts keys
+        updates[`members.${userId}`] = true;
+      } else {
+        updates.members = admin.firestore.FieldValue.arrayUnion(userId);
+      }
+
+      // Use set({merge:true}) so we don't fail if the group doc is missing.
+      await userGroupRef.set(updates, { merge: true });
+
       console.log(`✅ Added user ${userId} to group ${groupId}`);
     });
-    
-    // Update user's userGroupIds
+
+    // Update user's userGroupIds (and tenant-scoped copy). Use set merge to avoid race if user doc isn't created yet.
     const userRef = db.collection('users').doc(userId);
-    await userRef.update({
-      userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
-      [`tenantIds.${tenantId}.userGroupIds`]: admin.firestore.FieldValue.arrayUnion(...groupIds),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    });
-    
+    await userRef.set(
+      {
+        userGroupIds: admin.firestore.FieldValue.arrayUnion(...groupIds),
+        [`tenantIds.${tenantId}.userGroupIds`]: admin.firestore.FieldValue.arrayUnion(...groupIds),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
     await Promise.all(groupUpdatePromises);
     
     console.log(`✅ Successfully added user ${userId} to ${groupIds.length} group(s)`);
