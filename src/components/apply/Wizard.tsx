@@ -865,12 +865,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               const userSnap = await getDoc(userRef);
               const existingData = userSnap.exists() ? userSnap.data() : {};
               const existingTenantMeta = existingData?.tenantIds?.[tenantId] || {};
+              // Preserve existing role/securityLevel so applying doesn't downgrade (e.g. Admin 7 → Applicant 2)
               update.tenantIds = {
                 ...(existingData?.tenantIds || {}),
                 [tenantId]: {
                   ...existingTenantMeta,
-                  role: 'Applicant',
-                  securityLevel: '2',
+                  role: existingTenantMeta?.role || 'Applicant',
+                  securityLevel: existingTenantMeta?.securityLevel || '2',
                   addedAt: existingTenantMeta?.addedAt || serverTimestamp(),
                 },
               };
@@ -1455,12 +1456,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const userSnap = await getDoc(userRef);
           const existingData = userSnap.exists() ? userSnap.data() : {};
           const existingTenantMeta = existingData?.tenantIds?.[tenantId] || {};
+          // Preserve existing role/securityLevel so applying doesn't downgrade (e.g. Admin 7 → Applicant 2)
           profileUpdate.tenantIds = {
             ...(existingData?.tenantIds || {}),
             [tenantId]: {
               ...existingTenantMeta,
-              role: 'Applicant',
-              securityLevel: '2',
+              role: existingTenantMeta?.role || 'Applicant',
+              securityLevel: existingTenantMeta?.securityLevel || '2',
               addedAt: existingTenantMeta?.addedAt || serverTimestamp(),
             },
           };

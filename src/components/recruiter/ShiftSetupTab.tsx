@@ -386,23 +386,31 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         if (isGigJob) {
           shiftData.endDate = formData.endDate;
         } else {
-          // Open-ended schedule: no endDate stored
-          shiftData.endDate = deleteField();
+          // Open-ended schedule: no endDate. Only use deleteField for updateDoc (not allowed with addDoc).
+          if (editingShift) shiftData.endDate = deleteField();
         }
         shiftData.weeklySchedule = formData.weeklySchedule || buildDefaultWeeklySchedule(formData.defaultStartTime, formData.defaultEndTime);
       } else {
-        // Ensure multi-day fields are removed when switching back to single-day.
-        shiftData.endDate = deleteField();
-        shiftData.weeklySchedule = deleteField();
+        // Single-day: no endDate or weeklySchedule. Only use deleteField for updateDoc.
+        if (editingShift) {
+          shiftData.endDate = deleteField();
+          shiftData.weeklySchedule = deleteField();
+        }
       }
 
       if (editingShift) {
-        // Update existing shift
         await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', editingShift.id), shiftData);
         setSuccess('Shift updated successfully');
       } else {
-        // Create new shift in tenant/job_order subcollection
-        await addDoc(collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts'), shiftData);
+        // addDoc() does not accept deleteField() — only include fields we want on the new document
+        const dataForAdd = { ...shiftData };
+        if (!isSchedule) {
+          delete dataForAdd.endDate;
+          delete dataForAdd.weeklySchedule;
+        } else if (!isGigJob) {
+          delete dataForAdd.endDate;
+        }
+        await addDoc(collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts'), dataForAdd);
         setSuccess('Shift created successfully');
       }
 
