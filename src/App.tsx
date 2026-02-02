@@ -346,6 +346,7 @@ function App() {
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />
       <Route path="/onboarding/complete" element={<OnboardingCompleteScreen />} />
       <Route path="/c1/apply" element={<Apply />} />
+      <Route path="/c1/apply/group/:groupId" element={<Apply />} />
       <Route path="/consent" element={<Communications />} />
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />

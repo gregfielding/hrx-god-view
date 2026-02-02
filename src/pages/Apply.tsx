@@ -6,7 +6,7 @@
  */
 
 import React, { useState, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Box,
   Container,
@@ -21,7 +21,8 @@ import {
   Paper,
 } from '@mui/material';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp, getDoc, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { getFunctions, httpsCallable } from 'firebase/functions';
 import { auth, db } from '../firebase';
 import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
 
@@ -29,6 +30,8 @@ const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 
 const Apply: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const params = useParams<{ groupId?: string }>();
   const firstNameRef = useRef<HTMLInputElement>(null);
   
   const [firstName, setFirstName] = useState('');
@@ -42,6 +45,51 @@ const Apply: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
+  const [signupGroupId, setSignupGroupId] = useState<string | null>(null);
+  const [signupGroupTitle, setSignupGroupTitle] = useState<string | null>(null);
+  const [groupLoading, setGroupLoading] = useState(false);
+  const [pendingGroupAdd, setPendingGroupAdd] = useState<{ userId: string; groupId: string } | null>(null);
+
+  // Resolve optional groupId from route param or query string
+  useEffect(() => {
+    const fromParam = params.groupId ? String(params.groupId).trim() : '';
+    const searchParams = new URLSearchParams(location.search);
+    const fromQuery = searchParams.get('groupId') ? String(searchParams.get('groupId')).trim() : '';
+    const resolved = fromParam || fromQuery || '';
+    setSignupGroupId(resolved || null);
+  }, [params.groupId, location.search]);
+
+  // If this is a group-specific signup, validate the group and load its title for display.
+  useEffect(() => {
+    let cancelled = false;
+    const gid = signupGroupId ? signupGroupId.trim() : '';
+    if (!gid) {
+      setSignupGroupTitle(null);
+      setGroupLoading(false);
+      return;
+    }
+
+    (async () => {
+      setGroupLoading(true);
+      try {
+        const fn = httpsCallable(getFunctions(), 'validateUserGroupSignup');
+        const res = await fn({ tenantId: C1_TENANT_ID, groupId: gid });
+        const data = (res as any)?.data || {};
+        if (!cancelled) setSignupGroupTitle(String(data?.title || '').trim() || 'User Group');
+      } catch (e) {
+        if (!cancelled) {
+          setSignupGroupTitle(null);
+          setError('Unable to validate this signup link. Please try again.');
+        }
+      } finally {
+        if (!cancelled) setGroupLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [signupGroupId]);
 
   // Auto-focus first field
   useEffect(() => {
@@ -92,6 +140,7 @@ const Apply: React.FC = () => {
     e.preventDefault();
     setError(null);
     setSuccess(false);
+    setPendingGroupAdd(null);
 
     // Validation
     if (!firstName.trim() || !lastName.trim() || !email.trim() || !dateOfBirth || !phone.trim() || !password.trim()) {
@@ -130,6 +179,15 @@ const Apply: React.FC = () => {
       return;
     }
 
+    if (groupLoading) {
+      setError('Validating signup link… please wait.');
+      return;
+    }
+    if (signupGroupId && !signupGroupTitle) {
+      setError('This signup link is invalid or expired. Please request a new link.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -142,9 +200,7 @@ const Apply: React.FC = () => {
         displayName: `${firstName} ${lastName}`.trim()
       });
 
-      // Check if user document already exists
       const userRef = doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userRef);
 
       // Prepare user profile data
       const phoneE164 = `+1${phoneDigits}`;
@@ -163,7 +219,8 @@ const Apply: React.FC = () => {
         updatedAt: serverTimestamp(),
         lastLogin: serverTimestamp(),
         // Signup source
-        signupSource: 'apply_landing',
+        signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+        signupGroupId: signupGroupId || null,
         // Default values for new users from apply page
         securityLevel: '2' as const, // Applicant level
         role: 'Tenant' as const,
@@ -269,6 +326,19 @@ const Apply: React.FC = () => {
       // Create or update user document
       await setDoc(userRef, userProfile, { merge: true });
 
+      // If this is a group-specific signup, add the user to that group via Cloud Function.
+      if (signupGroupId) {
+        try {
+          const fn = httpsCallable(getFunctions(), 'addUsersToGroups');
+          await fn({ tenantId: C1_TENANT_ID, userId: user.uid, groupIds: [signupGroupId] });
+        } catch (groupErr) {
+          console.error('Error adding user to group:', groupErr);
+          setPendingGroupAdd({ userId: user.uid, groupId: signupGroupId });
+          setError('Your profile was created, but we could not finish adding you to the group. Please click “Finish signup” to try again.');
+          return;
+        }
+      }
+
       // Log SMS consent to userConsents collection (compliance requirement)
       try {
         await logSMSConsent({
@@ -331,7 +401,9 @@ const Apply: React.FC = () => {
     password === confirmPassword &&
     validateEmail(email) &&
     validatePassword(password) &&
-    smsConsent;
+    smsConsent &&
+    !groupLoading &&
+    (!signupGroupId || !!signupGroupTitle);
 
   return (
     <Container maxWidth="sm" sx={{ py: { xs: 4, md: 6 } }}>
@@ -347,6 +419,11 @@ const Apply: React.FC = () => {
           <Typography variant="h4" sx={{ fontWeight: 700, mb: 1 }}>
             Get Started with C1 Staffing
           </Typography>
+          {signupGroupTitle && (
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Signing up for: <strong>{signupGroupTitle}</strong>
+            </Typography>
+          )}
           <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
             Create your worker profile so we can match you with jobs, shifts, and opportunities. If you agree to received them, you'll receive updates by text message once you give consent below.
           </Typography>
@@ -355,7 +432,45 @@ const Apply: React.FC = () => {
         {/* Error/Success Messages */}
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
-            {error}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <span>{error}</span>
+              {pendingGroupAdd && (
+                <Box>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    disabled={loading}
+                    onClick={async () => {
+                      if (!pendingGroupAdd) return;
+                      setError(null);
+                      setLoading(true);
+                      try {
+                        const fn = httpsCallable(getFunctions(), 'addUsersToGroups');
+                        await fn({ tenantId: C1_TENANT_ID, userId: pendingGroupAdd.userId, groupIds: [pendingGroupAdd.groupId] });
+                        setPendingGroupAdd(null);
+                        setSuccess(true);
+                        setTimeout(() => {
+                          navigate('/login', {
+                            state: {
+                              message: 'Profile created successfully! Please sign in to continue.',
+                              email,
+                            },
+                          });
+                        }, 1000);
+                      } catch (e) {
+                        console.error('Retry add-to-group failed:', e);
+                        setError('Still unable to finish group signup. Please try again in a moment.');
+                      } finally {
+                        setLoading(false);
+                      }
+                    }}
+                    sx={{ textTransform: 'none' }}
+                  >
+                    Finish signup
+                  </Button>
+                </Box>
+              )}
+            </Box>
           </Alert>
         )}
 

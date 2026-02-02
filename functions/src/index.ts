@@ -9663,6 +9663,41 @@ export const addUsersToGroups = onCall({
   }
 });
 
+// Validate a public "apply to group" link (no auth required)
+export const validateUserGroupSignup = onCall({
+  cors: [
+    'http://localhost:3000',
+    'https://hrx1-d3beb.web.app',
+    'https://hrx1-d3beb.firebaseapp.com',
+    'https://hrxone.com',
+    'https://www.hrxone.com'
+  ]
+}, async (request) => {
+  const { tenantId, groupId } = request.data || {};
+  try {
+    if (!tenantId || !groupId) {
+      throw new Error('tenantId and groupId are required');
+    }
+
+    const db = admin.firestore();
+    const ref = db.collection('tenants').doc(String(tenantId)).collection('userGroups').doc(String(groupId));
+    const snap = await ref.get();
+    if (!snap.exists) {
+      throw new HttpsError('not-found', 'Group not found');
+    }
+    const data = snap.data() as any;
+    return {
+      success: true,
+      groupId: String(groupId),
+      tenantId: String(tenantId),
+      title: String(data?.title || '').trim() || null,
+    };
+  } catch (error: any) {
+    if (error instanceof HttpsError) throw error;
+    throw new HttpsError('invalid-argument', error?.message || 'Failed to validate group');
+  }
+});
+
 // Generate slug from tenant name
 export const generateTenantSlug = onCall(async (request) => {
   const { name } = request.data;

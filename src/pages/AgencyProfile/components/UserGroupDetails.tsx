@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -31,13 +31,14 @@ import {
   Tabs,
   Tab,
   TableSortLabel,
+  CircularProgress,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query, deleteField } from 'firebase/firestore';
 import { useNavigate, useLocation } from 'react-router-dom';
 import GroupsIcon from '@mui/icons-material/Groups';
-import SaveOutlinedIcon from '@mui/icons-material/SaveOutlined';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import StarIcon from '@mui/icons-material/Star';
@@ -86,7 +87,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin'>('name');
   const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
   const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
-  const { isFavorite, toggleFavorite } = useFavorites('users');
+  const { isFavorite: isUserFavorite, toggleFavorite: toggleUserFavorite } = useFavorites('users');
+  const { isFavorite: isGroupFavorite, toggleFavorite: toggleGroupFavorite } = useFavorites('userGroups');
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
+  const lastSavedGroupMetaRef = useRef<{ title: string; description: string } | null>(null);
 
   // Check if we're accessing from the top-level usergroups page
   const isFromTopLevel = location.pathname.includes('/usergroups') || location.pathname === '/usergroups';
@@ -107,7 +113,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       if (groupSnap.exists()) {
         const data = groupSnap.data();
         setGroup({ id: groupId, ...data });
-        setEditForm({ title: data.title || '', description: data.description || '' });
+        const nextMeta = { title: data.title || '', description: data.description || '' };
+        setEditForm(nextMeta);
+        lastSavedGroupMetaRef.current = nextMeta;
         setMemberIds(data.memberIds || []);
         setGroupManagerIds(data.groupManagerIds || []);
       }
@@ -249,22 +257,35 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     }
   };
 
-  const handleEditSave = async () => {
+  const saveGroupMetaIfChanged = async () => {
+    if (!tenantId || !groupId) return;
+    const title = String(editForm.title || '').trim();
+    const description = String(editForm.description || '');
+
+    // Require a non-empty title
+    if (!title) {
+      const last = lastSavedGroupMetaRef.current;
+      if (last) setEditForm(last);
+      setError('Group title is required.');
+      return;
+    }
+
+    const last = lastSavedGroupMetaRef.current;
+    if (last && last.title === title && last.description === description) return;
+
     setLoading(true);
     setError('');
     try {
       const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
-      await updateDoc(groupRef, {
-        title: editForm.title,
-        description: editForm.description,
-        groupManagerIds,
-      });
+      await updateDoc(groupRef, { title, description });
+      lastSavedGroupMetaRef.current = { title, description };
       setSuccess(true);
-      fetchGroup();
+      setGroup((prev: any) => (prev ? { ...prev, title, description } : prev));
     } catch (err: any) {
       setError(err.message || 'Failed to update group');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const handleAddMember = async () => {
@@ -355,7 +376,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   };
 
   const handleDeleteGroup = async () => {
-    setLoading(true);
+    setDeleting(true);
     setError('');
     try {
       await deleteDoc(doc(db, 'tenants', tenantId, 'userGroups', groupId));
@@ -367,7 +388,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     } catch (err: any) {
       setError(err.message || 'Failed to delete group');
     }
-    setLoading(false);
+    setDeleting(false);
   };
 
   useEffect(() => {
@@ -705,13 +726,34 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                   fontSize: { xs: '20px', md: '24px' },
                   fontWeight: 700,
                   lineHeight: 1.2,
-                  minWidth: 0,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
+                  maxWidth: '100%',
                 }}
               >
-                {editForm.title || group?.title || 'User Group'}
+                <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, maxWidth: '100%' }}>
+                  <Box
+                    sx={{
+                      display: 'block',
+                      maxWidth: 'calc(100% - 32px)',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {editForm.title || group?.title || 'User Group'}
+                  </Box>
+                  <FavoriteButton
+                    itemId={groupId}
+                    favoriteType="userGroups"
+                    isFavorite={isGroupFavorite}
+                    toggleFavorite={toggleGroupFavorite}
+                    size="small"
+                    tooltipText={{
+                      favorited: 'Remove group from favorites',
+                      notFavorited: 'Add group to favorites',
+                    }}
+                    sx={{ ml: 0.25, flexShrink: 0 }}
+                  />
+                </Box>
               </Typography>
               <Typography
                 variant="body2"
@@ -734,35 +776,34 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           <Stack direction="row" spacing={1.25} alignItems="center" sx={{ justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
             <Button
               variant="outlined"
+              startIcon={<ContentCopyIcon />}
+              onClick={async () => {
+                const link = `${window.location.origin}/c1/apply/group/${groupId}`;
+                try {
+                  await navigator.clipboard.writeText(link);
+                  setShareSnackbarOpen(true);
+                } catch (e) {
+                  // Fallback best-effort
+                  try {
+                    await navigator.clipboard.writeText(link);
+                    setShareSnackbarOpen(true);
+                  } catch {
+                    setError('Unable to copy link to clipboard.');
+                  }
+                }
+              }}
+              sx={{ borderRadius: '999px', textTransform: 'none' }}
+            >
+              Share
+            </Button>
+            <Button
+              variant="outlined"
               startIcon={<ArrowBackIcon />}
               onClick={() => (isFromTopLevel ? navigate('/usergroups') : navigate(`/tenants/${tenantId}?tab=6`))}
               sx={{ borderRadius: '999px', textTransform: 'none' }}
             >
               Back
             </Button>
-            <Button
-              variant="contained"
-              startIcon={<SaveOutlinedIcon />}
-              onClick={handleEditSave}
-              disabled={loading || !editForm.title || !editForm.description}
-              sx={{ borderRadius: '999px', textTransform: 'none' }}
-            >
-              Save
-            </Button>
-            <Tooltip title={members.length > 0 ? 'Remove all members before deleting this group' : 'Delete group'} arrow>
-              <span>
-                <Button
-                  variant="contained"
-                  color="error"
-                  startIcon={<DeleteOutlineIcon />}
-                  onClick={handleDeleteGroup}
-                  disabled={loading || members.length > 0}
-                  sx={{ borderRadius: '999px', textTransform: 'none' }}
-                >
-                  Delete
-                </Button>
-              </span>
-            </Tooltip>
           </Stack>
         }
         showDivider={false}
@@ -960,8 +1001,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                             <FavoriteButton
                               itemId={u.id}
                               favoriteType="users"
-                              isFavorite={isFavorite}
-                              toggleFavorite={toggleFavorite}
+                              isFavorite={isUserFavorite}
+                              toggleFavorite={toggleUserFavorite}
                               size="small"
                               tooltipText={{
                                 favorited: 'Remove from favorites',
@@ -1157,12 +1198,14 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           label="Group Title"
           value={editForm.title}
           onChange={(e) => handleEditChange('title', e.target.value)}
+          onBlur={saveGroupMetaIfChanged}
                       fullWidth
         />
         <TextField
           label="Description"
           value={editForm.description}
           onChange={(e) => handleEditChange('description', e.target.value)}
+          onBlur={saveGroupMetaIfChanged}
                       fullWidth
           multiline
           minRows={2}
@@ -1209,6 +1252,70 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         )}
       </Box>
 
+      {/* Delete Group Button - Bottom of page (match Contact layout) */}
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'center',
+          mt: 9,
+          pb: 3,
+          px: { xs: 2, md: 3 },
+        }}
+      >
+        <Tooltip title={members.length > 0 ? 'Remove all members before deleting this group' : 'Delete group'} arrow>
+          <span>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteOutlineIcon />}
+              onClick={() => setDeleteDialogOpen(true)}
+              disabled={loading || deleting || members.length > 0}
+              sx={{
+                borderColor: 'error.main',
+                textTransform: 'none',
+                '&:hover': {
+                  borderColor: 'error.dark',
+                  backgroundColor: 'error.light',
+                },
+              }}
+            >
+              Delete Group
+            </Button>
+          </span>
+        </Tooltip>
+      </Box>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={deleteDialogOpen}
+        onClose={() => setDeleteDialogOpen(false)}
+        aria-labelledby="delete-dialog-title"
+        aria-describedby="delete-dialog-description"
+      >
+        <DialogTitle id="delete-dialog-title">Confirm Deletion</DialogTitle>
+        <DialogContent>
+          <Typography id="delete-dialog-description">
+            Are you sure you want to delete this group? This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)} color="primary" disabled={deleting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={async () => {
+              await handleDeleteGroup();
+              setDeleteDialogOpen(false);
+            }}
+            color="error"
+            variant="contained"
+            disabled={deleting}
+          >
+            {deleting ? <CircularProgress size={24} /> : 'Delete'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog open={addMemberOpen} onClose={() => setAddMemberOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Add member</DialogTitle>
         <DialogContent>
@@ -1244,6 +1351,11 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       <Snackbar open={success} autoHideDuration={2000} onClose={() => setSuccess(false)}>
         <Alert severity="success" sx={{ width: '100%' }}>
           Group updated!
+        </Alert>
+      </Snackbar>
+      <Snackbar open={shareSnackbarOpen} autoHideDuration={2000} onClose={() => setShareSnackbarOpen(false)}>
+        <Alert severity="success" sx={{ width: '100%' }} onClose={() => setShareSnackbarOpen(false)}>
+          Link copied!
         </Alert>
       </Snackbar>
     </Box>

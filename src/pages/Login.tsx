@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress } from '@mui/material';
@@ -8,7 +8,6 @@ import { useAuth } from '../contexts/AuthContext';
 
 
 const Login = () => {
-  console.log('Login component rendering');
   const { user, role, loading, securityLevel, activeTenant } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -18,36 +17,48 @@ const Login = () => {
   const [localLoading, setLocalLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const didRedirectRef = useRef(false);
+  const didConsumeLocationStateRef = useRef(false);
 
   // Redirect once fully authenticated and role is loaded
   useEffect(() => {
-    if (!loading && user && securityLevel) {
+    if (didRedirectRef.current) return;
+    if (!loading && user && securityLevel != null && String(securityLevel).trim() !== '') {
       try {
         // Staff (security levels 0-4) go to their profile
-        const secLevel = parseInt(securityLevel);
+        const secLevel = parseInt(String(securityLevel), 10);
+        didRedirectRef.current = true;
         if (secLevel >= 0 && secLevel <= 4) {
           const tenantSlug = activeTenant?.slug || 'c1';
-          navigate(`/${tenantSlug}/users/${user.uid}`);
+          navigate(`/${tenantSlug}/users/${user.uid}`, { replace: true });
         } else {
           // Admins go to dashboard
-          navigate('/');
+          navigate('/', { replace: true });
         }
       } catch (error) {
         console.error('Error during login redirect:', error);
         // Fallback to dashboard
-        navigate('/');
+        didRedirectRef.current = true;
+        navigate('/', { replace: true });
       }
     }
   }, [user, loading, securityLevel, activeTenant, navigate]);
 
   // Check for success message from password setup
   useEffect(() => {
-    if (location.state?.message) {
-      setSuccessMessage(location.state.message);
-      // Clear the state to prevent showing the message again on refresh
-      navigate(location.pathname, { replace: true });
+    if (didConsumeLocationStateRef.current) return;
+    const state = location.state as any;
+    const msg = state?.message ? String(state.message) : '';
+    const stateEmail = state?.email ? String(state.email) : '';
+    if (msg) {
+      didConsumeLocationStateRef.current = true;
+      setSuccessMessage(msg);
+      if (stateEmail && !email) setEmail(stateEmail);
+      // Clear location.state; navigating to the same route without overriding `state`
+      // can cause a render loop on some React Router versions.
+      navigate(location.pathname, { replace: true, state: null });
     }
-  }, [location.state, navigate, location.pathname]);
+  }, [location.key, location.pathname, navigate, email]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +67,7 @@ const Login = () => {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       // don't navigate here — wait for role to resolve in useEffect
+      setLocalLoading(false);
     } catch (err: any) {
       setError(err.message);
       setLocalLoading(false);
