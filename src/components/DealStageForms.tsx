@@ -2092,6 +2092,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           options={[
             'Business Casual',
             'Business Professional',
+            'Black Bistro',
             'Casual',
             'Scrubs',
             'Uniform Provided',
@@ -2099,6 +2100,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             'White Shirt',
             'Polo Shirt',
             'Button-Down Shirt',
+            'Black Button-Down Shirt',
             'Dress Shirt',
             'Khaki Pants',
             'Dress Pants',

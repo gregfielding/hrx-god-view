@@ -2604,6 +2604,7 @@ const JobsBoard: React.FC = () => {
                     options={[
                       'Business Casual',
                       'Business Professional',
+                      'Black Bistro',
                       'Casual',
                       'Scrubs',
                       'Uniform Provided',
@@ -2611,6 +2612,7 @@ const JobsBoard: React.FC = () => {
                       'White Shirt',
                       'Polo Shirt',
                       'Button-Down Shirt',
+                      'Black Button-Down Shirt',
                       'Dress Shirt',
                       'Khaki Pants',
                       'Dress Pants',

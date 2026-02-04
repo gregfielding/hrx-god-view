@@ -65,15 +65,17 @@ const LocationHeader: React.FC<LocationHeaderProps> = ({
   const companyName = company?.companyName || company?.name || 'Company';
   const companyLogo = company?.logo;
   
-  // Helper to ensure URL has protocol
+  // Helper to ensure URL has protocol (do not treat phone numbers as URLs)
   const ensureProtocol = (url: string): string => {
     if (ensureUrlProtocol) {
       return ensureUrlProtocol(url);
     }
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return 'https://' + url;
-    }
-    return url;
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
   
   // Get company initial for avatar

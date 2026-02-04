@@ -1882,24 +1882,26 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return true;
   })();
 
-  // Personal Info validation (step 0) - no address required
-  const personalValid = !!(
-    formData?.personal?.firstName?.trim() &&
-    formData?.personal?.lastName?.trim() &&
-    formData?.personal?.email?.trim() &&
-    formData?.personal?.phone?.trim() &&
-    formData?.personal?.phone?.replace(/\D/g, '').length >= 10 && // Phone must have at least 10 digits
-    formData?.personal?.dob?.trim() && // Must be in YYYY-MM-DD format
-    formData?.personal?.dob?.length === 10 // YYYY-MM-DD format is exactly 10 characters
-  );
+  // Personal Info validation (step 0) - no address required (coerce to string for Chromebook/persisted state)
+  const personalValid = (() => {
+    const p = formData?.personal;
+    if (!p) return false;
+    const firstName = typeof p.firstName === 'string' ? p.firstName.trim() : '';
+    const lastName = typeof p.lastName === 'string' ? p.lastName.trim() : '';
+    const email = typeof p.email === 'string' ? p.email.trim() : '';
+    const phone = String(p.phone ?? '').trim();
+    const phoneDigits = phone.replace(/\D/g, '');
+    const dob = typeof p.dob === 'string' ? p.dob.trim() : String(p.dob ?? '').trim();
+    return !!(firstName && lastName && email && phone && phoneDigits.length >= 10 && dob && dob.length === 10);
+  })();
 
-  // Address validation (step 1) - coordinates required and must be valid numbers
+  // Address validation (step 1) - coordinates required and must be valid numbers (coerce to string for Chromebook/persisted state)
   const addressValid = (() => {
     const personal = formData?.personal || {};
-    const street = personal.street?.trim();
-    const city = personal.city?.trim();
-    const state = personal.state?.trim();
-    const zip = personal.zip?.trim();
+    const street = (typeof personal.street === 'string' ? personal.street : String(personal.street ?? '')).trim();
+    const city = (typeof personal.city === 'string' ? personal.city : String(personal.city ?? '')).trim();
+    const state = (typeof personal.state === 'string' ? personal.state : String(personal.state ?? '')).trim();
+    const zip = (typeof personal.zip === 'string' ? personal.zip : String(personal.zip ?? '')).trim();
     const homeLat = personal.homeLat;
     const homeLng = personal.homeLng;
     const placeId = personal.placeId;

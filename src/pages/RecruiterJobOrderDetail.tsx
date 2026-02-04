@@ -272,34 +272,39 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           if (userIds.includes(u.id)) userMap.set(u.id, u.data());
         });
 
-        // Build applicant rows
-        const applicantsData: Applicant[] = applicationItems.map(app => {
-          const userData = userMap.get(app.userId) || {};
-          const profileScore = calculateProfileScore(userData);
-          const fitScore = app.scores?.fitScore ?? null;
+        // Build applicant rows (exclude withdrawn so they are effectively "removed" from the list)
+        const applicantsData: Applicant[] = applicationItems
+          .filter((app) => {
+            const status = app.status || 'submitted';
+            return status !== 'withdrawn' && status !== 'deleted';
+          })
+          .map((app) => {
+            const userData = userMap.get(app.userId) || {};
+            const profileScore = calculateProfileScore(userData);
+            const fitScore = app.scores?.fitScore ?? null;
 
-          return {
-            uid: app.userId,
-            displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
-            firstName: userData.firstName || '',
-            lastName: userData.lastName || '',
-            email: userData.email || '',
-            phone: userData.phone || userData.phoneE164 || '',
-            avatar: userData.avatar,
-            applicationData: app, // keep the full application object for actions
-            city: userData.city || userData.addressInfo?.city || '',
-            state: userData.state || userData.addressInfo?.state || '',
-            workEligibility: userData.workEligibility || false,
-            phoneVerified: userData.phoneVerified || false,
-            appliedAt: app.appliedAt,
-            applicationStatus: app.status || 'submitted',
-            profileScore,
-            fitScore,
-            scoreSummary: normalizeScoreSummary(userData.scoreSummary),
-            selectedShifts: app.selectedShifts || [],
-            shiftAssignments: app.shiftAssignments || {},
-          };
-        });
+            return {
+              uid: app.userId,
+              displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
+              firstName: userData.firstName || '',
+              lastName: userData.lastName || '',
+              email: userData.email || '',
+              phone: userData.phone || userData.phoneE164 || '',
+              avatar: userData.avatar,
+              applicationData: app, // keep the full application object for actions
+              city: userData.city || userData.addressInfo?.city || '',
+              state: userData.state || userData.addressInfo?.state || '',
+              workEligibility: userData.workEligibility || false,
+              phoneVerified: userData.phoneVerified || false,
+              appliedAt: app.appliedAt,
+              applicationStatus: app.status || 'submitted',
+              profileScore,
+              fitScore,
+              scoreSummary: normalizeScoreSummary(userData.scoreSummary),
+              selectedShifts: app.selectedShifts || [],
+              shiftAssignments: app.shiftAssignments || {},
+            };
+          });
 
         // Sort newest first
         applicantsData.sort((a, b) => {
@@ -496,77 +501,58 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
 
     try {
-
-      // Get the user's full application data map
       const userRef = doc(db, 'users', applicant.uid);
       const userDoc = await getDoc(userRef);
-      
-      if (!userDoc.exists()) {
-        console.error('User document not found');
-        return;
-      }
-      
-      const userData = userDoc.data();
-      const allApplicationData = userData.applicationData || {};
-      
-      // Find the correct application ID for this job
+      const userData = userDoc.exists() ? userDoc.data() : {};
+      const allApplicationData = userData?.applicationData || {};
+
+      // Find the correct application ID for this job in the user's applicationData
       let applicationIdToRemove: string | null = null;
-      
       for (const [appId, appData] of Object.entries(allApplicationData)) {
         const app = appData as any;
-        // Match by jobId or jobOrderId
         if (
-          (app.jobId && connectedJobPosts.some(post => post.id === app.jobId)) ||
+          (app.jobId && connectedJobPosts.some((post) => post.id === app.jobId)) ||
           app.jobOrderId === jobOrderId
         ) {
           applicationIdToRemove = appId;
           break;
         }
       }
-      
-      if (!applicationIdToRemove) {
-        console.error('Could not find application to remove');
-        alert('Error: Could not find application data');
-        return;
+
+      // Update user doc only if we found the application there (e.g. not yet withdrawn)
+      if (applicationIdToRemove) {
+        const updatedApplicationData = { ...allApplicationData };
+        delete updatedApplicationData[applicationIdToRemove];
+        const currentApplicationIds = userData?.applicationIds || [];
+        const updatedApplicationIds = currentApplicationIds.filter((id: string) => id !== applicationIdToRemove);
+        await updateDoc(userRef, {
+          applicationData: updatedApplicationData,
+          applicationIds: updatedApplicationIds,
+          updatedAt: serverTimestamp(),
+        });
       }
-      
 
-      // Remove the application from the map
-      const updatedApplicationData = { ...allApplicationData };
-      delete updatedApplicationData[applicationIdToRemove];
-
-      // Also remove from applicationIds array
-      const currentApplicationIds = userData.applicationIds || [];
-      const updatedApplicationIds = currentApplicationIds.filter((id: string) => id !== applicationIdToRemove);
-
-      await updateDoc(userRef, {
-        applicationData: updatedApplicationData,
-        applicationIds: updatedApplicationIds,
-        updatedAt: serverTimestamp()
-      });
-
-      // Also delete from tenant's applications collection if it exists
-      try {
-        const tenantAppId = `${applicant.uid}_${applicant.applicationData.jobId}`;
-        const tenantAppRef = doc(db, 'tenants', tenantId, 'applications', tenantAppId);
-        const tenantAppDoc = await getDoc(tenantAppRef);
-        
-        if (tenantAppDoc.exists()) {
-          await updateDoc(tenantAppRef, {
-            status: 'deleted',
-            deletedAt: serverTimestamp(),
-            deletedBy: user?.uid,
-            updatedAt: serverTimestamp()
-          });
+      // Always mark/update the tenant application doc so it disappears from the list (use actual doc id from list)
+      const tenantAppDocId = applicant.applicationData?.id;
+      if (tenantId && tenantAppDocId) {
+        try {
+          const tenantAppRef = doc(db, 'tenants', tenantId, 'applications', tenantAppDocId);
+          const tenantAppDoc = await getDoc(tenantAppRef);
+          if (tenantAppDoc.exists()) {
+            await updateDoc(tenantAppRef, {
+              status: 'deleted',
+              deletedAt: serverTimestamp(),
+              deletedBy: user?.uid,
+              updatedAt: serverTimestamp(),
+            });
+          }
+        } catch (tenantAppErr) {
+          console.warn('Tenant application update failed (non-fatal):', tenantAppErr);
         }
-      } catch (tenantAppErr) {
-        // Don't fail the whole operation if this fails
       }
 
-
-      // Update local state
-      setApplicants(prev => prev.filter(a => a.uid !== applicant.uid));
-
+      // Remove from local state so the row disappears immediately
+      setApplicants((prev) => prev.filter((a) => a.uid !== applicant.uid));
       handleCloseActionMenu(applicant.uid);
     } catch (error) {
       console.error('❌ Error removing application:', error);
@@ -1194,25 +1180,43 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               <CircularProgress />
             </Box>
           ) : (
-            <FormControl fullWidth>
-              <InputLabel>Select User</InputLabel>
-              <Select
-                value={selectedUserId}
-                onChange={(e) => setSelectedUserId(e.target.value)}
-                label="Select User"
-              >
-                {availableUsers.length === 0 ? (
-                  <MenuItem disabled>No eligible users found</MenuItem>
-                ) : (
-                  availableUsers.map((u: any) => (
-                    <MenuItem key={u.uid} value={u.uid}>
-                      {u.displayName} - {u.email} {u.city && u.state ? `(${u.city}, ${u.state})` : ''}
-                      {u.securityLevel === 3 && ' ⭐ Candidate'}
-                    </MenuItem>
-                  ))
-                )}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              options={availableUsers}
+              value={availableUsers.find((u: any) => u.uid === selectedUserId) || null}
+              onChange={(_, newValue: any) => setSelectedUserId(newValue?.uid || '')}
+              getOptionLabel={(u: any) =>
+                [u.displayName || '', u.email || ''].filter(Boolean).join(' · ') ||
+                (u.city && u.state ? `(${u.city}, ${u.state})` : '') ||
+                'Unknown'
+              }
+              filterOptions={(options, { inputValue }) => {
+                const search = inputValue.trim().toLowerCase();
+                if (!search) return options;
+                return options.filter(
+                  (u: any) =>
+                    (u.displayName || '').toLowerCase().includes(search) ||
+                    (u.email || '').toLowerCase().includes(search) ||
+                    (u.city || '').toLowerCase().includes(search) ||
+                    (u.state || '').toLowerCase().includes(search)
+                );
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="Search by name or email"
+                  placeholder="Type to search applicants..."
+                />
+              )}
+              renderOption={(props, u: any) => (
+                <li {...props} key={u.uid}>
+                  {[u.displayName, u.email].filter(Boolean).join(' · ') || '—'}{' '}
+                  {u.city && u.state ? `(${u.city}, ${u.state})` : ''}
+                  {u.securityLevel === 3 ? ' ⭐ Candidate' : ''}
+                </li>
+              )}
+              noOptionsText="No eligible users found"
+              fullWidth
+            />
           )}
         </Stack>
       </DialogContent>
@@ -1666,7 +1670,6 @@ const JobOrderJobsBoardTab: React.FC<{
         ? firstPosition.payRate 
         : jobOrder.payRate?.toString() || '',
       workersNeeded: jobOrder.workersNeeded || 1,
-      showWorkersNeeded: false, // Default to false when first loading
       eVerifyRequired: compliance.eVerify === true || (jobOrder as any).eVerifyRequired || false,
       // Background check packages from scoping (preferred) or top-level, deduplicated
       backgroundCheckPackages: (() => {
@@ -1763,6 +1766,15 @@ const JobOrderJobsBoardTab: React.FC<{
       // Map shiftType from job order to shift array for job post
       shift: (jobOrder as any).shiftType ? (Array.isArray((jobOrder as any).shiftType) ? (jobOrder as any).shiftType : [(jobOrder as any).shiftType]) : [],
       showShift: !!(jobOrder as any).shiftType,
+      // Copy display toggles from job order so job post shows same fields
+      showPayRate: (jobOrder as any).showPayRate !== undefined ? (jobOrder as any).showPayRate : true,
+      showStart: (jobOrder as any).showStartDate ?? (jobOrder as any).showStart ?? false,
+      showEnd: (jobOrder as any).showEnd ?? false,
+      showWorkersNeeded: (jobOrder as any).showWorkersNeeded !== undefined ? (jobOrder as any).showWorkersNeeded : true,
+      expDate: formatDateForInput((jobOrder as any).expDate) || '',
+      showBackgroundChecks: ((jobOrder as any).backgroundCheckPackages || []).length > 0,
+      showDrugScreening: ((jobOrder as any).drugScreeningPanels || []).length > 0,
+      showAdditionalScreenings: ((jobOrder as any).additionalScreenings || []).length > 0,
       status: 'draft' as const,
       visibility: 'public' as const,
     };

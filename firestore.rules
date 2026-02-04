@@ -165,7 +165,14 @@ service cloud.firestore {
       match /notes/{noteId} {
         allow read, write: if isAuthenticated() && request.auth.uid == userId;
         allow read, write: if isHRX();
-        allow read, write: if isTenantAdmin(resource.data.tenantId);
+        // Internal team (security level 5, 6, 7) can add notes to any user in their tenant
+        function targetUserTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read, create, update, delete: if isAuthenticated() && (
+          targetUserTenantId() != null && hasSecurityLevel(targetUserTenantId(), 5)
+        );
       }
       
       match /moments/{momentId} {
@@ -920,11 +927,15 @@ service cloud.firestore {
       }
       
       // --- CRM NOTES COLLECTIONS ---
+      // All logged-in users with security level 5, 6, or 7 can add notes (user + contact layouts)
       match /contact_notes/{noteId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -933,7 +944,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -942,7 +956,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -951,7 +968,10 @@ service cloud.firestore {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasCRMAccess();
         allow read: if isAssignedToTenant(tenantId);
-        allow create: if isAuthenticated() && isAssignedToTenant(tenantId) && hasCRMAccess();
+        allow create: if isAuthenticated() && (
+          (isAssignedToTenant(tenantId) && hasCRMAccess()) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow update: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
         allow delete: if isAuthenticated() && (resource.data.authorId == request.auth.uid || isTenantAdmin(tenantId));
       }
@@ -1743,7 +1763,7 @@ service cloud.firestore {
     
     function isHighSecurityLevel() {
       let user = getUser();
-      return user.securityLevel == "6" || user.securityLevel == "7";
+      return user.securityLevel == "5" || user.securityLevel == "6" || user.securityLevel == "7";
     }
     
     // SMS-specific helpers

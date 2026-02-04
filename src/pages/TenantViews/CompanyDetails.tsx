@@ -575,9 +575,9 @@ const CompanyDetails: React.FC = () => {
       console.error('Error loading locations:', err);
     });
     
-    // Real-time listener for notes count
-    const notesRef = collection(db, 'tenants', tenantId, 'notes');
-    const notesQuery = query(notesRef, where('entityId', '==', companyId), where('entityType', '==', 'company'));
+    // Real-time listener for notes count (use company_notes collection; Firestore rules allow read)
+    const notesRef = collection(db, 'tenants', tenantId, 'company_notes');
+    const notesQuery = query(notesRef, where('entityId', '==', companyId));
     const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
       setNotesCount(snapshot.size);
     }, (err) => {
@@ -685,11 +685,12 @@ const CompanyDetails: React.FC = () => {
 
   // Helper function to ensure URLs have proper protocols
   const ensureUrlProtocol = (url: string): string => {
-    if (!url) return url;
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
-    }
-    return 'https://' + url;
+    if (!url || typeof url !== 'string') return url;
+    const trimmed = url.trim();
+    if (!trimmed) return url;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
 
   const handleCompanyUpdate = async (field: string, value: any) => {
@@ -1530,7 +1531,7 @@ const CompanyDetails: React.FC = () => {
       )}
       
       {tabValue === 1 && (
-        <LocationsTab company={company} currentTab={tabValue} />
+        <LocationsTab company={company} currentTab={tabValue} contacts={contacts} deals={deals} />
       )}
       
       {tabValue === 2 && (
@@ -2738,11 +2739,14 @@ const CompanyDashboardTab: React.FC<{
   const [jobOrders, setJobOrders] = useState<any[]>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
   const navigate = useNavigate();
-  // Local helper: URL protocol enforcement
+  // Local helper: URL protocol enforcement (do not treat phone numbers as URLs)
   const ensureUrlProtocol = (url: string): string => {
-    if (!url) return url as any;
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    return 'https://' + url;
+    if (!url || typeof url !== 'string') return url as any;
+    const trimmed = url.trim();
+    if (!trimmed) return url as any;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
   // Local helper: update a single company field
   const updateCompanyField = async (field: string, value: any) => {
@@ -4298,11 +4302,12 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
 
   // Helper function to ensure URLs have proper protocols
   const ensureUrlProtocol = (url: string): string => {
-    if (!url) return url;
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      return url;
-    }
-    return 'https://' + url;
+    if (!url || typeof url !== 'string') return url;
+    const trimmed = url.trim();
+    if (!trimmed) return url;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
 
   const handleCompanyUpdate = async (field: string, value: any) => {
@@ -5201,7 +5206,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
     </Grid>
   );
 };
-const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company, currentTab }) => {
+const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[]; deals?: any[] }> = ({ company, currentTab, contacts = [], deals = [] }) => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
   const [locations, setLocations] = useState<any[]>([]);
@@ -5409,14 +5414,32 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
   });
   const autocompleteRef = useRef<any>(null);
 
+  // Enrich locations with contact and deal counts from company contacts/deals
+  const enrichedLocations = React.useMemo(() => {
+    return locations.map((loc) => {
+      const locationId = loc.id;
+      const contactCount = (contacts || []).filter(
+        (c: any) =>
+          (c.associations?.locations && c.associations.locations.includes(locationId)) ||
+          c.locationId === locationId
+      ).length;
+      const dealCount = (deals || []).filter(
+        (d: any) =>
+          (d.associations?.locations && d.associations.locations.includes(locationId)) ||
+          d.locationId === locationId
+      ).length;
+      return { ...loc, contactCount, dealCount };
+    });
+  }, [locations, contacts, deals]);
+
   // Filter locations based on search query
   const filteredLocations = React.useMemo(() => {
     if (!searchQuery.trim()) {
-      return locations;
+      return enrichedLocations;
     }
     
     const searchLower = searchQuery.toLowerCase();
-    return locations.filter((location) => {
+    return enrichedLocations.filter((location) => {
       const name = (location.name || location.nickname || '').toLowerCase();
       const code = (location.code || '').toLowerCase();
       const city = (location.city || '').toLowerCase();
@@ -5427,7 +5450,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number }> = ({ company,
              city.includes(searchLower) || 
              state.includes(searchLower);
     });
-  }, [locations, searchQuery]);
+  }, [enrichedLocations, searchQuery]);
 
   const handleAddLocation = async () => {
     try {
@@ -6416,19 +6439,17 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
   const filteredContacts = React.useMemo(() => {
     let result = contacts;
     
-    // Apply search filter
+    // Apply search filter (support multi-word: every token must match at least one field)
     if (searchQuery.trim()) {
-      const searchLower = searchQuery.toLowerCase();
+      const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
       result = result.filter((contact: any) => {
         const fullName = (contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
         const firstName = (contact.firstName || '').toLowerCase();
         const lastName = (contact.lastName || '').toLowerCase();
         const email = (contact.email || '').toLowerCase();
-        
-        return fullName.includes(searchLower) || 
-               firstName.includes(searchLower) || 
-               lastName.includes(searchLower) || 
-               email.includes(searchLower);
+        return tokens.every(token =>
+          fullName.includes(token) || firstName.includes(token) || lastName.includes(token) || email.includes(token)
+        );
       });
     }
     
@@ -6484,9 +6505,23 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
 
     setSavingContact(true);
     try {
-      const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+      const { addDoc, collection, query, where, getDocs, serverTimestamp } = await import('firebase/firestore');
       const { db } = await import('../../firebase');
-      
+
+      const emailTrimmed = (contactForm.email || '').trim();
+      if (emailTrimmed && tenantId) {
+        const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+        const q = query(contactsRef, where('email', '==', emailTrimmed));
+        const existingSnap = await getDocs(q);
+        if (!existingSnap.empty) {
+          const existing = existingSnap.docs[0].data();
+          const name = existing.fullName || [existing.firstName, existing.lastName].filter(Boolean).join(' ') || 'Another contact';
+          setError(`A contact with this email already exists in the system: ${name}. Please search for them or use a different email.`);
+          setSavingContact(false);
+          return;
+        }
+      }
+
       const { linkedInUrl, ...restForm } = contactForm;
       const contactData = {
         ...restForm,

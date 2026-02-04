@@ -10,6 +10,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Paper,
   CircularProgress,
   Chip,
@@ -152,8 +153,9 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           constraints.push(where('status', '==', statusFilter));
         }
 
-        // Keep server-side ordering for general listing; if an index is missing Firestore will surface an error.
-        constraints.push(orderBy(sortField, sortDirection));
+        // recruiterName is computed client-side, so use createdAt for Firestore order when sorting by recruiter
+        const orderByField = sortField === 'recruiterName' ? 'createdAt' : sortField;
+        constraints.push(orderBy(orderByField, sortDirection));
         constraints.push(limit(effectivePageSize));
 
         const jobOrderQuery = query(baseRef, ...constraints);
@@ -249,6 +251,16 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           };
         })
       );
+
+      // Sort by recruiter name client-side (not stored in Firestore)
+      if (sortField === 'recruiterName') {
+        newJobOrders.sort((a, b) => {
+          const na = (a.recruiterName || 'Unassigned').toLowerCase();
+          const nb = (b.recruiterName || 'Unassigned').toLowerCase();
+          const cmp = na.localeCompare(nb);
+          return sortDirection === 'asc' ? cmp : -cmp;
+        });
+      }
 
       setJobOrders(newJobOrders);
       firstLoadRef.current = false;
@@ -707,7 +719,13 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     textTransform: 'uppercase', 
                     fontSize: '0.75rem',
                   }}>
-                    Recruiter(s)
+                    <TableSortLabel
+                      active={sortField === 'recruiterName'}
+                      direction={sortField === 'recruiterName' ? sortDirection : 'asc'}
+                      onClick={() => handleSort('recruiterName')}
+                    >
+                      Recruiter(s)
+                    </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ 
                     fontWeight: 700, 

@@ -883,9 +883,13 @@ const RecruiterCompanyDetails: React.FC = () => {
   };
 
   const ensureUrlProtocol = (url?: string) => {
-    if (!url) return '';
-    if (url.startsWith('http://') || url.startsWith('https://')) return url;
-    return `https://${url}`;
+    if (!url || typeof url !== 'string') return '';
+    const trimmed = url.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    // Do not treat phone numbers as URLs (prevents GET https://(512) 636-9409/)
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return `https://${trimmed}`;
   };
 
   const companyName = company?.companyName || company?.name || 'Company';
@@ -1002,9 +1006,9 @@ const RecruiterCompanyDetails: React.FC = () => {
               </Box>
 
               {/* Line 4: Social / contact icons */}
-              {(company?.website || company?.linkedin) && (
+              {(ensureUrlProtocol(company?.website) || ensureUrlProtocol(company?.linkedin)) && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
-                  {company?.website && (
+                  {ensureUrlProtocol(company?.website) && (
                     <IconButton
                       size="small"
                       component="a"
@@ -1017,7 +1021,7 @@ const RecruiterCompanyDetails: React.FC = () => {
                       <LanguageIcon fontSize="small" />
                     </IconButton>
                   )}
-                  {company?.linkedin && (
+                  {ensureUrlProtocol(company?.linkedin) && (
                     <IconButton
                       size="small"
                       component="a"
@@ -1171,7 +1175,7 @@ const RecruiterCompanyDetails: React.FC = () => {
       </TabPanel>
       
       <TabPanel value={tabValue} index={1}>
-        <LocationsTab company={company} currentTab={tabValue} locations={locations} />
+        <LocationsTab company={company} currentTab={tabValue} locations={locations} contacts={contacts} deals={deals} />
       </TabPanel>
       
       <TabPanel value={tabValue} index={2}>
@@ -2371,7 +2375,7 @@ const CompanyDashboardTab: React.FC<{
   );
 };
 
-const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[] }> = ({ company, currentTab, locations: initialLocations }) => {
+const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[]; contacts?: any[]; deals?: any[] }> = ({ company, currentTab, locations: initialLocations, contacts = [], deals = [] }) => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
   const [locations, setLocations] = useState<any[]>(initialLocations);
@@ -2394,14 +2398,32 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
   });
   const autocompleteRef = useRef<any>(null);
 
+  // Enrich locations with contact and deal counts from company contacts/deals
+  const enrichedLocations = React.useMemo(() => {
+    return locations.map((loc) => {
+      const locationId = loc.id;
+      const contactCount = (contacts || []).filter(
+        (c: any) =>
+          (c.associations?.locations && c.associations.locations.includes(locationId)) ||
+          c.locationId === locationId
+      ).length;
+      const dealCount = (deals || []).filter(
+        (d: any) =>
+          (d.associations?.locations && d.associations.locations.includes(locationId)) ||
+          d.locationId === locationId
+      ).length;
+      return { ...loc, contactCount, dealCount };
+    });
+  }, [locations, contacts, deals]);
+
   // Filter locations based on search query
   const filteredLocations = React.useMemo(() => {
     if (!searchQuery.trim()) {
-      return locations;
+      return enrichedLocations;
     }
     
     const searchLower = searchQuery.toLowerCase();
-    return locations.filter((location) => {
+    return enrichedLocations.filter((location) => {
       const name = (location.name || location.nickname || '').toLowerCase();
       const code = (location.code || '').toLowerCase();
       const city = (location.city || '').toLowerCase();
@@ -2412,7 +2434,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
              city.includes(searchLower) || 
              state.includes(searchLower);
     });
-  }, [locations, searchQuery]);
+  }, [enrichedLocations, searchQuery]);
 
   // Reload locations when company changes
   useEffect(() => {
@@ -3283,6 +3305,20 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     setSavingContact(true);
     setError(null);
     try {
+      const emailTrimmed = (contactForm.email || '').trim();
+      if (emailTrimmed && tenantId) {
+        const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+        const q = query(contactsRef, where('email', '==', emailTrimmed));
+        const existingSnap = await getDocs(q);
+        if (!existingSnap.empty) {
+          const existing = existingSnap.docs[0].data();
+          const name = existing.fullName || [existing.firstName, existing.lastName].filter(Boolean).join(' ') || 'Another contact';
+          setError(`A contact with this email already exists in the system: ${name}. Please search for them or use a different email.`);
+          setSavingContact(false);
+          return;
+        }
+      }
+
       const contactData = {
         ...contactForm,
         fullName: `${contactForm.firstName} ${contactForm.lastName}`,
@@ -3326,23 +3362,20 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
     }
   };
 
-  // Filter contacts based on search query
+  // Filter contacts based on search query (support multi-word: every token must match at least one field)
   const filteredContacts = React.useMemo(() => {
     if (!searchQuery.trim()) {
       return contacts;
     }
-    
-    const searchLower = searchQuery.toLowerCase();
+    const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
     return contacts.filter((contact: any) => {
       const fullName = (contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}` || '').toLowerCase();
       const firstName = (contact.firstName || '').toLowerCase();
       const lastName = (contact.lastName || '').toLowerCase();
       const email = (contact.email || '').toLowerCase();
-      
-      return fullName.includes(searchLower) || 
-             firstName.includes(searchLower) || 
-             lastName.includes(searchLower) || 
-             email.includes(searchLower);
+      return tokens.every(token =>
+        fullName.includes(token) || firstName.includes(token) || lastName.includes(token) || email.includes(token)
+      );
     });
   }, [contacts, searchQuery]);
 

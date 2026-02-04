@@ -2270,6 +2270,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     options={[
                       'Business Casual',
                       'Business Professional',
+                      'Black Bistro',
                       'Casual',
                       'Scrubs',
                       'Uniform Provided',
@@ -2277,6 +2278,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       'White Shirt',
                       'Polo Shirt',
                       'Button-Down Shirt',
+                      'Black Button-Down Shirt',
                       'Dress Shirt',
                       'Khaki Pants',
                       'Dress Pants',
@@ -2390,14 +2392,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.decisionMaker) || null}
                   onChange={(event, newValue) => handleInputChange('decisionMaker', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Decision Maker"
-                      placeholder="Select Decision Maker"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (
@@ -2424,14 +2426,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.hrContactId) || null}
                   onChange={(event, newValue) => handleInputChange('hrContactId', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="HR Contact"
-                      placeholder="Select HR Contact"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (
@@ -2458,14 +2460,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.operationsContactId) || null}
                   onChange={(event, newValue) => handleInputChange('operationsContactId', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Operations Contact"
-                      placeholder="Select Operations Contact"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (
@@ -2493,14 +2495,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.procurementContactId) || null}
                   onChange={(event, newValue) => handleInputChange('procurementContactId', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Procurement Contact"
-                      placeholder="Select Procurement Contact"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (
@@ -2526,14 +2528,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.billingContactId) || null}
                   onChange={(event, newValue) => handleInputChange('billingContactId', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Billing Contact"
-                      placeholder="Select Billing Contact"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (
@@ -2561,14 +2563,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.safetyContactId) || null}
                   onChange={(event, newValue) => handleInputChange('safetyContactId', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Safety Contact"
-                      placeholder="Select Safety Contact"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (
@@ -2594,14 +2596,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   fullWidth
                   options={loadedContacts}
-                  getOptionLabel={(option) => option.fullName || option.name || ''}
+                  getOptionLabel={(option) => [option.fullName || option.name, option.email].filter(Boolean).join(' · ') || ''}
                   value={loadedContacts.find(contact => contact.id === formData.invoiceContactId) || null}
                   onChange={(event, newValue) => handleInputChange('invoiceContactId', newValue?.id || '')}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Invoice Contact"
-                      placeholder="Select Invoice Contact"
+                      placeholder="Search by name or email..."
                     />
                   )}
                   renderOption={(props, option) => (

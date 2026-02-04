@@ -5,7 +5,7 @@
  * Slack channel messages and posting new messages.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Drawer,
   Box,
@@ -35,6 +35,8 @@ interface SlackChannelDrawerProps {
   members?: MemberPreview[];
   onClose: () => void;
   onToggleWatch?: (channelId: string) => Promise<void>;
+  /** When set, after messages load the list will scroll to show this message (Firestore doc id). */
+  scrollToMessageId?: string | null;
 }
 
 const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
@@ -43,12 +45,14 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
   members = [],
   onClose,
   onToggleWatch,
+  scrollToMessageId,
 }) => {
   const { user, activeTenant } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [snackbarMessage, setSnackbarMessage] = useState<string | null>(null);
   const [snackbarError, setSnackbarError] = useState<string | null>(null);
+  const messagesScrollRef = useRef<HTMLDivElement>(null);
 
   const tenantId = activeTenant?.id || '';
   const channelId = channel?.id || null;
@@ -67,6 +71,29 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
       setSnackbarError(err.message || 'Could not send message to Slack');
     }
   };
+
+  // When messages finish loading, scroll to bottom (most recent) or to the specific message from feed link
+  useEffect(() => {
+    if (!open || loading || messages.length === 0) return;
+    const el = messagesScrollRef.current;
+    if (!el) return;
+
+    const scrollAfterPaint = () => {
+      requestAnimationFrame(() => {
+        if (scrollToMessageId) {
+          const target = el.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            el.scrollTop = el.scrollHeight;
+          }
+        } else {
+          el.scrollTop = el.scrollHeight;
+        }
+      });
+    };
+    scrollAfterPaint();
+  }, [open, loading, messages.length, scrollToMessageId]);
 
   if (!channel) {
     return (
@@ -206,7 +233,7 @@ const SlackChannelDrawer: React.FC<SlackChannelDrawerProps> = ({
           )}
 
           {/* Messages list */}
-          <Box sx={{ flex: 1, overflow: 'auto', bgcolor: 'grey.50' }}>
+          <Box ref={messagesScrollRef} sx={{ flex: 1, overflow: 'auto', bgcolor: 'grey.50' }}>
             <SlackMessageList messages={messages} loading={loading} channelId={channel.slackChannelId} />
           </Box>
 

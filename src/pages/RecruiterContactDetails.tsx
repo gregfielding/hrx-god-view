@@ -580,11 +580,12 @@ const RecruiterContactDetails: React.FC = () => {
   };
 
   const ensureUrlProtocol = (url: string): string => {
-    if (!url) return url;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return 'https://' + url;
-    }
-    return url;
+    if (!url || typeof url !== 'string') return url;
+    const trimmed = url.trim();
+    if (!trimmed) return url;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
 
   const removeUndefinedValues = (obj: any): any => {
@@ -2482,7 +2483,7 @@ const RecruiterContactDetails: React.FC = () => {
         loading={logActivityLoading}
         salespeople={salespeople}
         contacts={contact ? [contact] : []}
-        preselectContactsFromProps={false}
+        preselectContactsFromProps={true}
         currentUserId={currentUser?.uid || ''}
         tenantId={tenantId || ''}
       />

@@ -1009,7 +1009,7 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
                 multiple
                 fullWidth
                 freeSolo
-                options={['Business Casual', 'Uniform Provided', 'Casual', 'Business Professional', 'Safety Uniform', 'Scrubs']}
+                options={['Business Casual', 'Uniform Provided', 'Casual', 'Business Professional', 'Black Bistro', 'Safety Uniform', 'Scrubs', 'Button-Down Shirt', 'Black Button-Down Shirt']}
                 value={uniformRequirements}
                 onChange={(event, newValue) => {
                   setUniformRequirements(newValue);

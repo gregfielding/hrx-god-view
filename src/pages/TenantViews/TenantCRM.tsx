@@ -1094,37 +1094,19 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
             title: c.title || c.jobTitle
           })));
           
-          // Filter client-side for substring matching
+          // Filter client-side: multi-word search — every token must match at least one field
+          const tokens = searchLower.split(/\s+/).filter(Boolean);
           const filteredData = contactsData.filter((contact: any) => {
-            const fullName = (contact.fullName || contact.name || '').toLowerCase();
+            const fullName = (contact.fullName || contact.name || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '').toLowerCase();
+            const firstName = (contact.firstName || '').toLowerCase();
+            const lastName = (contact.lastName || '').toLowerCase();
             const email = (contact.email || '').toLowerCase();
             const title = (contact.title || contact.jobTitle || '').toLowerCase();
             const phone = (contact.phone || '').toLowerCase();
-            
-            // Debug: Only log if it might be a match
-            if (fullName.includes(searchLower)) {
-              console.log('Potential contact match:', {
-                id: contact.id,
-                fullName: contact.fullName || contact.name,
-                searchLower: searchLower
-              });
-            }
-            
-            const matches = fullName.includes(searchLower) ||
-                           email.includes(searchLower) ||
-                           title.includes(searchLower) ||
-                           phone.includes(searchLower);
-            
-            if (matches) {
-              console.log('✅ Contact match found:', { 
-                id: contact.id,
-                name: contact.fullName || contact.name, 
-                email: contact.email, 
-                title: contact.title || contact.jobTitle
-              });
-            }
-            
-            return matches;
+            return tokens.every(token =>
+              fullName.includes(token) || firstName.includes(token) || lastName.includes(token) ||
+              email.includes(token) || title.includes(token) || phone.includes(token)
+            );
           });
           
           console.log('Filtered to', filteredData.length, 'contacts');
@@ -1754,6 +1736,20 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
 
     setSavingContact(true);
     try {
+      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+      const emailTrimmed = (contactForm.email || '').trim();
+      if (emailTrimmed && tenantId) {
+        const q = query(contactsRef, where('email', '==', emailTrimmed));
+        const existingSnap = await getDocs(q);
+        if (!existingSnap.empty) {
+          const existing = existingSnap.docs[0].data();
+          const name = existing.fullName || [existing.firstName, existing.lastName].filter(Boolean).join(' ') || 'Another contact';
+          setError(`A contact with this email already exists in the system: ${name}. Please search for them or use a different email.`);
+          setSavingContact(false);
+          return;
+        }
+      }
+
       const associations: any = {};
       if (contactForm.companyId) associations.companies = [contactForm.companyId];
       
@@ -1796,7 +1792,6 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         accountOwnerId: currentUser?.uid || null
       } as any;
 
-      const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
       await addDoc(contactsRef, contactData);
 
       // Reset form and close dialog

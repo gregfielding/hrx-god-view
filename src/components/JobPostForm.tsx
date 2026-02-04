@@ -16,8 +16,9 @@ import {
   CircularProgress,
   Alert,
   Stack,
+  Snackbar,
 } from '@mui/material';
-import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon } from '@mui/icons-material';
+import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { useAuth } from '../contexts/AuthContext';
@@ -53,6 +54,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const { tenantId, user } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [generatingDescription, setGeneratingDescription] = useState(false);
+  const [copySnackbarOpen, setCopySnackbarOpen] = useState(false);
 
   const normalizeGroupIds = (value?: string | string[] | null): string[] => {
     if (Array.isArray(value)) {
@@ -589,14 +591,23 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               ? firstPosition.payRate 
               : jobOrderData.payRate?.toString()) || '',
             workersNeeded: jobOrderData.workersNeeded || 1,
-            showWorkersNeeded: formData.showWorkersNeeded !== undefined ? formData.showWorkersNeeded : true,
+            showWorkersNeeded: jobOrderData.showWorkersNeeded !== undefined ? jobOrderData.showWorkersNeeded : true,
+            showPayRate: jobOrderData.showPayRate !== undefined ? jobOrderData.showPayRate : true,
+            showStart: jobOrderData.showStartDate ?? jobOrderData.showStart ?? false,
+            showEnd: jobOrderData.showEnd ?? false,
+            expDate: formatDateForInput(jobOrderData.expDate) || formData.expDate || '',
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
             backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
+            showBackgroundChecks: (jobOrderData.backgroundCheckPackages || []).length > 0,
             drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
+            showDrugScreening: (jobOrderData.drugScreeningPanels || []).length > 0,
             additionalScreenings: jobOrderData.additionalScreenings || [],
-            // Copy all requirements and qualifications
-            licensesCerts: jobOrderData.licensesCerts || [],
-            showLicensesCerts: (jobOrderData.licensesCerts || []).length > 0,
+            showAdditionalScreenings: (jobOrderData.additionalScreenings || []).length > 0,
+            // Copy all requirements and qualifications (job order may use licensesCerts or requiredLicenses/requiredCertifications)
+            licensesCerts: (jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0)
+              ? jobOrderData.licensesCerts
+              : [...(jobOrderData.requiredLicenses || []), ...(jobOrderData.requiredCertifications || [])],
+            showLicensesCerts: ((jobOrderData.licensesCerts && jobOrderData.licensesCerts.length > 0) || (jobOrderData.requiredLicenses && jobOrderData.requiredLicenses.length > 0) || (jobOrderData.requiredCertifications && jobOrderData.requiredCertifications.length > 0)),
             skills: jobOrderData.skillsRequired || [],
             showSkills: (jobOrderData.skillsRequired || []).length > 0,
             languages: jobOrderData.languagesRequired || [],
@@ -628,12 +639,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               return [eduMap[jobOrderData.educationRequired] || jobOrderData.educationRequired];
             })() : [],
             showEducation: !!jobOrderData.educationRequired,
-            physicalRequirements: jobOrderData.physicalRequirements || [],
-            showPhysicalRequirements: (jobOrderData.physicalRequirements || []).length > 0,
-            uniformRequirements: jobOrderData.uniformRequirements ? [jobOrderData.uniformRequirements] : [],
-            showUniformRequirements: !!jobOrderData.uniformRequirements,
-            requiredPpe: jobOrderData.ppeRequirements ? [jobOrderData.ppeRequirements] : [],
-            showRequiredPpe: !!jobOrderData.ppeRequirements
+            physicalRequirements: Array.isArray(jobOrderData.physicalRequirements) ? jobOrderData.physicalRequirements : (jobOrderData.physicalRequirements ? [jobOrderData.physicalRequirements] : []),
+            showPhysicalRequirements: (Array.isArray(jobOrderData.physicalRequirements) ? jobOrderData.physicalRequirements.length > 0 : !!jobOrderData.physicalRequirements),
+            uniformRequirements: Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements : (jobOrderData.uniformRequirements ? [jobOrderData.uniformRequirements] : []),
+            showUniformRequirements: (Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.length > 0 : !!jobOrderData.uniformRequirements),
+            customUniformRequirements: jobOrderData.customUniformRequirements || formData.customUniformRequirements || '',
+            showCustomUniformRequirements: !!(jobOrderData.customUniformRequirements || formData.customUniformRequirements),
+            requiredPpe: Array.isArray(jobOrderData.ppeRequirements) ? jobOrderData.ppeRequirements : (jobOrderData.ppeRequirements ? [jobOrderData.ppeRequirements] : []),
+            showRequiredPpe: (Array.isArray(jobOrderData.ppeRequirements) ? jobOrderData.ppeRequirements.length > 0 : !!jobOrderData.ppeRequirements)
           });
           
           if (jobOrderData.companyId) {
@@ -777,6 +790,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     } finally {
       setGeneratingDescription(false);
     }
+  };
+
+  const handleCopyDescription = () => {
+    const text = formData.jobDescription?.trim();
+    if (!text) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopySnackbarOpen(true);
+    });
   };
 
   const handleSubmit = async () => {
@@ -991,7 +1012,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           </Box>
         )}
 
-        <Box sx={{ mb: 1 }}>
+        <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Button
             variant="outlined"
             startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
@@ -1000,6 +1021,15 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             size="small"
           >
             {generatingDescription ? 'Generating...' : 'Generate Job Description'}
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<ContentCopyIcon />}
+            onClick={handleCopyDescription}
+            disabled={!formData.jobDescription?.trim()}
+            size="small"
+          >
+            Copy to clipboard
           </Button>
         </Box>
 
@@ -1909,8 +1939,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 multiple
                 fullWidth
                 options={[
-                  'Business Casual', 'Business Professional', 'Casual', 'Scrubs', 'Uniform Provided',
-                  'Black Pants', 'White Shirt', 'Polo Shirt', 'Button-Down Shirt', 'Dress Shirt',
+                  'Business Casual', 'Business Professional', 'Black Bistro', 'Casual', 'Scrubs', 'Uniform Provided',
+                  'Black Pants', 'White Shirt', 'Polo Shirt', 'Button-Down Shirt', 'Black Button-Down Shirt', 'Dress Shirt',
                   'Khaki Pants', 'Dress Pants', 'Jeans (Dark)', 'Jeans (No Holes)', 'Slacks',
                   'Skirt/Dress', 'Blouse', 'Sweater', 'Cardigan', 'Blazer', 'Suit', 'Tie Required',
                   'No Tie', 'Closed-Toe Shoes', 'Steel-Toe Boots', 'Non-Slip Shoes', 'Dress Shoes',
@@ -2099,6 +2129,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           </Button>
         </Box>
       </Stack>
+      <Snackbar
+        open={copySnackbarOpen}
+        autoHideDuration={2000}
+        onClose={() => setCopySnackbarOpen(false)}
+        message="Copied to clipboard"
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
     </Box>
   );
 };

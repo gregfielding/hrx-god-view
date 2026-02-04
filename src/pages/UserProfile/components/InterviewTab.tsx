@@ -23,13 +23,16 @@ import {
   Grid,
   Divider,
   Slider,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Schedule as ScheduleIcon,
   Person as PersonIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
-import { doc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, getDoc, updateDoc } from 'firebase/firestore';
+import { doc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -295,6 +298,75 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
     }).format(date);
   };
 
+  const updateScoreSummaryFromInterviews = async (userId: string) => {
+    const interviewsRef = collection(db, 'users', userId, 'interviews');
+    let snap;
+    try {
+      snap = await getDocs(query(interviewsRef, orderBy('createdAt', 'desc')));
+    } catch {
+      snap = await getDocs(query(interviewsRef, orderBy('timestamp', 'desc')));
+    }
+    const docs = snap.docs.map((d) => ({ id: d.id, ...d.data() } as any)).filter((d) => d && d.isArchived !== true);
+    const scored = docs
+      .map((d) => (typeof d.score10 === 'number' ? d.score10 : typeof d.score === 'number' ? d.score : null))
+      .filter((n): n is number => typeof n === 'number');
+    const interviewCount = docs.length;
+    const interviewAvg = interviewCount
+      ? Math.round((scored.reduce((a, b) => a + b, 0) / interviewCount) * 10) / 10
+      : undefined;
+    const lastInterview = docs[0];
+    const lastAt = lastInterview?.createdAt?.toDate?.() ?? lastInterview?.timestamp?.toDate?.() ?? null;
+    const lastScore10 = lastInterview != null && (typeof lastInterview.score10 === 'number' || typeof lastInterview.score === 'number')
+      ? (typeof lastInterview.score10 === 'number' ? lastInterview.score10 : lastInterview.score)
+      : null;
+    let qualityScore: number | null = null;
+    try {
+      const userSnap = await getDoc(doc(db, 'users', userId));
+      const ss = (userSnap.data() as any)?.scoreSummary || {};
+      const reviewAvg = typeof ss?.reviewAvg === 'number' ? ss.reviewAvg : null;
+      const hasInterview = typeof interviewAvg === 'number' && Number.isFinite(interviewAvg);
+      const hasReview = typeof reviewAvg === 'number' && Number.isFinite(reviewAvg);
+      if (hasInterview || hasReview) {
+        const interviewScore100 = hasInterview ? (interviewAvg! / 10) * 100 : 0;
+        const reviewScore100 = hasReview ? ((reviewAvg! - 1) / 4) * 100 : 0;
+        const iw = hasInterview && hasReview ? 0.5 : hasInterview ? 1 : 0;
+        const rw = hasInterview && hasReview ? 0.5 : hasReview ? 1 : 0;
+        const raw = interviewScore100 * iw + reviewScore100 * rw;
+        qualityScore = Math.round(Math.max(0, Math.min(100, raw)));
+      }
+    } catch {
+      // non-fatal
+    }
+    await updateDoc(doc(db, 'users', userId), {
+      'scoreSummary.interviewAvg': interviewAvg ?? null,
+      'scoreSummary.interviewCount': interviewCount,
+      'scoreSummary.interviewLastAt': lastAt ?? null,
+      'scoreSummary.interviewLastScore10': lastScore10 ?? null,
+      ...(qualityScore !== null ? { 'scoreSummary.qualityScore': qualityScore } : {}),
+    } as any);
+  };
+
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const handleDeleteInterview = async (e: React.MouseEvent, interviewId: string) => {
+    e.stopPropagation();
+    if (!uid || !window.confirm('Delete this interview? This cannot be undone.')) return;
+    setDeletingId(interviewId);
+    try {
+      const interviewRef = doc(db, 'users', uid, 'interviews', interviewId);
+      await deleteDoc(interviewRef);
+      await updateScoreSummaryFromInterviews(uid);
+      await loadInterviews();
+      setSuccessMessage('Interview deleted');
+      setShowSuccess(true);
+    } catch (error: any) {
+      console.error('Error deleting interview:', error);
+      setSuccessMessage(error?.message || 'Failed to delete interview');
+      setShowSuccess(true);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* Interview Form Card */}
@@ -383,6 +455,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                     <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Completed By</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Score</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -418,6 +491,19 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                         <Typography variant="body2" fontWeight={600} color="primary">
                           {interview.score10 !== undefined ? `${interview.score10}/10` : 'N/A'}
                         </Typography>
+                      </TableCell>
+                      <TableCell align="right" onClick={(e) => e.stopPropagation()}>
+                        <Tooltip title="Delete interview">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={(e) => handleDeleteInterview(e, interview.id)}
+                            disabled={deletingId === interview.id}
+                            aria-label="Delete interview"
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
                       </TableCell>
                     </TableRow>
                   ))}

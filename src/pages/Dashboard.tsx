@@ -46,6 +46,7 @@ const Dashboard: React.FC = () => {
   // Slack channel drawer state
   const [slackChannelDrawerOpen, setSlackChannelDrawerOpen] = useState(false);
   const [selectedSlackChannel, setSelectedSlackChannel] = useState<SlackChannelView | null>(null);
+  const [slackChannelScrollToMessageId, setSlackChannelScrollToMessageId] = useState<string | null>(null);
 
   // Mentions drawer state
   const [mentionsDrawerOpen, setMentionsDrawerOpen] = useState(false);
@@ -122,11 +123,12 @@ const Dashboard: React.FC = () => {
     openMessenger();
   };
 
-  // Open Slack channel drawer
-  const handleOpenSlackChannelDrawer = (options: { channelId: string }) => {
+  // Open Slack channel drawer (optionally scroll to a specific message when opened from feed)
+  const handleOpenSlackChannelDrawer = (options: { channelId: string; messageId?: string }) => {
     const channel = slackChannels.find((c) => c.id === options.channelId);
     if (channel) {
       setSelectedSlackChannel(channel);
+      setSlackChannelScrollToMessageId(options.messageId ?? null);
       setSlackChannelDrawerOpen(true);
     } else {
       console.warn('Channel not found:', options.channelId);
@@ -151,7 +153,7 @@ const Dashboard: React.FC = () => {
           console.warn('[Dashboard] Failed to mark mention as read:', err);
         }
       }
-      handleOpenSlackChannelDrawer({ channelId: mention.drawerScope.channelId });
+      handleOpenSlackChannelDrawer({ channelId: mention.drawerScope.channelId, messageId: mention.messageId });
       setMentionsDrawerOpen(false);
     }
   };
@@ -514,9 +516,11 @@ const Dashboard: React.FC = () => {
         <SlackChannelDrawer
           open={slackChannelDrawerOpen}
           channel={selectedSlackChannel}
+          scrollToMessageId={slackChannelScrollToMessageId}
           onClose={() => {
             setSlackChannelDrawerOpen(false);
             setSelectedSlackChannel(null);
+            setSlackChannelScrollToMessageId(null);
           }}
         />
       )}

@@ -11,6 +11,13 @@ import { db } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 
+export interface SlackMessageFile {
+  id?: string;
+  name?: string;
+  mimetype?: string;
+  url: string;
+}
+
 export interface SlackChannelMessage {
   id: string;
   text: string;
@@ -20,6 +27,8 @@ export interface SlackChannelMessage {
   sentAt: Date;
   ts: string;
   threadTs?: string;
+  /** File attachments (images etc.) with displayable URLs */
+  files?: SlackMessageFile[];
 }
 
 interface UseSlackChannelThreadOptions {
@@ -88,6 +97,7 @@ export function useSlackChannelThread({
               sentAt,
               ts: data.ts || '',
               threadTs: data.threadTs || undefined,
+              files: Array.isArray(data.files) ? data.files : undefined,
             };
           });
 

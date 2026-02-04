@@ -33,7 +33,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { collection, query, orderBy, getDocs, doc, getDoc, limit, startAfter, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, orderBy, getDocs, doc, getDoc, limit, startAfter, addDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useFavorites } from '../hooks/useFavorites';
 import { usePageCache } from '../hooks/usePageCache';
@@ -638,19 +638,22 @@ const RecruiterContacts: React.FC = () => {
       filtered = filtered.filter(contact => isFavorite(contact.id));
     }
     
-    // Apply search filter
+    // Apply search filter (support multi-word: every token must match at least one field)
     if (effectiveSearch) {
-      const searchLower = effectiveSearch.toLowerCase();
+      const tokens = effectiveSearch.toLowerCase().split(/\s+/).filter(Boolean);
       filtered = filtered.filter(contact => {
         const firstName = (contact.firstName || '').toLowerCase();
         const lastName = (contact.lastName || '').toLowerCase();
+        const fullName = (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || '').toLowerCase();
         const email = (contact.email || '').toLowerCase();
         const companyName = (contact.companyName || '').toLowerCase();
-        
-        return firstName.includes(searchLower) ||
-               lastName.includes(searchLower) ||
-               email.includes(searchLower) ||
-               companyName.includes(searchLower);
+        return tokens.every(token =>
+          firstName.includes(token) ||
+          lastName.includes(token) ||
+          fullName.includes(token) ||
+          email.includes(token) ||
+          companyName.includes(token)
+        );
       });
     }
     
@@ -777,6 +780,21 @@ const RecruiterContacts: React.FC = () => {
     setContactError(null);
 
     try {
+      // If email is provided, check for an existing contact with that email
+      const emailTrimmed = (contactForm.email || '').trim();
+      if (emailTrimmed) {
+        const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+        const q = query(contactsRef, where('email', '==', emailTrimmed));
+        const existingSnap = await getDocs(q);
+        if (!existingSnap.empty) {
+          const existing = existingSnap.docs[0].data();
+          const name = existing.fullName || [existing.firstName, existing.lastName].filter(Boolean).join(' ') || 'Another contact';
+          setContactError(`A contact with this email already exists in the system: ${name}. Please search for them or use a different email.`);
+          setSavingContact(false);
+          return;
+        }
+      }
+
       const selectedLocation =
         contactForm.companyId && contactForm.locationId
           ? companyLocations.find((l) => l.id === contactForm.locationId)

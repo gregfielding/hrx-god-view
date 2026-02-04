@@ -21,6 +21,7 @@ import {
 } from './messaging/slackMapping';
 import { logSlackTraffic } from './messaging/slackTrafficLogging';
 import { handleSlackMentions } from './mentions/slackMentions';
+import { getDefaultBucket } from './utils/storageBucket';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -180,10 +181,20 @@ interface SlackMessageDoc {
   ts: string;
   threadTs?: string;
   isThreadReply: boolean;
+  /** File attachments (images etc.) with displayable URLs so they show in channel threads */
+  files?: SlackMessageFile[];
   hrxConversationId?: string; // Phase 3.3: Optional HRX conversation mapping
   hrxConversationType?: 'dm' | 'channel'; // Phase 3.3: Optional conversation type
   raw: any; // Full payload (for debugging, can trim later)
   createdAt: admin.firestore.Timestamp;
+}
+
+/** Stored file attachment for display (url is our Storage URL so images load in the app) */
+interface SlackMessageFile {
+  id?: string;
+  name?: string;
+  mimetype?: string;
+  url: string;
 }
 
 /**
@@ -214,6 +225,43 @@ function getChannelType(event: SlackEventPayload['event']): 'im' | 'channel' | '
   
   // Default to channel if unknown
   return 'channel';
+}
+
+/** Download a Slack file (image) with bot token and upload to Firebase Storage; return a display URL. */
+async function downloadSlackFileAndGetDisplayUrl(
+  tenantId: string,
+  channelId: string,
+  ts: string,
+  file: { id?: string; url_private?: string; thumb_360?: string; name?: string; mimetype?: string },
+  botToken: string
+): Promise<string | null> {
+  const url = file.thumb_360 || file.url_private;
+  if (!url) return null;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${botToken}` } });
+    if (!res.ok) {
+      logger.warn('Slack file fetch failed', { status: res.status, fileId: file.id });
+      return null;
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const ext = (file.mimetype && file.mimetype.startsWith('image/'))
+      ? file.mimetype.replace('image/', '') === 'jpeg' ? 'jpg' : file.mimetype.replace('image/', '')
+      : (file.name && /\.(\w+)$/.exec(file.name)?.[1]) || 'bin';
+    const safeTs = (ts || '').replace(/[^a-z0-9.-]/gi, '_');
+    const safeId = (file.id || `f${Date.now()}`).replace(/[^a-z0-9.-]/gi, '_');
+    const storagePath = `tenants/${tenantId}/slack_files/${channelId}/${safeTs}_${safeId}.${ext}`;
+    const bucket = getDefaultBucket();
+    const storageFile = bucket.file(storagePath);
+    await storageFile.save(buffer, { contentType: file.mimetype || 'application/octet-stream' });
+    const [signedUrl] = await storageFile.getSignedUrl({
+      action: 'read',
+      expires: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
+    });
+    return signedUrl || null;
+  } catch (err: any) {
+    logger.warn('Slack file download/upload failed', { fileId: file.id, error: err?.message });
+    return null;
+  }
 }
 
 // TEMP: hard-coded tenant for C1 Staffing
@@ -453,6 +501,7 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
   let hrxUserId: string | null = null;
   let securityLevel = 1;
   let canAccessSlack = false;
+  let botToken: string | undefined;
   
   try {
     // Try to fetch Slack user info from Slack API (optional)
@@ -460,7 +509,7 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
     let slackDisplayName: string | undefined;
     
     try {
-      const botToken = SLACK_BOT_TOKEN.value();
+      botToken = SLACK_BOT_TOKEN.value();
       if (botToken) {
         const userInfo = await fetchSlackUserInfo(event.user, botToken);
         if (userInfo) {
@@ -495,6 +544,25 @@ async function handleSlackEventAsync(payload: SlackEventPayload): Promise<void> 
   } catch (error: any) {
     logger.error(`Error mapping Slack user ${event.user} to HRX user:`, error);
     // Continue without hrxUserId - message will be stored but not integrated
+  }
+  
+  // Process file_share attachments: download images to Storage so they display in channel threads
+  const eventFiles = (event as any)?.files as Array<{ id?: string; url_private?: string; thumb_360?: string; name?: string; title?: string; mimetype?: string }> | undefined;
+  if (eventFiles?.length && botToken) {
+    const tsRaw = event.ts || '';
+    const channelId = event.channel || '';
+    const fileResults = await Promise.all(
+      eventFiles.map(async (f) => {
+        const displayUrl = await downloadSlackFileAndGetDisplayUrl(tenantId, channelId, tsRaw, f, botToken!);
+        return {
+          id: f.id,
+          name: f.name || f.title || 'File',
+          mimetype: f.mimetype,
+          url: displayUrl || f.url_private || '',
+        } as SlackMessageFile;
+      })
+    );
+    messageDoc.files = fileResults.filter((f) => f.url);
   }
   
   // If no HRX user mapped, log and bail (message still stored in slack_messages for audit)

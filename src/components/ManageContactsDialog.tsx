@@ -14,13 +14,11 @@ import {
   ListItemSecondaryAction,
   IconButton,
   Avatar,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   CircularProgress,
   Alert,
   Divider,
+  Autocomplete,
+  TextField,
 } from '@mui/material';
 import {
   Close as CloseIcon,
@@ -59,7 +57,7 @@ const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
   dealCompanyId,
 }) => {
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
-  const [selectedContactId, setSelectedContactId] = useState<string>('');
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -167,17 +165,14 @@ const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
   };
 
   const handleAddSelectedContact = () => {
-    if (selectedContactId) {
-      const selectedContact = availableContacts.find(contact => contact.id === selectedContactId);
-      if (selectedContact) {
-        handleAddContact(selectedContact);
-        setSelectedContactId('');
-      }
+    if (selectedContact) {
+      handleAddContact(selectedContact);
+      setSelectedContact(null);
     }
   };
 
   const handleClose = () => {
-    setSelectedContactId('');
+    setSelectedContact(null);
     setError('');
     onClose();
   };
@@ -262,34 +257,41 @@ const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
             
             {!loading && availableToAdd.length > 0 ? (
               <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
-                <FormControl fullWidth>
-                  <InputLabel>Select Contact</InputLabel>
-                  <Select
-                    value={selectedContactId}
-                    onChange={(e) => setSelectedContactId(e.target.value)}
-                    label="Select Contact"
-                  >
-                    {availableToAdd.map((contact) => (
-                      <MenuItem key={contact.id} value={contact.id}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
-                            {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || 'C'}
-                          </Avatar>
-                          <Box>
-                            <Typography variant="body2">{contact.fullName}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {contact.email}
-                            </Typography>
-                          </Box>
+                <Autocomplete
+                  fullWidth
+                  options={availableToAdd}
+                  value={selectedContact}
+                  onChange={(_, newValue) => setSelectedContact(newValue)}
+                  getOptionLabel={(option) =>
+                    [option.fullName, option.email].filter(Boolean).join(' · ') || 'Unknown'
+                  }
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label="Select Contact"
+                      placeholder="Search by name or email..."
+                    />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>
+                          {option.fullName?.charAt(0) || option.firstName?.charAt(0) || 'C'}
+                        </Avatar>
+                        <Box>
+                          <Typography variant="body2">{option.fullName}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {option.email}
+                          </Typography>
                         </Box>
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                      </Box>
+                    </li>
+                  )}
+                />
                 <Button
                   variant="contained"
                   onClick={handleAddSelectedContact}
-                  disabled={!selectedContactId}
+                  disabled={!selectedContact}
                   startIcon={<AddIcon />}
                 >
                   Add

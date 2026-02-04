@@ -50,6 +50,7 @@ import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer'
 import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
+import { logUserActivity } from '../../utils/activityLogger';
 import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
 
 const UserProfilePage = () => {
@@ -129,6 +130,7 @@ const UserProfilePage = () => {
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
+  const [activityLogRefreshKey, setActivityLogRefreshKey] = useState(0);
   const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
 
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
@@ -2006,7 +2008,7 @@ const UserProfilePage = () => {
               case 'Messages':
                 return <MessagesTab uid={uid} tenantId={tenantId || undefined} />;
               case 'Activity Log':
-                return <ActivityLogTab uid={uid} user={user} />;
+                return <ActivityLogTab uid={uid} user={user} refreshTrigger={activityLogRefreshKey} />;
               case 'Settings':
                 return <SystemAccessTab uid={uid} />;
               default:
@@ -2165,7 +2167,7 @@ const UserProfilePage = () => {
           try {
             const { TaskService } = await import('../../utils/taskService');
             const taskService = TaskService.getInstance();
-            await taskService.createTask({
+            const result = await taskService.createTask({
               ...taskData,
               tenantId: (tenantId || authTenantId || activeTenant?.id) as string,
               createdBy: user?.uid || '',
@@ -2179,6 +2181,19 @@ const UserProfilePage = () => {
                 salespeople: user?.uid ? [user.uid] : []
               }
             });
+            // Save to this user's activity log so it appears in Activity History tab
+            if (uid) {
+              await logUserActivity({
+                userId: uid,
+                action: taskData.title || 'Activity logged',
+                actionType: 'other',
+                description: taskData.description || '',
+                severity: (taskData.priority === 'low' || taskData.priority === 'high' ? taskData.priority : 'medium') as 'low' | 'medium' | 'high',
+                source: 'web',
+                metadata: { taskId: result?.taskId, loggedBy: user?.uid }
+              });
+              setActivityLogRefreshKey((k) => k + 1);
+            }
             setShowLogActivityDialog(false);
           } catch (error) {
             console.error('Error logging activity:', error);

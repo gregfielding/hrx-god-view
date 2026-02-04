@@ -1,5 +1,5 @@
 import * as admin from 'firebase-admin';
-import { onCall } from 'firebase-functions/v2/https';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
 import { fetchAndNormalize, fetchBestGuessUrls } from './utils/serp';
 import { logEnrichmentEvent } from './utils/logging';
@@ -635,8 +635,8 @@ export const enrichCompanyOnDemand = onCall({
   secrets: [APOLLO_API_KEY]
 }, async (request) => {
   const { tenantId, companyId, mode, force } = (request.data || {}) as { tenantId: string; companyId: string; mode?: Mode; force?: boolean };
-  if (!request.auth?.uid) throw new Error('Auth required');
-  if (!tenantId || !companyId) throw new Error('tenantId and companyId required');
+  if (!request.auth?.uid) throw new HttpsError('unauthenticated', 'Auth required');
+  if (!tenantId || !companyId) throw new HttpsError('invalid-argument', 'tenantId and companyId required');
   const desiredMode: Mode = (mode as Mode) || 'apollo-only';
   try {
     console.log('enrichCompanyOnDemand:start', { tenantId, companyId, mode: desiredMode, force: !!force });
@@ -662,7 +662,9 @@ export const enrichCompanyOnDemand = onCall({
       }
     };
   } catch (e: any) {
-    console.error('enrichCompanyOnDemand failed', { tenantId, companyId, error: e?.message });
-    return { status: 'error', message: e?.message || 'Internal error' };
+    const message = (e?.message && String(e.message)) || (e && String(e)) || 'Enrichment failed';
+    console.error('enrichCompanyOnDemand failed', { tenantId, companyId, error: message });
+    // Always return a serializable payload so the client never gets FirebaseError: internal
+    return { status: 'error', message };
   }
 });

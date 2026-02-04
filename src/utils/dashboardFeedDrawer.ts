@@ -9,7 +9,7 @@ import { DashboardFeedItem } from '../types/dashboardFeed';
 export interface DrawerOpenCallbacks {
   openEmailDrawer: (options: { threadId: string; tenantId: string }) => void;
   openSlackDMDrawer: (options: { threadId: string; tenantId: string }) => void;
-  openSlackChannelDrawer: (options: { channelId: string }) => void;
+  openSlackChannelDrawer: (options: { channelId: string; messageId?: string }) => void;
   openMentionsDrawer?: () => void;
 }
 
@@ -48,6 +48,7 @@ export function openDrawerFromFeedItem(
       if (item.drawerScope.channelId) {
         callbacks.openSlackChannelDrawer({
           channelId: item.drawerScope.channelId,
+          messageId: item.messageId,
         });
       } else {
         console.warn('Slack Channel feed item missing channelId', item);
@@ -63,6 +64,7 @@ export function openDrawerFromFeedItem(
         if (item.mentionMetadata?.origin === 'slack' && item.drawerScope.channelId) {
           callbacks.openSlackChannelDrawer({
             channelId: item.drawerScope.channelId,
+            messageId: item.messageId,
           });
         } else {
           console.log('HRX mention clicked', item);

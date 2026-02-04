@@ -2452,8 +2452,22 @@ const LocationDetails: React.FC = () => {
               setSavingContact(true);
               setContactsError(null);
               try {
-                const { addDoc, collection, serverTimestamp } = await import('firebase/firestore');
+                const { addDoc, collection, query, where, getDocs, serverTimestamp } = await import('firebase/firestore');
                 const { db } = await import('../../firebase');
+
+                const emailTrimmed = (contactForm.email || '').trim();
+                if (emailTrimmed && tenantId) {
+                  const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
+                  const q = query(contactsRef, where('email', '==', emailTrimmed));
+                  const existingSnap = await getDocs(q);
+                  if (!existingSnap.empty) {
+                    const existing = existingSnap.docs[0].data();
+                    const name = existing.fullName || [existing.firstName, existing.lastName].filter(Boolean).join(' ') || 'Another contact';
+                    setContactsError(`A contact with this email already exists in the system: ${name}. Please search for them or use a different email.`);
+                    setSavingContact(false);
+                    return;
+                  }
+                }
 
                 const contactData: any = {
                   firstName: contactForm.firstName,

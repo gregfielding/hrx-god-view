@@ -161,7 +161,7 @@ const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, 
         const displayText = replaceSlackEmojiCodes(message.text);
 
         return (
-          <Box key={message.id} sx={{ display: 'flex', gap: 1.5, mb: 3 }}>
+          <Box key={message.id} data-message-id={message.id} sx={{ display: 'flex', gap: 1.5, mb: 3 }}>
             <Avatar
               src={avatarSrc}
               sx={{
@@ -219,7 +219,66 @@ const SlackMessageList: React.FC<SlackMessageListProps> = ({ messages, loading, 
               >
                 {renderTextWithMentions(displayText)}
               </Box>
-              
+              {/* File attachments (images and links) */}
+              {message.files && message.files.length > 0 && (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
+                  {message.files.map((file, idx) => {
+                    const isImage = file.mimetype?.startsWith('image/') ||
+                      /\.(jpe?g|png|gif|webp|bmp)$/i.test(file.name || '');
+                    if (isImage && file.url) {
+                      return (
+                        <Box
+                          key={file.id || idx}
+                          component="a"
+                          href={file.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{
+                            display: 'block',
+                            maxWidth: 320,
+                            maxHeight: 240,
+                            borderRadius: 1,
+                            overflow: 'hidden',
+                            border: '1px solid',
+                            borderColor: 'divider',
+                          }}
+                        >
+                          <img
+                            src={file.url}
+                            alt={file.name || 'Attachment'}
+                            style={{
+                              width: '100%',
+                              height: 'auto',
+                              maxHeight: 240,
+                              objectFit: 'cover',
+                              display: 'block',
+                            }}
+                          />
+                        </Box>
+                      );
+                    }
+                    if (file.url) {
+                      return (
+                        <Link
+                          key={file.id || idx}
+                          href={file.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{
+                            fontSize: '0.875rem',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 0.5,
+                          }}
+                        >
+                          {file.name || 'Open file'}
+                        </Link>
+                      );
+                    }
+                    return null;
+                  })}
+                </Box>
+              )}
               {/* Reactions Bar */}
               {channelId && user?.uid && (
                 <SlackMessageReactionsBar

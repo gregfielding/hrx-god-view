@@ -65,9 +65,11 @@ interface ActivityLog {
 interface ActivityLogTabProps {
   uid: string;
   user: any;
+  /** When this value changes, the tab will refetch activities (e.g. after logging a new activity). */
+  refreshTrigger?: number;
 }
 
-const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
+const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user, refreshTrigger }) => {
   const [activities, setActivities] = useState<ActivityLog[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -84,6 +86,12 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user }) => {
   useEffect(() => {
     loadActivities();
   }, [uid]);
+
+  useEffect(() => {
+    if (uid && refreshTrigger != null && refreshTrigger > 0) {
+      loadActivities(true);
+    }
+  }, [refreshTrigger]);
 
   const loadActivities = async (isRefresh = false) => {
     if (!uid) return;

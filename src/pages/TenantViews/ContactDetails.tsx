@@ -1043,10 +1043,10 @@ const ContactDetails: React.FC = () => {
     loadAllCompanies();
     loadJobOrdersForContact();
     
-    // Load notes count
+    // Load notes count (use contact_notes collection; Firestore rules allow read)
     if (contactId && tenantId) {
-      const notesRef = collection(db, 'tenants', tenantId, 'notes');
-      const notesQuery = query(notesRef, where('entityId', '==', contactId), where('entityType', '==', 'contact'));
+      const notesRef = collection(db, 'tenants', tenantId, 'contact_notes');
+      const notesQuery = query(notesRef, where('entityId', '==', contactId));
       const unsubscribeNotes = onSnapshot(notesQuery, (snapshot) => {
         setNotesCount(snapshot.size);
       }, (err) => {
@@ -1241,11 +1241,12 @@ const ContactDetails: React.FC = () => {
   };
 
   const ensureUrlProtocol = (url: string): string => {
-    if (!url) return url;
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      return 'https://' + url;
-    }
-    return url;
+    if (!url || typeof url !== 'string') return url;
+    const trimmed = url.trim();
+    if (!trimmed) return url;
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
+    if (/^[\d\s().\-+xX]+$/.test(trimmed) || (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed))) return '';
+    return 'https://' + trimmed;
   };
 
   const handleDelete = async () => {
@@ -1666,19 +1667,28 @@ const ContactDetails: React.FC = () => {
       // Import TaskService dynamically to avoid circular dependencies
       const { TaskService } = await import('../../utils/taskService');
       const taskService = TaskService.getInstance();
-      
-      // Create the task as completed
+      const contactIds = Array.isArray(taskData.associations?.contacts)
+        ? taskData.associations.contacts.map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
+        : [];
+      const ensureContactId = contact?.id && !contactIds.includes(contact.id)
+        ? [contact.id, ...contactIds]
+        : contactIds.length ? contactIds : (contact?.id ? [contact.id] : []);
+
+      // Create the task as completed; associate with this contact so it appears in Activity tab
       await taskService.createTask({
         ...taskData,
         tenantId,
         status: 'completed',
         completedAt: new Date(),
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        associations: {
+          ...taskData.associations,
+          contacts: ensureContactId
+        }
       });
-      
+
       setShowLogActivityDialog(false);
-      // Optionally refresh any task-related data
       showToast('Activity logged successfully', 'success');
     } catch (error) {
       console.error('Error logging activity:', error);
@@ -4284,6 +4294,7 @@ const ContactDetails: React.FC = () => {
         loading={logActivityLoading}
         salespeople={salespeople}
         contacts={[contact]}
+        preselectContactsFromProps={true}
         currentUserId={user?.uid || ''}
         tenantId={tenantId}
       />

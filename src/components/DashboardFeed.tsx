@@ -104,7 +104,7 @@ const SOURCE_META: Record<
 interface DashboardFeedProps {
   onOpenEmailDrawer: (options: { threadId: string; tenantId: string }) => void;
   onOpenSlackDMDrawer: (options: { threadId: string; tenantId: string }) => void;
-  onOpenSlackChannelDrawer: (options: { channelId: string }) => void;
+  onOpenSlackChannelDrawer: (options: { channelId: string; messageId?: string }) => void;
   onOpenMentionsDrawer?: () => void;
 }
 
