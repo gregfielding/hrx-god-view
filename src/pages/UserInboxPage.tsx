@@ -172,6 +172,9 @@ const UserInboxPage: React.FC = () => {
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
   const [syncingGmail, setSyncingGmail] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+  const [backgroundSyncMessage, setBackgroundSyncMessage] = useState<string | null>(null);
+  // Optimistic mark-as-read: thread IDs we've marked read locally before Firestore updates
+  const [optimisticReadThreadIds, setOptimisticReadThreadIds] = useState<Set<string>>(new Set());
 
   // Filter state - default to Gmail Primary (align with Gmail/Mimestream)
   const [activeFilter, setActiveFilter] = useState<InboxFilter>('primary');
@@ -348,6 +351,14 @@ const UserInboxPage: React.FC = () => {
   };
   
   const displayThreads = getDisplayThreads();
+  // Apply optimistic read overrides so mark-as-read updates UI immediately when using realtime data
+  const effectiveDisplayThreads = useMemo(() =>
+    displayThreads.map(t => ({
+      ...t,
+      unreadCount: optimisticReadThreadIds.has(t.id) ? 0 : (t.unreadCount || 0),
+    })),
+    [displayThreads, optimisticReadThreadIds]
+  );
   const displayLoading = isBackendSearch ? isSearching : (realtimeLoading && emailThreads.length === 0);
 
   // Removed unified inbox - inbox is now email-only per decoupling spec
@@ -368,59 +379,60 @@ const UserInboxPage: React.FC = () => {
 
     setSyncingGmail(true);
     if (!silent) {
-    setError(null);
-    setSyncSuccess(null);
+      setError(null);
+      setSyncSuccess(null);
+      setBackgroundSyncMessage(null);
     }
 
-    try {
-      const syncGmailEmailsFn = httpsCallable(functions, 'syncGmailEmails');
-      const result = await syncGmailEmailsFn({
-        userId: user.uid,
-        tenantId: effectiveTenantId,
-        maxResults: silent ? 200 : 1000, // Reduced to avoid timeouts - 200 for auto syncs, 1000 for manual
-      });
+    // Non-blocking sync: fire the callable and stop UI spinner after a short delay.
+    // New threads appear via Firestore realtime listener as the Cloud Function writes them.
+    const syncGmailEmailsFn = httpsCallable(functions, 'syncGmailEmails', { timeout: 540_000 });
+    const syncPromise = syncGmailEmailsFn({
+      userId: user.uid,
+      tenantId: effectiveTenantId,
+      maxResults: silent ? 200 : 1000,
+    });
 
-      const data = result.data as any;
-      
-      if (data.error) {
-        if (!silent) {
-        setError(data.message || 'Failed to sync Gmail emails');
-        }
-        return;
-      }
-
-      const syncedCount = data.syncedCount || data.newEmails || 0;
-      
-      // Refresh email threads after sync
-      if (activeTab === 'email') {
-        await loadEmailThreads();
-      }
-
-      // Only show success message if not silent and there were new emails
-      if (!silent) {
-      if (syncedCount > 0) {
-        setSyncSuccess(`Successfully synced ${syncedCount} email${syncedCount !== 1 ? 's' : ''} from Gmail`);
-        // Clear success message after 5 seconds
-        setTimeout(() => {
-          setSyncSuccess(null);
-        }, 5000);
-      } else {
-        setSyncSuccess('Sync completed. No new emails found in your Gmail inbox.');
-        // Clear message after 3 seconds for "no emails" case
-        setTimeout(() => {
-          setSyncSuccess(null);
-        }, 3000);
-        }
-      }
-
-    } catch (error: any) {
-      console.error('Error syncing Gmail emails:', error);
-      if (!silent) {
-      setError(`Failed to sync Gmail emails: ${error.message || 'Unknown error'}`);
-      }
-    } finally {
+    // Stop spinner after 2s and show background message so UI doesn't block
+    const stopSpinnerTimer = setTimeout(() => {
       setSyncingGmail(false);
-    }
+      if (!silent) {
+        setBackgroundSyncMessage('Syncing Gmail in background. New emails will appear automatically.');
+        setTimeout(() => setBackgroundSyncMessage(null), 30000);
+      }
+    }, 2000);
+
+    syncPromise
+      .then((result) => {
+        clearTimeout(stopSpinnerTimer);
+        setSyncingGmail(false);
+        setBackgroundSyncMessage(null);
+        const data = result.data as any;
+        if (data?.error) {
+          if (!silent) setError(data.message || 'Failed to sync Gmail emails');
+          return;
+        }
+        const syncedCount = data?.syncedCount ?? data?.newEmails ?? 0;
+        if (activeTab === 'email') loadEmailThreads();
+        if (!silent) {
+          if (syncedCount > 0) {
+            setSyncSuccess(`Synced ${syncedCount} email${syncedCount !== 1 ? 's' : ''} from Gmail`);
+            setTimeout(() => setSyncSuccess(null), 5000);
+          } else {
+            setSyncSuccess('Sync completed. No new emails found.');
+            setTimeout(() => setSyncSuccess(null), 3000);
+          }
+        }
+      })
+      .catch((error: any) => {
+        clearTimeout(stopSpinnerTimer);
+        setSyncingGmail(false);
+        setBackgroundSyncMessage(null);
+        console.error('Error syncing Gmail emails:', error);
+        if (!silent) {
+          setError(`Failed to sync Gmail emails: ${error?.message || 'Unknown error'}`);
+        }
+      });
   };
 
   // Reset search state when searchQuery becomes empty
@@ -521,6 +533,30 @@ const UserInboxPage: React.FC = () => {
       clearInterval(pollingInterval);
     };
   }, [user?.uid, effectiveTenantId, gmailConnected, activeTab, syncingGmail, handleSyncGmail]);
+
+  // Reconciliation: Gmail API reports unread but Firestore list has none (or is empty) — trigger background sync
+  const reconciliationTriggeredRef = useRef(false);
+  useEffect(() => {
+    if (!user?.uid || !effectiveTenantId || !gmailConnected || activeTab !== 'email' || syncingGmail) return;
+    const gmailUnread = (gmailMailboxCounts.primary ?? 0) + (gmailMailboxCounts.social ?? 0) + (gmailMailboxCounts.promotions ?? 0) + (gmailMailboxCounts.updates ?? 0) + (gmailMailboxCounts.forums ?? 0) + (gmailMailboxCounts.spam ?? 0);
+    const firestoreUnread = displayThreads.reduce((sum, t) => sum + (t.unreadCount || 0), 0);
+    if (gmailUnread > 0 && firestoreUnread === 0 && !reconciliationTriggeredRef.current) {
+      reconciliationTriggeredRef.current = true;
+      handleSyncGmail(true);
+    }
+  }, [user?.uid, effectiveTenantId, gmailConnected, activeTab, syncingGmail, gmailMailboxCounts, displayThreads, handleSyncGmail]);
+
+  // Clear optimistic read overrides when Firestore delivers the thread with unreadCount 0
+  useEffect(() => {
+    setOptimisticReadThreadIds(prev => {
+      if (prev.size === 0) return prev;
+      const next = new Set(prev);
+      for (const t of displayThreads) {
+        if (t.unreadCount === 0) next.delete(t.id);
+      }
+      return next.size === prev.size ? prev : next;
+    });
+  }, [displayThreads]);
 
   // Clear hover state when drawer opens to prevent flickering
   useEffect(() => {
@@ -786,7 +822,7 @@ const UserInboxPage: React.FC = () => {
     if (!effectiveTenantId) return;
 
     const update = createStarUpdate(threadId, starred);
-    const currentThreads = displayThreads;
+    const currentThreads = effectiveDisplayThreads;
 
     const { updated, error } = await executeOptimisticUpdate(
       currentThreads,
@@ -831,15 +867,15 @@ const UserInboxPage: React.FC = () => {
     enabled: !emailDrawerOpen && !messageDrawerOpen,
     handlers: {
       onNavigateNext: () => {
-        const currentIndex = displayThreads.findIndex(t => t.id === selectedEmailThread?.id);
-        if (currentIndex < displayThreads.length - 1) {
-          handleEmailThreadClick(displayThreads[currentIndex + 1]);
+        const currentIndex = effectiveDisplayThreads.findIndex(t => t.id === selectedEmailThread?.id);
+        if (currentIndex < effectiveDisplayThreads.length - 1) {
+          handleEmailThreadClick(effectiveDisplayThreads[currentIndex + 1]);
         }
       },
       onNavigatePrevious: () => {
-        const currentIndex = displayThreads.findIndex(t => t.id === selectedEmailThread?.id);
+        const currentIndex = effectiveDisplayThreads.findIndex(t => t.id === selectedEmailThread?.id);
         if (currentIndex > 0) {
-          handleEmailThreadClick(displayThreads[currentIndex - 1]);
+          handleEmailThreadClick(effectiveDisplayThreads[currentIndex - 1]);
         }
       },
       onReply: () => {
@@ -882,8 +918,11 @@ const UserInboxPage: React.FC = () => {
     event.stopPropagation();
     if (!user?.uid || !effectiveTenantId) return;
 
+    // Optimistic update: show as read immediately (works with realtime data)
+    setOptimisticReadThreadIds(prev => new Set(prev).add(threadId));
+
     const update = createMarkReadUpdate(threadId);
-    const currentThreads = displayThreads;
+    const currentThreads = effectiveDisplayThreads;
 
     const { updated, error } = await executeOptimisticUpdate(
       currentThreads,
@@ -909,18 +948,16 @@ const UserInboxPage: React.FC = () => {
           throw new Error('Failed to mark as read');
         }
       },
-      (err) => {
+      () => {
         showErrorToast('Failed to mark as read');
+        setOptimisticReadThreadIds(prev => { const next = new Set(prev); next.delete(threadId); return next; });
       }
     );
 
-    // Update state
-    if (isBackendSearch) {
-      setSearchResults(updated);
-    } else if (realtimeThreads.length > 0) {
-      setEmailThreads(updated);
-    } else {
-      setEmailThreads(updated);
+    // Update state for non-realtime / search
+    if (error == null) {
+      if (isBackendSearch) setSearchResults(updated);
+      else setEmailThreads(updated);
     }
   };
 
@@ -1000,6 +1037,8 @@ const UserInboxPage: React.FC = () => {
   const handleBulkMarkRead = async () => {
     if (selectedThreadIds.size === 0 || !user?.uid || !effectiveTenantId) return;
 
+    const ids = Array.from(selectedThreadIds);
+    setOptimisticReadThreadIds(prev => new Set([...prev, ...ids]));
     setBulkActionLoading(true);
     try {
       const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
@@ -1011,7 +1050,7 @@ const UserInboxPage: React.FC = () => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            threadIds: Array.from(selectedThreadIds),
+            threadIds: ids,
             tenantId: effectiveTenantId,
             userId: user.uid,
             updates: { unreadCount: 0 },
@@ -1023,9 +1062,8 @@ const UserInboxPage: React.FC = () => {
         throw new Error('Failed to mark threads as read');
       }
 
-      // Update local state reactively
-      setEmailThreads(prevThreads => 
-        prevThreads.map(thread => 
+      setEmailThreads(prevThreads =>
+        prevThreads.map(thread =>
           selectedThreadIds.has(thread.id || '')
             ? { ...thread, unreadCount: 0 }
             : thread
@@ -1035,6 +1073,7 @@ const UserInboxPage: React.FC = () => {
       setSelectedThreadIds(new Set());
     } catch (err: any) {
       setError(err.message || 'Failed to mark threads as read');
+      setOptimisticReadThreadIds(prev => { const next = new Set(prev); ids.forEach(id => next.delete(id)); return next; });
     } finally {
       setBulkActionLoading(false);
     }
@@ -1092,19 +1131,18 @@ const UserInboxPage: React.FC = () => {
   const handleMarkAllRead = async () => {
     if (!user?.uid || !effectiveTenantId) return;
 
+    const unreadThreadIds = filteredEmailThreads
+      .filter(thread => thread.unreadCount > 0)
+      .map(thread => thread.id)
+      .filter((id): id is string => !!id);
+
+    if (unreadThreadIds.length === 0) return;
+
+    setOptimisticReadThreadIds(prev => new Set([...prev, ...unreadThreadIds]));
     try {
       const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
         'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
-      // Get all unread thread IDs
-      const unreadThreadIds = filteredEmailThreads
-        .filter(thread => thread.unreadCount > 0)
-        .map(thread => thread.id)
-        .filter((id): id is string => !!id);
-
-      if (unreadThreadIds.length === 0) return;
-
-      // Mark all unread threads as read
       const response = await fetch(
         `${API_BASE_URL}/bulkUpdateEmailThreadsApi`,
         {
@@ -1123,9 +1161,8 @@ const UserInboxPage: React.FC = () => {
         throw new Error('Failed to mark all as read');
       }
 
-      // Update local state reactively
-      setEmailThreads(prevThreads => 
-        prevThreads.map(thread => 
+      setEmailThreads(prevThreads =>
+        prevThreads.map(thread =>
           unreadThreadIds.includes(thread.id || '')
             ? { ...thread, unreadCount: 0 }
             : thread
@@ -1133,6 +1170,7 @@ const UserInboxPage: React.FC = () => {
       );
     } catch (err: any) {
       setError(err.message || 'Failed to mark all as read');
+      setOptimisticReadThreadIds(prev => { const next = new Set(prev); unreadThreadIds.forEach(id => next.delete(id)); return next; });
     }
   };
 
@@ -1466,8 +1504,8 @@ const UserInboxPage: React.FC = () => {
   };
 
   // Use search results if backend search is active, otherwise use normal threads
-  // Use displayThreads (real-time or loaded) for filtering
-  const threadsToFilter = displayThreads;
+  // Use effective display threads (with optimistic read overrides) for filtering
+  const threadsToFilter = effectiveDisplayThreads;
   
   // Filter threads based on active filter (for client-side filtering like starred)
   const filteredEmailThreads = threadsToFilter.filter(thread => {
@@ -1621,11 +1659,33 @@ const UserInboxPage: React.FC = () => {
     }
   };
 
-  // Calculate counts for filter badges
-  // Sum up total unread messages across all threads (not just count threads)
-  // Use real-time unread count if available, otherwise calculate from display threads
-  const unreadCount = realtimeUnreadCount > 0 ? realtimeUnreadCount : displayThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
-  const starredCount = displayThreads.filter(t => t.starred).length;
+  // Calculate counts for filter badges (use effective threads so optimistic read is reflected)
+  const unreadCount = effectiveDisplayThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
+  const starredCount = effectiveDisplayThreads.filter(t => t.starred).length;
+
+  // Derive mailbox badge counts from Firestore threads when available so badges match the list (single source of truth)
+  const mailboxCountsFromFirestore = useMemo(() => {
+    const categories: InboxFilter[] = ['primary', 'social', 'promotions', 'updates', 'forums', 'spam'];
+    const counts: Partial<Record<InboxFilter, number>> = {};
+    for (const cat of categories) counts[cat] = 0;
+    for (const thread of effectiveDisplayThreads) {
+      const unread = thread.unreadCount || 0;
+      if (unread <= 0) continue;
+      const labels = thread.labels || [];
+      const defaultPrimary = labels.length === 0;
+      if (defaultPrimary) {
+        counts.primary! += unread;
+      } else {
+        for (const label of labels) {
+          if (label in counts) (counts as any)[label] += unread;
+        }
+      }
+    }
+    return counts;
+  }, [effectiveDisplayThreads]);
+
+  // Prefer Firestore-derived badge counts when we have threads; else use Gmail API counts
+  const effectiveMailboxCounts = effectiveDisplayThreads.length > 0 ? mailboxCountsFromFirestore : gmailMailboxCounts;
 
   const handleMessageClick = (log: MessageLog) => {
     setSelectedMessage(log);
@@ -1866,7 +1926,7 @@ const UserInboxPage: React.FC = () => {
               onFilterChange={handleMailboxFilterChange}
               unreadCount={unreadCount}
               starredCount={starredCount}
-              mailboxCounts={gmailMailboxCounts}
+              mailboxCounts={effectiveMailboxCounts}
               showCategories={true}
               orientation="horizontal"
               unreadOnly={showUnreadOnly}
@@ -1919,6 +1979,12 @@ const UserInboxPage: React.FC = () => {
       {syncSuccess && (
         <Alert severity="success" sx={{ mb: 2, mx: 2, flexShrink: 0 }} onClose={() => setSyncSuccess(null)}>
           {syncSuccess}
+        </Alert>
+      )}
+
+      {backgroundSyncMessage && (
+        <Alert severity="info" sx={{ mb: 2, mx: 2, flexShrink: 0 }} onClose={() => setBackgroundSyncMessage(null)}>
+          {backgroundSyncMessage}
         </Alert>
       )}
 
@@ -3362,9 +3428,9 @@ const UserInboxPage: React.FC = () => {
         onThreadUpdated={(threadId, unreadCount) => {
           updateThreadReadStatus(threadId, unreadCount);
         }}
-        allThreadIds={displayThreads.map(t => t.id)}
+        allThreadIds={effectiveDisplayThreads.map(t => t.id)}
         onNavigateToThread={(newThreadId) => {
-          const newThread = displayThreads.find(t => t.id === newThreadId);
+          const newThread = effectiveDisplayThreads.find(t => t.id === newThreadId);
           if (newThread) {
             setSelectedEmailThread(newThread);
             setSelectedEmailThreadId(newThread.id);

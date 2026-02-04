@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { doc, getDoc, onSnapshot, collection, query, where } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
 import {
   Avatar,
   Box,
@@ -307,53 +307,42 @@ const Layout: React.FC = React.memo(function Layout() {
 
   const [agencyLogoUrl, setAgencyLogoUrl] = useState<string | null>(null);
 
-  // Fetch unread email thread count for inbox badge
+  // Real-time inbox unread count for nav badge (updates as messages are read)
   useEffect(() => {
-    if (!user?.uid || !activeTenant?.id || !user?.email) {
+    if (!user?.uid || !activeTenant?.id) {
       setInboxUnreadCount(0);
       return;
     }
 
-    const loadUnreadCount = async () => {
-      try {
-        // Preferred semantics: match Gmail's unread count for Primary only (CATEGORY_PERSONAL)
-        const { functions } = await import('../firebase');
-        const { httpsCallable } = await import('firebase/functions');
-        const getCounts = httpsCallable(functions, 'getGmailMailboxCounts');
-        const result = await getCounts({ userId: user.uid });
-        const data = result.data as any;
-        const primaryUnread = Number(data?.counts?.primary?.threadsUnread || 0);
-        if (data?.success && Number.isFinite(primaryUnread)) {
-          setInboxUnreadCount(primaryUnread > 99 ? 99 : primaryUnread);
-          return;
-        }
-        // Fallback: if callable fails, keep old behavior via REST thread count
-        const API_BASE_URL =
-          process.env.REACT_APP_FUNCTIONS_URL ||
-          'https://us-central1-hrx1-d3beb.cloudfunctions.net';
-        const response = await fetch(
-          `${API_BASE_URL}/listEmailThreadsApi?tenantId=${encodeURIComponent(activeTenant.id)}&userId=${encodeURIComponent(user.uid)}&category=primary&unreadOnly=true&limit=200`
-        );
-        if (response.ok) {
-          const fallback = await response.json().catch(() => ({}));
-          const threadsWithUnread = (fallback.threads || []).filter((t: any) => (t.unreadCount || 0) > 0);
-          setInboxUnreadCount(Math.min(99, threadsWithUnread.length));
-        } else {
+    try {
+      const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
+      const threadsQuery = query(
+        threadsRef,
+        where('participantUserIds', 'array-contains', user.uid),
+        where('status', '==', 'active'),
+        orderBy('lastMessageAt', 'desc'),
+        limit(500)
+      );
+      const unsubscribe = onSnapshot(
+        threadsQuery,
+        (snapshot) => {
+          const total = snapshot.docs.reduce(
+            (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
+            0
+          );
+          setInboxUnreadCount(total > 99 ? 99 : total);
+        },
+        (err) => {
+          console.warn('Inbox unread count listener error:', err);
           setInboxUnreadCount(0);
         }
-      } catch (err) {
-        // Silently fail - badge is not critical
-        console.warn('Failed to load inbox unread count:', err);
-        // Reset to 0 on error to ensure badge doesn't show stale data
-        setInboxUnreadCount(0);
-      }
-    };
-
-    loadUnreadCount();
-    // Refresh every 30 seconds
-    const interval = setInterval(loadUnreadCount, 30000);
-    return () => clearInterval(interval);
-  }, [user?.uid, activeTenant?.id, user?.email]);
+      );
+      return () => unsubscribe();
+    } catch (err) {
+      console.warn('Inbox unread count setup failed:', err);
+      setInboxUnreadCount(0);
+    }
+  }, [user?.uid, activeTenant?.id]);
 
   // Real-time listener for unread internal message count
   useEffect(() => {
