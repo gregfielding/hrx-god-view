@@ -292,27 +292,26 @@ const CompaniesPage: React.FC = () => {
         return;
       }
 
-      // Normal load (no state filter) - default to ascending alphabetical by companyName
+      // Normal load (no state filter). Fetch all docs without orderBy so companies with only "name" (no companyName) are included.
       const companiesRef = collection(db, 'tenants', tenantId, 'crm_companies');
-      
-      // If search query is provided, query the entire collection for matching companies
+      const sortByName = (a: any, b: any) => {
+        const na = (a.companyName || a.name || '').toLowerCase();
+        const nb = (b.companyName || b.name || '').toLowerCase();
+        return na.localeCompare(nb);
+      };
+
+      let allCompanies: any[];
+      if (filterByUser && currentUser?.uid) {
+        const q = query(companiesRef, where('accountOwnerId', '==', currentUser.uid));
+        const snapshot = await getDocs(q);
+        allCompanies = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      } else {
+        const snapshot = await getDocs(companiesRef);
+        allCompanies = snapshot.docs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      }
+
       if (searchQuery && searchQuery.trim()) {
         const searchLower = searchQuery.trim().toLowerCase();
-        const searchUpper = searchQuery.trim().toUpperCase();
-        const searchCapitalized = searchQuery.trim().charAt(0).toUpperCase() + searchQuery.trim().slice(1).toLowerCase();
-        
-        // Query all companies and filter by name (Firestore doesn't support case-insensitive search natively)
-        // We'll fetch all companies and filter client-side, but at least we're querying the full collection
-        let allCompaniesQuery: any = query(companiesRef, orderBy('companyName', 'asc'));
-        
-        if (filterByUser && currentUser?.uid) {
-          allCompaniesQuery = query(allCompaniesQuery, where('accountOwnerId', '==', currentUser.uid));
-        }
-        
-        const allSnapshot = await getDocs(allCompaniesQuery);
-        const allCompanies = allSnapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
-        
-        // Filter by search term (case-insensitive)
         const filtered = allCompanies.filter((company: any) => {
           const companyName = (company.companyName || company.name || '').toLowerCase();
           const companyUrl = (company.companyUrl || company.url || '').toLowerCase();
@@ -320,7 +319,6 @@ const CompaniesPage: React.FC = () => {
           const industry = (company.industry || '').toLowerCase();
           const state = (company.state || '').toLowerCase();
           const headquarters = (company.headquarters || '').toLowerCase();
-          
           return companyName.includes(searchLower) ||
                  companyUrl.includes(searchLower) ||
                  city.includes(searchLower) ||
@@ -328,43 +326,26 @@ const CompaniesPage: React.FC = () => {
                  state.includes(searchLower) ||
                  headquarters.includes(searchLower);
         });
-        
+        filtered.sort(sortByName);
         if (append) {
           setCompanies(prev => [...prev, ...filtered]);
         } else {
           setCompanies(filtered);
-          // Cache search results
           updateCache({ cachedResults: filtered });
         }
-        
-        setCompaniesHasMore(false);
-        setCompaniesLastDoc(null);
       } else {
-        // No search query - load ALL companies for proper pagination
-        // This allows the pagination component to show the correct total count
-        let q: any = query(companiesRef, orderBy('companyName', 'asc'));
-        
-        if (filterByUser && currentUser?.uid) {
-          q = query(q, where('accountOwnerId', '==', currentUser.uid));
-        }
-        
-        const snapshot = await getDocs(q);
-        const newCompanies = snapshot.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) }));
-        
+        allCompanies.sort(sortByName);
         if (append) {
-          setCompanies(prev => [...prev, ...newCompanies]);
+          setCompanies(prev => [...prev, ...allCompanies]);
         } else {
-          setCompanies(newCompanies);
-          // Cache the results (only for non-filtered loads)
+          setCompanies(allCompanies);
           if (!filterByUser && !searchQuery) {
-            updateCache({ cachedResults: newCompanies });
+            updateCache({ cachedResults: allCompanies });
           }
         }
-        
-        // No more pagination needed since we loaded all companies
-        setCompaniesLastDoc(null);
-        setCompaniesHasMore(false);
       }
+      setCompaniesHasMore(false);
+      setCompaniesLastDoc(null);
     } catch (error: any) {
       console.error('Error loading companies:', error);
     } finally {

@@ -2559,10 +2559,11 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
   const renderProposalDraftedForm = () => {
     const data = stageData.proposalDrafted || {};
     const positionRates = data.positionRates || [];
+    const discoveryJobTitles = stageData.discovery?.jobTitles || [];
 
     const addPosition = () => {
       const newPosition = {
-        jobTitle: '',
+        jobTitle: discoveryJobTitles.length > 0 ? discoveryJobTitles[0] : '',
         markupPercent: 0,
         payRate: 0,
         billRate: 0
@@ -2597,6 +2598,11 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           </Button>
         </Box>
 
+        {discoveryJobTitles.length === 0 && (
+          <Alert severity="info" sx={{ mb: 2 }}>
+            Add job titles in the <strong>Discovery</strong> stage to specify positions and pricing here.
+          </Alert>
+        )}
         {positionRates.length === 0 ? (
           <Box sx={{ textAlign: 'center', py: 4, color: 'text.secondary' }}>
             <Typography variant="body2">No positions added yet. Click &quot;Add Position&quot; to get started.</Typography>
@@ -2617,13 +2623,28 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
                 {positionRates.map((position, index) => (
                   <TableRow key={index}>
                     <TableCell>
-                      <TextField
-                        value={position.jobTitle}
-                        onChange={(e) => updatePosition(index, 'jobTitle', e.target.value)}
-                        size="small"
-                        fullWidth
-                        placeholder="e.g., Forklift Driver"
-                      />
+                      {discoveryJobTitles.length > 0 ? (
+                        <FormControl size="small" fullWidth>
+                          <Select
+                            value={position.jobTitle}
+                            onChange={(e) => updatePosition(index, 'jobTitle', e.target.value)}
+                            displayEmpty
+                            renderValue={(v) => v || 'Select job title'}
+                          >
+                            {discoveryJobTitles.map((title) => (
+                              <MenuItem key={title} value={title}>{title}</MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField
+                          value={position.jobTitle}
+                          onChange={(e) => updatePosition(index, 'jobTitle', e.target.value)}
+                          size="small"
+                          fullWidth
+                          placeholder="Add job titles in Discovery first"
+                        />
+                      )}
                     </TableCell>
                     <TableCell align="right">
                       <TextField

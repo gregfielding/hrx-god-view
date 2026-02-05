@@ -413,7 +413,7 @@ const LinkForActivity: React.FC<{ it: LocationActivityItem; tenantId: string; co
     }
   }
   if (!href) {
-    href = `/crm/companies/${companyId}`;
+    href = `/companies/${companyId}`;
     label = 'View Company';
   }
   return (
@@ -997,7 +997,7 @@ const LocationDetails: React.FC = () => {
     try {
       const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
       await deleteDoc(locationRef);
-      navigate(`/crm/companies/${companyId}?tab=1`);
+      navigate(`/companies/${companyId}?tab=1`);
     } catch (err: any) {
       console.error('Error deleting location:', err);
       setError(err.message || 'Failed to delete location');
@@ -1030,18 +1030,18 @@ const LocationDetails: React.FC = () => {
     const sourceTab = currentUrl.searchParams.get('sourceTab');
     
     if (sourceTab) {
-      navigate(`/crm/companies/${companyId}?tab=${sourceTab}`);
+      navigate(`/companies/${companyId}?tab=${sourceTab}`);
       return;
     }
     
     // Fallback: check referrer for tab information
     const referrer = document.referrer;
-    if (referrer.includes('/crm/companies/') && referrer.includes('tab=')) {
+    if (referrer.includes('/companies/') && referrer.includes('tab=')) {
       try {
         const referrerUrl = new URL(referrer);
         const tab = referrerUrl.searchParams.get('tab');
         if (tab) {
-          navigate(`/crm/companies/${companyId}?tab=${tab}`);
+          navigate(`/companies/${companyId}?tab=${tab}`);
           return;
         }
       } catch (err) {
@@ -1050,7 +1050,7 @@ const LocationDetails: React.FC = () => {
     }
     
     // Default to locations tab (tab=1) since this is a location details page
-    navigate(`/crm/companies/${companyId}?tab=1`);
+    navigate(`/companies/${companyId}?tab=1`);
   };
 
   if (loading) {
@@ -1274,7 +1274,7 @@ const LocationDetails: React.FC = () => {
                           cursor: 'pointer',
                           '&:hover': { textDecoration: 'underline' },
                         }}
-                        onClick={() => navigate(`/crm/companies/${companyId}`)}
+                        onClick={() => navigate(`/companies/${companyId}`)}
                       >
                         {company?.companyName || company?.name || 'Company'}
                       </Typography>

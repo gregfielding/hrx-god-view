@@ -797,10 +797,10 @@ const UniversalAssociationsCard: React.FC<UniversalAssociationsCardProps> = ({
   const handleEntityClick = (entity: any, type: string) => {
     switch (type) {
       case 'company':
-        navigate(`/crm/companies/${entity.id}`);
+        navigate(`/companies/${entity.id}`);
         break;
       case 'location':
-        navigate(`/crm/companies/${entity.companyId}/locations/${entity.id}`);
+        navigate(`/companies/${entity.companyId}/locations/${entity.id}`);
         break;
       case 'contact':
         navigate(`/contacts/${entity.id}`);

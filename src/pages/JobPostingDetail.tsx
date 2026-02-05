@@ -303,8 +303,9 @@ const JobPostingDetail: React.FC = () => {
           const jobsBoardService = JobsBoardService.getInstance();
           const shifts = await jobsBoardService.fetchActiveShiftsForJobOrder(
             posting.tenantId,
-            posting.jobOrderId,
-            posting.shiftFilterDays || 30
+            posting.jobOrderId!,
+            posting.shiftFilterDays || 30,
+            posting.positionJobTitle
           );
           console.log('✅ Loaded shifts:', shifts);
           setDynamicShifts(shifts);

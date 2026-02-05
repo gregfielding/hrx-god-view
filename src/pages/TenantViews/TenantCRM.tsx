@@ -1835,6 +1835,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       const { parentCompany, ...rest } = companyForm as any;
       const companyData = {
         ...rest,
+        companyName: companyForm.name || rest.name || '', // Required for /companies search (orderBy companyName)
         tenantId,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -4193,7 +4194,7 @@ const CompaniesTab: React.FC<{
   };
 
   const handleViewCompany = (company: any) => {
-    navigate(`/crm/companies/${company.id}`);
+    navigate(`/companies/${company.id}`);
   };
 
   const handleEditCompany = (company: any) => {

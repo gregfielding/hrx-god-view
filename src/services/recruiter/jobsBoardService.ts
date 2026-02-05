@@ -127,6 +127,8 @@ export interface JobsBoardPost {
   
   // Links
   jobOrderId?: string; // Optional link to job order
+  /** For Gig job orders: links this post to a specific position (job title) */
+  positionJobTitle?: string;
   skills?: string[]; // Required skills for the position
   showSkills?: boolean; // Whether to show skills on public posting
   licensesCerts?: string[]; // Required licenses and certifications
@@ -228,6 +230,8 @@ export interface CreatePostData {
   
   // Links
   jobOrderId?: string;
+  /** For Gig job orders: link this post to a specific position (job title) */
+  positionJobTitle?: string;
   autoAddToUserGroups?: string[];
   autoAddToUserGroup?: string; // Legacy single value support
   
@@ -379,11 +383,13 @@ export class JobsBoardService {
    * @param tenantId Tenant ID
    * @param jobOrderId Job Order ID
    * @param filterDays Number of days in future to include (default: 30)
+   * @param positionJobTitle When set (Gig per-position posts), only shifts with matching defaultJobTitle
    */
   async fetchActiveShiftsForJobOrder(
     tenantId: string, 
     jobOrderId: string, 
-    filterDays = 30
+    filterDays = 30,
+    positionJobTitle?: string
   ): Promise<JobBoardShift[]> {
     try {
       // Fetch job order to get gigPositions for pay rate lookup
@@ -459,6 +465,8 @@ export class JobsBoardService {
       });
 
       const shifts = shiftsRaw
+        // For Gig per-position posts: only include shifts for this position
+        .filter((shift) => !positionJobTitle || shift.defaultJobTitle === positionJobTitle)
         // Multi-day aware overlap filter: include if the shift range overlaps [todayISO, cutoffISO]
         .filter((shift) => {
           const start = (shift.shiftDate || '').toString();
@@ -533,18 +541,22 @@ export class JobsBoardService {
         visibility = 'restricted';
       }
       
-      // For Gig jobs, check if gigPositions exist and use first position's job title and pay rate
+      // For Gig jobs, check if gigPositions exist and use first position's job title and pay rate (or customData for per-position)
       const gigPositions = (jobOrder as any).gigPositions as Array<{jobTitle: string; payRate: string; workersNeeded?: number}> | undefined;
       const isGigJob = jobType === 'gig';
       const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
-      
-      // Use job title and pay rate from first position if available, otherwise fall back to job order fields
-      const jobTitle = customData?.jobTitle || (isGigJob && firstPosition ? firstPosition.jobTitle : jobOrder.jobTitle);
-      const payRate = customData?.payRate !== undefined 
-        ? customData.payRate 
-        : (isGigJob && firstPosition && firstPosition.payRate 
-          ? parseFloat(firstPosition.payRate) || undefined 
-          : (jobOrder.showPayRate ? jobOrder.payRate : undefined));
+      const positionJobTitle = customData?.positionJobTitle;
+      const positionForTitle = positionJobTitle && gigPositions ? gigPositions.find(p => p.jobTitle === positionJobTitle) : null;
+
+      // Use job title and pay rate from customData (per-position), first position, or job order fields
+      const jobTitle = customData?.jobTitle ?? (positionForTitle ? positionForTitle.jobTitle : (isGigJob && firstPosition ? firstPosition.jobTitle : jobOrder.jobTitle));
+      const payRate = customData?.payRate !== undefined
+        ? customData.payRate
+        : (positionForTitle && positionForTitle.payRate
+          ? parseFloat(positionForTitle.payRate) || undefined
+          : (isGigJob && firstPosition && firstPosition.payRate
+            ? parseFloat(firstPosition.payRate) || undefined
+            : (jobOrder.showPayRate ? jobOrder.payRate : undefined)));
       const autoAddGroups = normalizeAutoAddGroups(
         customData?.autoAddToUserGroups ?? customData?.autoAddToUserGroup
       );
@@ -599,6 +611,7 @@ export class JobsBoardService {
         
         // Links
         jobOrderId,
+        ...(positionJobTitle ? { positionJobTitle } : {}),
         autoAddToUserGroups: autoAddGroups,
         ...(autoAddGroups.length === 1 ? { autoAddToUserGroup: autoAddGroups[0] } : {}),
         
@@ -632,10 +645,10 @@ export class JobsBoardService {
         updatedAt: new Date()
       };
 
-      // For Gig jobs with dynamic shifts, fetch and set nextShiftDate
+      // For Gig jobs with dynamic shifts, fetch and set nextShiftDate (filter by position when per-position post)
       if (usesDynamicShifts && jobOrderId) {
         try {
-          const shifts = await this.fetchActiveShiftsForJobOrder(tenantId, jobOrderId, 30);
+          const shifts = await this.fetchActiveShiftsForJobOrder(tenantId, jobOrderId, 30, positionJobTitle);
           if (shifts.length > 0) {
             postData.nextShiftDate = new Date(shifts[0].shiftDate);
           }
@@ -650,6 +663,30 @@ export class JobsBoardService {
       console.error('Error creating jobs board post:', error);
       throw error;
     }
+  }
+
+  /**
+   * Create one jobs board post per gig position for a Gig job order.
+   * Call when opening Jobs Board tab for a Gig with no existing postings, or when activating all positions.
+   */
+  async createPostsForGigJobOrderPositions(tenantId: string, jobOrderId: string, createdBy: string): Promise<string[]> {
+    const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+    const jobOrderDoc = await getDoc(jobOrderRef);
+    if (!jobOrderDoc.exists()) throw new Error('Job Order not found');
+    const jobOrder = { id: jobOrderDoc.id, ...jobOrderDoc.data() } as JobOrder;
+    const jobType = (jobOrder as any).jobType || 'gig';
+    const gigPositions = (jobOrder as any).gigPositions as Array<{ jobTitle: string; payRate: string; workersNeeded?: number }> | undefined;
+    if (jobType !== 'gig' || !gigPositions?.length) return [];
+    const ids: string[] = [];
+    for (const position of gigPositions) {
+      const id = await this.createPostFromJobOrder(tenantId, jobOrderId, createdBy, {
+        positionJobTitle: position.jobTitle,
+        jobTitle: position.jobTitle,
+        payRate: position.payRate ? parseFloat(position.payRate) || undefined : undefined,
+      });
+      ids.push(id);
+    }
+    return ids;
   }
 
   // Create a standalone jobs board post
@@ -733,6 +770,7 @@ export class JobsBoardService {
         
         // Links
         ...(postData.jobOrderId && { jobOrderId: postData.jobOrderId }),
+        ...(postData.positionJobTitle && { positionJobTitle: postData.positionJobTitle }),
         skills: postData.skills || [],
         ...(postData.showSkills !== undefined && { showSkills: postData.showSkills }),
         ...(postData.licensesCerts && { licensesCerts: postData.licensesCerts }),
@@ -906,17 +944,20 @@ export class JobsBoardService {
     }
   }
 
-  // Get posts by job order
-  async getPostsByJobOrder(tenantId: string, jobOrderId: string): Promise<JobsBoardPost[]> {
+  // Get posts by job order; optionally filter to the post for a specific position (Gig per-position posts)
+  async getPostsByJobOrder(tenantId: string, jobOrderId: string, positionJobTitle?: string): Promise<JobsBoardPost[]> {
     try {
       const q = query(
         collection(db, 'tenants', tenantId, 'job_postings'),
         where('jobOrderId', '==', jobOrderId),
         orderBy('createdAt', 'desc')
       );
-      
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      let posts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      if (positionJobTitle != null) {
+        posts = posts.filter((p) => p.positionJobTitle === positionJobTitle);
+      }
+      return posts;
     } catch (error) {
       console.error('Error getting posts by job order:', error);
       throw error;

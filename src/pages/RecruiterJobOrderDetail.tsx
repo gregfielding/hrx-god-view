@@ -39,7 +39,9 @@ import {
   Autocomplete,
   Checkbox,
   FormControlLabel,
-  Snackbar
+  Snackbar,
+  Tabs,
+  Tab
 } from '@mui/material';
 import {
   MoreVert as MoreVertIcon,
@@ -1545,7 +1547,9 @@ const JobOrderDefaultsTab: React.FC<{
   );
 };
 
-// Job Order Jobs Board Tab - uses JobPostForm with job order data pre-populated
+type GigPosition = { jobTitle: string; payRate: string; workersNeeded?: number };
+
+// Job Order Jobs Board Tab - uses JobPostForm with job order data pre-populated; Gig jobs get one sub-tab per position
 const JobOrderJobsBoardTab: React.FC<{
   jobOrder: JobOrder;
   tenantId: string;
@@ -1553,9 +1557,14 @@ const JobOrderJobsBoardTab: React.FC<{
   onPostSaved?: () => void;
 }> = ({ jobOrder, tenantId, userId, onPostSaved }) => {
   const [loading, setLoading] = useState(false);
-  const [existingPost, setExistingPost] = useState<JobsBoardPost | null>(null);
+  const [posts, setPosts] = useState<JobsBoardPost[]>([]);
+  const [jobsBoardSubTab, setJobsBoardSubTab] = useState(0);
+  const [copyLinkSnackbarOpen, setCopyLinkSnackbarOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const jobsBoardService = JobsBoardService.getInstance();
+
+  const gigPositions = (jobOrder as any).gigPositions as GigPosition[] | undefined;
+  const isGigWithPositions = jobOrder?.jobType === 'gig' && gigPositions && gigPositions.length > 0;
 
   // Format date for input
   const formatDateForInput = (dateValue: any): string => {
@@ -1580,48 +1589,45 @@ const JobOrderJobsBoardTab: React.FC<{
     }
   };
 
-  // Load existing connected post
-  useEffect(() => {
-    const loadExistingPost = async () => {
-      if (!jobOrder?.id) return;
-      try {
-        const posts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
-        if (posts.length > 0) {
-          setExistingPost(posts[0]); // Use first connected post
-        }
-      } catch (err) {
-        console.error('Error loading existing post:', err);
+  // Load connected posts; for Gig with positions and no posts, create one draft post per position
+  const loadPosts = useCallback(async () => {
+    if (!jobOrder?.id) return;
+    try {
+      let list = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
+      if (isGigWithPositions && list.length === 0 && userId) {
+        await jobsBoardService.createPostsForGigJobOrderPositions(tenantId, jobOrder.id, userId);
+        list = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrder.id);
       }
-    };
-    loadExistingPost();
-  }, [jobOrder?.id, tenantId]);
+      setPosts(list);
+    } catch (err) {
+      console.error('Error loading job posts:', err);
+    }
+  }, [jobOrder?.id, tenantId, userId, isGigWithPositions]);
 
-  // Convert job order data to JobPostForm initialData format
-  const getInitialData = (): any => {
-    if (existingPost) {
-      // If editing existing post, use its data
+  useEffect(() => {
+    loadPosts();
+  }, [loadPosts]);
+
+  // Convert job order data to JobPostForm initialData format (optionally for a specific Gig position)
+  const getInitialData = (existingPostForForm: JobsBoardPost | null | undefined, position: GigPosition | null | undefined): any => {
+    if (existingPostForForm) {
       return {
-        ...existingPost,
-        startDate: formatDateForInput(existingPost.startDate),
-        endDate: formatDateForInput(existingPost.endDate),
-        expDate: formatDateForInput(existingPost.expDate),
-        payRate: existingPost.payRate?.toString() || '',
-        showWorkersNeeded: existingPost.showWorkersNeeded !== undefined ? existingPost.showWorkersNeeded : false,
-        // Ensure skills is an array
-        skills: Array.isArray(existingPost.skills) ? existingPost.skills : (existingPost.skills ? [existingPost.skills] : []),
-        // Ensure uniform requirements are arrays
-        uniformRequirements: Array.isArray(existingPost.uniformRequirements) ? existingPost.uniformRequirements : (existingPost.uniformRequirements ? [existingPost.uniformRequirements] : []),
+        ...existingPostForForm,
+        startDate: formatDateForInput(existingPostForForm.startDate),
+        endDate: formatDateForInput(existingPostForForm.endDate),
+        expDate: formatDateForInput(existingPostForForm.expDate),
+        payRate: existingPostForForm.payRate?.toString() || '',
+        showWorkersNeeded: existingPostForForm.showWorkersNeeded !== undefined ? existingPostForForm.showWorkersNeeded : false,
+        skills: Array.isArray(existingPostForForm.skills) ? existingPostForForm.skills : (existingPostForForm.skills ? [existingPostForForm.skills] : []),
+        uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
       };
     }
 
-    // Otherwise, pre-populate from job order
     const scoping = jobOrder?.deal?.stageData?.scoping || {};
     const compliance = scoping.compliance || {};
-    
-    // For Gig jobs, check if gigPositions exist
-    const gigPositions = (jobOrder as any).gigPositions as Array<{jobTitle: string; payRate: string; workersNeeded?: number}> | undefined;
     const isGigJob = jobOrder.jobType === 'gig';
     const firstPosition = gigPositions && gigPositions.length > 0 ? gigPositions[0] : null;
+    const positionForPrefill = position ?? firstPosition;
 
     // Combine requiredLicenses and requiredCertifications
     // Check both top-level and scoping structure, deduplicated
@@ -1652,7 +1658,7 @@ const JobOrderJobsBoardTab: React.FC<{
       jobOrderId: jobOrder.id,
       postTitle: jobOrder.jobOrderName || '',
       jobType: jobOrder.jobType || 'career',
-      jobTitle: isGigJob && firstPosition ? firstPosition.jobTitle : jobOrder.jobTitle || '',
+      jobTitle: isGigJob && positionForPrefill ? positionForPrefill.jobTitle : jobOrder.jobTitle || '',
       jobDescription: jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
       companyId: jobOrder.companyId || '',
       companyName: jobOrder.companyName || '',
@@ -1666,9 +1672,10 @@ const JobOrderJobsBoardTab: React.FC<{
       },
       startDate: formatDateForInput(jobOrder.startDate),
       endDate: formatDateForInput(jobOrder.endDate),
-      payRate: isGigJob && firstPosition && firstPosition.payRate 
-        ? firstPosition.payRate 
+      payRate: isGigJob && positionForPrefill && positionForPrefill.payRate
+        ? positionForPrefill.payRate
         : jobOrder.payRate?.toString() || '',
+      ...(positionForPrefill && { positionJobTitle: positionForPrefill.jobTitle }),
       workersNeeded: jobOrder.workersNeeded || 1,
       eVerifyRequired: compliance.eVerify === true || (jobOrder as any).eVerifyRequired || false,
       // Background check packages from scoping (preferred) or top-level, deduplicated
@@ -1780,25 +1787,33 @@ const JobOrderJobsBoardTab: React.FC<{
     };
   };
 
-  const handleSave = async (data: Partial<JobsBoardPost>) => {
+  const handleSave = async (
+    data: Partial<JobsBoardPost>,
+    existingPostForForm: JobsBoardPost | null | undefined,
+    position: GigPosition | null | undefined
+  ) => {
     setLoading(true);
     setError(null);
-
     try {
-      if (existingPost) {
-        // Update existing post
-        await jobsBoardService.updatePost(tenantId, existingPost.id, {
+      if (existingPostForForm) {
+        await jobsBoardService.updatePost(tenantId, existingPostForForm.id, {
           ...data,
-          jobOrderId: jobOrder.id, // Ensure connection is maintained
+          jobOrderId: jobOrder.id,
+        });
+      } else if (isGigWithPositions && position) {
+        await jobsBoardService.createPostFromJobOrder(tenantId, jobOrder.id, userId, {
+          positionJobTitle: position.jobTitle,
+          jobTitle: position.jobTitle,
+          payRate: position.payRate ? parseFloat(position.payRate) || undefined : undefined,
+          ...data,
         });
       } else {
-        // Create new post
         await jobsBoardService.createPost(tenantId, {
           ...data,
           jobOrderId: jobOrder.id,
         } as any, userId);
       }
-      
+      loadPosts();
       onPostSaved?.();
     } catch (err: any) {
       console.error('Error saving job post:', err);
@@ -1808,15 +1823,21 @@ const JobOrderJobsBoardTab: React.FC<{
     }
   };
 
-  const handleCancel = () => {
-    // No-op for now, could navigate away or reset form
-  };
+  const handleCancel = () => {};
 
-  // Memoize initial data to avoid recalculating on every render
-  const initialData = React.useMemo(() => {
-    const data = getInitialData();
-    return data;
-  }, [existingPost, jobOrder]);
+  const existingPostSingle = !isGigWithPositions ? (posts[0] ?? null) : null;
+
+  const postForCopy = isGigWithPositions && gigPositions?.length
+    ? posts.find((p) => p.positionJobTitle === gigPositions[jobsBoardSubTab]?.jobTitle) ?? null
+    : posts[0] ?? null;
+  const copyUrl = postForCopy ? `${window.location.origin}/c1/jobs-board/${postForCopy.id}` : null;
+
+  const handleCopyLink = () => {
+    if (copyUrl) {
+      navigator.clipboard.writeText(copyUrl);
+      setCopyLinkSnackbarOpen(true);
+    }
+  };
 
   return (
     <Box>
@@ -1825,19 +1846,87 @@ const JobOrderJobsBoardTab: React.FC<{
           {error}
         </Alert>
       )}
-      <Card sx={{ bgcolor: 'background.paper' }}>
-        <CardContent>
-      <JobPostForm
-        initialData={initialData}
-        onSave={handleSave}
-        onCancel={handleCancel}
-        loading={loading}
-        mode={existingPost ? 'edit' : 'create'}
-        hideJobOrderConnection={true}
-        jobOrderData={jobOrder}
-      />
-        </CardContent>
-      </Card>
+      {isGigWithPositions ? (
+        <>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: 1, borderColor: 'divider', mb: 2 }}>
+            <Tabs value={jobsBoardSubTab} onChange={(_, v) => setJobsBoardSubTab(v)}>
+              {(gigPositions ?? []).map((pos, idx) => (
+                <Tab key={pos.jobTitle} label={pos.jobTitle} id={`jobs-board-tab-${idx}`} aria-controls={`jobs-board-tabpanel-${idx}`} />
+              ))}
+            </Tabs>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<ContentCopyIcon />}
+              onClick={handleCopyLink}
+              disabled={!copyUrl}
+              sx={{ textTransform: 'none', borderRadius: '24px', height: '36px', px: 2, whiteSpace: 'nowrap', flexShrink: 0 }}
+            >
+              Copy Jobs Board Link
+            </Button>
+          </Box>
+          {(gigPositions ?? []).map((position, idx) => {
+            const existingPostForPosition = posts.find((p) => p.positionJobTitle === position.jobTitle) ?? null;
+            return (
+              <div key={position.jobTitle} role="tabpanel" hidden={jobsBoardSubTab !== idx} id={`jobs-board-tabpanel-${idx}`} aria-labelledby={`jobs-board-tab-${idx}`}>
+                {jobsBoardSubTab === idx && (
+                  <Card sx={{ bgcolor: 'background.paper' }}>
+                    <CardContent>
+                      <JobPostForm
+                        initialData={getInitialData(existingPostForPosition, position)}
+                        onSave={(data) => handleSave(data, existingPostForPosition, position)}
+                        onCancel={handleCancel}
+                        loading={loading}
+                        mode={existingPostForPosition ? 'edit' : 'create'}
+                        hideJobOrderConnection={true}
+                        jobOrderData={jobOrder}
+                      />
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            );
+          })}
+        </>
+      ) : (
+        <>
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<ContentCopyIcon />}
+              onClick={handleCopyLink}
+              disabled={!copyUrl}
+              sx={{ textTransform: 'none', borderRadius: '24px', height: '36px', px: 2, whiteSpace: 'nowrap' }}
+            >
+              Copy Jobs Board Link
+            </Button>
+          </Box>
+          <Card sx={{ bgcolor: 'background.paper' }}>
+            <CardContent>
+              <JobPostForm
+                initialData={getInitialData(existingPostSingle, null)}
+                onSave={(data) => handleSave(data, existingPostSingle, null)}
+                onCancel={handleCancel}
+                loading={loading}
+                mode={existingPostSingle ? 'edit' : 'create'}
+                hideJobOrderConnection={true}
+                jobOrderData={jobOrder}
+              />
+            </CardContent>
+          </Card>
+        </>
+      )}
+      <Snackbar
+        open={copyLinkSnackbarOpen}
+        autoHideDuration={3000}
+        onClose={() => setCopyLinkSnackbarOpen(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert onClose={() => setCopyLinkSnackbarOpen(false)} severity="success" sx={{ width: '100%' }}>
+          Link copied to clipboard.
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };
@@ -2557,9 +2646,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   };
 
-  const activeJobPost = connectedJobPosts.find((post) => post.status === 'active');
-  const shareUrl = activeJobPost ? `${window.location.origin}/c1/jobs-board/${activeJobPost.id}` : null;
-
   const displayCompanyName =
     jobOrder.companyName || company?.companyName || company?.name || 'Company';
   const companyInitial = String(displayCompanyName || 'C').trim().charAt(0).toUpperCase();
@@ -2959,26 +3045,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
             >
               Back
             </Button>
-
-            {shareUrl && (
-                        <Button
-                          variant="outlined"
-                          startIcon={<ContentCopyIcon />}
-                          onClick={() => {
-                  navigator.clipboard.writeText(shareUrl);
-                            setShareSnackbarOpen(true);
-                          }}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  height: '40px',
-                  px: 2,
-                  whiteSpace: 'nowrap',
-                          }}
-                        >
-                          Share
-                        </Button>
-                )}
               </Box>
             } 
           />

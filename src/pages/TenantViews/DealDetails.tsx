@@ -1788,7 +1788,7 @@ const DealDetails: React.FC = () => {
               variant="outlined"
               size="small"
               onClick={() => {
-                if (company) navigate(`/crm/companies/${company.id}`);
+                if (company) navigate(`/companies/${company.id}`);
               }}
               sx={{
                 minWidth: 'auto',
@@ -1814,13 +1814,13 @@ const DealDetails: React.FC = () => {
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/crm/companies/${company.id}`)}
+                onClick={() => navigate(`/companies/${company.id}`)}
                 role="button"
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault();
-                    navigate(`/crm/companies/${company.id}`);
+                    navigate(`/companies/${company.id}`);
                   }
                 }}
               >
@@ -2048,7 +2048,7 @@ const DealDetails: React.FC = () => {
                       }}
                       onClick={() => {
                         if (company && locationId) {
-                          navigate(`/crm/companies/${company.id}/locations/${locationId}`);
+                          navigate(`/companies/${company.id}/locations/${locationId}`);
                         }
                       }}
                       role="button"
@@ -2057,7 +2057,7 @@ const DealDetails: React.FC = () => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
                           if (company && locationId) {
-                            navigate(`/crm/companies/${company.id}/locations/${locationId}`);
+                            navigate(`/companies/${company.id}/locations/${locationId}`);
                           }
                         }
                       }}
@@ -2257,7 +2257,7 @@ const DealDetails: React.FC = () => {
                           cursor: 'pointer',
                           '&:hover': { textDecoration: 'underline' },
                         }}
-                        onClick={() => navigate(`/crm/companies/${company.id}`)}
+                        onClick={() => navigate(`/companies/${company.id}`)}
                       >
                         {company.companyName || company.name}
                       </Typography>
@@ -2286,7 +2286,7 @@ const DealDetails: React.FC = () => {
                             cursor: 'pointer',
                             '&:hover': { textDecoration: 'underline' },
                           }}
-                          onClick={() => navigate(`/crm/companies/${company.id}/locations/${locationId}`)}
+                          onClick={() => navigate(`/companies/${company.id}/locations/${locationId}`)}
                         >
                           {displayName}
                         </Typography>

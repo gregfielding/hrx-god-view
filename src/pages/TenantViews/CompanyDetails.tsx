@@ -2603,7 +2603,7 @@ const LinkForActivity: React.FC<{ it: CompanyActivityItem; tenantId: string }> =
     }
   }
   if (!href) {
-    href = `/crm/companies/${(it as any).companyId || ''}`;
+    href = `/companies/${(it as any).companyId || ''}`;
     label = 'View Company';
   }
   return (
@@ -2703,10 +2703,10 @@ const RelatedCompanyRow: React.FC<{ tenantId: string; relation: 'parent' | 'chil
   return (
     <Box
       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-      onClick={() => navigate(`/crm/companies/${actualCompanyId}`)}
+      onClick={() => navigate(`/companies/${actualCompanyId}`)}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/crm/companies/${actualCompanyId}`); } }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/companies/${actualCompanyId}`); } }}
     >
       <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>
         <CompanyAvatar tenantId={tenantId} companyId={actualCompanyId} />
@@ -5392,7 +5392,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[
 
   // Handle location details view
   const handleViewLocation = (location: any) => {
-    navigate(`/crm/companies/${company.id}/locations/${location.id}?sourceTab=${currentTab}`);
+    navigate(`/companies/${company.id}/locations/${location.id}?sourceTab=${currentTab}`);
   };
 
 

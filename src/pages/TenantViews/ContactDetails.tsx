@@ -2149,7 +2149,7 @@ const ContactDetails: React.FC = () => {
                         }}
                         onClick={() => {
                           const id = company?.id || contact.companyId;
-                          if (id) navigate(`/crm/companies/${id}`);
+                          if (id) navigate(`/companies/${id}`);
                         }}
                       >
                         {company?.companyName || company?.name || contact.companyName || 'Company'}
@@ -2178,7 +2178,7 @@ const ContactDetails: React.FC = () => {
                                   '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
                                 }}
                                 onClick={() => {
-                                  if (company?.id) navigate(`/crm/companies/${company.id}/locations/${loc.id}`);
+                                  if (company?.id) navigate(`/companies/${company.id}/locations/${loc.id}`);
                                 }}
                               >
                                 {displayText}
@@ -2393,7 +2393,7 @@ const ContactDetails: React.FC = () => {
             <Button
               variant="outlined"
               startIcon={<ArrowBackIcon />}
-              onClick={() => navigate(company ? `/crm/companies/${company.id}?tab=2` : '/contacts')}
+              onClick={() => navigate(company ? `/companies/${company.id}?tab=2` : '/contacts')}
             >
               Back
             </Button>
@@ -3434,10 +3434,10 @@ const ContactDetails: React.FC = () => {
                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
                                     {contact.companyId ? (
                                       <MUILink
-                                        href={`/crm/companies/${contact.companyId}`}
+                                        href={`/companies/${contact.companyId}`}
                                         onClick={(e) => {
                                           e.preventDefault();
-                                          navigate(`/crm/companies/${contact.companyId}`);
+                                          navigate(`/companies/${contact.companyId}`);
                                         }}
                                         color="primary"
                                         underline="hover"

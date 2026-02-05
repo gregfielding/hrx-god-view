@@ -1113,7 +1113,8 @@ const PublicJobsBoard: React.FC = () => {
         const shifts = await jobsBoardService.fetchActiveShiftsForJobOrder(
           selectedJob.tenantId,
           (selectedJob as any).jobOrderId,
-          30
+          30,
+          (selectedJob as any).positionJobTitle
         );
         setSelectedJobShifts(shifts);
       } catch (err) {
