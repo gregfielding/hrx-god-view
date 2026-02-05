@@ -97,6 +97,7 @@ export const p = {
   config: (tid: string) => `tenants/${tid}/settings/config`,
   main: (tid: string) => `tenants/${tid}/settings/main`,
   flex: (tid: string) => `tenants/${tid}/settings/flex`,
+  smartGroups: (tid: string) => `tenants/${tid}/settings/smartGroups`,
 
   /**
    * Monitoring and events (for auditing)

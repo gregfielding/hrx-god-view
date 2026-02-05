@@ -33,7 +33,27 @@ import FavoriteButton from '../../../components/FavoriteButton';
 import FavoritesFilter from '../../../components/FavoritesFilter';
 import { useFavorites } from '../../../hooks/useFavorites';
 
-const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
+export interface UserGroupsTabProps {
+  tenantId: string;
+  hideHeader?: boolean;
+  layoutSearch?: string;
+  layoutSetSearch?: (value: string) => void;
+  layoutShowFavoritesOnly?: boolean;
+  layoutSetShowFavoritesOnly?: (value: boolean) => void;
+  layoutOpenCreateForm?: boolean;
+  layoutSetOpenCreateForm?: (value: boolean) => void;
+}
+
+const UserGroupsTab: React.FC<UserGroupsTabProps> = ({
+  tenantId,
+  hideHeader = false,
+  layoutSearch,
+  layoutSetSearch,
+  layoutShowFavoritesOnly,
+  layoutSetShowFavoritesOnly,
+  layoutOpenCreateForm,
+  layoutSetOpenCreateForm,
+}) => {
   const [form, setForm] = useState({ title: '', description: '' });
   const [groups, setGroups] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -43,23 +63,36 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const [showForm, setShowForm] = useState(false);
   const [agencyUsers, setAgencyUsers] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [localSearchTerm, setLocalSearchTerm] = useState('');
+  const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  
+
+  const searchTerm = hideHeader && layoutSearch !== undefined ? layoutSearch : localSearchTerm;
+  const setSearchTerm = hideHeader && layoutSetSearch ? layoutSetSearch : setLocalSearchTerm;
+  const showFavoritesOnly = hideHeader && layoutShowFavoritesOnly !== undefined ? layoutShowFavoritesOnly : localShowFavoritesOnly;
+  const setShowFavoritesOnly = hideHeader && layoutSetShowFavoritesOnly ? layoutSetShowFavoritesOnly : (v: boolean) => setLocalShowFavoritesOnly(v);
+
   // Refs for sticky positioning
   const contentRef = useRef<HTMLDivElement | null>(null);
-  
+
+  // When layout requests open create form (header Create button), open dialog and clear the flag
+  useEffect(() => {
+    if (hideHeader && layoutOpenCreateForm && layoutSetOpenCreateForm) {
+      setShowForm(true);
+      layoutSetOpenCreateForm(false);
+    }
+  }, [hideHeader, layoutOpenCreateForm, layoutSetOpenCreateForm]);
+
   // Check if we're accessing from the recruiter module
   const isFromRecruiter = location.pathname.includes('/recruiter/user-groups');
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('userGroups');
-  
+
   const handleSearchChange = (value: string) => {
     setSearchTerm(value);
   };
-  
+
   const handleFavoritesToggle = () => {
     setShowFavoritesOnly(!showFavoritesOnly);
   };
@@ -195,73 +228,71 @@ const UserGroupsTab: React.FC<{ tenantId: string }> = ({ tenantId }) => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
-            <Typography
-              variant="h6"
-              sx={{
-                fontSize: { xs: '20px', md: '24px' },
-                fontWeight: 600,
-                lineHeight: 1.2,
-              }}
-            >
-              User Groups
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-              <InboxSearchBar
-                value={searchTerm}
-                onChange={handleSearchChange}
-                onSearch={handleSearchChange}
-                placeholder="Search groups..."
-              />
-              
-              {/* Favorites filter */}
-              <FavoritesFilter
-                favoriteType="userGroups"
-                showFavoritesOnly={showFavoritesOnly}
-                onToggle={handleFavoritesToggle}
-                showText={false}
-                size="small"
+      {!hideHeader && (
+        <PageHeader
+          title={
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+              <Typography
+                variant="h6"
                 sx={{
-                  minWidth: '32px',
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  '&:hover': {
-                    backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                  },
-                }}
-              />
-              
-              <Button
-                variant="contained"
-                startIcon={<AddIcon />}
-                onClick={() => setShowForm(true)}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '24px',
-                  px: 2.5,
-                  py: 1,
-                  height: '40px',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#0057B8',
-                  boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                  '&:hover': {
-                    bgcolor: '#004a9f',
-                    boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                  },
-                  whiteSpace: 'nowrap',
+                  fontSize: { xs: '20px', md: '24px' },
+                  fontWeight: 600,
+                  lineHeight: 1.2,
                 }}
               >
-                Create New Group
-              </Button>
+                User Groups
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+                <InboxSearchBar
+                  value={searchTerm}
+                  onChange={handleSearchChange}
+                  onSearch={handleSearchChange}
+                  placeholder="Search groups..."
+                />
+                <FavoritesFilter
+                  favoriteType="userGroups"
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={handleFavoritesToggle}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                />
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setShowForm(true)}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '24px',
+                    px: 2.5,
+                    py: 1,
+                    height: '40px',
+                    fontWeight: 500,
+                    fontSize: '14px',
+                    bgcolor: '#0057B8',
+                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                    '&:hover': {
+                      bgcolor: '#004a9f',
+                      boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                    },
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Create New Group
+                </Button>
+              </Box>
             </Box>
-          </Box>
-        }
-      />
-      
+          }
+        />
+      )}
       <Box
         ref={contentRef}
         sx={{

@@ -150,6 +150,8 @@ export interface UserProfile {
   activeTenantId?: string;
   tenantIds?: string[] | { [tenantId: string]: any };
   userGroupIds?: string[];
+  /** Smart Groups: geographic and industry dimensions from application events (separate from User Groups) */
+  smartGroupData?: import('../services/smartGroupService').SmartGroupData;
   addressInfo?: any;
   certifications?: any[];
   skills?: any[];

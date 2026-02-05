@@ -37,6 +37,7 @@ import { formatDistanceToNow } from 'date-fns';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
+import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -648,6 +649,13 @@ const JobPostingDetail: React.FC = () => {
         withdrawnAt: new Date(),
         withdrawnBy: user?.uid || null,
       });
+      if (user?.uid) {
+        try {
+          await updateUserSmartGroupOnWithdraw(user.uid, resolvedTenantId, applicationDocId);
+        } catch (sgErr) {
+          console.warn('Smart Groups: failed to update on withdraw', sgErr);
+        }
+      }
       setApplicationStatus('withdrawn');
     } catch (err) {
       console.error('Failed to cancel application:', err);

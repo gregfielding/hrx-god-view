@@ -6,15 +6,17 @@ import EmailIcon from '@mui/icons-material/Email';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ChatIcon from '@mui/icons-material/Chat';
 import PeopleIcon from '@mui/icons-material/People';
+import GroupWorkIcon from '@mui/icons-material/GroupWork';
 import PageHeader from '../../components/PageHeader';
 import CompanySetup from './CompanySetup';
 import MessagingTab from './MessagingTab';
 import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
 import WorkforceManagement from './WorkforceManagement';
+import SmartGroupsSettings from './SmartGroupsSettings';
 import { useAuth } from '../../contexts/AuthContext';
 
-type SettingsTab = 'company-setup' | 'messaging' | 'senders' | 'slack' | 'workforce';
+type SettingsTab = 'company-setup' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups';
 
 const SettingsLanding: React.FC = () => {
   const { tenantId } = useAuth();
@@ -46,6 +48,11 @@ const SettingsLanding: React.FC = () => {
       title: 'Workforce Management',
       icon: <PeopleIcon sx={{ fontSize: 20 }} />,
     },
+    {
+      id: 'smart-groups' as SettingsTab,
+      title: 'Smart Groups',
+      icon: <GroupWorkIcon sx={{ fontSize: 20 }} />,
+    },
   ];
 
   const renderTabContent = () => {
@@ -60,6 +67,8 @@ const SettingsLanding: React.FC = () => {
         return <SlackAdminPage />;
       case 'workforce':
         return <WorkforceManagement />;
+      case 'smart-groups':
+        return tenantId ? <SmartGroupsSettings tenantId={tenantId} /> : null;
       default:
         return <CompanySetup />;
     }

@@ -127,6 +127,7 @@ import LogActivityDialog from '../components/LogActivityDialog';
 import DealAgeChip from '../components/DealAgeChip';
 import HealthBadge from '../components/HealthBadge';
 import { calculateDealHealth, calculateDealAge } from '../utils/dealHealthCalculator';
+import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import PageHeader from '../components/PageHeader';
@@ -2480,6 +2481,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
       
       const addedLocation = { id: docRef.id, ...locationData };
       setLocations(prev => [...prev, addedLocation]);
+      ensureCityInSmartGroups(tenantId, newLocation.city || '', newLocation.state || '').catch(() => {});
       
       setNewLocation({
         name: '',

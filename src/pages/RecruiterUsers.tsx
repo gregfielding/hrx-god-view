@@ -90,7 +90,12 @@ interface TenantUserGroup {
   description?: string;
 }
 
-const RecruiterUsers: React.FC = () => {
+export interface RecruiterUsersProps {
+  hideHeader?: boolean;
+  scope?: 'all' | 'my';
+}
+
+const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, scope: scopeProp }) => {
   const navigate = useNavigate();
   const { activeTenant, user } = useAuth();
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
@@ -145,6 +150,10 @@ const RecruiterUsers: React.FC = () => {
   const [usersScope, setUsersScope] = useState<'all' | 'my'>(
     cacheState.usersScope === 'my' ? 'my' : 'all'
   );
+
+  // When embedded in UsersLayout, scope comes from route (prop); otherwise use local tab state
+  const effectiveScope = scopeProp !== undefined ? scopeProp : usersScope;
+  const showAllMyTabs = scopeProp === undefined;
   
   // Pagination state
   const [lastVisibleDoc, setLastVisibleDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -179,12 +188,12 @@ const RecruiterUsers: React.FC = () => {
     setLastVisibleDoc(null);
     setHasMore(true);
     loadUsers(activeTenant.id, true);
-  }, [activeTenant?.id, usersScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
+  }, [activeTenant?.id, effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
 
   // Update cache when filters change
   useEffect(() => {
     updateCache({
-      usersScope,
+      usersScope: effectiveScope,
       securityLevelFilter,
       groupFilter,
       skillFilter,
@@ -192,12 +201,12 @@ const RecruiterUsers: React.FC = () => {
       sortBy,
       sortDirection,
     });
-  }, [usersScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, sortDirection, updateCache]);
+  }, [effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, sortDirection, updateCache]);
 
   // Reset client pagination when filters/search change
   useEffect(() => {
     setPage(0);
-  }, [searchTerm, usersScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
+  }, [searchTerm, effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
 
   const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin') => {
     if (sortBy === key) {
@@ -312,7 +321,7 @@ const RecruiterUsers: React.FC = () => {
         return typeof candidate === 'string' && candidate.trim() ? candidate : null;
       };
 
-      if (usersScope === 'my') {
+      if (effectiveScope === 'my') {
         const uid = user?.uid;
         if (!uid) {
           setUsers([]);
@@ -490,7 +499,7 @@ const RecruiterUsers: React.FC = () => {
   
   // Load more users when clicking "Load More"
   const loadMoreUsers = () => {
-    if (usersScope === 'my') return;
+    if (effectiveScope === 'my') return;
     if (!activeTenant?.id || loadingMore || !hasMore) return;
     loadUsers(activeTenant.id, false);
   };
@@ -785,49 +794,48 @@ const RecruiterUsers: React.FC = () => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-      <PageHeader
-        title={
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
-            <Typography
-              variant="h6"
-              sx={{
-                fontSize: { xs: '20px', md: '24px' },
-                fontWeight: 600,
-                lineHeight: 1.2,
-              }}
-            >
-              Users
-            </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
-              <InboxSearchBar
-                value={searchTerm}
-                onChange={handleSearchChange}
-                onSearch={handleSearchChange}
-                placeholder="Search users..."
-              />
-              
-              {/* Favorites filter */}
-              <FavoritesFilter
-                favoriteType="users"
-                showFavoritesOnly={showFavoritesOnly}
-                onToggle={handleFavoritesToggle}
-                showText={false}
-                size="small"
+      {!hideHeader && (
+        <PageHeader
+          title={
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 2 }}>
+              <Typography
+                variant="h6"
                 sx={{
-                  minWidth: '32px',
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '50%',
-                  '&:hover': {
-                    backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                  },
+                  fontSize: { xs: '20px', md: '24px' },
+                  fontWeight: 600,
+                  lineHeight: 1.2,
                 }}
-              />
+              >
+                Users
+              </Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexShrink: 0 }}>
+                <InboxSearchBar
+                  value={searchTerm}
+                  onChange={handleSearchChange}
+                  onSearch={handleSearchChange}
+                  placeholder="Search users..."
+                />
+                <FavoritesFilter
+                  favoriteType="users"
+                  showFavoritesOnly={showFavoritesOnly}
+                  onToggle={handleFavoritesToggle}
+                  showText={false}
+                  size="small"
+                  sx={{
+                    minWidth: '32px',
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    '&:hover': {
+                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
+                    },
+                  }}
+                />
+              </Box>
             </Box>
-          </Box>
-        }
-      />
-      
+          }
+        />
+      )}
       <Box
         ref={contentRef}
         sx={{
@@ -859,40 +867,42 @@ const RecruiterUsers: React.FC = () => {
           }}
         >
           <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
-            <Box sx={{ display: 'flex', gap: 0.5, mr: 0.5 }}>
-              {[
-                { label: 'All Users', value: 'all' as const },
-                { label: 'My Users', value: 'my' as const },
-              ].map((t) => {
-                const isActive = usersScope === t.value;
-                return (
-                  <Button
-                    key={t.value}
-                    onClick={() => {
-                      setUsersScope(t.value);
-                      updateCache({ usersScope: t.value });
-                    }}
-                    variant="text"
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '999px',
-                      fontSize: '14px',
-                      fontWeight: isActive ? 500 : 400,
-                      color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                      bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                      px: 1.5,
-                      py: 0.75,
-                      minWidth: 'auto',
-                      '&:hover': {
-                        bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
-                      },
-                    }}
-                  >
-                    {t.label}
-                  </Button>
-                );
-              })}
-            </Box>
+            {showAllMyTabs && (
+              <Box sx={{ display: 'flex', gap: 0.5, mr: 0.5 }}>
+                {[
+                  { label: 'All Users', value: 'all' as const },
+                  { label: 'My Users', value: 'my' as const },
+                ].map((t) => {
+                  const isActive = usersScope === t.value;
+                  return (
+                    <Button
+                      key={t.value}
+                      onClick={() => {
+                        setUsersScope(t.value);
+                        updateCache({ usersScope: t.value });
+                      }}
+                      variant="text"
+                      sx={{
+                        textTransform: 'none',
+                        borderRadius: '999px',
+                        fontSize: '14px',
+                        fontWeight: isActive ? 500 : 400,
+                        color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
+                        bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
+                        px: 1.5,
+                        py: 0.75,
+                        minWidth: 'auto',
+                        '&:hover': {
+                          bgcolor: isActive ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
+                        },
+                      }}
+                    >
+                      {t.label}
+                    </Button>
+                  );
+                })}
+              </Box>
+            )}
             <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
               <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
               <Select

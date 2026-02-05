@@ -70,7 +70,8 @@
     "verify-phase2-auth": "ts-node --project scripts/tsconfig.json scripts/verify-phase2-auth.ts",
     "check:parity": "ts-node scripts/checkFieldParity.ts",
     "test:mapping": "ts-node scripts/testMapping.ts",
-    "test:adapter": "ts-node scripts/testDealStageAdapter.ts"
+    "test:adapter": "ts-node scripts/testDealStageAdapter.ts",
+    "seed-smart-groups": "node scripts/seedSmartGroupsFromApplications.js"
   },
   "eslintConfig": {
     "extends": [

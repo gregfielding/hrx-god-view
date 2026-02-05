@@ -1,6 +1,7 @@
 import { doc, getDoc, setDoc, serverTimestamp, collection, query, where, getDocs, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { logJobApplicationActivity } from './activityLogger';
+import { updateUserSmartGroupOnApply } from '../services/smartGroupService';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from './gigShiftApplicationLimits';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -393,6 +394,26 @@ export async function submitQuickApplication(
       [applicationDataKey]: applicationQuickData,
       updatedAt: serverTimestamp(),
     }, { merge: true });
+
+    try {
+      const worksite = jobPosting?.worksiteAddress ?? { city: (jobPosting as any)?.city, state: (jobPosting as any)?.state, zipCode: (jobPosting as any)?.worksiteAddress?.zipCode };
+      const wsAddr = jobPosting?.worksiteAddress;
+      await updateUserSmartGroupOnApply(userId, tenantId, applicationId, {
+        worksite: { city: worksite?.city, state: worksite?.state, zipCode: worksite?.zipCode },
+        jobTitle: jobPosting?.jobTitle || jobPosting?.postTitle || '',
+        userAddressCity: city,
+        userGeocoordinates: lat != null && lng != null ? { lat, lng } : undefined,
+        skills: Array.isArray(userData.skills) ? userData.skills : [],
+        companyName: jobPosting?.companyName,
+        companyId: jobPosting?.companyId,
+        worksiteName: jobPosting?.worksiteName,
+        worksiteId: jobPosting?.worksiteId,
+        worksiteAddress: wsAddr ? { street: wsAddr.street, city: wsAddr.city, state: wsAddr.state, zipCode: wsAddr.zipCode } : undefined,
+        worksiteGeocoordinates: (wsAddr as any)?.coordinates ? { lat: (wsAddr as any).coordinates.lat, lng: (wsAddr as any).coordinates.lng } : undefined,
+      });
+    } catch (sgErr) {
+      console.warn('Smart Groups: failed to update on apply', sgErr);
+    }
     
     return { success: true };
   } catch (error: any) {

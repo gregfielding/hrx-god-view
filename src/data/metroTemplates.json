@@ -1,0 +1,39 @@
+[
+  {
+    "metroKey": "dallas_fort_worth",
+    "label": "Dallas–Fort Worth",
+    "subareas": [
+      { "subareaKey": "north_dfw", "label": "North DFW", "cityKeys": ["plano_tx", "mckinney_tx", "frisco_tx", "allen_tx", "prosper_tx", "carrollton_tx", "denton_tx", "lewisville_tx", "flower_mound_tx", "the_colony_tx", "little_elm_tx"] },
+      { "subareaKey": "south_dfw", "label": "South DFW", "cityKeys": ["duncanville_tx", "lancaster_tx", "cedar_hill_tx", "desoto_tx", "waxahachie_tx", "midlothian_tx", "mansfield_tx", "arlington_tx", "grand_prairie_tx"] },
+      { "subareaKey": "mid_cities", "label": "Mid Cities", "cityKeys": ["irving_tx", "euless_tx", "bedford_tx", "hurst_tx", "grapevine_tx", "richardson_tx", "garland_tx", "mesquite_tx"] },
+      { "subareaKey": "dallas", "label": "Dallas", "cityKeys": ["dallas_tx"] },
+      { "subareaKey": "fort_worth", "label": "Fort Worth", "cityKeys": ["fort_worth_tx"] }
+    ]
+  },
+  {
+    "metroKey": "austin",
+    "label": "Austin",
+    "subareas": [
+      { "subareaKey": "austin", "label": "Austin", "cityKeys": ["austin_tx", "round_rock_tx", "cedar_park_tx", "pflugerville_tx", "del_valle_tx"] }
+    ]
+  },
+  {
+    "metroKey": "houston",
+    "label": "Houston",
+    "subareas": [
+      { "subareaKey": "central", "label": "Central Houston", "cityKeys": ["houston_tx", "bellaire_tx", "west_university_place_tx", "southside_place_tx"] },
+      { "subareaKey": "north", "label": "North Houston", "cityKeys": ["spring_tx", "the_woodlands_tx", "conroe_tx", "tomball_tx", "humble_tx"] },
+      { "subareaKey": "south", "label": "South Houston", "cityKeys": ["pearland_tx", "league_city_tx", "friendswood_tx", "clear_lake_tx"] },
+      { "subareaKey": "east", "label": "East Houston", "cityKeys": ["baytown_tx", "la_porte_tx", "pasadena_tx", "deer_park_tx"] }
+    ]
+  },
+  {
+    "metroKey": "san_antonio",
+    "label": "San Antonio",
+    "subareas": [
+      { "subareaKey": "central", "label": "Central San Antonio", "cityKeys": ["san_antonio_tx"] },
+      { "subareaKey": "north", "label": "North San Antonio", "cityKeys": ["san_marcos_tx", "new_braunfels_tx", "schertz_tx", "universal_city_tx"] },
+      { "subareaKey": "south", "label": "South San Antonio", "cityKeys": ["live_oak_tx", "converse_tx", "elmendorf_tx"] }
+    ]
+  }
+]

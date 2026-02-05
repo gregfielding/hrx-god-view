@@ -125,7 +125,9 @@ import RecruiterMain from './pages/RecruiterMain';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
+import SmartGroupsPage from './pages/SmartGroupsPage';
 import RecruiterUsers from './pages/RecruiterUsers';
+import UsersLayout from './pages/UsersLayout';
 import RecruiterCompanies from './pages/RecruiterCompanies';
 import RecruiterCompanyDetails from './pages/RecruiterCompanyDetails';
 import RecruiterContacts from './pages/RecruiterContacts';
@@ -511,11 +513,15 @@ function App() {
         <Route path="users" element={
           <ProtectedRoute requiredSecurityLevel="5">
             <RecruiterAccessGuard>
-              <UsersPageWrapper />
+              <UsersLayout />
             </RecruiterAccessGuard>
           </ProtectedRoute>
         }>
-          <Route index element={<RecruiterUsers />} />
+          <Route index element={<Navigate to="/users/all" replace />} />
+          <Route path="all" element={<RecruiterUsers hideHeader scope="all" />} />
+          <Route path="my" element={<RecruiterUsers hideHeader scope="my" />} />
+          <Route path="user-groups" element={<TenantUserGroups hideHeader />} />
+          <Route path="smart-groups" element={<SmartGroupsPage hideHeader />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>
 
@@ -617,11 +623,7 @@ function App() {
             <TenantLocations />
           </ProtectedRoute>
         } />
-        <Route path="usergroups" element={
-          <ProtectedRoute requiredSecurityLevel="4">
-            <TenantUserGroups />
-          </ProtectedRoute>
-        } />
+        <Route path="usergroups" element={<Navigate to="/users/user-groups" replace />} />
         <Route path="usergroups/:groupId" element={
           <ProtectedRoute requiredSecurityLevel="4">
             <UserGroupDetailsWrapper />
@@ -988,6 +990,7 @@ function App() {
           <Route path="users" element={<Navigate to="/users" replace />} />
           <Route path="users/:uid" element={<UsersRedirect />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
+          <Route path="smartgroups" element={<Navigate to="/users/smart-groups" replace />} />
           {/* Steer list pages to canonical routes */}
           <Route path="companies" element={<Navigate to="/companies" replace />} />
           <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />

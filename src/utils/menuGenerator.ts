@@ -181,12 +181,6 @@ export async function generateMenuItems(
           icon: 'people',
           requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
         },
-        {
-          text: 'User Groups',
-          to: '/usergroups',
-          icon: 'diversity3',
-          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
-        },
       ] : []),
       // Only show Customers if HRX Customers module is enabled
       ...(customersModuleEnabled ? [{

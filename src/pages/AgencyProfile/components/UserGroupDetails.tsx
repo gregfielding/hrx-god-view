@@ -381,7 +381,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     try {
       await deleteDoc(doc(db, 'tenants', tenantId, 'userGroups', groupId));
       if (isFromTopLevel) {
-        navigate('/usergroups');
+        navigate('/users/user-groups');
       } else {
         navigate(`/tenants/${tenantId}?tab=6`);
       }
@@ -799,7 +799,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
             <Button
               variant="outlined"
               startIcon={<ArrowBackIcon />}
-              onClick={() => (isFromTopLevel ? navigate('/usergroups') : navigate(`/tenants/${tenantId}?tab=6`))}
+              onClick={() => (isFromTopLevel ? navigate('/users/user-groups') : navigate(`/tenants/${tenantId}?tab=6`))}
               sx={{ borderRadius: '999px', textTransform: 'none' }}
             >
               Back

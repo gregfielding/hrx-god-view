@@ -150,6 +150,7 @@ import AddNoteDialog from '../../components/AddNoteDialog';
 import DealAgeChip from '../../components/DealAgeChip';
 import HealthBadge from '../../components/HealthBadge';
 import { calculateDealHealth, calculateDealAge } from '../../utils/dealHealthCalculator';
+import { ensureCityInSmartGroups } from '../../services/smartGroupMetroSync';
 
 // AngelList and Crunchbase Icon Components
 const AngelListIcon = ({ hasUrl }: { hasUrl: boolean }) => (
@@ -471,6 +472,7 @@ const CompanyDetails: React.FC = () => {
 
       await addDoc(locationsRef, newLocation);
       console.log('Created headquarters location from Apollo data');
+      ensureCityInSmartGroups(tenantId, apolloData.city || '', apolloData.state || '').catch(() => {});
 
     } catch (error) {
       console.error('Error creating headquarters location:', error);
@@ -4385,6 +4387,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
         // Create new headquarters location
         await addDoc(locationsRef, cleanLocationData);
         console.log('✅ Created headquarters location');
+        ensureCityInSmartGroups(tenantId, addressData.city || '', addressData.state || '').catch(() => {});
       } else {
         // Check if any existing headquarters has the same address
         const existingHeadquarters = headquartersSnap.docs.find(doc => {
@@ -4402,6 +4405,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
             id: existingHeadquarters.id // Preserve the existing ID
           });
           console.log('✅ Updated existing headquarters location with same address');
+          ensureCityInSmartGroups(tenantId, addressData.city || '', addressData.state || '').catch(() => {});
         } else {
           // Check if we have multiple headquarters and need to clean up duplicates
           if (headquartersSnap.docs.length > 1) {
@@ -5348,6 +5352,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[
       
       const newLocation = { id: docRef.id, ...locationData };
       setLocations(prev => [...prev, newLocation]);
+      ensureCityInSmartGroups(tenantId, location.city || '', location.state || '').catch(() => {});
       
       // Remove from suggestions
       setSuggestedLocations(prev => prev.filter(loc => loc.address !== location.address));
@@ -5468,6 +5473,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[
       
       const addedLocation = { id: docRef.id, ...locationData };
       setLocations(prev => [...prev, addedLocation]);
+      ensureCityInSmartGroups(tenantId, newLocation.city || '', newLocation.state || '').catch(() => {});
       
       setNewLocation({
         name: '',

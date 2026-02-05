@@ -299,6 +299,21 @@ service cloud.firestore {
         allow read, write: if isAuthenticated() && isAssignedToTenant(tenantId);
       }
 
+      // --- EMAIL THREADS (Inbox - unread count listener and inbox page) ---
+      // Path: tenants/{tenantId}/emailThreads/{threadId}
+      match /emailThreads/{threadId} {
+        // Read: user must be assigned to tenant and be a participant (matches query: participantUserIds array-contains uid)
+        allow read: if isAuthenticated() &&
+                       isAssignedToTenant(tenantId) &&
+                       request.auth.uid in resource.data.get('participantUserIds', []);
+        // Create/update: tenant members can create/update (e.g. mark read); writes also from Cloud Functions
+        allow create: if isAuthenticated() && isAssignedToTenant(tenantId);
+        allow update: if isAuthenticated() &&
+                         isAssignedToTenant(tenantId) &&
+                         request.auth.uid in resource.data.get('participantUserIds', []);
+        allow delete: if isHRX() || isTenantAdmin(tenantId);
+      }
+
       // --- AI CHAT THREADS (Tenant-level) ---
       // Conversations stored at tenants/{tenantId}/ai_chats/{threadId}/messages/{messageId}
       match /ai_chats/{threadId} {

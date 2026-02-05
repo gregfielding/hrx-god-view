@@ -24,6 +24,7 @@ import EligibilityModal from '../../components/EligibilityModal';
 import { geocodeAddress, geocodeAddressDetailed } from '../../utils/geocodeAddress';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from '../../utils/gigShiftApplicationLimits';
 import { logJobApplicationActivity } from '../../utils/activityLogger';
+import { updateUserSmartGroupOnApply } from '../../services/smartGroupService';
 
 type WizardProps = {
   tenantId: string;
@@ -1634,6 +1635,26 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             console.error('Failed to update user document with application data:', userUpdateError);
             // Don't throw here - we still want the application to be created
             // The user can be updated later via the migration script if needed
+          }
+
+          try {
+            const worksite = posting?.worksiteAddress ?? { city: (posting as any)?.city, state: (posting as any)?.state, zipCode: (posting as any)?.worksiteAddress?.zipCode };
+            const wsAddr = posting?.worksiteAddress;
+            await updateUserSmartGroupOnApply(effectiveUid!, tenantId, applicationId, {
+              worksite: { city: worksite?.city, state: worksite?.state, zipCode: worksite?.zipCode },
+              jobTitle: posting?.jobTitle || posting?.postTitle || '',
+              userAddressCity: personal?.city ?? '',
+              userGeocoordinates: personal?.homeLat != null && personal?.homeLng != null ? { lat: personal.homeLat, lng: personal.homeLng } : undefined,
+              skills: Array.isArray(quals?.skills) ? quals.skills.map((s: any) => typeof s === 'string' ? s : s?.name).filter(Boolean) : [],
+              companyName: posting?.companyName,
+              companyId: posting?.companyId,
+              worksiteName: posting?.worksiteName,
+              worksiteId: posting?.worksiteId,
+              worksiteAddress: wsAddr ? { street: wsAddr.street, city: wsAddr.city, state: wsAddr.state, zipCode: wsAddr.zipCode } : undefined,
+              worksiteGeocoordinates: (wsAddr as any)?.coordinates ? { lat: (wsAddr as any).coordinates.lat, lng: (wsAddr as any).coordinates.lng } : undefined,
+            });
+          } catch (sgErr) {
+            console.warn('Smart Groups: failed to update on apply', sgErr);
           }
           
           // Auto-add to user groups if specified in job posting

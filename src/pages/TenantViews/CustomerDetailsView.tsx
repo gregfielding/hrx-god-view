@@ -61,6 +61,7 @@ import { Autocomplete } from '@react-google-maps/api';
 import { db, storage } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { geocodeAddress } from '../../utils/geocodeAddress';
+import { ensureCityInSmartGroups } from '../../services/smartGroupMetroSync';
 import { formatPhoneNumber } from '../../utils/formatPhone';
 import IndustrySelector from '../../components/IndustrySelector';
 
@@ -300,6 +301,7 @@ const CustomerDetailsView: React.FC<CustomerDetailsViewProps> = ({
         await addDoc(collection(db, 'tenants', tenantId, 'customers', customer.id, 'locations'), worksiteData);
         setSuccessMessage('Worksite location added successfully!');
       }
+      ensureCityInSmartGroups(tenantId, worksiteForm.city || '', worksiteForm.state || '').catch(() => {});
 
       setWorksiteDialogOpen(false);
       setWorksiteForm({ nickname: '', street: '', city: '', state: '', zip: '', notes: '' });
