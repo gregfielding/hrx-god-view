@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip } from '@mui/material';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip, CircularProgress } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
 import MessageIcon from '@mui/icons-material/Message';
@@ -14,13 +14,16 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
 import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs, getCountFromServer } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs, getCountFromServer, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
-import { db, functions } from '../../firebase'; // adjust path
+import { db, functions, storage } from '../../firebase'; // adjust path
+import ImageCropDialog from '../../components/common/ImageCropDialog';
+import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
-import { calculateProfileScore } from '../../utils/applicantScoring';
+import { calculateProfileScore, calculateCompletenessScore } from '../../utils/applicantScoring';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
@@ -51,11 +54,16 @@ import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import { logUserActivity } from '../../utils/activityLogger';
-import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
+import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal, getScoreSummaryUpdateFromCompleteness } from '../../utils/scoreSummary';
+import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
+import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
   const { user, securityLevel, role, tenantId: authTenantId, activeTenant } = useAuth();
+  const [tenantId, setCustomerId] = useState<string | null>(null);
+  const effectiveTenantId = tenantId || authTenantId || activeTenant?.id;
+  const { distribution: scoringDistribution } = useScoringDistribution(effectiveTenantId ?? undefined);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { isFavorite, toggleFavorite } = useFavorites('users');
@@ -95,7 +103,6 @@ const UserProfilePage = () => {
   const [city, setCity] = useState<string>('');
   const [state, setState] = useState<string>('');
   const [linkedinUrl, setLinkedinUrl] = useState<string>('');
-  const [tenantId, setCustomerId] = useState<string | null>(null);
   const [workStatus, setWorkStatus] = useState<string>('');
   const [employmentType, setEmploymentType] = useState<string>('');
   const [departmentName, setDepartmentName] = useState<string>('');
@@ -107,6 +114,7 @@ const UserProfilePage = () => {
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
+  const [profileCompletenessScore, setProfileCompletenessScore] = useState<number | undefined>(undefined);
   const [scoreSummary, setScoreSummary] = useState<ScoreSummary | undefined>(undefined);
   const [reviewsCount, setReviewsCount] = useState<number>(0);
   const [createdAt, setCreatedAt] = useState<any>(null);
@@ -132,6 +140,50 @@ const UserProfilePage = () => {
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [activityLogRefreshKey, setActivityLogRefreshKey] = useState(0);
   const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
+  const [recordHeaderAvatarHover, setRecordHeaderAvatarHover] = useState(false);
+  const [recordHeaderCropOpen, setRecordHeaderCropOpen] = useState(false);
+  const [pendingRecordAvatarSrc, setPendingRecordAvatarSrc] = useState<string | null>(null);
+  const [recordHeaderAvatarBusy, setRecordHeaderAvatarBusy] = useState(false);
+  const recordHeaderFileInputRef = useRef<HTMLInputElement>(null);
+
+  const canEditRecordAvatar = !!uid && (user?.uid === uid || (typeof securityLevel === 'string' && parseInt(securityLevel, 10) >= 4));
+  const handleRecordHeaderAvatarClick = useCallback(() => {
+    recordHeaderFileInputRef.current?.click();
+  }, []);
+  const handleRecordHeaderAvatarFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      setPendingRecordAvatarSrc(src);
+      setRecordHeaderCropOpen(true);
+    } catch {
+      // ignore
+    }
+    e.target.value = '';
+  }, []);
+  const handleConfirmRecordHeaderAvatarCrop = useCallback(async (blob: Blob) => {
+    if (!uid) return;
+    setRecordHeaderAvatarBusy(true);
+    try {
+      const storageRef = ref(storage, `avatars/${uid}.jpg`);
+      await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(storageRef);
+      await updateDoc(doc(db, 'users', uid), { avatar: downloadURL });
+      setAvatarUrl(downloadURL);
+      setRecordHeaderCropOpen(false);
+      setPendingRecordAvatarSrc(null);
+    } catch (err) {
+      console.error('Error saving avatar:', err);
+    } finally {
+      setRecordHeaderAvatarBusy(false);
+    }
+  }, [uid]);
 
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
 
@@ -496,12 +548,34 @@ const UserProfilePage = () => {
             setManagerName('');
           }
           
-          // Calculate profile score
+          // Calculate profile score and completeness (for AI score formula)
           const score = calculateProfileScore(data);
           setProfileScore(score);
+          const completeness = calculateCompletenessScore(data);
+          setProfileCompletenessScore(completeness);
           // Denormalized score summary (interviews/reviews/AI)
-          setScoreSummary(normalizeScoreSummary((data as any).scoreSummary));
-          
+          const normalizedSummary = normalizeScoreSummary((data as any).scoreSummary);
+          setScoreSummary(normalizedSummary);
+
+          // Backfill: persist completenessScore and aiScore when missing or when stored is 0 but profile has content
+          const hasProfileContent = (d: any) =>
+            (d?.skills?.length > 0 || d?.workHistory?.length > 0 || d?.certifications?.length > 0);
+          const shouldBackfill =
+            uid &&
+            (typeof normalizedSummary?.completenessScore !== 'number' ||
+              (normalizedSummary?.completenessScore === 0 && hasProfileContent(data)));
+          if (shouldBackfill) {
+            const { completenessScore: c, aiScore: newAi } = getScoreSummaryUpdateFromCompleteness(
+              completeness,
+              normalizedSummary
+            );
+            updateDoc(doc(db, 'users', uid), {
+              'scoreSummary.completenessScore': c,
+              'scoreSummary.aiScore': newAi,
+              'scoreSummary.aiScoreUpdatedAt': serverTimestamp(),
+            }).catch((err) => console.warn('UserProfile: backfill scoreSummary failed', err));
+          }
+
           // Set createdAt
           setCreatedAt(data.createdAt || null);
         }
@@ -799,6 +873,9 @@ const UserProfilePage = () => {
     );
     
     await updateDoc(userRef, cleanData);
+    await persistScoreSummaryFromProfile(uid).catch((err) =>
+      console.warn('UserProfile: persist scoreSummary after skills update failed', err)
+    );
   };
 
   if (!uid) {
@@ -1100,6 +1177,7 @@ const UserProfilePage = () => {
           isAdminView={isAdminView}
           profileScore={profileScore}
           scoreSummary={scoreSummary}
+          scoringDistribution={scoringDistribution}
           resume={skillsData?.resume || null}
           certifications={skillsData?.certifications || []}
           education={skillsData?.education || []}
@@ -1261,21 +1339,59 @@ const UserProfilePage = () => {
             title={
               <Box>
                 <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
-                  <Avatar
-                    src={avatarUrl || undefined}
-                    sx={{
-                      width: 108,
-                      height: 108,
-                      bgcolor: 'primary.main',
-                      fontSize: '40px',
-                      fontWeight: 600,
-                      flexShrink: 0,
-                      border: onboardingInProgress ? `6px solid ${onboardingAccent}` : undefined,
-                      boxSizing: 'border-box',
-                    }}
+                  <Box
+                    position="relative"
+                    onMouseEnter={() => setRecordHeaderAvatarHover(true)}
+                    onMouseLeave={() => setRecordHeaderAvatarHover(false)}
+                    sx={{ flexShrink: 0 }}
                   >
-                    {!avatarUrl && initials}
-                  </Avatar>
+                    <Avatar
+                      src={avatarUrl || undefined}
+                      sx={{
+                        width: 108,
+                        height: 108,
+                        bgcolor: avatarUrl ? 'transparent' : 'primary.main',
+                        fontSize: '40px',
+                        fontWeight: 600,
+                        border: onboardingInProgress ? `6px solid ${onboardingAccent}` : undefined,
+                        boxSizing: 'border-box',
+                      }}
+                    >
+                      {!avatarUrl && initials}
+                    </Avatar>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      ref={recordHeaderFileInputRef}
+                      style={{ display: 'none' }}
+                      onChange={handleRecordHeaderAvatarFileChange}
+                    />
+                    {canEditRecordAvatar && recordHeaderAvatarHover && (
+                      <Tooltip title="Replace photo">
+                        <IconButton
+                          size="small"
+                          onClick={(e) => { e.stopPropagation(); handleRecordHeaderAvatarClick(); }}
+                          disabled={recordHeaderAvatarBusy}
+                          sx={{
+                            position: 'absolute',
+                            bottom: -4,
+                            right: -4,
+                            bgcolor: 'grey.300',
+                            color: 'grey.700',
+                            width: 28,
+                            height: 28,
+                            '&:hover': { bgcolor: 'grey.400' },
+                          }}
+                        >
+                          {recordHeaderAvatarBusy ? (
+                            <CircularProgress size={16} color="inherit" />
+                          ) : (
+                            <CameraAltIcon sx={{ fontSize: 16 }} />
+                          )}
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Box>
                   <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 108 }}>
                     {/* Line 1: Name */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
@@ -1986,6 +2102,8 @@ const UserProfilePage = () => {
                     uid={uid}
                     scoreSummary={scoreSummary}
                     fallbackAiScore={profileScore}
+                    fallbackCompleteness={profileCompletenessScore}
+                    scoringDistribution={scoringDistribution}
                     onGoToInterview={() => handleTabChange({} as React.SyntheticEvent, 'Interview')}
                   />
                 );
@@ -2090,6 +2208,24 @@ const UserProfilePage = () => {
           }}
         />
       )}
+
+      {/* Record header avatar crop (when using PageHeader / recruiter view) */}
+      <ImageCropDialog
+        open={recordHeaderCropOpen}
+        title="Edit profile photo"
+        imageSrc={pendingRecordAvatarSrc}
+        cropShape="round"
+        aspect={1}
+        confirmLabel={recordHeaderAvatarBusy ? 'Saving…' : 'Save'}
+        loading={recordHeaderAvatarBusy}
+        onCancel={() => {
+          if (recordHeaderAvatarBusy) return;
+          setRecordHeaderCropOpen(false);
+          setPendingRecordAvatarSrc(null);
+          if (recordHeaderFileInputRef.current) recordHeaderFileInputRef.current.value = '';
+        }}
+        onConfirm={handleConfirmRecordHeaderAvatarCrop}
+      />
 
       {/* Start Onboarding Dialog (Recruiter record view) */}
       {uid && (tenantId || authTenantId || activeTenant?.id) && (

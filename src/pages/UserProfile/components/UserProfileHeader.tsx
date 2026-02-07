@@ -41,7 +41,8 @@ import ComplianceStatusChips from './ComplianceStatusChips';
 import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
 import CompactActionGrid from './CompactActionGrid';
-import type { ScoreSummary } from '../../../utils/scoreSummary';
+import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import { getRelativeAiScore } from '../../../utils/scoreSummary';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
@@ -80,6 +81,7 @@ interface UserProfileHeaderProps {
   isAdminView?: boolean; // True if viewer is admin (security >= 5)
   profileScore?: number; // Profile completeness score (0-100)
   scoreSummary?: ScoreSummary;
+  scoringDistribution?: ScoringDistribution | null;
   // New props for document access and additional data
   resume?: {
     fileName: string;
@@ -165,6 +167,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   isAdminView = false,
   profileScore,
   scoreSummary,
+  scoringDistribution,
   resume,
   certifications = [],
   workEligibility,
@@ -791,16 +794,21 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
-                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                // Use AI score first so header matches the users table and Score tab
+                const rawSummary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
+                if (typeof rawSummary !== 'number' || Number.isNaN(rawSummary)) return null;
+                const relative = getRelativeAiScore(rawSummary, scoringDistribution);
+                const display = relative != null ? relative : Math.round(rawSummary);
                 return (
-                  <Chip
-                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                    label={`Score ${Math.round(summary)}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontWeight: 700, flexShrink: 0 }}
-                  />
+                  <Tooltip title={relative != null ? `Raw: ${Math.round(rawSummary)} (relative: ${display})` : `AI Score ${Math.round(rawSummary)}`}>
+                    <Chip
+                      icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                      label={`AI Score ${display}`}
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontWeight: 700, flexShrink: 0 }}
+                    />
+                  </Tooltip>
                 );
               })()}
             </Box>
@@ -1335,16 +1343,21 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
-                if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                // Use AI score first so header matches the users table and Score tab
+                const rawSummary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
+                if (typeof rawSummary !== 'number' || Number.isNaN(rawSummary)) return null;
+                const relative = getRelativeAiScore(rawSummary, scoringDistribution);
+                const display = relative != null ? relative : Math.round(rawSummary);
                 return (
-                  <Chip
-                    icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                    label={`Score ${Math.round(summary)}`}
-                    size="small"
-                    variant="outlined"
-                    sx={{ fontWeight: 700, flexShrink: 0 }}
-                  />
+                  <Tooltip title={relative != null ? `Raw: ${Math.round(rawSummary)} (relative: ${display})` : `AI Score ${Math.round(rawSummary)}`}>
+                    <Chip
+                      icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                      label={`AI Score ${display}`}
+                      size="small"
+                      variant="outlined"
+                      sx={{ fontWeight: 700, flexShrink: 0 }}
+                    />
+                  </Tooltip>
                 );
               })()}
             </Box>

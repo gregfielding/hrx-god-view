@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Box,
   Typography,
@@ -24,6 +24,7 @@ import {
   Snackbar,
   Alert,
   Autocomplete,
+  Checkbox,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -34,6 +35,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query, deleteField } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useNavigate, useLocation } from 'react-router-dom';
 import GroupsIcon from '@mui/icons-material/Groups';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
@@ -41,6 +43,9 @@ import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
+import SmsIcon from '@mui/icons-material/Sms';
+import MessageDrawer, { type MessageRecipient } from '../../../components/MessageDrawer';
 import StarIcon from '@mui/icons-material/Star';
 import InsightsIcon from '@mui/icons-material/Insights';
 import IconButton from '@mui/material/IconButton';
@@ -48,7 +53,9 @@ import PersonIcon from '@mui/icons-material/Person';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import BlockIcon from '@mui/icons-material/Block';
 
-import { db } from '../../../firebase';
+import { db, storage } from '../../../firebase';
+import ImageCropDialog from '../../../components/common/ImageCropDialog';
+import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
@@ -92,6 +99,15 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectAllResults, setSelectAllResults] = useState(false);
+  const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
+  const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
+  const [avatarHover, setAvatarHover] = useState(false);
+  const [avatarCropOpen, setAvatarCropOpen] = useState(false);
+  const [pendingAvatarSrc, setPendingAvatarSrc] = useState<string | null>(null);
+  const [avatarBusy, setAvatarBusy] = useState(false);
+  const avatarFileInputRef = useRef<HTMLInputElement>(null);
   const lastSavedGroupMetaRef = useRef<{ title: string; description: string } | null>(null);
 
   // Check if we're accessing from the top-level usergroups page
@@ -486,6 +502,117 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     membersPage * membersRowsPerPage + membersRowsPerPage,
   );
 
+  const selectedCount = selectAllResults ? sortedMembers.length : selectedIds.size;
+  const allOnPageSelected =
+    paginatedMembers.length > 0 &&
+    paginatedMembers.every((m) => (selectAllResults ? true : selectedIds.has(m.id)));
+  const someOnPageSelected =
+    paginatedMembers.some((m) => selectedIds.has(m.id)) || (selectAllResults && paginatedMembers.length > 0);
+
+  const handleSelectAllOnPage = useCallback(() => {
+    if (allOnPageSelected) {
+      if (selectAllResults) {
+        setSelectAllResults(false);
+        setSelectedIds(new Set());
+      } else {
+        const onPageIds = new Set(paginatedMembers.map((m) => m.id));
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          onPageIds.forEach((id) => next.delete(id));
+          return next;
+        });
+      }
+    } else {
+      if (selectAllResults) {
+        setSelectedIds(new Set(paginatedMembers.map((m) => m.id)));
+        setSelectAllResults(false);
+      } else {
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          paginatedMembers.forEach((m) => next.add(m.id));
+          return next;
+        });
+      }
+    }
+  }, [allOnPageSelected, selectAllResults, paginatedMembers]);
+
+  const handleSelectRow = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+    if (selectAllResults) setSelectAllResults(false);
+  }, [selectAllResults]);
+
+  const handleSelectAllResults = useCallback(() => {
+    setSelectAllResults(true);
+    setSelectedIds(new Set(sortedMembers.map((m) => m.id)));
+  }, [sortedMembers]);
+
+  const handleClearSelection = useCallback(() => {
+    setSelectedIds(new Set());
+    setSelectAllResults(false);
+  }, []);
+
+  const handleGroupAvatarClick = useCallback(() => {
+    avatarFileInputRef.current?.click();
+  }, []);
+
+  const handleGroupAvatarFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      setPendingAvatarSrc(src);
+      setAvatarCropOpen(true);
+    } catch (err) {
+      console.error('Error reading avatar file:', err);
+      setError('Failed to load image.');
+    }
+    e.target.value = '';
+  }, []);
+
+  const handleConfirmGroupAvatarCrop = useCallback(async (blob: Blob) => {
+    if (!tenantId || !groupId) return;
+    setAvatarBusy(true);
+    try {
+      const storageRef = ref(storage, `userGroupAvatars/${tenantId}/${groupId}.jpg`);
+      await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(storageRef);
+      const groupRef = doc(db, 'tenants', tenantId, 'userGroups', groupId);
+      await updateDoc(groupRef, { avatar: downloadURL });
+      setGroup((prev: any) => (prev ? { ...prev, avatar: downloadURL } : prev));
+      setAvatarCropOpen(false);
+      setPendingAvatarSrc(null);
+    } catch (err: any) {
+      console.error('Error saving group avatar:', err);
+      setError(err?.message || 'Failed to save group photo.');
+    } finally {
+      setAvatarBusy(false);
+    }
+  }, [tenantId, groupId]);
+
+  const bulkRecipientsAndIds = useMemo(() => {
+    const users = selectAllResults
+      ? sortedMembers
+      : sortedMembers.filter((m) => selectedIds.has(m.id));
+    const recipients: MessageRecipient[] = users.map((u) => ({
+      userId: u.id,
+      name: [u.firstName, u.lastName].filter(Boolean).join(' ') || 'Unknown',
+      email: u.email ?? undefined,
+      phone: u.phone ?? undefined,
+    }));
+    const recipientUserIds = users.map((u) => u.id);
+    return { recipients, recipientUserIds };
+  }, [selectAllResults, selectedIds, sortedMembers]);
+
   const handleMembersSort = (key: typeof membersSortBy) => {
     if (membersSortBy === key) {
       setMembersSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
@@ -707,18 +834,57 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       <PageHeader
         title={
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-            <Avatar
-              sx={{
-                width: 72,
-                height: 72,
-                bgcolor: 'primary.main',
-                color: '#fff',
-                fontWeight: 700,
-                flexShrink: 0,
-              }}
+            <Box
+              position="relative"
+              onMouseEnter={() => setAvatarHover(true)}
+              onMouseLeave={() => setAvatarHover(false)}
+              sx={{ flexShrink: 0 }}
             >
-              <GroupsIcon />
-            </Avatar>
+              <Avatar
+                src={group?.avatar ?? undefined}
+                sx={{
+                  width: 72,
+                  height: 72,
+                  bgcolor: group?.avatar ? 'transparent' : 'primary.main',
+                  color: '#fff',
+                  fontWeight: 700,
+                }}
+              >
+                {!group?.avatar && <GroupsIcon />}
+              </Avatar>
+              <input
+                type="file"
+                accept="image/*"
+                ref={avatarFileInputRef}
+                style={{ display: 'none' }}
+                onChange={handleGroupAvatarFileChange}
+              />
+              {avatarHover && (
+                <Tooltip title="Replace photo">
+                  <IconButton
+                    size="small"
+                    onClick={handleGroupAvatarClick}
+                    disabled={avatarBusy}
+                    sx={{
+                      position: 'absolute',
+                      bottom: -4,
+                      right: -4,
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      width: 28,
+                      height: 28,
+                      '&:hover': { bgcolor: 'grey.400' },
+                    }}
+                  >
+                    {avatarBusy ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <CameraAltIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Box>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography
                 variant="h6"
@@ -794,7 +960,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
               }}
               sx={{ borderRadius: '999px', textTransform: 'none' }}
             >
-              Share
+              Copy Application Link
             </Button>
             <Button
               variant="outlined"
@@ -859,12 +1025,67 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
         {activeTab === 'members' && (
           <>
+            {selectedCount > 0 && (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 2,
+                  px: 2,
+                  py: 1.25,
+                  backgroundColor: 'action.selected',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderBottom: 'none',
+                  borderRadius: '8px 8px 0 0',
+                }}
+              >
+                <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                  {selectAllResults
+                    ? `All ${sortedMembers.length} result${sortedMembers.length === 1 ? '' : 's'} selected`
+                    : `${selectedCount} selected`}
+                </Typography>
+                <Button size="small" onClick={handleClearSelection} sx={{ textTransform: 'none' }}>
+                  Clear selection
+                </Button>
+                {allOnPageSelected && !selectAllResults && sortedMembers.length > paginatedMembers.length && (
+                  <Button size="small" variant="outlined" onClick={handleSelectAllResults} sx={{ textTransform: 'none' }}>
+                    Select all {sortedMembers.length} results
+                  </Button>
+                )}
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<EmailIcon />}
+                  onClick={() => {
+                    setBulkDrawerChannel('email');
+                    setBulkDrawerOpen(true);
+                  }}
+                  sx={{ textTransform: 'none' }}
+                >
+                  Bulk Email
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<SmsIcon />}
+                  onClick={() => {
+                    setBulkDrawerChannel('sms');
+                    setBulkDrawerOpen(true);
+                  }}
+                  sx={{ textTransform: 'none' }}
+                >
+                  Bulk SMS
+                </Button>
+              </Box>
+            )}
             <TableContainer
               component={Paper}
               elevation={0}
               sx={{
                 borderRadius: 2,
                 border: '1px solid #EAEEF4',
+                ...(selectedCount > 0 && { borderRadius: '0 0 8px 8px' }),
                 position: 'relative',
                 display: 'flex',
                 flexDirection: 'column',
@@ -872,7 +1093,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 overflowY: 'auto',
                 overflowX: 'auto',
                 width: '100%',
-                px: 2,
+                px: 0,
                 '&::-webkit-scrollbar': { width: '8px', height: '8px' },
                 '&::-webkit-scrollbar-track': {
                   background: 'rgba(0, 0, 0, 0.02)',
@@ -901,6 +1122,15 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                   }}
                 >
                   <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
+                    <TableCell padding="checkbox" sx={{ width: 48, bgcolor: '#FFFFFF', borderRadius: 0 }}>
+                      <Checkbox
+                        size="small"
+                        checked={allOnPageSelected}
+                        indeterminate={someOnPageSelected}
+                        onChange={handleSelectAllOnPage}
+                        aria-label="Select all on page"
+                      />
+                    </TableCell>
                     <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       <TableSortLabel
@@ -974,7 +1204,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={10} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={11} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -997,6 +1227,14 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                           }}
                           onClick={() => navigate(`/users/${u.id}`)}
                         >
+                          <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              size="small"
+                              checked={selectAllResults || selectedIds.has(u.id)}
+                              onChange={() => handleSelectRow(u.id)}
+                              aria-label={`Select ${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'Select member'}
+                            />
+                          </TableCell>
                           <TableCell onClick={(event) => event.stopPropagation()}>
                             <FavoriteButton
                               itemId={u.id}
@@ -1025,25 +1263,33 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                   {String(u.firstName || '').trim()} {String(u.lastName || '').trim()}
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                  #{String(u.id).slice(-6)}
+                                  {u.createdAt ? formatDate(u.createdAt) : '—'}
                                 </Typography>
                               </Box>
                             </Box>
                           </TableCell>
 
-                          <TableCell>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                                <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                          <TableCell sx={{ py: 0.5 }}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 0 }}>
+                                <EmailIcon sx={{ fontSize: 14, color: 'text.secondary', flexShrink: 0 }} />
+                                <Typography variant="body2" sx={{ fontSize: '0.85rem', lineHeight: 1.35 }}>
                                   {u.email || '—'}
                                 </Typography>
                               </Box>
                               {(u.phone || u.phoneE164) && (
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                  <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                                  <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 0 }}>
+                                  <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary', flexShrink: 0 }} />
+                                  <Typography variant="body2" sx={{ fontSize: '0.85rem', lineHeight: 1.35 }}>
                                     {formatPhoneNumber(String(u.phone || u.phoneE164))}
+                                  </Typography>
+                                </Box>
+                              )}
+                              {(u.city || u.state || (u.address && (u.address as any).city) || (u.address && (u.address as any).state)) && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minHeight: 0 }}>
+                                  <LocationOnIcon sx={{ fontSize: 14, color: 'text.secondary', flexShrink: 0 }} />
+                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem', lineHeight: 1.35 }}>
+                                    {[u.city ?? (u.address as any)?.city, u.state ?? (u.address as any)?.state].filter(Boolean).join(', ')}
                                   </Typography>
                                 </Box>
                               )}
@@ -1120,25 +1366,33 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                           </TableCell>
 
                           <TableCell>
-                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                              {skills.slice(0, 3).map((skill) => (
-                                <Chip
-                                  key={skill}
-                                  label={skill}
-                                  size="small"
-                                  variant="outlined"
-                                  icon={<StarIcon sx={{ fontSize: 14 }} />}
-                                />
-                              ))}
-                              {skills.length === 0 && (
-                                <Typography variant="body2" color="text.secondary">
-                                  —
-      </Typography>
-                              )}
-                              {skills.length > 3 && (
-                                <Chip size="small" label={`+${skills.length - 3}`} variant="outlined" />
-                              )}
-                            </Box>
+                            {skills.length === 0 ? (
+                              <Typography variant="body2" color="text.secondary">—</Typography>
+                            ) : (
+                              <Tooltip
+                                title={
+                                  skills.length <= 1
+                                    ? skills[0]
+                                    : (
+                                      <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
+                                        {skills.map((skill) => (
+                                          <Typography key={skill} component="span" variant="body2" sx={{ display: 'block' }}>
+                                            {skill}
+                                          </Typography>
+                                        ))}
+                                      </Box>
+                                    )
+                                }
+                                placement="top"
+                                enterDelay={300}
+                                disableInteractive={false}
+                              >
+                                <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
+                                  {skills[0]}
+                                  {skills.length > 1 ? '…' : ''}
+                                </Typography>
+                              </Tooltip>
+                            )}
                           </TableCell>
 
                           <TableCell sx={{ minWidth: 200 }}>
@@ -1358,6 +1612,35 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           Link copied!
         </Alert>
       </Snackbar>
+      <ImageCropDialog
+        open={avatarCropOpen}
+        title="Edit group photo"
+        imageSrc={pendingAvatarSrc}
+        cropShape="rect"
+        aspect={1}
+        confirmLabel={avatarBusy ? 'Saving…' : 'Save'}
+        loading={avatarBusy}
+        onCancel={() => {
+          if (avatarBusy) return;
+          setAvatarCropOpen(false);
+          setPendingAvatarSrc(null);
+          if (avatarFileInputRef.current) avatarFileInputRef.current.value = '';
+        }}
+        onConfirm={handleConfirmGroupAvatarCrop}
+      />
+      <MessageDrawer
+        open={bulkDrawerOpen}
+        onClose={() => setBulkDrawerOpen(false)}
+        recipients={bulkRecipientsAndIds.recipients}
+        tenantId={tenantId}
+        bulkSystemMode={true}
+        recipientUserIds={bulkRecipientsAndIds.recipientUserIds}
+        defaultChannels={[bulkDrawerChannel]}
+        onSend={() => {
+          handleClearSelection();
+          setBulkDrawerOpen(false);
+        }}
+      />
     </Box>
   );
 };

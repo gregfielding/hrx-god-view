@@ -100,6 +100,12 @@ export const p = {
   smartGroups: (tid: string) => `tenants/${tid}/settings/smartGroups`,
 
   /**
+   * Saved Smart Groups (saved search results with member list)
+   */
+  savedSmartGroups: (tid: string) => `tenants/${tid}/savedSmartGroups`,
+  savedSmartGroup: (tid: string, id: string) => `tenants/${tid}/savedSmartGroups/${id}`,
+
+  /**
    * Monitoring and events (for auditing)
    */
   monitoring: (tid: string) => `tenants/${tid}/monitoring`,

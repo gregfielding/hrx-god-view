@@ -61,3 +61,108 @@ export function formatOneDecimal(n: number | undefined): string {
   return (Math.round(n * 10) / 10).toFixed(1);
 }
 
+const DEFAULT_AI_WEIGHTS = { completeness: 0.45, responsiveness: 0.25, quality: 0.3 };
+
+/**
+ * Compute AI score from the three components (0–100 each) using the standard formula.
+ * Used when quality/completeness/responsiveness change so the stored aiScore stays in sync.
+ */
+export function computeAiScoreFromComponents(
+  completeness: number | undefined | null,
+  responsiveness: number | undefined | null,
+  quality: number | undefined | null,
+  weights: { completeness: number; responsiveness: number; quality: number } = DEFAULT_AI_WEIGHTS
+): number | null {
+  const c = typeof completeness === 'number' && Number.isFinite(completeness) ? completeness : null;
+  const r = typeof responsiveness === 'number' && Number.isFinite(responsiveness) ? responsiveness : null;
+  const q = typeof quality === 'number' && Number.isFinite(quality) ? quality : null;
+  if (c === null || r === null || q === null) return null;
+  const raw =
+    weights.completeness * c + weights.responsiveness * r + weights.quality * q;
+  return Math.round(Math.max(0, Math.min(100, raw)));
+}
+
+/**
+ * Returns completenessScore and aiScore to persist when profile-derived completeness is used.
+ * Uses existing responsiveness and quality from scoreSummary (defaults 50 and 0).
+ */
+export function getScoreSummaryUpdateFromCompleteness(
+  completeness: number,
+  existingSummary: ScoreSummary | undefined
+): { completenessScore: number; aiScore: number } {
+  const responsiveness =
+    typeof existingSummary?.responsivenessScore === 'number' ? existingSummary.responsivenessScore! : 50;
+  const quality =
+    typeof existingSummary?.qualityScore === 'number' ? existingSummary.qualityScore! : 0;
+  const aiScore = computeAiScoreFromComponents(completeness, responsiveness, quality);
+  return {
+    completenessScore: Math.max(0, Math.min(100, Math.round(completeness))),
+    aiScore: aiScore ?? 0,
+  };
+}
+
+/** Percentiles for one metric (from tenants/{tenantId}/scoringDistribution/current). */
+export interface ScoringPercentiles {
+  p10: number;
+  p25: number;
+  p50: number;
+  p75: number;
+  p90: number;
+}
+
+/** Cached distribution per tenant (read from Firestore). */
+export interface ScoringDistribution {
+  updatedAt?: any;
+  userCount: number;
+  aiScore: ScoringPercentiles;
+  completenessScore: ScoringPercentiles;
+  responsivenessScore: ScoringPercentiles;
+  qualityScore: ScoringPercentiles;
+}
+
+const MIN_USERS_FOR_RELATIVE = 10;
+
+/**
+ * Map raw AI score (0–100) to a relative score (0–100) using the tenant's distribution.
+ * Median pool score ≈ 50; top of pool → 90+. Returns null if distribution is missing or too thin.
+ */
+export function getRelativeAiScore(
+  rawAiScore: number | undefined | null,
+  distribution: ScoringDistribution | undefined | null
+): number | null {
+  if (rawAiScore == null || !Number.isFinite(rawAiScore)) return null;
+  if (!distribution || distribution.userCount < MIN_USERS_FOR_RELATIVE) return null;
+  const p = distribution.aiScore;
+  if (!p || typeof p.p50 !== 'number') return null;
+
+  const raw = Math.max(0, Math.min(100, rawAiScore));
+
+  if (raw <= p.p10) {
+    const t = p.p10 > 0 ? raw / p.p10 : 1;
+    return Math.round(t * 10);
+  }
+  if (raw <= p.p25) {
+    const d = p.p25 - p.p10;
+    const t = d > 0 ? (raw - p.p10) / d : 0.5;
+    return Math.round(10 + t * 15);
+  }
+  if (raw <= p.p50) {
+    const d = p.p50 - p.p25;
+    const t = d > 0 ? (raw - p.p25) / d : 0.5;
+    return Math.round(25 + t * 25);
+  }
+  if (raw <= p.p75) {
+    const d = p.p75 - p.p50;
+    const t = d > 0 ? (raw - p.p50) / d : 0.5;
+    return Math.round(50 + t * 25);
+  }
+  if (raw <= p.p90) {
+    const d = p.p90 - p.p75;
+    const t = d > 0 ? (raw - p.p75) / d : 0.5;
+    return Math.round(75 + t * 15);
+  }
+  const d = 100 - p.p90;
+  const t = d > 0 ? (raw - p.p90) / d : 1;
+  return Math.round(Math.min(100, 90 + t * 10));
+}
+

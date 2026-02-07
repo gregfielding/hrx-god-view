@@ -64,6 +64,11 @@ service cloud.firestore {
                          request.resource.data.memberIds is list && 
                          request.auth.uid in request.resource.data.memberIds;
       }
+
+      match /savedSmartGroups/{doc} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role == 'Recruiter'));
+      }
       
       match /job_postings/{doc} {
         // Allow anyone to read job postings (client-side filtering handles visibility)
@@ -302,9 +307,9 @@ service cloud.firestore {
       // --- EMAIL THREADS (Inbox - unread count listener and inbox page) ---
       // Path: tenants/{tenantId}/emailThreads/{threadId}
       match /emailThreads/{threadId} {
-        // Read: user must be assigned to tenant and be a participant (matches query: participantUserIds array-contains uid)
+        // Read: user must be in tenant (via assignment or claims) and be a participant (matches query: participantUserIds array-contains uid)
         allow read: if isAuthenticated() &&
-                       isAssignedToTenant(tenantId) &&
+                       (isAssignedToTenant(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles)) &&
                        request.auth.uid in resource.data.get('participantUserIds', []);
         // Create/update: tenant members can create/update (e.g. mark read); writes also from Cloud Functions
         allow create: if isAuthenticated() && isAssignedToTenant(tenantId);
@@ -408,6 +413,12 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
       }
 
+      // --- SAVED SMART GROUPS (Tenants) ---
+      match /savedSmartGroups/{groupId} {
+        allow read, write: if isHRX() || isTenantAdmin(tenantId);
+        allow read: if isAssignedToTenant(tenantId);
+      }
+
       // --- USERS (Tenants) ---
       match /users/{userId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
@@ -418,6 +429,12 @@ service cloud.firestore {
       match /settings/{settingsId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read: if isAssignedToTenant(tenantId);
+      }
+
+      // --- SCORING DISTRIBUTION (Tenants) - written by Cloud Functions, read by client for relative AI score ---
+      match /scoringDistribution/{docId} {
+        allow read: if isAssignedToTenant(tenantId);
+        allow write: if false;
       }
       
       // --- SLACK CHANNEL MEMBERSHIPS (Tenants) ---

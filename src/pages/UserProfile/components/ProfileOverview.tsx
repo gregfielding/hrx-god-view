@@ -60,6 +60,7 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 import { db , auth } from '../../../firebase';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import { logProfileUpdateActivity, logSecurityChangeActivity } from '../../../utils/activityLogger';
+import { persistScoreSummaryFromProfile } from '../../../utils/persistScoreSummaryFromProfile';
 import { useAuth } from '../../../contexts/AuthContext';
 import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
 
@@ -862,7 +863,11 @@ const transportOptions: Array<{
       
       console.log('Submitting update data:', finalUpdateData);
       await updateDoc(userRef, finalUpdateData);
-      
+
+      await persistScoreSummaryFromProfile(uid).catch((err) =>
+        console.warn('ProfileOverview: persist scoreSummary failed', err)
+      );
+
       // Log the profile update activity
       const changes = {
         formChanges: Object.keys(form).reduce((acc, key) => {

@@ -126,6 +126,8 @@ import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
 import SmartGroupsPage from './pages/SmartGroupsPage';
+import MySmartGroupsListPage from './pages/MySmartGroupsListPage';
+import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
 import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
 import RecruiterCompanies from './pages/RecruiterCompanies';
@@ -522,6 +524,8 @@ function App() {
           <Route path="my" element={<RecruiterUsers hideHeader scope="my" />} />
           <Route path="user-groups" element={<TenantUserGroups hideHeader />} />
           <Route path="smart-groups" element={<SmartGroupsPage hideHeader />} />
+          <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
+          <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>
 

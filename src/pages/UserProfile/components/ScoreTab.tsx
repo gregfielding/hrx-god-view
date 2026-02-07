@@ -1,18 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Box, Card, CardContent, CardHeader, Divider, Stack, Typography, Chip, Button } from '@mui/material';
+import { Box, Card, CardContent, CardHeader, Divider, Stack, Typography, Chip, Button, Tooltip } from '@mui/material';
 import InsightsIcon from '@mui/icons-material/Insights';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
 import StarIcon from '@mui/icons-material/Star';
 import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore';
 import { db } from '../../../firebase';
-import type { ScoreSummary } from '../../../utils/scoreSummary';
-import { formatOneDecimal } from '../../../utils/scoreSummary';
+import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import { formatOneDecimal, getRelativeAiScore } from '../../../utils/scoreSummary';
 import ReviewsTab from './ReviewsTab';
 
 type Props = {
   uid: string;
   scoreSummary?: ScoreSummary;
   fallbackAiScore?: number;
+  /** Profile-derived completeness (0–100) when scoreSummary.completenessScore is missing. */
+  fallbackCompleteness?: number;
+  /** Tenant distribution for relative AI score (0–100 vs pool). */
+  scoringDistribution?: ScoringDistribution | null;
   onGoToInterview?: () => void;
 };
 
@@ -33,19 +37,16 @@ const toDateLabel = (ts: any): string => {
   }
 };
 
-export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, onGoToInterview }: Props) {
+export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackCompleteness, scoringDistribution, onGoToInterview }: Props) {
   const aiScore = scoreSummary?.aiScore ?? fallbackAiScore;
 
   const aiCalc = useMemo(() => {
     const w = scoreSummary?.aiWeights || { completeness: 0.45, responsiveness: 0.25, quality: 0.3 };
-    // Ensure the 3 components always have usable values for display.
-    // - completeness: fallback to profileScore (passed as fallbackAiScore today; will be wired explicitly later)
-    // - responsiveness: if not computed yet, show a neutral default (50) so the math is visible
-    // - quality: if not computed yet, default to 0 (conservative)
+    // Completeness: use stored value when present, else profile-derived fallbackCompleteness.
     const c =
       typeof scoreSummary?.completenessScore === 'number'
         ? scoreSummary!.completenessScore!
-        : (typeof fallbackAiScore === 'number' ? fallbackAiScore : 0);
+        : (typeof fallbackCompleteness === 'number' ? fallbackCompleteness : 0);
     const r = typeof scoreSummary?.responsivenessScore === 'number' ? scoreSummary!.responsivenessScore! : 50;
     const q = typeof scoreSummary?.qualityScore === 'number' ? scoreSummary!.qualityScore! : 0;
     const hasAll = c !== null && r !== null && q !== null;
@@ -58,7 +59,7 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, onGoToInt
       computedAi: computed,
       hasAll,
     };
-  }, [scoreSummary]);
+  }, [scoreSummary, fallbackCompleteness]);
 
   const [recentInterviews, setRecentInterviews] = useState<InterviewRow[]>([]);
 
@@ -124,7 +125,15 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, onGoToInt
         <CardContent>
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
             {typeof aiScore === 'number' && !Number.isNaN(aiScore) ? (
-              <Chip color="primary" variant="outlined" label={`AI Score: ${Math.round(aiScore)}`} />
+              (() => {
+                const relative = getRelativeAiScore(aiScore, scoringDistribution);
+                const display = relative != null ? relative : Math.round(aiScore);
+                return (
+                  <Tooltip title={relative != null ? `Raw: ${Math.round(aiScore)} (relative to pool: ${display})` : `AI Score: ${Math.round(aiScore)}`}>
+                    <Chip color="primary" variant="outlined" label={`AI Score: ${display}`} />
+                  </Tooltip>
+                );
+              })()
             ) : (
               <Chip variant="outlined" label="AI Score: N/A" />
             )}
@@ -148,7 +157,10 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, onGoToInt
 
           <Divider sx={{ my: 2 }} />
           <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
-            Score details
+            How the AI score is determined
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            The AI Score shown above (and in the users table) is the stored score for this user. It is calculated from three components using this formula:
           </Typography>
           <Stack spacing={0.5}>
             <Typography variant="body2" color="text.secondary">
@@ -185,18 +197,24 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, onGoToInt
             </Typography>
 
             {aiCalc.hasAll ? (
-              <Typography variant="body2" color="text.secondary">
-                Computed AI Score: <strong>{aiCalc.computedAi}</strong>
-                {typeof aiScore === 'number' && !Number.isNaN(aiScore) && (
-                  <>
-                    {' '}
-                    (stored: <strong>{Math.round(aiScore)}</strong>)
-                  </>
-                )}
-              </Typography>
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  Using the current components, the formula gives: <strong>{aiCalc.computedAi}</strong>.
+                  {typeof aiScore === 'number' && !Number.isNaN(aiScore) && (
+                    aiCalc.computedAi !== null && Math.round(aiScore) !== aiCalc.computedAi ? (
+                      <>
+                        {' '}
+                        The stored AI Score is <strong>{Math.round(aiScore)}</strong>; it may have been saved at an earlier time or with different inputs.
+                      </>
+                    ) : (
+                      <> The stored score matches.</>
+                    )
+                  )}
+                </Typography>
+              </>
             ) : (
               <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                Detailed components will populate as the system computes completeness/responsiveness/quality.
+                Detailed components will populate as the system computes completeness, responsiveness, and quality.
               </Typography>
             )}
           </Stack>

@@ -11419,6 +11419,18 @@ export {
   bulkUpdateEmailThreadsApi
 } from './messaging/emailThreadsApi';
 
+// Bulk Send (system sender only)
+export { bulkSendEmailApi, bulkSendSmsApi } from './messaging/bulkSendApi';
+
+// Scoring distribution (relative AI score per tenant)
+export {
+  scheduledScoringDistribution,
+  recomputeScoringDistribution,
+  computeDistributionForTenant,
+  type ScoringDistributionDoc,
+  type Percentiles,
+} from './scoringDistribution';
+
 // Email Migration
 export { migrateEmailLogsToThreads } from './messaging/migrateEmailLogsToThreads';
 

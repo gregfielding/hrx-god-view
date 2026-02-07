@@ -26,6 +26,70 @@ interface UserProfile {
   updatedAt?: any;
   createdAt?: any;
   applicationData?: any;
+  professionalBio?: string;
+  bio?: string;
+  summary?: string;
+  resume?: { storagePath?: string; downloadUrl?: string };
+}
+
+/**
+ * Completeness score (0–100) for AI score formula.
+ * Includes bio and resume (resume weighted heavy). Use for scoreSummary.completenessScore.
+ */
+export function calculateCompletenessScore(user: UserProfile): number {
+  let score = 0;
+
+  // Basic Info (15 points)
+  const hasBasicInfo = !!(
+    user.firstName &&
+    user.lastName &&
+    user.email &&
+    (user.phone || user.phoneE164) &&
+    user.dob &&
+    (user.address || user.addressInfo)
+  );
+  if (hasBasicInfo) score += 15;
+
+  // Verification (12 points)
+  if (user.phoneVerified) score += 6;
+  if (user.workEligibility) score += 6;
+
+  // Skills (12 points)
+  if (user.skills && user.skills.length >= 3) score += 12;
+  else if (user.skills && user.skills.length > 0) score += Math.round((user.skills.length / 3) * 12);
+
+  // Work History (10 points)
+  if (user.workHistory && user.workHistory.length > 0) score += 10;
+
+  // Certifications (8 points)
+  if (user.certifications && user.certifications.length > 0) score += 8;
+
+  // Education (4 points)
+  if (user.education && user.education.length > 0) score += 4;
+
+  // Bio (8 points) – professionalBio, bio, or summary
+  const hasBio = !!(
+    (user.professionalBio && String(user.professionalBio).trim()) ||
+    (user.bio && String(user.bio).trim()) ||
+    (user.summary && String(user.summary).trim())
+  );
+  if (hasBio) score += 8;
+
+  // Resume (25 points) – weighted heavy
+  const hasResume = !!(user.resume && (user.resume.storagePath || user.resume.downloadUrl));
+  if (hasResume) score += 25;
+
+  // Engagement (8 points total)
+  if (user.loginCount && user.loginCount > 3) score += 2;
+  if (user.updatedAt) {
+    const updatedDate = user.updatedAt.toDate ? user.updatedAt.toDate() : new Date(user.updatedAt);
+    const daysSinceUpdate = (Date.now() - updatedDate.getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceUpdate <= 30) score += 2;
+  }
+  if (user.applicationData && Object.keys(user.applicationData).length > 1) score += 2;
+  if (user.languages && user.languages.length > 0) score += 2;
+
+  return Math.min(Math.round(score), 100);
 }
 
 /**

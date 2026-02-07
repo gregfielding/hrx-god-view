@@ -35,6 +35,7 @@ import {
 import { doc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, getDoc, updateDoc, deleteDoc } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
+import { computeAiScoreFromComponents } from '../../../utils/scoreSummary';
 import { useAuth } from '../../../contexts/AuthContext';
 
 interface InterviewQuestion {
@@ -238,10 +239,11 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           : undefined;
         // Also compute qualityScore so header "Score" reflects interviews + reviews.
         let qualityScore: number | null = null;
+        let scoreSummary: any = {};
         try {
           const userSnap = await getDoc(doc(db, 'users', uid));
-          const ss = (userSnap.data() as any)?.scoreSummary || {};
-          const reviewAvg = typeof ss?.reviewAvg === 'number' ? ss.reviewAvg : null;
+          scoreSummary = (userSnap.data() as any)?.scoreSummary || {};
+          const reviewAvg = typeof scoreSummary?.reviewAvg === 'number' ? scoreSummary.reviewAvg : null;
           const hasInterview = typeof interviewAvg === 'number' && Number.isFinite(interviewAvg);
           const hasReview = typeof reviewAvg === 'number' && Number.isFinite(reviewAvg);
           if (hasInterview || hasReview) {
@@ -256,6 +258,11 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           // non-fatal
         }
 
+        // Recompute and persist AI score when quality (or other components) change
+        const completeness = typeof scoreSummary?.completenessScore === 'number' ? scoreSummary.completenessScore : 0;
+        const responsiveness = typeof scoreSummary?.responsivenessScore === 'number' ? scoreSummary.responsivenessScore : 50;
+        const newAiScore = computeAiScoreFromComponents(completeness, responsiveness, qualityScore ?? undefined);
+
         // NOTE: use dot-path updates to avoid overwriting other scoreSummary fields (e.g. reviews)
         await updateDoc(doc(db, 'users', uid), {
           'scoreSummary.interviewAvg': interviewAvg ?? null,
@@ -263,6 +270,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           'scoreSummary.interviewLastAt': serverTimestamp(),
           'scoreSummary.interviewLastScore10': score,
           ...(qualityScore !== null ? { 'scoreSummary.qualityScore': qualityScore } : {}),
+          ...(newAiScore !== null ? { 'scoreSummary.aiScore': newAiScore, 'scoreSummary.aiScoreUpdatedAt': serverTimestamp() } : {}),
         } as any);
       } catch {
         // non-fatal
@@ -320,10 +328,11 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
       ? (typeof lastInterview.score10 === 'number' ? lastInterview.score10 : lastInterview.score)
       : null;
     let qualityScore: number | null = null;
+    let scoreSummary: any = {};
     try {
       const userSnap = await getDoc(doc(db, 'users', userId));
-      const ss = (userSnap.data() as any)?.scoreSummary || {};
-      const reviewAvg = typeof ss?.reviewAvg === 'number' ? ss.reviewAvg : null;
+      scoreSummary = (userSnap.data() as any)?.scoreSummary || {};
+      const reviewAvg = typeof scoreSummary?.reviewAvg === 'number' ? scoreSummary.reviewAvg : null;
       const hasInterview = typeof interviewAvg === 'number' && Number.isFinite(interviewAvg);
       const hasReview = typeof reviewAvg === 'number' && Number.isFinite(reviewAvg);
       if (hasInterview || hasReview) {
@@ -337,12 +346,16 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
     } catch {
       // non-fatal
     }
+    const completeness = typeof scoreSummary.completenessScore === 'number' ? scoreSummary.completenessScore : 0;
+    const responsiveness = typeof scoreSummary.responsivenessScore === 'number' ? scoreSummary.responsivenessScore : 50;
+    const newAiScore = qualityScore !== null ? computeAiScoreFromComponents(completeness, responsiveness, qualityScore) : null;
     await updateDoc(doc(db, 'users', userId), {
       'scoreSummary.interviewAvg': interviewAvg ?? null,
       'scoreSummary.interviewCount': interviewCount,
       'scoreSummary.interviewLastAt': lastAt ?? null,
       'scoreSummary.interviewLastScore10': lastScore10 ?? null,
       ...(qualityScore !== null ? { 'scoreSummary.qualityScore': qualityScore } : {}),
+      ...(newAiScore !== null ? { 'scoreSummary.aiScore': newAiScore, 'scoreSummary.aiScoreUpdatedAt': serverTimestamp() } : {}),
     } as any);
   };
 

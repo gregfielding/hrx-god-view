@@ -333,7 +333,10 @@ const Layout: React.FC = React.memo(function Layout() {
           setInboxUnreadCount(total > 99 ? 99 : total);
         },
         (err) => {
-          console.warn('Inbox unread count listener error:', err);
+          const isPermissionError = err?.code === 'permission-denied' || (err?.message && String(err.message).includes('insufficient permissions'));
+          if (!isPermissionError) {
+            console.warn('Inbox unread count listener error:', err);
+          }
           setInboxUnreadCount(0);
         }
       );

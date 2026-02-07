@@ -15,6 +15,7 @@ export interface SmartGroupEntry {
   userAddressCity: string;
   userGeocoordinates?: { lat: number; lng: number };
   skills?: string[];
+  certifications?: string[];
   jobCategory: JobCategory;
   timestamp: any;
   cityKey: string;
@@ -73,6 +74,7 @@ export async function updateUserSmartGroupOnApply(
     userAddressCity?: string;
     userGeocoordinates?: { lat: number; lng: number };
     skills?: string[];
+    certifications?: string[];
     companyName?: string;
     companyId?: string;
     worksiteName?: string;
@@ -103,6 +105,7 @@ export async function updateUserSmartGroupOnApply(
       userAddressCity: params.userAddressCity ?? '',
       userGeocoordinates: params.userGeocoordinates,
       skills: params.skills ?? [],
+      certifications: params.certifications ?? [],
       jobCategory,
       timestamp: serverTimestamp(),
       companyName: params.companyName,

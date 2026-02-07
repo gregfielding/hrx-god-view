@@ -1,7 +1,7 @@
 /**
  * Users Layout
  *
- * Single header with four tabs: All Users | My Users | User Groups | Smart Groups.
+ * Single header with five tabs: All Users | My Users | User Groups | Smart Groups | My Smart Groups.
  * Search (with Favorites) and, for User Groups, Create button are in the header, right-justified.
  */
 
@@ -13,7 +13,7 @@ import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 
-export type UsersTab = 'all' | 'my' | 'user-groups' | 'smart-groups';
+export type UsersTab = 'all' | 'my' | 'user-groups' | 'smart-groups' | 'my-smart-groups';
 
 export interface UsersLayoutOutletContext {
   usersTab: UsersTab;
@@ -30,10 +30,12 @@ const TAB_PATHS: { tab: UsersTab; path: string; label: string }[] = [
   { tab: 'my', path: '/users/my', label: 'My Users' },
   { tab: 'user-groups', path: '/users/user-groups', label: 'User Groups' },
   { tab: 'smart-groups', path: '/users/smart-groups', label: 'Smart Groups' },
+  { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
 ];
 
 function getActiveTab(pathname: string): UsersTab {
   if (pathname.includes('/users/user-groups')) return 'user-groups';
+  if (pathname.includes('/users/my-smart-groups')) return 'my-smart-groups';
   if (pathname.includes('/users/smart-groups')) return 'smart-groups';
   if (pathname.includes('/users/my')) return 'my';
   if (pathname.includes('/users/all')) return 'all';
@@ -196,6 +198,18 @@ const UsersLayout: React.FC = () => {
           display: 'flex',
           flexDirection: 'column',
           pb: 2,
+          '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+          '&::-webkit-scrollbar-track': {
+            background: 'rgba(0, 0, 0, 0.02)',
+            borderRadius: '4px',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: 'rgba(0, 0, 0, 0.15)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+          },
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }}
       >
         <Outlet context={outletContext} />

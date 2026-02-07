@@ -1646,6 +1646,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               userAddressCity: personal?.city ?? '',
               userGeocoordinates: personal?.homeLat != null && personal?.homeLng != null ? { lat: personal.homeLat, lng: personal.homeLng } : undefined,
               skills: Array.isArray(quals?.skills) ? quals.skills.map((s: any) => typeof s === 'string' ? s : s?.name).filter(Boolean) : [],
+              certifications: Array.isArray(quals?.certifications) ? quals.certifications.map((c: any) => typeof c === 'string' ? c : c?.name).filter(Boolean) : [],
               companyName: posting?.companyName,
               companyId: posting?.companyId,
               worksiteName: posting?.worksiteName,

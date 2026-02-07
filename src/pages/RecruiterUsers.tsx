@@ -5,6 +5,7 @@ import {
   Autocomplete,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   FormControl,
@@ -26,8 +27,9 @@ import {
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
-import StarIcon from '@mui/icons-material/Star';
-import GroupIcon from '@mui/icons-material/Groups';
+import LocationOnIcon from '@mui/icons-material/LocationOn';
+import SmsIcon from '@mui/icons-material/Sms';
+import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
@@ -48,8 +50,9 @@ import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
-import { normalizeScoreSummary, formatOneDecimal } from '../utils/scoreSummary';
+import { normalizeScoreSummary, formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
 import type { ScoreSummary } from '../utils/scoreSummary';
+import { useScoringDistribution } from '../hooks/useScoringDistribution';
 
 type SecurityLevel =
   | '0'
@@ -68,13 +71,14 @@ interface RecruiterUser {
   lastName: string;
   email: string;
   phone?: string;
+  city?: string;
+  state?: string;
   avatar?: string;
   securityLevel: string;
   employeeOnboardStatus?: string;
   contractorOnboardStatus?: string;
   onboardingType?: string;
   scoreSummary?: ScoreSummary;
-  state?: string;
   lastLoginAt?: any;
   updatedAt?: any;
   createdAt?: any;
@@ -98,6 +102,8 @@ export interface RecruiterUsersProps {
 const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, scope: scopeProp }) => {
   const navigate = useNavigate();
   const { activeTenant, user } = useAuth();
+  const tenantId = activeTenant?.id;
+  const { distribution: scoringDistribution } = useScoringDistribution(tenantId);
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
   const [localSearch, setLocalSearch] = useState('');
   const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
@@ -169,6 +175,10 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [selectAllResults, setSelectAllResults] = useState(false);
+  const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
+  const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -303,7 +313,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
           userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
           skills: normalizedSkills,
-          state: userData.state || userData.address?.state || '',
+          city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
+          state: userData.state || userData.address?.state || (userData.addressInfo && (userData.addressInfo as any).state) || '',
         };
       };
 
@@ -600,17 +611,20 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   };
 
   const renderAiScore = (user: RecruiterUser) => {
-    const score =
+    const rawScore =
       user.scoreSummary?.aiScore ??
       user.aiJobFitScore ??
       user.aiProfileScore;
-    if (score === undefined || score === null || Number.isNaN(score)) {
+    if (rawScore === undefined || rawScore === null || Number.isNaN(rawScore)) {
       return <Typography variant="body2" color="text.secondary">N/A</Typography>;
     }
+    const relativeScore = getRelativeAiScore(rawScore, scoringDistribution);
+    const displayScore = relativeScore != null ? relativeScore : Math.round(rawScore);
+    const showRelative = relativeScore != null;
 
     let color: 'default' | 'success' | 'warning' | 'error' = 'default';
-    if (score >= 80) color = 'success';
-    else if (score >= 60) color = 'warning';
+    if (displayScore >= 80) color = 'success';
+    else if (displayScore >= 60) color = 'warning';
     else color = 'default';
 
     return (
@@ -623,7 +637,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
-                AI: <strong>{Math.round(score)}</strong>
+                AI: <strong>{Math.round(rawScore)}</strong>
+                {showRelative ? ` (relative: ${displayScore})` : ''}
               </Typography>
               <Typography variant="body2">
                 Interview: <strong>{formatOneDecimal(user.scoreSummary?.interviewAvg)}</strong>/10
@@ -639,7 +654,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       >
         <Chip
           icon={<InsightsIcon sx={{ fontSize: 16 }} />}
-          label={`${Math.round(score)}`}
+          label={`${displayScore}`}
           color={color}
           size="small"
           variant={color === 'default' ? 'outlined' : 'filled'}
@@ -741,8 +756,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             return sortDirection === 'asc' ? nameCompare : -nameCompare;
           }
           case 'aiScore': {
-            const aScore = a.aiJobFitScore ?? a.aiProfileScore ?? -1;
-            const bScore = b.aiJobFitScore ?? b.aiProfileScore ?? -1;
+            const aScore = a.scoreSummary?.aiScore ?? a.aiJobFitScore ?? a.aiProfileScore ?? -1;
+            const bScore = b.scoreSummary?.aiScore ?? b.aiJobFitScore ?? b.aiProfileScore ?? -1;
             const diff = (bScore ?? -1) - (aScore ?? -1);
             return sortDirection === 'desc' ? diff : -diff;
           }
@@ -772,6 +787,69 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     const end = start + rowsPerPage;
     return filteredUsers.slice(start, end);
   }, [filteredUsers, page, rowsPerPage]);
+
+  const selectedCount = selectAllResults ? filteredUsers.length : selectedIds.size;
+  const allOnPageSelected =
+    paginatedUsers.length > 0 &&
+    (selectAllResults || paginatedUsers.every((u) => selectedIds.has(u.id)));
+  const someOnPageSelected =
+    !selectAllResults && paginatedUsers.some((u) => selectedIds.has(u.id));
+
+  const handleSelectAllOnPage = () => {
+    if (allOnPageSelected) {
+      if (selectAllResults) {
+        setSelectAllResults(false);
+        const remaining = new Set(filteredUsers.map((u) => u.id));
+        paginatedUsers.forEach((u) => remaining.delete(u.id));
+        setSelectedIds(remaining);
+      } else {
+        const next = new Set(selectedIds);
+        paginatedUsers.forEach((u) => next.delete(u.id));
+        setSelectedIds(next);
+      }
+    } else {
+      const next = new Set(selectedIds);
+      paginatedUsers.forEach((u) => next.add(u.id));
+      setSelectedIds(next);
+    }
+  };
+
+  const handleSelectRow = (userId: string, checked: boolean) => {
+    if (selectAllResults) {
+      if (checked) return;
+      setSelectAllResults(false);
+      const next = new Set(filteredUsers.map((u) => u.id));
+      next.delete(userId);
+      setSelectedIds(next);
+    } else {
+      const next = new Set(selectedIds);
+      if (checked) next.add(userId);
+      else next.delete(userId);
+      setSelectedIds(next);
+    }
+  };
+
+  const handleSelectAllResults = () => {
+    setSelectAllResults(true);
+    setSelectedIds(new Set());
+  };
+
+  const handleClearSelection = () => {
+    setSelectAllResults(false);
+    setSelectedIds(new Set());
+  };
+
+  const bulkRecipientsAndIds = useMemo(() => {
+    const usersToUse = selectAllResults ? filteredUsers : filteredUsers.filter((u) => selectedIds.has(u.id));
+    const recipients: MessageRecipient[] = usersToUse.map((u) => ({
+      userId: u.id,
+      name: [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || u.id,
+      email: u.email,
+      phone: u.phone ? formatPhoneNumber(u.phone) : undefined,
+    }));
+    const recipientUserIds = usersToUse.map((u) => u.id);
+    return { recipients, recipientUserIds };
+  }, [selectAllResults, selectedIds, filteredUsers]);
 
   // If user paginates beyond what's loaded, auto-fetch more in the background
   useEffect(() => {
@@ -1092,13 +1170,69 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 </Typography>
               </Box>
             )}
-            
+
+          {selectedCount > 0 && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                px: 2,
+                py: 1.25,
+                backgroundColor: 'action.selected',
+                border: '1px solid',
+                borderColor: 'divider',
+                borderBottom: 'none',
+                borderRadius: '8px 8px 0 0',
+              }}
+            >
+              <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                {selectAllResults
+                  ? `All ${filteredUsers.length} result${filteredUsers.length === 1 ? '' : 's'} selected`
+                  : `${selectedCount} selected`}
+              </Typography>
+              <Button size="small" onClick={handleClearSelection} sx={{ textTransform: 'none' }}>
+                Clear selection
+              </Button>
+              {allOnPageSelected && !selectAllResults && filteredUsers.length > paginatedUsers.length && (
+                <Button size="small" variant="outlined" onClick={handleSelectAllResults} sx={{ textTransform: 'none' }}>
+                  Select all {filteredUsers.length} results
+                </Button>
+              )}
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<EmailIcon />}
+                onClick={() => {
+                  setBulkDrawerChannel('email');
+                  setBulkDrawerOpen(true);
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Bulk Email
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<SmsIcon />}
+                onClick={() => {
+                  setBulkDrawerChannel('sms');
+                  setBulkDrawerOpen(true);
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Bulk SMS
+              </Button>
+            </Box>
+          )}
+
           <TableContainer
             component={Paper}
             elevation={0}
             sx={{
               borderRadius: 2,
               border: '1px solid #EAEEF4',
+              ...(selectedCount > 0 && { borderRadius: '0 0 8px 8px' }),
               position: 'relative',
               flex: 1,
               display: 'flex',
@@ -1136,8 +1270,17 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             }}
           >
             <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
+                <TableCell padding="checkbox" sx={{ width: 48, bgcolor: '#FFFFFF', borderRadius: 0 }}>
+                  <Checkbox
+                    size="small"
+                    checked={allOnPageSelected}
+                    indeterminate={someOnPageSelected}
+                    onChange={handleSelectAllOnPage}
+                    aria-label="Select all on page"
+                  />
+                </TableCell>
                 <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 200 }}>
                   <TableSortLabel
                     active={sortBy === 'name'}
                     direction={sortBy === 'name' ? sortDirection : 'asc'}
@@ -1201,6 +1344,15 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 }}
                 onClick={() => navigate(`/users/${user.id}`)}
               >
+                  <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()} sx={{ width: 48 }}>
+                    <Checkbox
+                      size="small"
+                      checked={selectAllResults || selectedIds.has(user.id)}
+                      onChange={(_, checked) => handleSelectRow(user.id, checked)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${user.firstName} ${user.lastName}`}
+                    />
+                  </TableCell>
                   <TableCell onClick={(event) => event.stopPropagation()}>
                     <FavoriteButton
                       itemId={user.id}
@@ -1214,21 +1366,18 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       }}
                     />
                   </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                  <TableCell sx={{ minWidth: 200 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
                       <Avatar
                         src={user.avatar}
                         alt={`${user.firstName} ${user.lastName}`}
-                        sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}
+                        sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE, flexShrink: 0 }}
                       >
                         {user.firstName?.[0]}
                       </Avatar>
-                      <Box>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
                           {user.firstName} {user.lastName}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          #{user.id.slice(-6)}
                         </Typography>
                         {user.createdAt && (
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
@@ -1251,6 +1400,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                           <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
                           <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
                             {formatPhoneNumber(user.phone)}
+                          </Typography>
+                        </Box>
+                      )}
+                      {(user.city || user.state) && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                          <LocationOnIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>
+                            {[user.city, user.state].filter(Boolean).join(', ')}
                           </Typography>
                         </Box>
                       )}
@@ -1283,53 +1440,62 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                     })()}
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {user.userGroupIds.length === 0 && (
-                        <Typography variant="body2" color="text.secondary">
-                          —
+                    {user.userGroupIds.length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">—</Typography>
+                    ) : (
+                      <Tooltip
+                        title={
+                          user.userGroupIds.length <= 1
+                            ? (groupLookup.get(user.userGroupIds[0])?.title || user.userGroupIds[0])
+                            : (
+                              <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
+                                {user.userGroupIds.map((id) => (
+                                  <Typography key={id} component="span" variant="body2" sx={{ display: 'block' }}>
+                                    {groupLookup.get(id)?.title || id}
+                                  </Typography>
+                                ))}
+                              </Box>
+                            )
+                        }
+                        placement="top"
+                        enterDelay={300}
+                        disableInteractive={false}
+                      >
+                        <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
+                          {groupLookup.get(user.userGroupIds[0])?.title || user.userGroupIds[0]}
+                          {user.userGroupIds.length > 1 ? '…' : ''}
                         </Typography>
-                      )}
-                      {user.userGroupIds.slice(0, 3).map((groupId) => {
-                        const group = groupLookup.get(groupId);
-                        return (
-                          <Chip
-                            key={groupId}
-                            size="small"
-                            icon={<GroupIcon sx={{ fontSize: 14 }} />}
-                            label={group?.title || groupId}
-                            variant="outlined"
-                          />
-                        );
-                      })}
-                      {user.userGroupIds.length > 3 && (
-                        <Chip
-                          size="small"
-                          label={`+${user.userGroupIds.length - 3} more`}
-                          variant="outlined"
-                        />
-                      )}
-                    </Box>
+                      </Tooltip>
+                    )}
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {user.skills?.slice(0, 3).map((skill) => (
-                        <Chip
-                          key={skill}
-                          label={skill}
-                          size="small"
-                          variant="outlined"
-                          icon={<StarIcon sx={{ fontSize: 14 }} />}
-                        />
-                      ))}
-                      {user.skills?.length === 0 && (
-                        <Typography variant="body2" color="text.secondary">
-                          —
+                    {!user.skills?.length ? (
+                      <Typography variant="body2" color="text.secondary">—</Typography>
+                    ) : (
+                      <Tooltip
+                        title={
+                          user.skills.length <= 1
+                            ? user.skills[0]
+                            : (
+                              <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
+                                {user.skills.map((skill) => (
+                                  <Typography key={skill} component="span" variant="body2" sx={{ display: 'block' }}>
+                                    {skill}
+                                  </Typography>
+                                ))}
+                              </Box>
+                            )
+                        }
+                        placement="top"
+                        enterDelay={300}
+                        disableInteractive={false}
+                      >
+                        <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
+                          {user.skills[0]}
+                          {user.skills.length > 1 ? '…' : ''}
                         </Typography>
-                      )}
-                      {user.skills?.length > 3 && (
-                        <Chip size="small" label={`+${user.skills.length - 3}`} variant="outlined" />
-                      )}
-                    </Box>
+                      </Tooltip>
+                    )}
                   </TableCell>
                   <TableCell sx={{ minWidth: 200 }}>
                     <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
@@ -1354,6 +1520,20 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           </>
         ) : null}
       </Box>
+
+      <MessageDrawer
+        open={bulkDrawerOpen}
+        onClose={() => setBulkDrawerOpen(false)}
+        recipients={bulkRecipientsAndIds.recipients}
+        tenantId={activeTenant?.id}
+        bulkSystemMode={true}
+        recipientUserIds={bulkRecipientsAndIds.recipientUserIds}
+        defaultChannels={[bulkDrawerChannel]}
+        onSend={() => {
+          handleClearSelection();
+          setBulkDrawerOpen(false);
+        }}
+      />
     </Box>
   );
 };

@@ -123,6 +123,64 @@ function calculateProfileScore(userData: any): number {
 }
 
 /**
+ * Completeness score (0–100) for AI score formula. Mirrors frontend calculateCompletenessScore.
+ * Includes bio and resume (resume weighted heavy). Use for scoreSummary.completenessScore.
+ */
+function calculateCompletenessScore(userData: any): number {
+  let score = 0;
+
+  const hasBasicInfo = !!(
+    userData.firstName &&
+    userData.lastName &&
+    userData.email &&
+    (userData.phone || userData.phoneE164) &&
+    userData.dob &&
+    (userData.address || userData.addressInfo)
+  );
+  if (hasBasicInfo) score += 15;
+
+  if (userData.phoneVerified) score += 6;
+  if (userData.workEligibility) score += 6;
+
+  if (userData.skills && userData.skills.length >= 3) score += 12;
+  else if (userData.skills && userData.skills.length > 0) {
+    score += Math.round((userData.skills.length / 3) * 12);
+  }
+
+  if (userData.workHistory && userData.workHistory.length > 0) score += 10;
+  if (userData.certifications && userData.certifications.length > 0) score += 8;
+  if (userData.education && userData.education.length > 0) score += 4;
+
+  const hasBio = !!(
+    (userData.professionalBio && String(userData.professionalBio).trim()) ||
+    (userData.bio && String(userData.bio).trim()) ||
+    (userData.summary && String(userData.summary).trim())
+  );
+  if (hasBio) score += 8;
+
+  const hasResume = !!(
+    userData.resume &&
+    (userData.resume.storagePath || userData.resume.downloadUrl)
+  );
+  if (hasResume) score += 25;
+
+  if (userData.loginCount && userData.loginCount > 3) score += 2;
+  if (userData.updatedAt) {
+    const updatedDate = userData.updatedAt.toDate
+      ? userData.updatedAt.toDate()
+      : new Date(userData.updatedAt);
+    const daysSinceUpdate =
+      (Date.now() - updatedDate.getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceUpdate <= 30) score += 2;
+  }
+  if (userData.applicationData && Object.keys(userData.applicationData).length > 1)
+    score += 2;
+  if (userData.languages && userData.languages.length > 0) score += 2;
+
+  return Math.min(Math.round(score), 100);
+}
+
+/**
  * Generate hash of job requirements for cache invalidation
  */
 function hashJobRequirements(jobOrder: any): string {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Grid, TextField, Button, Snackbar, Alert, Typography } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
-import { geocodeAddress } from '../../../../utils/geocodeAddress';
+import { geocodeAddress, getGeocodingErrorMessage } from '../../../../utils/geocodeAddress';
 
 type Props = {
   uid: string;
@@ -14,6 +14,7 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
   const [originalForm, setOriginalForm] = useState(formData);
   const [showToast, setShowToast] = useState(false);
   const [message, setMessage] = useState('');
+  const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success');
   const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
   const autocompleteRef = useRef<any>(null);
   const retryTimeoutRef = useRef<NodeJS.Timeout>();
@@ -92,53 +93,41 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
     autocompleteRef.current = autocomplete;
   }, []);
 
-  const geocodeCurrentAddress = async () => {
+  const geocodeCurrentAddress = async (): Promise<{ lat: number; lng: number }> => {
     const { streetAddress, city, state, zip } = form;
-    
-    // Check if we have enough address components to geocode
     if (!streetAddress || !city || !state) {
-      return null;
+      throw new Error('Street, city, and state are required to geocode');
     }
-    
-    try {
-      const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ');
-      console.log('Geocoding address:', fullAddress);
-      
-      const coordinates = await geocodeAddress(fullAddress);
-      console.log('Geocoding successful:', coordinates);
-      
-      return coordinates;
-    } catch (error) {
-      console.warn('Geocoding failed:', error);
-      return null;
-    }
+    const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ');
+    return geocodeAddress(fullAddress);
   };
 
   const handleSave = async () => {
     try {
-      // If we don't have coordinates but have a complete address, try to geocode it
+      let formToSave = form;
       if (!form.homeLat || !form.homeLng) {
-        const coordinates = await geocodeCurrentAddress();
-        if (coordinates) {
-          setForm(prev => ({
-            ...prev,
-            homeLat: coordinates.lat,
-            homeLng: coordinates.lng
-          }));
+        try {
+          const coordinates = await geocodeCurrentAddress();
+          formToSave = { ...form, homeLat: coordinates.lat, homeLng: coordinates.lng };
+          setForm(formToSave);
           setMessage('Address updated and geocoded successfully');
-        } else {
-          setMessage('Address updated successfully (geocoding failed)');
+          setToastSeverity('success');
+        } catch (geoErr) {
+          formToSave = form;
+          setMessage('Address saved. ' + getGeocodingErrorMessage(geoErr, { hasAutocomplete: true }));
+          setToastSeverity('error');
         }
       } else {
         setMessage('Address updated successfully');
+        setToastSeverity('success');
       }
-      
-      await onFormChange(form);
+      await onFormChange(formToSave);
       setShowToast(true);
-      setOriginalForm(form);
+      setOriginalForm(formToSave);
     } catch (error) {
       console.error('Error saving address:', error);
       setMessage('Error saving address');
+      setToastSeverity('error');
       setShowToast(true);
     }
   };
@@ -237,20 +226,22 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
           </Button>
         )}
         {form.streetAddress && form.city && form.state && (!form.homeLat || !form.homeLng) && (
-          <Button 
-            variant="outlined" 
+          <Button
+            variant="outlined"
             onClick={async () => {
-              const coordinates = await geocodeCurrentAddress();
-              if (coordinates) {
+              try {
+                const coordinates = await geocodeCurrentAddress();
                 setForm(prev => ({
                   ...prev,
                   homeLat: coordinates.lat,
                   homeLng: coordinates.lng
                 }));
                 setMessage('Address geocoded successfully');
+                setToastSeverity('success');
                 setShowToast(true);
-              } else {
-                setMessage('Geocoding failed - please check the address');
+              } catch (err) {
+                setMessage(getGeocodingErrorMessage(err, { hasAutocomplete: true }));
+                setToastSeverity('error');
                 setShowToast(true);
               }
             }}
@@ -259,8 +250,8 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
           </Button>
         )}
       </Box>
-      <Snackbar open={showToast} autoHideDuration={3000} onClose={() => setShowToast(false)}>
-        <Alert onClose={() => setShowToast(false)} severity="success" sx={{ width: '100%' }}>
+      <Snackbar open={showToast} autoHideDuration={6000} onClose={() => setShowToast(false)}>
+        <Alert onClose={() => setShowToast(false)} severity={toastSeverity} sx={{ width: '100%' }}>
           {message}
         </Alert>
       </Snackbar>

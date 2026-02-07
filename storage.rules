@@ -51,6 +51,14 @@ service firebase.storage {
       allow read: if true;
     }
 
+    // User group avatar upload access
+    match /userGroupAvatars/{tenantId}/{fileName} {
+      // Allow authenticated users to upload/delete user group avatars for their tenant
+      allow write, delete: if request.auth != null;
+      // Public read access for group avatars
+      allow read: if true;
+    }
+
     // Deal contract upload access
     match /deals/{tenantId}/{dealId}/contracts/{fileName} {
       // Allow authenticated users to upload/delete contracts for their tenant's deals

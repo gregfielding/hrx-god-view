@@ -137,7 +137,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { auth } from '../../firebase';
 import { useCRMCache } from '../../contexts/CRMCacheContext';
 import IndustrySelector from '../../components/IndustrySelector';
-import { geocodeAddress } from '../../utils/geocodeAddress';
+import { geocodeAddress, getGeocodingErrorMessage } from '../../utils/geocodeAddress';
 import { INDUSTRIES, getIndustriesByCategory, getIndustryByCode } from '../../data/industries';
 import NewsEnrichmentPanel from '../../components/NewsEnrichmentPanel';
 import AIEnrichmentWidget from '../../components/AIEnrichmentWidget';
@@ -724,7 +724,7 @@ const CompanyDetails: React.FC = () => {
       setSuccess('Address geocoded successfully!');
     } catch (err) {
       console.error('Error geocoding address:', err);
-      setError('Failed to geocode address. Please check the address format.');
+      setError(getGeocodingErrorMessage(err, { hasAutocomplete: false }));
     }
   };
 
@@ -4464,7 +4464,7 @@ const OverviewTab: React.FC<{ company: any; tenantId: string }> = ({ company, te
       setSuccess('Address geocoded successfully!');
     } catch (err) {
       console.error('Error geocoding address:', err);
-      setError('Failed to geocode address. Please check the address format.');
+      setError(getGeocodingErrorMessage(err, { hasAutocomplete: false }));
     }
   };
 

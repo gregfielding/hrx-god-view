@@ -52,3 +52,22 @@ export async function geocodeAddress(address: string): Promise<{ lat: number; ln
   const detailed = await geocodeAddressDetailed(address);
   return { lat: detailed.lat, lng: detailed.lng };
 }
+
+const MSG_API_KEY =
+  'Google Maps API key is not set. Set REACT_APP_GOOGLE_MAPS_API_KEY and enable Geocoding API.';
+const MSG_FAILED_WITH_SUGGESTIONS =
+  'Geocoding failed. Select an address from the suggestions above, or check that the Geocoding API is enabled for your API key.';
+const MSG_FAILED_GENERIC =
+  'Geocoding failed. Check the address or ensure the Geocoding API is enabled for your API key.';
+
+/**
+ * Returns a user-facing message for geocoding errors. Use in catch blocks when calling geocodeAddress / geocodeAddressDetailed.
+ */
+export function getGeocodingErrorMessage(
+  error: unknown,
+  options?: { hasAutocomplete?: boolean }
+): string {
+  const msg = error instanceof Error ? error.message : String(error ?? '');
+  if (msg === 'Google Maps API key is not set') return MSG_API_KEY;
+  return options?.hasAutocomplete === true ? MSG_FAILED_WITH_SUGGESTIONS : MSG_FAILED_GENERIC;
+}

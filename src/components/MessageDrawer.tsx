@@ -70,6 +70,10 @@ interface MessageDrawerProps {
   onMessageSent?: (optimisticMessageId?: string) => void; // Callback after message is sent (for thread replies)
   onOptimisticMessage?: (message: any) => void; // Callback to add optimistic message before sending
   variant?: 'drawer' | 'inline'; // Render as drawer or inline form
+  /** When true, use system sender only (SendGrid/Twilio) and call bulk send APIs. Recipients are read-only. */
+  bulkSystemMode?: boolean;
+  /** Required when bulkSystemMode: list of user IDs to send to (used by bulk APIs). */
+  recipientUserIds?: string[];
 }
 
 interface SenderOption {
@@ -99,6 +103,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   onMessageSent,
   onOptimisticMessage,
   variant = 'drawer',
+  bulkSystemMode = false,
+  recipientUserIds,
 }) => {
   const { user, activeTenant } = useAuth();
   const effectiveTenantId = tenantId || activeTenant?.id || '';
@@ -195,6 +201,20 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       setRecipientInputValue(recipients.map(r => r.email || r.name).join(', '));
       setRecipientOptions([]);
       setGmailConnected(null);
+
+      if (bulkSystemMode) {
+        setSenderOptions([{
+          id: 'system',
+          type: 'gmail',
+          label: 'System',
+          description: 'Approved sender (SendGrid / Twilio)',
+          enabled: true,
+        }]);
+        setSelectedSenderId('system');
+        setLoadingSenders(false);
+        setHasTwilioNumber(true);
+        return;
+      }
       
       // Always show Gmail option (disabled if not connected).
       const initialOptions: SenderOption[] = [
@@ -286,7 +306,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
         setRecipientInputValue(recipients.map(r => r.email || r.name).join(', '));
       }
     }
-  }, [open, initialChannel, defaultChannels, defaultSubject, defaultBody, user?.uid, effectiveTenantId, recipients]);
+  }, [open, initialChannel, defaultChannels, defaultSubject, defaultBody, user?.uid, effectiveTenantId, recipients, bulkSystemMode]);
 
   // Search for recipients by email, name, or username
   const searchRecipients = async (searchTerm: string) => {
@@ -628,6 +648,82 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL || 
         'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
+      // Bulk send (system sender only)
+      if (bulkSystemMode && recipientUserIds?.length && user?.uid && effectiveTenantId) {
+        const token = await user.getIdToken();
+        const bodyPlain = messageBody.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
+
+        if (channels.includes('email')) {
+          const res = await fetch(`${API_BASE_URL}/bulkSendEmailApi`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              tenantId: effectiveTenantId,
+              initiatedByUserId: user.uid,
+              recipientUserIds,
+              subject,
+              bodyHtml: messageBody,
+              bodyPlain,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setError(data.error?.message || 'Bulk email failed');
+            setLoading(false);
+            return;
+          }
+          const sent = data.sent ?? 0;
+          const failed = data.failed ?? 0;
+          const total = recipientUserIds.length;
+          if (failed > 0) {
+            setSuccess(true);
+            setError(`Sent to ${sent} of ${total} recipients. ${failed} failed.`);
+          } else {
+            setSuccess(true);
+            if (onSend) onSend({ success: true, dispatchedChannels: ['email'], messageLogIds: [] });
+            onClose();
+          }
+        } else if (channels.includes('sms')) {
+          const res = await fetch(`${API_BASE_URL}/bulkSendSmsApi`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              tenantId: effectiveTenantId,
+              initiatedByUserId: user.uid,
+              recipientUserIds,
+              body: bodyPlain,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            setError(data.error?.message || 'Bulk SMS failed');
+            setLoading(false);
+            return;
+          }
+          const sent = data.sent ?? 0;
+          const failed = data.failed ?? 0;
+          const total = recipientUserIds.length;
+          if (failed > 0) {
+            setSuccess(true);
+            setError(`Sent to ${sent} of ${total} recipients. ${failed} failed.`);
+          } else {
+            setSuccess(true);
+            if (onSend) onSend({ success: true, dispatchedChannels: ['sms'], messageLogIds: [] });
+            onClose();
+          }
+        } else {
+          setError('Select email or SMS');
+        }
+        setLoading(false);
+        return;
+      }
+
       // If this is a new email (forward or new email, not a reply), use sendNewEmailApi
       const isForwardOrNewEmail = !threadId && channels.includes('email') && channels.length === 1;
       if (isForwardOrNewEmail) {
@@ -968,7 +1064,13 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       <Box sx={{ flex: variant === 'inline' ? 'none' : 1, overflow: 'auto', p: variant === 'inline' ? 2 : 3 }}>
           <Stack spacing={3}>
             {/* Sender Selection */}
-            {loadingSenders ? (
+            {bulkSystemMode ? (
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary">
+                  Sending from: System (approved sender)
+                </Typography>
+              </Box>
+            ) : loadingSenders ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <CircularProgress size={16} />
                 <Typography variant="body2" color="text.secondary">
@@ -1002,8 +1104,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               </FormControl>
             ) : null}
             
-            {/* Channel Selector - Hide when email-only (compose, reply, forward from inbox) */}
-            {!defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && (
+            {/* Channel Selector - Hide when email-only (compose, reply, forward from inbox) or bulk mode */}
+            {!bulkSystemMode && !defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && (
               <FormControl component="fieldset">
                 <FormLabel component="legend">Channels</FormLabel>
                 <FormGroup row sx={{ mt: 1 }}>
@@ -1036,11 +1138,29 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
             )}
 
             {/* Only show divider if Channels section is visible */}
-            {!defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && <Divider />}
+            {!bulkSystemMode && !defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && <Divider />}
+
+            {/* Recipients - read-only in bulk mode */}
+            {bulkSystemMode ? (
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  To ({internalRecipients.length} recipient{internalRecipients.length === 1 ? '' : 's'})
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {internalRecipients.slice(0, 10).map((r, i) => (
+                    <Chip key={r.userId || r.email || `bulk-recipient-${i}`} size="small" label={r.name || r.email || r.userId} sx={{ maxWidth: 180 }} />
+                  ))}
+                  {internalRecipients.length > 10 && (
+                    <Chip key="bulk-more" size="small" label={`+${internalRecipients.length - 10} more`} />
+                  )}
+                </Box>
+              </Box>
+            ) : null}
 
             {/* Email-specific fields */}
             {channels.includes('email') && (
               <Stack spacing={2}>
+                {!bulkSystemMode && (
                 <Box>
                   <Typography variant="subtitle2" gutterBottom>
                     To *
@@ -1164,9 +1284,9 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                   {internalRecipients.length > 0 && (
                     <Box sx={{ mt: 1 }}>
                       <Stack direction="row" spacing={1} sx={{ flexWrap: 'wrap', gap: 1 }}>
-                        {internalRecipients.map((r) => (
+                        {internalRecipients.map((r, i) => (
                           <Chip
-                            key={r.userId}
+                            key={r.userId || r.email || `recipient-${i}`}
                             label={`${r.name}${r.email ? ` <${r.email}>` : ''}`}
                             size="small"
                             onDelete={() => {
@@ -1179,6 +1299,9 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                     </Box>
                   )}
                 </Box>
+                )}
+                {!bulkSystemMode && (
+                <>
                 <Box>
                   <Typography variant="subtitle2" gutterBottom>
                     Cc (optional)
@@ -1203,6 +1326,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
                     placeholder="bcc@example.com"
                   />
                 </Box>
+                </>
+                )}
                 <Box>
                   <Typography variant="subtitle2" gutterBottom>
                     Subject *

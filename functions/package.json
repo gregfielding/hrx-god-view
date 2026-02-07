@@ -16,7 +16,8 @@
     "test:triggers:deployed": "firebase functions:call runTriggerTests",
     "test:triggers:deployed:coverage": "firebase functions:call checkTriggerCoverage",
     "test:triggers:dashboard": "firebase functions:call getTestResultsDashboard",
-    "check:maintenance": "npx ts-node src/checkTestMaintenance.ts"
+    "check:maintenance": "npx ts-node src/checkTestMaintenance.ts",
+    "backfill:scoring-distribution": "npm run build && node lib/scripts/backfillScoringDistribution.js"
   },
   "engines": {
     "node": "20"

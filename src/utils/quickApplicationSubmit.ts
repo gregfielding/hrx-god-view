@@ -404,6 +404,9 @@ export async function submitQuickApplication(
         userAddressCity: city,
         userGeocoordinates: lat != null && lng != null ? { lat, lng } : undefined,
         skills: Array.isArray(userData.skills) ? userData.skills : [],
+        certifications: Array.isArray(userData.certifications)
+          ? userData.certifications.map((c: any) => (typeof c === 'string' ? c : c?.name || '')).filter(Boolean)
+          : [],
         companyName: jobPosting?.companyName,
         companyId: jobPosting?.companyId,
         worksiteName: jobPosting?.worksiteName,
