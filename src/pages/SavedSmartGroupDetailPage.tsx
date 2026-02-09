@@ -52,7 +52,7 @@ import BlockIcon from '@mui/icons-material/Block';
 import ClearIcon from '@mui/icons-material/Clear';
 import SmsIcon from '@mui/icons-material/Sms';
 import { useNavigate, useParams } from 'react-router-dom';
-import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp, collection, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { runSavedSmartGroupSearch, type SavedSmartGroupFilters } from '../services/runSavedSmartGroupSearch';
