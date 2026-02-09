@@ -23,6 +23,8 @@ export interface SavedSmartGroupFilters {
   cityFilter?: string | null;
   categoryFilter?: string | null;
   radiusAddress?: string;
+  radiusLat?: number | null;
+  radiusLng?: number | null;
   radiusMiles?: number;
   selectedSkills?: string[];
   selectedCertifications?: string[];
@@ -93,12 +95,25 @@ export async function runSavedSmartGroupSearch(
   const memberIds: string[] = [];
   if (filters.residenceSubMode === 'radius' && filters.radiusAddress?.trim()) {
     let geo: { lat: number; lng: number };
-    try {
-      geo = await geocodeAddress(filters.radiusAddress.trim());
-    } catch (error: any) {
-      const address = filters.radiusAddress.trim();
-      const errorMsg = error?.message || 'Geocoding failed';
-      throw new Error(`Failed to geocode address "${address}": ${errorMsg}. Please check the address and try again, or edit the Smart Group to update the address.`);
+    
+    // Use saved coordinates if available, otherwise geocode
+    if (filters.radiusLat != null && filters.radiusLng != null && 
+        typeof filters.radiusLat === 'number' && typeof filters.radiusLng === 'number' &&
+        !isNaN(filters.radiusLat) && !isNaN(filters.radiusLng)) {
+      geo = { lat: filters.radiusLat, lng: filters.radiusLng };
+    } else {
+      // Fallback to geocoding if coordinates not saved (for backward compatibility)
+      try {
+        geo = await geocodeAddress(filters.radiusAddress.trim());
+      } catch (error: any) {
+        const address = filters.radiusAddress.trim();
+        const errorMsg = error?.message || 'Geocoding failed';
+        // Provide more helpful guidance for API key issues
+        if (errorMsg.includes('API request denied') || errorMsg.includes('API key')) {
+          throw new Error(`Geocoding failed for address "${address}": ${errorMsg}. To fix this, enable the Geocoding API in Google Cloud Console for your API key (REACT_APP_GOOGLE_MAPS_API_KEY), or edit this Smart Group to use a different location filter.`);
+        }
+        throw new Error(`Failed to geocode address "${address}": ${errorMsg}. Please check the address and try again, or edit the Smart Group to update the address.`);
+      }
     }
     const radiusMiles = filters.radiusMiles ?? 10;
     for (const uid of userIds) {

@@ -870,6 +870,11 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         if (residenceSubMode === 'radius') {
           filters.radiusAddress = radiusAddress;
           filters.radiusMiles = radiusMiles;
+          // Save geocoded coordinates to avoid re-geocoding on update
+          if (radiusLat != null && radiusLng != null) {
+            filters.radiusLat = radiusLat;
+            filters.radiusLng = radiusLng;
+          }
         }
       }
       const memberStatusById: Record<string, 'preferred' | 'member' | 'not_preferred'> = {};

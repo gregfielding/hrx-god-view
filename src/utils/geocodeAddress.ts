@@ -27,7 +27,7 @@ export async function geocodeAddressDetailed(address: string): Promise<GeocodeDe
       : data.status === 'OVER_QUERY_LIMIT'
       ? 'Geocoding API quota exceeded'
       : data.status === 'REQUEST_DENIED'
-      ? 'Geocoding API request denied (check API key permissions)'
+      ? 'Geocoding API request denied. Please enable the Geocoding API in Google Cloud Console for your API key, or check API key restrictions.'
       : data.status === 'INVALID_REQUEST'
       ? 'Invalid address format'
       : `Geocoding failed (status: ${data.status})`;

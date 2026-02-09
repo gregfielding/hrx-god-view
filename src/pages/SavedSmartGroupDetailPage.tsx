@@ -129,6 +129,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
   const [editCityFilter, setEditCityFilter] = useState<string | null>(null);
   const [editCategoryFilter, setEditCategoryFilter] = useState<string | null>(null);
   const [editRadiusAddress, setEditRadiusAddress] = useState('');
+  const [editRadiusLat, setEditRadiusLat] = useState<number | null>(null);
+  const [editRadiusLng, setEditRadiusLng] = useState<number | null>(null);
   const [editRadiusMiles, setEditRadiusMiles] = useState(10);
   const [editSelectedSkills, setEditSelectedSkills] = useState<string[]>([]);
   const [editSelectedCertifications, setEditSelectedCertifications] = useState<string[]>([]);
@@ -177,6 +179,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         setEditCityFilter(filters.cityFilter ?? null);
         setEditCategoryFilter(filters.categoryFilter ?? null);
         setEditRadiusAddress(filters.radiusAddress || '');
+        setEditRadiusLat(filters.radiusLat ?? null);
+        setEditRadiusLng(filters.radiusLng ?? null);
         setEditRadiusMiles(filters.radiusMiles ?? 10);
         setEditSelectedSkills(filters.selectedSkills || []);
         setEditSelectedCertifications(filters.selectedCertifications || []);
@@ -279,6 +283,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         if (editResidenceSubMode === 'radius') {
           filters.radiusAddress = editRadiusAddress;
           filters.radiusMiles = editRadiusMiles;
+          // Save geocoded coordinates if available
+          if (editRadiusLat != null && editRadiusLng != null) {
+            filters.radiusLat = editRadiusLat;
+            filters.radiusLng = editRadiusLng;
+          }
         }
       }
       
@@ -364,6 +373,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     setEditCityFilter(group.filters.cityFilter ?? null);
     setEditCategoryFilter(group.filters.categoryFilter ?? null);
     setEditRadiusAddress(group.filters.radiusAddress || '');
+    setEditRadiusLat(group.filters.radiusLat ?? null);
+    setEditRadiusLng(group.filters.radiusLng ?? null);
     setEditRadiusMiles(group.filters.radiusMiles ?? 10);
     setEditSelectedSkills(group.filters.selectedSkills || []);
     setEditSelectedCertifications(group.filters.selectedCertifications || []);
@@ -955,6 +966,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                         const lng = typeof loc.lng === 'function' ? loc.lng() : loc.lng;
                         if (typeof lat === 'number' && typeof lng === 'number') {
                           setEditRadiusAddress(place.formatted_address ?? '');
+                          setEditRadiusLat(lat);
+                          setEditRadiusLng(lng);
                         }
                       }
                     }}

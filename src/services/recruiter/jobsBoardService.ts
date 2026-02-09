@@ -622,14 +622,14 @@ export class JobsBoardService {
         
         // Requirements & Additional Info
         requirements: customData?.requirements || [
-          ...jobOrder.requiredLicenses,
-          ...jobOrder.requiredCertifications,
+          ...(Array.isArray(jobOrder.requiredLicenses) ? jobOrder.requiredLicenses : []),
+          ...(Array.isArray(jobOrder.requiredCertifications) ? jobOrder.requiredCertifications : []),
           ...(jobOrder.drugScreenRequired ? ['Drug Screen Required'] : []),
           ...(jobOrder.backgroundCheckRequired ? ['Background Check Required'] : []),
           ...(jobOrder.experienceRequired ? [jobOrder.experienceRequired] : []),
           ...(jobOrder.educationRequired ? [jobOrder.educationRequired] : []),
-          ...(jobOrder.languagesRequired || []),
-          ...(jobOrder.skillsRequired || [])
+          ...(Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : []),
+          ...(Array.isArray(jobOrder.skillsRequired) ? jobOrder.skillsRequired : [])
         ].filter(Boolean),
         benefits: customData?.benefits,
         shiftTimes: customData?.shiftTimes || jobOrder.shiftTimes?.join(', '),
