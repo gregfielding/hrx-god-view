@@ -55,6 +55,19 @@ export function invalidateEmailThread(tenantId: string, threadId: string, limit 
   } catch {}
 }
 
+/**
+ * Preload email thread content on hover (non-blocking)
+ * Checks cache first to avoid unnecessary requests
+ */
+export function preloadEmailThread(tenantId: string, threadId: string, limit = 50) {
+  const key = makeKey(tenantId, threadId, limit);
+  // Check if already cached
+  if (readSession(key)) return; // Already cached
+  
+  // Preload in background (non-blocking)
+  void fetchEmailThreadCached({ tenantId, threadId, limit, force: false });
+}
+
 export async function fetchEmailThreadCached(options: {
   tenantId: string;
   threadId: string;

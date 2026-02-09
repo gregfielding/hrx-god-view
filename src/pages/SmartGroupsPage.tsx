@@ -313,7 +313,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     clearCache();
   }, [clearCache]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     setError(null);
@@ -362,9 +362,9 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantId, setRows]);
 
-  const loadResidenceData = async () => {
+  const loadResidenceData = useCallback(async () => {
     if (!tenantId) return;
     setLoading(true);
     setError(null);
@@ -520,7 +520,21 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     } finally {
       setLoading(false);
     }
-  };
+  }, [
+    tenantId,
+    residenceSubMode,
+    radiusAddress,
+    radiusLat,
+    radiusLng,
+    radiusMiles,
+    selectedSkills,
+    selectedCertifications,
+    metroFilter,
+    areaFilter,
+    cityFilter,
+    customMetros,
+    setResidenceRows,
+  ]);
 
   const handleBuildReport = () => {
     setReportBuilt(true);
@@ -531,6 +545,49 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
       loadData();
     }
   };
+
+  // Auto-rebuild report when filters change (debounced)
+  useEffect(() => {
+    // Only auto-rebuild if a report was already built
+    if (!reportBuilt) return;
+
+    // Debounce filter changes to avoid excessive rebuilds
+    const timeoutId = setTimeout(() => {
+      setTablePage(0);
+      setSelectedIds(new Set());
+      setSelectAllResults(false);
+      if (filterMode === 'residence') {
+        // Residence mode: filters are applied during data loading, so reload
+        loadResidenceData();
+      }
+      // For application mode, client-side filtering in filteredRows handles it automatically
+      // No need to reload - filteredRows is computed from rows + filters
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [
+    // Track filter changes - use JSON.stringify for arrays to detect changes
+    reportBuilt,
+    filterMode,
+    filterMode === 'residence' ? JSON.stringify(selectedSkills) : null,
+    filterMode === 'residence' ? JSON.stringify(selectedCertifications) : null,
+    filterMode === 'residence' ? metroFilter : null,
+    filterMode === 'residence' ? areaFilter : null,
+    filterMode === 'residence' ? cityFilter : null,
+    filterMode === 'residence' ? radiusAddress : null,
+    filterMode === 'residence' ? radiusLat : null,
+    filterMode === 'residence' ? radiusLng : null,
+    filterMode === 'residence' ? radiusMiles : null,
+    filterMode === 'residence' ? residenceSubMode : null,
+    // Application mode filters (client-side filtering, but reset pagination on change)
+    filterMode === 'application' ? JSON.stringify(selectedSkills) : null,
+    filterMode === 'application' ? JSON.stringify(selectedCertifications) : null,
+    filterMode === 'application' ? metroFilter : null,
+    filterMode === 'application' ? areaFilter : null,
+    filterMode === 'application' ? cityFilter : null,
+    filterMode === 'application' ? categoryFilter : null,
+    loadResidenceData,
+  ]);
 
   const clearMetro = () => {
     setMetroFilter(null);

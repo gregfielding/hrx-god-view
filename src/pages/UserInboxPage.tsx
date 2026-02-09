@@ -75,6 +75,7 @@ import { Snackbar, Alert as MuiAlert } from '@mui/material';
 import { createSwipeHandler, getSwipeTransform, getSwipeActionColor, SwipeAction } from '../utils/emailSwipeActions';
 import EmailThreadSkeleton from '../components/EmailThreadSkeleton';
 import PullToRefresh from '../components/PullToRefresh';
+import { preloadEmailThread } from '../utils/emailThreadCache';
 // Removed unified inbox imports - inbox is now email-only per decoupling spec
 
 interface MessageLog {
@@ -181,6 +182,7 @@ const UserInboxPage: React.FC = () => {
   const [showUnreadOnly, setShowUnreadOnly] = useState(false);
   const [selectedThreadIds, setSelectedThreadIds] = useState<Set<string>>(new Set());
   const [hoveredThreadId, setHoveredThreadId] = useState<string | null>(null);
+  const preloadTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
   
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -202,6 +204,44 @@ const UserInboxPage: React.FC = () => {
   const [hoverCardOpen, setHoverCardOpen] = useState(false);
   
   // Safe hover state setter that ignores updates when drawer is open
+  // Handle thread hover with preloading
+  const handleThreadHover = (threadId: string) => {
+    // Only update hover state if drawer is not open
+    if (!emailDrawerOpen) {
+      setHoveredThreadId(threadId);
+    }
+    
+    // Always preload on hover (even if drawer is open, for next time)
+    // Debounce preload by 200ms
+    const existing = preloadTimeoutRef.current.get(threadId);
+    if (existing) clearTimeout(existing);
+    
+    const timeout = setTimeout(() => {
+      if (effectiveTenantId && threadId) {
+        preloadEmailThread(effectiveTenantId, threadId);
+      }
+      preloadTimeoutRef.current.delete(threadId);
+    }, 200);
+    
+    preloadTimeoutRef.current.set(threadId, timeout);
+  };
+
+  const handleThreadLeave = (threadId: string | null) => {
+    // Only update hover state if drawer is not open
+    if (!emailDrawerOpen) {
+      setHoveredThreadId(threadId);
+    }
+    
+    // Cancel any pending preload
+    if (threadId) {
+      const timeout = preloadTimeoutRef.current.get(threadId);
+      if (timeout) {
+        clearTimeout(timeout);
+        preloadTimeoutRef.current.delete(threadId);
+      }
+    }
+  };
+
   const setHoveredThreadIdSafe = (id: string | null) => {
     if (!emailDrawerOpen) {
       setHoveredThreadId(id);
@@ -2768,8 +2808,8 @@ const UserInboxPage: React.FC = () => {
                           return (
                           <TableRow
                             key={thread.id}
-                            onMouseEnter={() => setHoveredThreadIdSafe(thread.id)}
-                            onMouseLeave={() => setHoveredThreadIdSafe(null)}
+                            onMouseEnter={() => handleThreadHover(thread.id)}
+                            onMouseLeave={() => handleThreadLeave(null)}
                             onClick={(e) => {
                               // Don't open if swiping
                               if (!swipeState.isSwiping) {

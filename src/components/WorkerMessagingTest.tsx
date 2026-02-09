@@ -76,9 +76,9 @@ export const WorkerMessagingTest: React.FC<WorkerMessagingTestProps> = ({ onClos
           label="Recipient Phone Number"
           value={recipientPhone}
           onChange={(e) => setRecipientPhone(e.target.value)}
-          placeholder="+14154293750"
+          placeholder="+18888058650"
           fullWidth
-          helperText="Enter phone number in E.164 format (e.g., +14154293750)"
+          helperText="Enter phone number in E.164 format (e.g., +18888058650)"
         />
 
         <FormControl fullWidth>

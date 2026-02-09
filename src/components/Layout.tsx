@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { doc, getDoc, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, getDocs, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
 import {
   Avatar,
   Box,
@@ -308,43 +308,81 @@ const Layout: React.FC = React.memo(function Layout() {
   const [agencyLogoUrl, setAgencyLogoUrl] = useState<string | null>(null);
 
   // Real-time inbox unread count for nav badge (updates as messages are read)
+  // Uses Gmail API counts to match category tab counts
   useEffect(() => {
-    if (!user?.uid || !activeTenant?.id) {
+    if (!user?.uid) {
       setInboxUnreadCount(0);
       return;
     }
 
-    try {
-      const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
-      const threadsQuery = query(
-        threadsRef,
-        where('participantUserIds', 'array-contains', user.uid),
-        where('status', '==', 'active'),
-        orderBy('lastMessageAt', 'desc'),
-        limit(500)
-      );
-      const unsubscribe = onSnapshot(
-        threadsQuery,
-        (snapshot) => {
-          const total = snapshot.docs.reduce(
-            (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
-            0
-          );
+    const loadTotalUnread = async () => {
+      try {
+        const getCounts = httpsCallable(functions, 'getGmailMailboxCounts');
+        const result = await getCounts({ userId: user.uid });
+        const data = result.data as any;
+        const counts = data?.counts;
+        if (data?.success && counts) {
+          const total =
+            (counts.primary?.threadsUnread || 0) +
+            (counts.social?.threadsUnread || 0) +
+            (counts.promotions?.threadsUnread || 0) +
+            (counts.updates?.threadsUnread || 0) +
+            (counts.forums?.threadsUnread || 0) +
+            (counts.spam?.threadsUnread || 0);
           setInboxUnreadCount(total > 99 ? 99 : total);
-        },
-        (err) => {
-          const isPermissionError = err?.code === 'permission-denied' || (err?.message && String(err.message).includes('insufficient permissions'));
-          if (!isPermissionError) {
-            console.warn('Inbox unread count listener error:', err);
+        } else {
+          // Fallback: use Firestore listener if Gmail API unavailable
+          if (activeTenant?.id) {
+            try {
+              const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
+              const threadsQuery = query(
+                threadsRef,
+                where('participantUserIds', 'array-contains', user.uid),
+                where('status', '==', 'active'),
+                orderBy('lastMessageAt', 'desc'),
+                limit(500)
+              );
+              const snapshot = await getDocs(threadsQuery);
+              const total = snapshot.docs.reduce(
+                (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
+                0
+              );
+              setInboxUnreadCount(total > 99 ? 99 : total);
+            } catch (err) {
+              console.warn('Inbox unread count fallback failed:', err);
+              setInboxUnreadCount(0);
+            }
           }
-          setInboxUnreadCount(0);
         }
-      );
-      return () => unsubscribe();
-    } catch (err) {
-      console.warn('Inbox unread count setup failed:', err);
-      setInboxUnreadCount(0);
-    }
+      } catch (err) {
+        // Fallback: use Firestore listener if Gmail API fails
+        if (activeTenant?.id) {
+          try {
+            const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
+            const threadsQuery = query(
+              threadsRef,
+              where('participantUserIds', 'array-contains', user.uid),
+              where('status', '==', 'active'),
+              orderBy('lastMessageAt', 'desc'),
+              limit(500)
+            );
+            const snapshot = await getDocs(threadsQuery);
+            const total = snapshot.docs.reduce(
+              (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
+              0
+            );
+            setInboxUnreadCount(total > 99 ? 99 : total);
+          } catch (fallbackErr) {
+            console.warn('Inbox unread count setup failed:', fallbackErr);
+            setInboxUnreadCount(0);
+          }
+        }
+      }
+    };
+
+    loadTotalUnread();
+    const interval = setInterval(loadTotalUnread, 30000);
+    return () => clearInterval(interval);
   }, [user?.uid, activeTenant?.id]);
 
   // Real-time listener for unread internal message count

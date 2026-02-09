@@ -17,7 +17,7 @@
 ## Message Details (from logs)
 - **Message ID:** `SMdde9ac2961a393f1d49be7bedcc72fba`
 - **To:** `+19254480579`
-- **From:** `+14154293750`
+- **From:** `+18888058650`
 - **Status:** "queued" or "sent" (Twilio initial status)
 
 ## ✅ SOLUTION: Fix Failed Campaign Registration
@@ -59,7 +59,7 @@
 - Until approved: Messages will continue to fail with error 30034
 
 ### Current Configuration:
-- **Sending Number:** `+1 415 429 3750`
+- **Sending Number:** `+1 888 805 8650`
 - **Messaging Service:** Low Volume Mixed A2P Messaging Service
 - **Status:** Campaign registration failed - needs to be fixed and resubmitted
 
@@ -82,7 +82,7 @@ Verify the phone number is correct:
 ### 3. Carrier Filtering / Spam
 - Check spam/junk folder
 - Some carriers filter unknown numbers
-- Try replying to the number: `+14154293750`
+- Try replying to the number: `+18888058650`
 
 ### 4. Check Twilio Console
 Check delivery status in Twilio:

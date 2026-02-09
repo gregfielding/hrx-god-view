@@ -14,11 +14,65 @@ import { getEmailProvider } from './emailProviderFactory';
 import { getSmsProvider } from './smsProviderFactory';
 import { logMessage } from './messageLogging';
 import { getTenantSmsConsent } from './tenantConsent';
+import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
 
 const db = admin.firestore();
 
 const BULK_MESSAGE_TYPE_EMAIL = 'bulk_direct_email';
 const BULK_MESSAGE_TYPE_SMS = 'bulk_direct_sms';
+
+/**
+ * Replace template variables in message body with user data
+ * Supports: {{firstName}}, {{lastName}}, {{fullName}}, {{email}}, {{phone}}
+ */
+function replaceTemplateVariables(body: string, userData: admin.firestore.DocumentData | undefined): string {
+  if (!userData) return body;
+  
+  let rendered = body;
+  
+  // Extract values with fallbacks
+  const firstName = userData.firstName || userData.first_name || '';
+  const lastName = userData.lastName || userData.last_name || '';
+  const fullName = userData.displayName || 
+                   [firstName, lastName].filter(Boolean).join(' ') ||
+                   userData.name ||
+                   '';
+  const email = userData.email || '';
+  const phone = userData.phoneE164 || userData.phone || '';
+  
+  // Replace variables (case-insensitive, supports both {{var}} and {var})
+  const replacements: Record<string, string> = {
+    '{{firstName}}': firstName,
+    '{{lastName}}': lastName,
+    '{{fullName}}': fullName,
+    '{{email}}': email,
+    '{{phone}}': phone,
+    '{firstName}': firstName,
+    '{lastName}': lastName,
+    '{fullName}': fullName,
+    '{email}': email,
+    '{phone}': phone,
+  };
+  
+  for (const [placeholder, value] of Object.entries(replacements)) {
+    // Escape special regex characters in placeholder
+    const escapedPlaceholder = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedPlaceholder, 'gi');
+    rendered = rendered.replace(regex, value);
+  }
+  
+  return rendered;
+}
+
+/** Normalize phone to E.164 for Twilio. Handles (xxx)xxx-xxxx, xxx-xxx-xxxx, +1..., 10/11 digits. */
+function toE164(phone: string | undefined): string | null {
+  if (!phone || typeof phone !== 'string') return null;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (digits.length >= 10 && phone.trim().startsWith('+')) return `+${digits}`;
+  return digits.length >= 10 ? `+${digits}` : null;
+}
 
 /** CORS middleware so browser preflight (OPTIONS) from localhost/production gets proper headers. */
 const corsHandler = cors({ origin: true });
@@ -92,7 +146,7 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
         return;
       }
 
-      const { tenantId, initiatedByUserId, recipientUserIds, subject, bodyHtml, bodyPlain } = request.body || {};
+      const { tenantId, initiatedByUserId, recipientUserIds, subject, bodyHtml, bodyPlain, senderType } = request.body || {};
       if (!tenantId || !initiatedByUserId || !Array.isArray(recipientUserIds) || !subject || !bodyHtml) {
         response.status(400).json({
           success: false,
@@ -114,8 +168,34 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
         return;
       }
 
-      const systemIdentity = await resolveSenderIdentity(tenantId, {});
-      const emailProvider = getEmailProvider(systemIdentity);
+      // Resolve sender identity based on senderType
+      // 'system' = SendGrid with noreply@hrxone.com, no signature
+      // 'gmail' = Gmail API with user's email, includes signature
+      const isGmailSender = senderType === 'gmail';
+      let senderIdentity;
+      if (isGmailSender) {
+        // Resolve recruiter Gmail sender
+        senderIdentity = await resolveSenderIdentity(tenantId, {
+          source: 'recruiter',
+          sourceId: initiatedByUserId,
+        });
+        // Verify Gmail is actually connected
+        if (!senderIdentity.gmailUserId || senderIdentity.emailProvider !== 'gmail') {
+          response.status(400).json({
+            success: false,
+            error: {
+              code: 'INVALID_ARGUMENT',
+              message: 'Gmail not connected. Please connect Gmail in settings to send from your account.',
+            },
+          });
+          return;
+        }
+      } else {
+        // System sender (default)
+        senderIdentity = await resolveSenderIdentity(tenantId, {});
+      }
+
+      const emailProvider = getEmailProvider(senderIdentity);
       const textBody = bodyPlain || (bodyHtml ? bodyHtml.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim() : '');
 
       const errors: { userId: string; error: string }[] = [];
@@ -131,15 +211,31 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
             continue;
           }
 
-          const result = await emailProvider.sendEmail({
+          // Replace template variables in email body (both HTML and plain text)
+          const renderedHtmlBody = replaceTemplateVariables(String(bodyHtml), userData);
+          const renderedTextBody = replaceTemplateVariables(textBody, userData);
+
+          // For system sender: don't pass userId/gmailUserId to prevent signature lookup
+          // For Gmail sender: pass gmailUserId to include signature
+          const emailOptions: any = {
             tenantId,
             to: { email, name: userData?.firstName ? [userData.firstName, userData.lastName].filter(Boolean).join(' ') : email.split('@')[0] },
-            subject,
-            htmlBody: bodyHtml,
-            textBody,
+            subject: replaceTemplateVariables(subject, userData), // Also replace in subject
+            htmlBody: renderedHtmlBody,
+            textBody: renderedTextBody,
             messageTypeId: BULK_MESSAGE_TYPE_EMAIL,
-            userId: initiatedByUserId,
-          });
+          };
+
+          if (isGmailSender && senderIdentity.emailAddress) {
+            // Gmail sender: use Gmail email address and include userId for signature lookup
+            emailOptions.fromEmail = senderIdentity.emailAddress;
+            emailOptions.gmailUserId = senderIdentity.gmailUserId;
+            emailOptions.userId = senderIdentity.gmailUserId;
+          }
+          // For system sender: don't set fromEmail (will use default noreply@hrxone.com)
+          // Don't set userId/gmailUserId to prevent signature lookup
+
+          const result = await emailProvider.sendEmail(emailOptions);
 
           const status = result.success ? 'sent' : 'failed';
           const messageLogId = await logMessage({
@@ -150,7 +246,7 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
             direction: 'outbound',
             fromIdentity: 'system',
             fromUserId: initiatedByUserId,
-            contentSent: textBody || subject,
+            contentSent: renderedTextBody || subject,
             language: null,
             status: result.success ? 'sent' : 'failed',
             failureReason: result.success ? undefined : (result.errorMessage || result.errorCode),
@@ -165,7 +261,7 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
                 userName: auth.userName,
                 action: 'Bulk email sent',
                 actionType: 'email_sent',
-                description: subject,
+                description: renderedTextBody.slice(0, 50) + (renderedTextBody.length > 50 ? '…' : ''),
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
                 metadata: { messageLogId, channel: 'email', subject },
                 severity: 'low',
@@ -205,7 +301,17 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
  * POST /bulkSendSmsApi
  * Body: { tenantId, initiatedByUserId, recipientUserIds: string[], body: string }
  */
-export const bulkSendSmsApi = onRequest(async (request, response) => {
+export const bulkSendSmsApi = onRequest(
+  {
+    cors: true,
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (request, response) => {
+  logger.info('bulkSendSmsApi invoked', {
+    method: request.method,
+    hasBody: !!request.body,
+    bodyKeys: request.body ? Object.keys(request.body) : [],
+  });
   return corsHandler(request, response, async () => {
     setCors(response);
     if (request.method === 'OPTIONS') {
@@ -222,7 +328,19 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
       }
 
       const { tenantId, initiatedByUserId, recipientUserIds, body } = request.body || {};
+      logger.info('bulkSendSmsApi request parsed', {
+        tenantId,
+        initiatedByUserId,
+        recipientCount: Array.isArray(recipientUserIds) ? recipientUserIds.length : 0,
+        bodyLength: body ? String(body).length : 0,
+      });
       if (!tenantId || !initiatedByUserId || !Array.isArray(recipientUserIds) || body == null || body === '') {
+        logger.warn('bulkSendSmsApi validation failed', {
+          hasTenantId: !!tenantId,
+          hasInitiatedByUserId: !!initiatedByUserId,
+          isArray: Array.isArray(recipientUserIds),
+          hasBody: body != null && body !== '',
+        });
         response.status(400).json({
           success: false,
           error: {
@@ -234,7 +352,11 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
       }
 
       const auth = await verifyAuthAndTenant(request, response, tenantId);
-      if (!auth) return;
+      if (!auth) {
+        logger.warn('bulkSendSmsApi auth failed');
+        return;
+      }
+      logger.info('bulkSendSmsApi auth successful', { uid: auth.uid, userName: auth.userName });
       if (auth.uid !== initiatedByUserId) {
         response.status(403).json({
           success: false,
@@ -244,8 +366,14 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
       }
 
       const smsProvider = getSmsProvider();
-      const fromNumber =
-        (process.env.TWILIO_MESSAGING_PHONE_NUMBER as string) || '';
+      const providerType = smsProvider.constructor.name;
+      const fromNumber = TWILIO_MESSAGING_PHONE_NUMBER.value() || (process.env.TWILIO_MESSAGING_PHONE_NUMBER as string) || '';
+      logger.info('bulkSendSmsApi starting send', {
+        providerType,
+        smsProviderEnv: process.env.SMS_PROVIDER || '(not set, defaulting to mock)',
+        fromNumber: fromNumber ? `${fromNumber.slice(0, 4)}***` : '(not set)',
+        recipientCount: recipientUserIds.length,
+      });
 
       const errors: { userId: string; error: string }[] = [];
       let sent = 0;
@@ -253,10 +381,20 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
       for (const userId of recipientUserIds) {
         try {
           const userDoc = await db.collection('users').doc(userId).get();
+          if (!userDoc.exists) {
+            logger.warn(`bulkSendSmsApi: user ${userId} not found`);
+            errors.push({ userId, error: 'User not found' });
+            continue;
+          }
           const userData = userDoc.data();
-          const phoneE164 = userData?.phoneE164 || userData?.phone;
-          if (!phoneE164 || typeof phoneE164 !== 'string') {
-            errors.push({ userId, error: 'Missing phone number' });
+          const rawPhone = userData?.phoneE164 || userData?.phone;
+          const phoneE164 = toE164(rawPhone);
+          logger.info(`bulkSendSmsApi: processing user ${userId}`, {
+            rawPhone: rawPhone ? `${rawPhone.slice(0, 4)}***` : '(none)',
+            normalizedE164: phoneE164 ? `${phoneE164.slice(0, 4)}***` : '(invalid)',
+          });
+          if (!phoneE164) {
+            errors.push({ userId, error: 'Missing or invalid phone number (need 10+ digits)' });
             continue;
           }
 
@@ -270,13 +408,28 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
             continue;
           }
 
+          // Replace template variables in message body
+          const renderedBody = replaceTemplateVariables(String(body), userData);
+          
+          logger.info(`bulkSendSmsApi: calling smsProvider.sendSms for ${userId}`, {
+            to: phoneE164,
+            from: fromNumber ? `${fromNumber.slice(0, 4)}***` : '(not set)',
+            bodyLength: renderedBody.trim().length,
+            hasTemplateVars: body !== renderedBody,
+          });
           const result = await smsProvider.sendSms({
             tenantId,
             to: phoneE164,
             from: fromNumber,
-            body: String(body).trim(),
+            body: renderedBody.trim(),
             messageTypeId: BULK_MESSAGE_TYPE_SMS,
             userId,
+          });
+          logger.info(`bulkSendSmsApi: smsProvider result for ${userId}`, {
+            success: result.success,
+            errorCode: result.errorCode,
+            errorMessage: result.errorMessage,
+            providerMessageId: result.providerMessageId,
           });
 
           const messageLogId = await logMessage({
@@ -287,7 +440,7 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
             direction: 'outbound',
             fromIdentity: 'system',
             fromUserId: initiatedByUserId,
-            contentSent: String(body).trim(),
+            contentSent: renderedBody.trim(),
             language: null,
             status: result.success ? 'sent' : 'failed',
             failureReason: result.success ? undefined : (result.errorMessage || result.errorCode),
@@ -302,7 +455,7 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
                 userName: auth.userName,
                 action: 'Bulk SMS sent',
                 actionType: 'sms_sent',
-                description: String(body).trim().slice(0, 50) + (String(body).length > 50 ? '…' : ''),
+                description: renderedBody.trim().slice(0, 50) + (renderedBody.length > 50 ? '…' : ''),
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
                 metadata: { messageLogId, channel: 'sms' },
                 severity: 'low',
@@ -321,6 +474,7 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
       }
 
       const failed = errors.length;
+      logger.info('bulkSendSmsApi completed', { sent, failed, total: recipientUserIds.length, errors });
       response.status(200).json({
         success: failed === 0,
         sent,
@@ -336,4 +490,5 @@ export const bulkSendSmsApi = onRequest(async (request, response) => {
       });
     }
   });
-});
+  }
+);

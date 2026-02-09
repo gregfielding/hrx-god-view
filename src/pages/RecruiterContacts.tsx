@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Box,
   Typography,
@@ -152,19 +152,42 @@ const RecruiterContacts: React.FC = () => {
       stateFilter: 'all',
       sortField: 'fullName',
       sortDirection: 'asc',
+      searchQuery: '',
+      page: 0,
+      rowsPerPage: 20,
+      showFavoritesOnly: false,
     },
   });
   
   // `RecruiterContacts` is used both within `RecruiterDashboard` (with outlet context)
   // AND as a standalone route at `/contacts` (no outlet context). Provide local fallbacks
   // so the search field is always editable.
-  const [localSearch, setLocalSearch] = useState('');
-  const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(false);
+  const [localSearch, setLocalSearch] = useState(cacheState.searchQuery || '');
+  const [localShowFavoritesOnly, setLocalShowFavoritesOnly] = useState(cacheState.showFavoritesOnly || false);
 
   const headerSearch = outletCtx ? outletCtx.search : localSearch;
   const headerShowFavoritesOnly = outletCtx ? outletCtx.showFavoritesOnly : localShowFavoritesOnly;
-  const setHeaderSearch = outletCtx ? outletCtx.setSearch : setLocalSearch;
-  const setHeaderShowFavoritesOnly = outletCtx ? outletCtx.setShowFavoritesOnly : setLocalShowFavoritesOnly;
+  
+  // Wrapped setters that update cache
+  const setHeaderSearch = useCallback((value: string) => {
+    if (outletCtx) {
+      outletCtx.setSearch(value);
+      updateCache({ searchQuery: value });
+    } else {
+      setLocalSearch(value);
+      updateCache({ searchQuery: value });
+    }
+  }, [outletCtx, updateCache]);
+  
+  const setHeaderShowFavoritesOnly = useCallback((value: boolean) => {
+    if (outletCtx) {
+      outletCtx.setShowFavoritesOnly(value);
+      updateCache({ showFavoritesOnly: value });
+    } else {
+      setLocalShowFavoritesOnly(value);
+      updateCache({ showFavoritesOnly: value });
+    }
+  }, [outletCtx, updateCache]);
 
   // Only start searching after 3+ characters. Anything shorter behaves like "no search".
   const effectiveSearch = headerSearch.trim().length >= 3 ? headerSearch.trim() : '';
@@ -183,8 +206,8 @@ const RecruiterContacts: React.FC = () => {
   });
   const [sortField, setSortField] = useState<string>(cacheState.sortField || 'fullName');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'asc');
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [page, setPage] = useState(typeof cacheState.page === 'number' ? cacheState.page : 0);
+  const [rowsPerPage, setRowsPerPage] = useState(typeof cacheState.rowsPerPage === 'number' ? cacheState.rowsPerPage : 20);
   
   // Pagination state
   const contactsPageSize = 50;
@@ -219,6 +242,31 @@ const RecruiterContacts: React.FC = () => {
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [contactError, setContactError] = useState<string | null>(null);
   const [contactSuccess, setContactSuccess] = useState(false);
+
+  // Restore search from cache when using outlet context (on mount only)
+  useEffect(() => {
+    if (outletCtx) {
+      if (cacheState.searchQuery && !outletCtx.search) {
+        outletCtx.setSearch(cacheState.searchQuery);
+      }
+      if (cacheState.showFavoritesOnly !== undefined && outletCtx.showFavoritesOnly !== cacheState.showFavoritesOnly) {
+        outletCtx.setShowFavoritesOnly(cacheState.showFavoritesOnly);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Only run on mount
+
+  // Sync outlet context changes to cache (when outletCtx manages search)
+  useEffect(() => {
+    if (outletCtx) {
+      if (outletCtx.search !== headerSearch) {
+        updateCache({ searchQuery: outletCtx.search });
+      }
+      if (outletCtx.showFavoritesOnly !== headerShowFavoritesOnly) {
+        updateCache({ showFavoritesOnly: outletCtx.showFavoritesOnly });
+      }
+    }
+  }, [outletCtx?.search, outletCtx?.showFavoritesOnly, headerSearch, headerShowFavoritesOnly, updateCache]);
 
   // Load contacts and companies
   useEffect(() => {
@@ -284,7 +332,7 @@ const RecruiterContacts: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAddContactDialog, tenantId, contactForm.companyId]);
 
-  // Update cache when filters change
+  // Update cache when filters, search, pagination change
   useEffect(() => {
     updateCache({
       companyFilter: companyFilter as any,
@@ -293,11 +341,21 @@ const RecruiterContacts: React.FC = () => {
       stateFilter,
       sortField,
       sortDirection,
+      searchQuery: headerSearch,
+      page,
+      rowsPerPage,
+      showFavoritesOnly: headerShowFavoritesOnly,
     });
-  }, [companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection, updateCache]);
+  }, [companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection, headerSearch, page, rowsPerPage, headerShowFavoritesOnly, updateCache]);
 
-  // Reset UI pagination when filters/search/sort change
+  // Reset UI pagination when filters/search/sort change (but preserve when navigating back)
+  // Only reset if this is a new filter/search, not when restoring from cache
+  const isInitialMount = useRef(true);
   useEffect(() => {
+    if (isInitialMount.current) {
+      isInitialMount.current = false;
+      return; // Don't reset on initial mount (cache will restore pagination)
+    }
     setPage(0);
   }, [headerSearch, headerShowFavoritesOnly, companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection]);
 

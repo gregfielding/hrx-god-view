@@ -566,8 +566,11 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         // Mark thread as read in background (non-blocking) - don't await
         if (data.thread.unreadCount > 0) {
           markThreadRead().then(() => {
-            // Set flag to refresh when drawer closes (avoid immediate reload)
             setThreadWasMarkedAsRead(true);
+            // Immediately update parent component's thread list
+            if (onThreadUpdated) {
+              onThreadUpdated(threadId, 0); // 0 = read
+            }
           }).catch((err) => {
             console.error('EmailThreadView: Failed to mark thread as read', err);
           });

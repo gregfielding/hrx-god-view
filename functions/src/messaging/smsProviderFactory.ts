@@ -10,6 +10,10 @@ import { SmsProvider } from './SmsProvider';
 import { TwilioSmsProvider } from './TwilioSmsProvider';
 import { MockSmsProvider } from './MockSmsProvider';
 import { logger } from 'firebase-functions/v2';
+import { defineString } from 'firebase-functions/params';
+
+// Firebase Functions v2 parameter for SMS provider mode
+const smsProviderParam = defineString('SMS_PROVIDER', { default: 'mock' });
 
 let cachedProvider: SmsProvider | null = null;
 
@@ -24,7 +28,7 @@ function maskE164(phone: string | undefined): string {
 /**
  * Get the SMS provider instance (singleton)
  * 
- * Reads SMS_PROVIDER environment variable:
+ * Reads SMS_PROVIDER parameter (Firebase Functions v2) or environment variable:
  * - "twilio" -> TwilioSmsProvider (production)
  * - "mock" or unset -> MockSmsProvider (testing/dev)
  */
@@ -33,9 +37,20 @@ export function getSmsProvider(): SmsProvider {
     return cachedProvider;
   }
 
-  const mode = process.env.SMS_PROVIDER ?? 'mock';
+  // Try Firebase parameter first, then fall back to env var for local/dev
+  // Note: For v2 functions, set SMS_PROVIDER via Google Cloud Console environment variables
+  // or via: gcloud functions deploy FUNCTION_NAME --set-env-vars SMS_PROVIDER=twilio
+  const paramValue = smsProviderParam.value();
+  const envValue = process.env.SMS_PROVIDER;
+  const mode = (paramValue || envValue || 'mock').toLowerCase();
   const fromMasked = maskE164(process.env.TWILIO_MESSAGING_PHONE_NUMBER);
-  logger.info('[SMS] Provider selection', { mode, from: fromMasked });
+  logger.info('[SMS] Provider selection', {
+    mode,
+    from: fromMasked,
+    source: paramValue ? 'firebase-param' : envValue ? 'env-var' : 'default',
+    paramValue: paramValue || '(not set)',
+    envValue: envValue || '(not set)',
+  });
 
   if (mode === 'twilio') {
     logger.info('Initializing TwilioSmsProvider (production mode)');

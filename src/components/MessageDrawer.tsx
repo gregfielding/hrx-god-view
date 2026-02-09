@@ -117,8 +117,9 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [senderOptions, setSenderOptions] = useState<SenderOption[]>([]);
-  const [selectedSenderId, setSelectedSenderId] = useState<string>('gmail');
+  const [selectedSenderId, setSelectedSenderId] = useState<string>('system');
   const [gmailConnected, setGmailConnected] = useState<boolean | null>(null);
+  const [bulkSenderType, setBulkSenderType] = useState<'system' | 'gmail'>('system');
   const [loadingSenders, setLoadingSenders] = useState(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
   const [attachments, setAttachments] = useState<Array<{ id: string; name: string; size: number; file: File }>>([]);
@@ -203,14 +204,26 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
       setGmailConnected(null);
 
       if (bulkSystemMode) {
-        setSenderOptions([{
-          id: 'system',
-          type: 'gmail',
-          label: 'System',
-          description: 'Approved sender (SendGrid / Twilio)',
-          enabled: true,
-        }]);
-        setSelectedSenderId('system');
+        // Check Gmail connection for bulk mode
+        const checkGmailForBulk = async () => {
+          try {
+            const getGmailStatusFn = httpsCallable(functions, 'getGmailStatusOptimized');
+            const gmailResult = await getGmailStatusFn({ userId: user.uid, force: true });
+            const gmailData = gmailResult.data as { connected?: boolean; email?: string };
+            
+            if (gmailData?.connected) {
+              setGmailConnected(true);
+              setBulkSenderType('system'); // Default to system
+            } else {
+              setGmailConnected(false);
+            }
+          } catch (err) {
+            console.warn('Failed to check Gmail status for bulk mode:', err);
+            setGmailConnected(false);
+          }
+        };
+        
+        checkGmailForBulk();
         setLoadingSenders(false);
         setHasTwilioNumber(true);
         return;
@@ -667,10 +680,12 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               subject,
               bodyHtml: messageBody,
               bodyPlain,
+              senderType: bulkSenderType, // 'system' or 'gmail'
             }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok) {
+            setSuccess(false);
             setError(data.error?.message || 'Bulk email failed');
             setLoading(false);
             return;
@@ -678,15 +693,26 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           const sent = data.sent ?? 0;
           const failed = data.failed ?? 0;
           const total = recipientUserIds.length;
+          const firstErrorDetail = Array.isArray(data.errors) && data.errors.length > 0 ? data.errors[0].error : undefined;
           if (failed > 0) {
-            setSuccess(true);
-            setError(`Sent to ${sent} of ${total} recipients. ${failed} failed.`);
+            setSuccess(false);
+            setError(
+              firstErrorDetail
+                ? `Sent to ${sent} of ${total} recipients. ${failed} failed. ${firstErrorDetail}`
+                : `Sent to ${sent} of ${total} recipients. ${failed} failed.`
+            );
           } else {
             setSuccess(true);
             if (onSend) onSend({ success: true, dispatchedChannels: ['email'], messageLogIds: [] });
             onClose();
           }
         } else if (channels.includes('sms')) {
+          console.log('[MessageDrawer] Bulk SMS request:', {
+            url: `${API_BASE_URL}/bulkSendSmsApi`,
+            tenantId: effectiveTenantId,
+            recipientUserIds,
+            bodyLength: bodyPlain.length,
+          });
           const res = await fetch(`${API_BASE_URL}/bulkSendSmsApi`, {
             method: 'POST',
             headers: {
@@ -700,8 +726,18 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               body: bodyPlain,
             }),
           });
-          const data = await res.json().catch(() => ({}));
+          console.log('[MessageDrawer] Bulk SMS response:', {
+            ok: res.ok,
+            status: res.status,
+            statusText: res.statusText,
+          });
+          const data = await res.json().catch((err) => {
+            console.error('[MessageDrawer] Failed to parse SMS response JSON:', err);
+            return {};
+          });
+          console.log('[MessageDrawer] Bulk SMS response data:', data);
           if (!res.ok) {
+            setSuccess(false);
             setError(data.error?.message || 'Bulk SMS failed');
             setLoading(false);
             return;
@@ -709,9 +745,14 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           const sent = data.sent ?? 0;
           const failed = data.failed ?? 0;
           const total = recipientUserIds.length;
+          const firstErrorDetail = Array.isArray(data.errors) && data.errors.length > 0 ? data.errors[0].error : undefined;
           if (failed > 0) {
-            setSuccess(true);
-            setError(`Sent to ${sent} of ${total} recipients. ${failed} failed.`);
+            setSuccess(false);
+            setError(
+              firstErrorDetail
+                ? `Sent to ${sent} of ${total} recipients. ${failed} failed. ${firstErrorDetail}`
+                : `Sent to ${sent} of ${total} recipients. ${failed} failed.`
+            );
           } else {
             setSuccess(true);
             if (onSend) onSend({ success: true, dispatchedChannels: ['sms'], messageLogIds: [] });
@@ -1065,11 +1106,43 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           <Stack spacing={3}>
             {/* Sender Selection */}
             {bulkSystemMode ? (
-              <Box>
-                <Typography variant="subtitle2" color="text.secondary">
-                  Sending from: System (approved sender)
-                </Typography>
-              </Box>
+              <FormControl fullWidth>
+                <FormLabel>Send As</FormLabel>
+                <Select
+                  value={bulkSenderType}
+                  onChange={(e) => setBulkSenderType(e.target.value as 'system' | 'gmail')}
+                  size="small"
+                  sx={{ mt: 1 }}
+                >
+                  <MenuItem value="system">
+                    <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                      <Typography variant="body2" fontWeight={500}>
+                        System
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        noreply@hrxone.com (no signature)
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                  {gmailConnected && (
+                    <MenuItem value="gmail">
+                      <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                        <Typography variant="body2" fontWeight={500}>
+                          My Gmail
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {user?.email || 'Your Gmail account'}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  )}
+                </Select>
+                {!gmailConnected && gmailConnected !== null && (
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                    Connect Gmail in settings to send from your personal account
+                  </Typography>
+                )}
+              </FormControl>
             ) : loadingSenders ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <CircularProgress size={16} />
