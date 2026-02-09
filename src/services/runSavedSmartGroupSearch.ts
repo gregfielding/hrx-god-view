@@ -92,7 +92,14 @@ export async function runSavedSmartGroupSearch(
   // Residence mode
   const memberIds: string[] = [];
   if (filters.residenceSubMode === 'radius' && filters.radiusAddress?.trim()) {
-    const geo = await geocodeAddress(filters.radiusAddress.trim());
+    let geo: { lat: number; lng: number };
+    try {
+      geo = await geocodeAddress(filters.radiusAddress.trim());
+    } catch (error: any) {
+      const address = filters.radiusAddress.trim();
+      const errorMsg = error?.message || 'Geocoding failed';
+      throw new Error(`Failed to geocode address "${address}": ${errorMsg}. Please check the address and try again, or edit the Smart Group to update the address.`);
+    }
     const radiusMiles = filters.radiusMiles ?? 10;
     for (const uid of userIds) {
       const userRef = doc(db, 'users', uid);

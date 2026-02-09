@@ -22,7 +22,16 @@ export async function geocodeAddressDetailed(address: string): Promise<GeocodeDe
   );
   const data = await response.json();
   if (data.status !== 'OK' || !data.results?.length) {
-    throw new Error('Geocoding failed');
+    const statusMessage = data.status === 'ZERO_RESULTS' 
+      ? 'No results found for this address'
+      : data.status === 'OVER_QUERY_LIMIT'
+      ? 'Geocoding API quota exceeded'
+      : data.status === 'REQUEST_DENIED'
+      ? 'Geocoding API request denied (check API key permissions)'
+      : data.status === 'INVALID_REQUEST'
+      ? 'Invalid address format'
+      : `Geocoding failed (status: ${data.status})`;
+    throw new Error(statusMessage);
   }
 
   const result = data.results[0];

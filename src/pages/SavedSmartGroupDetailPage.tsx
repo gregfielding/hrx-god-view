@@ -421,7 +421,13 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
       }
       setMembersData(users);
     } catch (err: any) {
-      setUpdateError(err?.message ?? 'Failed to update results');
+      const errorMessage = err?.message ?? 'Failed to update results';
+      // If it's a geocoding error, show a more helpful message
+      if (errorMessage.includes('geocode') || errorMessage.includes('Geocoding')) {
+        setUpdateError(errorMessage);
+      } else {
+        setUpdateError(`Failed to update results: ${errorMessage}`);
+      }
     } finally {
       setUpdating(false);
     }
