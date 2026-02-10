@@ -8,19 +8,17 @@
  */
 
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+
 import { db } from '../firebase';
 import { toCityKey, getGeoHierarchy, formatGeoLabel } from '../data/metroSubareaSchema';
 import type { CustomMetrosMap } from '../hooks/useSmartGroupSettings';
-
-import metroTemplatesData from '../data/metroTemplates.json';
+import { findTemplateContainingCity } from '../data/metroMaster';
 
 interface MetroTemplate {
   metroKey: string;
   label: string;
   subareas: Array<{ subareaKey: string; label: string; cityKeys: string[] }>;
 }
-
-const metroTemplates = metroTemplatesData as MetroTemplate[];
 
 /** Check if cityKey is in the built-in hierarchy (without exporting the map). */
 function isCityInBuiltInHierarchy(cityKey: string): boolean {
@@ -44,16 +42,6 @@ function isCityInCustomMetros(cityKey: string, customMetros: CustomMetrosMap): b
   return false;
 }
 
-/** Find a metro template that contains this cityKey (spawn full metro). */
-function findTemplateContainingCity(cityKey: string): MetroTemplate | null {
-  for (const t of metroTemplates) {
-    for (const sub of t.subareas || []) {
-      if ((sub.cityKeys || []).includes(cityKey)) return t;
-    }
-  }
-  return null;
-}
-
 /** Convert template to CustomMetro shape for storage. */
 function templateToCustomMetro(t: MetroTemplate): { label: string; subareas: Array<{ subareaKey: string; label: string; cityKeys: string[] }> } {
   return {
@@ -64,6 +52,30 @@ function templateToCustomMetro(t: MetroTemplate): { label: string; subareas: Arr
       cityKeys: s.cityKeys ?? [],
     })),
   };
+}
+
+/**
+ * Remove standalone metros (e.g. joliet_il_metro) when that city is already covered
+ * by a full metro in the map. Prevents deleted standalones from reappearing when
+ * another city sync runs (e.g. Dublin sync reading stale doc that still had Joliet).
+ */
+function removeRedundantStandalones(next: CustomMetrosMap): CustomMetrosMap {
+  const cityKeysInFullMetros = new Set<string>();
+  for (const metro of Object.values(next)) {
+    for (const sub of metro.subareas ?? []) {
+      for (const ck of sub.cityKeys ?? []) {
+        cityKeysInFullMetros.add(ck);
+      }
+    }
+  }
+  const result = { ...next };
+  for (const cityKey of cityKeysInFullMetros) {
+    const standaloneKey = `${cityKey}_metro`;
+    if (standaloneKey in result) {
+      delete result[standaloneKey];
+    }
+  }
+  return result;
 }
 
 /**
@@ -89,20 +101,28 @@ export async function ensureCityInSmartGroups(
   const snap = await getDoc(smartGroupsRef);
   const existing = (snap.data()?.customMetros || {}) as CustomMetrosMap;
 
-  if (isCityInCustomMetros(cityKey, existing)) return;
-
   const next = { ...existing };
 
+  // If this city belongs to a full metro template (e.g. Joliet → Chicago, Dublin → SF Bay), add the full metro
+  // and remove any existing standalone metro for this city so the hierarchy is correct.
   const template = findTemplateContainingCity(cityKey);
   if (template) {
     next[template.metroKey] = templateToCustomMetro(template);
-  } else {
     const standaloneMetroKey = `${cityKey}_metro`;
-    next[standaloneMetroKey] = {
-      label: formatGeoLabel(cityKey),
-      subareas: [{ subareaKey: 'other', label: 'Other', cityKeys: [cityKey] }],
-    };
+    delete next[standaloneMetroKey];
+    const cleaned = removeRedundantStandalones(next);
+    await setDoc(smartGroupsRef, { customMetros: cleaned, updatedAt: new Date() }, { merge: true });
+    return;
   }
 
-  await setDoc(smartGroupsRef, { customMetros: next, updatedAt: new Date() }, { merge: true });
+  if (isCityInCustomMetros(cityKey, existing)) return;
+
+  const standaloneMetroKey = `${cityKey}_metro`;
+  next[standaloneMetroKey] = {
+    label: formatGeoLabel(cityKey),
+    subareas: [{ subareaKey: 'other', label: 'Other', cityKeys: [cityKey] }],
+  };
+
+  const cleaned = removeRedundantStandalones(next);
+  await setDoc(smartGroupsRef, { customMetros: cleaned, updatedAt: new Date() }, { merge: true });
 }

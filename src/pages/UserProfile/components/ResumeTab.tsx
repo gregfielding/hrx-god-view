@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Box } from '@mui/material';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { Box, Typography, Paper, Alert } from '@mui/material';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
-import ResumeStep from '../../../components/apply/steps/ResumeStep';
+import ResumeUpload from '../../../components/ResumeUpload';
 
 type Props = {
   uid: string;
@@ -11,7 +11,8 @@ type Props = {
 
 const ResumeTab: React.FC<Props> = ({ uid }) => {
   const { tenantId } = useAuth();
-  const [resumeData, setResumeData] = useState<any>({});
+  const [hasResume, setHasResume] = useState(false);
+  const [resumeFileName, setResumeFileName] = useState<string>('');
 
   useEffect(() => {
     if (!uid) return;
@@ -21,33 +22,42 @@ const ResumeTab: React.FC<Props> = ({ uid }) => {
     const unsubscribe = onSnapshot(userRef, (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        setResumeData({
-          resume: data.resume || null,
-          resumeFileName: data.resumeFileName || data.resume?.fileName || '',
-          resumeStoragePath: data.resumeStoragePath || data.resume?.storagePath || '',
-        });
+        const resume = data.resume || null;
+        setHasResume(!!resume);
+        setResumeFileName(resume?.fileName || '');
       }
     });
 
     return () => unsubscribe();
   }, [uid]);
 
-  const handleChange = async (updated: any) => {
-    // The ResumeStep component handles its own saving to Firestore
-    // This is just for local state sync if needed
-    setResumeData((prev: any) => ({ ...prev, ...updated }));
+  const handleResumeParsed = (parsedData: any) => {
+    // ResumeUpload component handles saving to Firestore
+    // This callback can be used for additional actions if needed
+    console.log('Resume parsed:', parsedData);
   };
 
   return (
-    <Box>
-      <ResumeStep 
-        tenantId={tenantId || ''}
-        value={resumeData} 
-        onChange={handleChange}
-      />
+    <Box sx={{ maxWidth: 800, mx: 'auto', p: 3 }}>
+      <Typography variant="h5" gutterBottom sx={{ mb: 3, fontWeight: 600 }}>
+        Resume Upload
+      </Typography>
+
+      {hasResume && resumeFileName && (
+        <Alert severity="success" sx={{ mb: 3 }}>
+          Current resume: <strong>{resumeFileName}</strong>
+        </Alert>
+      )}
+
+      <Paper sx={{ p: 3 }}>
+        <ResumeUpload
+          userId={uid}
+          tenantId={tenantId || undefined}
+          onResumeParsed={handleResumeParsed}
+        />
+      </Paper>
     </Box>
   );
 };
 
 export default ResumeTab;
-

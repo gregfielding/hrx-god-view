@@ -12,6 +12,8 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { enqueueSystemWelcomeSms } from './systemSms';
+import { dispatchSystemMessage } from './systemMessageDispatcher';
+import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
 import { TWILIO_MESSAGING_PHONE_NUMBER } from './twilioSecrets';
 
 if (!admin.apps.length) {
@@ -73,6 +75,45 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
           tenantId,
           userId,
           error: settingsErr?.message,
+        });
+        return;
+      }
+
+      // New path: rule-based automation trigger for account creation.
+      // Keep legacy enqueue as fallback while rule rollout is in progress.
+      let dispatched = false;
+      try {
+        const dispatchResult = await dispatchSystemMessage({
+          tenantId,
+          triggerKey: SYSTEM_TRIGGER_KEYS.accountCreated,
+          userId,
+          context: {
+            userData: data,
+          },
+          source: 'system',
+          sourceId: userId,
+        });
+        dispatched = !!dispatchResult.sent;
+        logger.info('Account-created automation dispatch attempted', {
+          userId,
+          tenantId,
+          handled: dispatchResult.handled,
+          sent: dispatchResult.sent,
+          ruleIds: dispatchResult.ruleIds,
+          errors: dispatchResult.errors,
+        });
+      } catch (dispatchErr: any) {
+        logger.warn('Account-created automation dispatch failed; falling back to legacy welcome SMS', {
+          userId,
+          tenantId,
+          error: dispatchErr?.message,
+        });
+      }
+
+      if (dispatched) {
+        logger.info('Account-created message sent via automation rule(s); skipping legacy welcome fallback', {
+          userId,
+          tenantId,
         });
         return;
       }

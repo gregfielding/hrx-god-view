@@ -19,7 +19,8 @@ import { useAuth } from '../../contexts/AuthContext';
 type SettingsTab = 'company-setup' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups';
 
 const SettingsLanding: React.FC = () => {
-  const { tenantId } = useAuth();
+  const { tenantId, activeTenant } = useAuth();
+  const effectiveTenantId = activeTenant?.id || tenantId;
   const [activeTab, setActiveTab] = useState<SettingsTab>('company-setup');
 
   const settingsTabs = [
@@ -60,7 +61,7 @@ const SettingsLanding: React.FC = () => {
       case 'company-setup':
         return <CompanySetup />;
       case 'messaging':
-        return tenantId ? <MessagingTab tenantId={tenantId} /> : null;
+        return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
       case 'senders':
         return <SenderManagementPage />;
       case 'slack':
@@ -68,7 +69,7 @@ const SettingsLanding: React.FC = () => {
       case 'workforce':
         return <WorkforceManagement />;
       case 'smart-groups':
-        return tenantId ? <SmartGroupsSettings tenantId={tenantId} /> : null;
+        return effectiveTenantId ? <SmartGroupsSettings tenantId={effectiveTenantId} /> : null;
       default:
         return <CompanySetup />;
     }

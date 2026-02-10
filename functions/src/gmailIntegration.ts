@@ -31,6 +31,71 @@ const oauth2Client = new google.auth.OAuth2(
   redirectUri.value()
 );
 
+function emailFromIdToken(idToken?: string | null): string {
+  if (!idToken) return '';
+  try {
+    const parts = idToken.split('.');
+    if (parts.length < 2) return '';
+    const payload = JSON.parse(
+      Buffer.from(parts[1], 'base64url').toString('utf8')
+    ) as { email?: string };
+    return payload?.email || '';
+  } catch {
+    return '';
+  }
+}
+
+async function resolveGoogleEmailFromTokens(tokens: any): Promise<string> {
+  const fromIdToken = emailFromIdToken(tokens?.id_token);
+  if (fromIdToken) {
+    return fromIdToken;
+  }
+  try {
+    oauth2Client.setCredentials(tokens);
+    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    const profile = await gmail.users.getProfile({ userId: 'me' });
+    return profile.data.emailAddress || '';
+  } catch (error: any) {
+    // Do not fail OAuth callback on profile lookup rate limits.
+    logger.warn('Unable to resolve Gmail profile email during OAuth callback', {
+      status: error?.code || error?.status,
+      reason: error?.errors?.[0]?.reason,
+      message: error?.message,
+    });
+    return '';
+  }
+}
+
+function getErrorMessage(error: any): string {
+  return String(error?.message || error?.error?.message || error || '');
+}
+
+function isGmailTokenError(error: any): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  return (
+    msg.includes('invalid_grant') ||
+    msg.includes('token has been expired') ||
+    msg.includes('token expired') ||
+    msg.includes('invalid credentials') ||
+    msg.includes('access has expired')
+  );
+}
+
+function isGmailRateLimitError(error: any): boolean {
+  const msg = getErrorMessage(error).toLowerCase();
+  const reason = String(error?.errors?.[0]?.reason || '').toLowerCase();
+  const status = Number(error?.code || error?.status || 0);
+  return (
+    status === 429 ||
+    msg.includes('rate limit') ||
+    msg.includes('quota') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('user-rate limit exceeded') ||
+    reason.includes('ratelimit') ||
+    reason.includes('quota')
+  );
+}
+
 /**
  * Gmail message bodies are base64url encoded. Normalize to base64 before decoding.
  */
@@ -167,11 +232,8 @@ export const handleGmailCallback = onCall({
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
     
-    // Get user info from Gmail API to get email address
-    oauth2Client.setCredentials(tokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    const email = profile.data.emailAddress;
+    // Best-effort email resolution (must not fail callback)
+    const email = await resolveGoogleEmailFromTokens(tokens);
     
     // Check if Calendar scopes are included
     const hasCalendarScope = tokens.scope?.includes('https://www.googleapis.com/auth/calendar');
@@ -237,11 +299,8 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
     // Exchange code for tokens
     const { tokens } = await oauth2Client.getToken(code);
 
-    // Get user info to capture email
-    oauth2Client.setCredentials(tokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    const profile = await gmail.users.getProfile({ userId: 'me' });
-    const email = profile.data.emailAddress || '';
+    // Best-effort email resolution (must not fail callback)
+    const email = await resolveGoogleEmailFromTokens(tokens);
 
     const hasCalendarScope = tokens.scope?.includes('https://www.googleapis.com/auth/calendar');
 
@@ -754,8 +813,19 @@ export const syncGmailEmails = onCall({
     };
 
   } catch (error) {
+    const message = getErrorMessage(error);
     console.error('Error syncing Gmail emails:', error);
-    throw new Error(`Failed to sync emails: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    if (isGmailRateLimitError(error)) {
+      logger.warn('syncGmailEmails rate-limited; returning retryable response', { message });
+      return {
+        success: false,
+        error: true,
+        retryable: true,
+        rateLimited: true,
+        message: `Gmail API is rate-limited. Please retry shortly. ${message}`.trim(),
+      };
+    }
+    throw new Error(`Failed to sync emails: ${message || 'Unknown error'}`);
   }
 });
 
@@ -826,22 +896,40 @@ export const getGmailUnreadInboxCount = onCall(
       return { success: true, unreadCount: 0, connected: false };
     }
 
-    oauth2Client.setCredentials(gmailTokens);
-    const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+    try {
+      oauth2Client.setCredentials(gmailTokens);
+      const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
 
-    // INBOX label has messagesUnread which matches Gmail’s sidebar unread count semantics.
-    const labelRes = await gmail.users.labels.get({ userId: 'me', id: 'INBOX' });
-    const unreadCount = Number(labelRes.data.messagesUnread || 0);
+      // INBOX label has messagesUnread which matches Gmail’s sidebar unread count semantics.
+      const labelRes = await gmail.users.labels.get({ userId: 'me', id: 'INBOX' });
+      const unreadCount = Number(labelRes.data.messagesUnread || 0);
 
-    await userRef.set(
-      {
-        gmailUnreadInboxCount: unreadCount,
-        gmailUnreadInboxCountUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+      await userRef.set(
+        {
+          gmailUnreadInboxCount: unreadCount,
+          gmailUnreadInboxCountUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
 
-    return { success: true, unreadCount, cached: false };
+      return { success: true, unreadCount, cached: false };
+    } catch (err: any) {
+      if (isGmailTokenError(err)) {
+        logger.info('getGmailUnreadInboxCount: Gmail token expired or invalid', { userId });
+        return { success: true, unreadCount: 0, connected: false };
+      }
+      if (isGmailRateLimitError(err)) {
+        logger.warn('getGmailUnreadInboxCount: Gmail rate-limited; using fallback', { userId });
+        return {
+          success: true,
+          unreadCount: typeof cached === 'number' ? cached : 0,
+          cached: typeof cached === 'number',
+          stale: typeof cached === 'number',
+          rateLimited: true,
+        };
+      }
+      throw err;
+    }
   }
 );
 
@@ -1007,16 +1095,20 @@ export const getGmailMailboxCounts = onCall(
 
       return { success: true, counts, cached: false };
     } catch (err: any) {
-      const msg = (err?.message || String(err)).toLowerCase();
-      const isTokenError =
-        msg.includes('invalid_grant') ||
-        msg.includes('token has been expired') ||
-        msg.includes('token expired') ||
-        msg.includes('invalid credentials') ||
-        msg.includes('access has expired');
-      if (isTokenError) {
+      if (isGmailTokenError(err)) {
         logger.info('getGmailMailboxCounts: Gmail token expired or invalid, returning empty counts', { userId });
         return { success: true, counts: emptyCounts, connected: false };
+      }
+      if (isGmailRateLimitError(err)) {
+        logger.warn('getGmailMailboxCounts: Gmail rate-limited; returning cached or empty counts', { userId });
+        return {
+          success: true,
+          counts: cached || emptyCounts,
+          connected: true,
+          cached: !!cached,
+          stale: !!cached,
+          rateLimited: true,
+        };
       }
       throw err;
     }

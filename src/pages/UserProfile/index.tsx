@@ -48,6 +48,7 @@ import EmailSignatureTab from './components/EmailSignatureTab';
 import OnboardingTab from './components/OnboardingTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 import MessagesTab from './components/MessagesTab';
+import ResumeTab from './components/ResumeTab';
 import StartOnboardingDialog from './components/StartOnboardingDialog';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
 import AddUserNoteDialog from './components/AddUserNoteDialog';
@@ -328,6 +329,7 @@ const UserProfilePage = () => {
       { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount }, // Hidden for 0-4
       { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView }, // Hidden for 0-4
       { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Resume Upload', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
       { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
@@ -2109,6 +2111,8 @@ const UserProfilePage = () => {
                 );
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
+              case 'Resume Upload':
+                return <ResumeTab uid={uid} />;
               case 'Applications':
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':

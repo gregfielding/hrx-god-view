@@ -8,7 +8,13 @@
  */
 
 import { logger } from 'firebase-functions/v2';
-import { sendMessage, MessageContext } from './routingOrchestrator';
+import { sendMessage } from './routingOrchestrator';
+import { dispatchSystemMessage } from './systemMessageDispatcher';
+import {
+  mapApplicationStatusToTriggerKey,
+  mapAssignmentStatusToTriggerKey,
+  SYSTEM_TRIGGER_KEYS,
+} from './triggerRegistry';
 
 /**
  * Send legacy application status message
@@ -25,6 +31,37 @@ export async function sendLegacyApplicationStatusMessage(args: {
   status?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
+    const triggerKey =
+      args.source === 'application_created'
+        ? SYSTEM_TRIGGER_KEYS.applicationReceived
+        : mapApplicationStatusToTriggerKey(args.status || '');
+    if (triggerKey) {
+      const dispatched = await dispatchSystemMessage({
+        tenantId: args.tenantId,
+        triggerKey,
+        userId: args.userId,
+        context: {
+          applicationId: args.applicationId,
+          status: args.status,
+          message: args.message,
+        },
+        metadata: {
+          source: args.source,
+          sourceId: args.sourceId,
+        },
+        source: 'system',
+        sourceId: args.sourceId,
+      });
+      if (dispatched.handled) {
+        return {
+          success: dispatched.sent,
+          messageId: null,
+          status: dispatched.sent ? 'sent' : 'failed',
+          error: dispatched.errors[0],
+        };
+      }
+    }
+
     // Map source to message type
     let messageTypeId = 'application_received';
     if (args.source === 'application_status_changed') {
@@ -255,6 +292,47 @@ export async function sendLegacyAssignmentMessage(args: {
   assignmentId?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
+    const statusForTrigger =
+      args.messageTypeId === 'assignment_confirmed'
+        ? 'confirmed'
+        : args.messageTypeId === 'assignment_active'
+        ? 'active'
+        : args.messageTypeId === 'assignment_completed'
+        ? 'completed'
+        : args.messageTypeId === 'assignment_cancelled'
+        ? 'cancelled'
+        : '';
+    const triggerKey =
+      args.source === 'assignment_created'
+        ? SYSTEM_TRIGGER_KEYS.assignmentCreated
+        : mapAssignmentStatusToTriggerKey(statusForTrigger);
+    if (triggerKey) {
+      const dispatched = await dispatchSystemMessage({
+        tenantId: args.tenantId,
+        triggerKey,
+        userId: args.userId,
+        context: {
+          assignmentId: args.assignmentId,
+          message: args.message,
+          status: args.messageTypeId,
+        },
+        metadata: {
+          source: args.source,
+          sourceId: args.sourceId,
+        },
+        source: 'system',
+        sourceId: args.sourceId,
+      });
+      if (dispatched.handled) {
+        return {
+          success: dispatched.sent,
+          messageId: null,
+          status: dispatched.sent ? 'sent' : 'failed',
+          error: dispatched.errors[0],
+        };
+      }
+    }
+
     const result = await sendMessage({
       tenantId: args.tenantId,
       userId: args.userId,

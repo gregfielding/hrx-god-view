@@ -39,6 +39,20 @@ export interface MessageTypeConfig {
 export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
   // System Messages
   {
+    id: 'system_onboarding_welcome',
+    label: 'System Onboarding Welcome',
+    category: 'system',
+    defaultChannels: ['sms'],
+    critical: false,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: true,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description: 'Welcome message sent after user signup',
+    enabled: true,
+  },
+  {
     id: 'system_alert',
     label: 'System Alert',
     category: 'system',

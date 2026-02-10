@@ -1,8 +1,9 @@
 /**
  * Metro / subarea schema for Smart Groups geographic hierarchy.
  * Maps city + state to cityKey, subareaKeys[], metroKey, stateKey.
- * Add more metros/regions as needed; structure is Craigslist-style (metro → subareas → cities).
+ * Source of truth is metroMaster.json (metro → subareas → cities + coordinates).
  */
+import { METRO_TEMPLATES } from './metroMaster';
 
 export interface GeoHierarchy {
   cityKey: string;
@@ -36,53 +37,17 @@ export function toStateKey(state: string): string {
   return stateNames[s] || s.toLowerCase().replace(/\s+/g, '_') || 'unknown';
 }
 
-/**
- * City → subarea(s) → metro.
- * Keys are normalized (lowercase, underscores). Each city can belong to one subarea and one metro.
- */
-const CITY_TO_SUBAREA_AND_METRO: Record<string, { subareaKey: string; metroKey: string }> = {
-  // Dallas–Fort Worth: North DFW
-  plano_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  mckinney_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  frisco_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  allen_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  prosper_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  carrollton_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  denton_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  lewisville_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  flower_mound_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  the_colony_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  little_elm_tx: { subareaKey: 'north_dfw', metroKey: 'dallas_fort_worth' },
-  // Dallas–Fort Worth: South DFW
-  duncanville_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  lancaster_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  cedar_hill_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  desoto_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  waxahachie_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  midlothian_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  mansfield_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  arlington_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  grand_prairie_tx: { subareaKey: 'south_dfw', metroKey: 'dallas_fort_worth' },
-  // Dallas–Fort Worth: Mid Cities
-  irving_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  euless_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  bedford_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  hurst_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  grapevine_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  richardson_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  garland_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  mesquite_tx: { subareaKey: 'mid_cities', metroKey: 'dallas_fort_worth' },
-  // Dallas–Fort Worth: Dallas
-  dallas_tx: { subareaKey: 'dallas', metroKey: 'dallas_fort_worth' },
-  // Dallas–Fort Worth: Fort Worth
-  fort_worth_tx: { subareaKey: 'fort_worth', metroKey: 'dallas_fort_worth' },
-  // Austin area (simple metro)
-  austin_tx: { subareaKey: 'austin', metroKey: 'austin' },
-  round_rock_tx: { subareaKey: 'austin', metroKey: 'austin' },
-  cedar_park_tx: { subareaKey: 'austin', metroKey: 'austin' },
-  pflugerville_tx: { subareaKey: 'austin', metroKey: 'austin' },
-  del_valle_tx: { subareaKey: 'austin', metroKey: 'austin' },
-};
+const CITY_TO_SUBAREA_AND_METRO: Record<string, { subareaKey: string; metroKey: string }> = {};
+for (const metro of METRO_TEMPLATES) {
+  for (const subarea of metro.subareas || []) {
+    for (const cityKey of subarea.cityKeys || []) {
+      CITY_TO_SUBAREA_AND_METRO[cityKey] = {
+        subareaKey: subarea.subareaKey,
+        metroKey: metro.metroKey,
+      };
+    }
+  }
+}
 
 /**
  * Resolve worksite city/state/zip to geographic hierarchy keys.
@@ -113,7 +78,7 @@ export function getGeoHierarchy(worksite: { city?: string; state?: string; zipCo
 }
 
 /** Metro options for filter dropdowns (from curated hierarchy). */
-export const METRO_OPTIONS: string[] = ['dallas_fort_worth', 'austin'];
+export const METRO_OPTIONS: string[] = METRO_TEMPLATES.map((m) => m.metroKey).sort();
 
 /** Subarea (area) options for a given metro. */
 export function getSubareaOptionsForMetro(metroKey: string): string[] {

@@ -36,6 +36,7 @@ import { Delete as DeleteIcon, Edit as EditIcon, Save as SaveIcon, Cancel as Can
 
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { db } from '../../../firebase';
+import { ensureCityInSmartGroups } from '../../../services/smartGroupMetroSync';
 
 // Location type options
 const locationTypeOptions = [
@@ -510,6 +511,7 @@ const LocationsTab: React.FC<LocationsTabProps> = ({ tenantId }) => {
         longitude: geo.lng,
         createdAt: serverTimestamp(),
       });
+      ensureCityInSmartGroups(tenantId, form.city || '', form.state || '').catch(() => {});
       setForm({ 
         nickname: '', 
         cid: '', 

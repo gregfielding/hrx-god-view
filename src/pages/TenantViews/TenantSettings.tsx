@@ -14,9 +14,10 @@ import CompanyDefaultsTab from './CompanyDefaultsTab';
 import MessagingTab from './MessagingTab';
 
 const TenantSettings: React.FC = () => {
-  const { tenantId } = useAuth();
+  const { tenantId, activeTenant } = useAuth();
+  const effectiveTenantId = activeTenant?.id || tenantId;
   const [tabValue, setTabValue] = useState(0);
-  if (!tenantId) return null;
+  if (!effectiveTenantId) return null;
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
@@ -55,47 +56,47 @@ const TenantSettings: React.FC = () => {
       {/* Tab Panels */}
       {tabValue === 0 && (
         <Box sx={{ p: 0 }}>
-          <BrandingTab tenantId={tenantId} />
+          <BrandingTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 1 && (
         <Box sx={{ p: 0 }}>
-          <RegionsTab tenantId={tenantId} />
+          <RegionsTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 2 && (
         <Box sx={{ p: 0 }}>
-          <DivisionTypesTab tenantId={tenantId} />
+          <DivisionTypesTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 3 && (
         <Box sx={{ p: 0 }}>
-          <DivisionsTab tenantId={tenantId} />
+          <DivisionsTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 4 && (
         <Box sx={{ p: 0 }}>
-          <DepartmentsTab tenantId={tenantId} />
+          <DepartmentsTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 5 && (
         <Box sx={{ p: 0 }}>
-          <LocationsTab tenantId={tenantId} />
+          <LocationsTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 6 && (
         <Box sx={{ p: 0 }}>
-          <MessagingTab tenantId={tenantId} />
+          <MessagingTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 7 && (
         <Box sx={{ p: 0 }}>
-          <OrgChartTab tenantId={tenantId} />
+          <OrgChartTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {tabValue === 8 && (
         <Box sx={{ p: 0 }}>
-          <CompanyDefaultsTab tenantId={tenantId} />
+          <CompanyDefaultsTab tenantId={effectiveTenantId} />
         </Box>
       )}
       {/* {tabValue === 7 && (

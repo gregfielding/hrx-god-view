@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { onCall, onRequest } from 'firebase-functions/v2/https';
+import { autoSyncUnknownWorksiteMetroToMaster } from './metroMasterAutoSync';
 
 const db = admin.firestore();
 
@@ -62,6 +63,18 @@ export const onCompanyLocationCreated = onDocumentCreated('tenants/{tenantId}/cr
   if (!stateCode) return;
   const path = mirrorDocPath(tenantId, companyId, locationId);
   await db.doc(path).set({ companyId, state: raw, stateCode, stateName }, { merge: true });
+
+  // Auto-sync metro master + tenant smart groups from newly added worksites.
+  try {
+    await autoSyncUnknownWorksiteMetroToMaster(tenantId, data);
+  } catch (e: any) {
+    console.error('autoSyncUnknownWorksiteMetroToMaster failed', {
+      tenantId,
+      companyId,
+      locationId,
+      error: String(e?.message || e),
+    });
+  }
 });
 
 export const onCompanyLocationUpdated = onDocumentUpdated('tenants/{tenantId}/crm_companies/{companyId}/locations/{locationId}', async (event) => {

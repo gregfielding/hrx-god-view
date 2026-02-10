@@ -8,8 +8,6 @@ import {
   Box,
   Typography,
   Paper,
-  Tabs,
-  Tab,
   Button,
   Table,
   TableBody,
@@ -35,7 +33,6 @@ import {
   CircularProgress,
   Tooltip,
   Stack,
-  FormHelperText,
   Grid,
   Link,
   Autocomplete,
@@ -46,7 +43,6 @@ import {
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AddIcon from '@mui/icons-material/Add';
-import PreviewIcon from '@mui/icons-material/Preview';
 import PhoneIcon from '@mui/icons-material/Phone';
 import EmailIcon from '@mui/icons-material/Email';
 import SmsIcon from '@mui/icons-material/Sms';
@@ -54,7 +50,7 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ComputerIcon from '@mui/icons-material/Computer';
 import { useAuth } from '../../contexts/AuthContext';
-import { collection, getDocs, query, where, limit } from 'firebase/firestore';
+import { collection, getDocs, query, limit } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../firebase';
@@ -64,11 +60,19 @@ import {
   updateTemplate,
   deleteTemplate,
   getMessageTypes,
-  testRenderTemplate,
   extractVariables,
   sendTestMessage,
+  listAutomationRules,
+  createAutomationRule,
+  updateAutomationRule,
+  deleteAutomationRule,
+  listTriggerCatalog,
+  testAutomationTemplate,
   type UnifiedMessageTemplate,
   type MessageTypeConfig,
+  type MessageAutomationRule,
+  type TriggerCatalogItem,
+  type AutomationRuleStatus,
   type Channel,
   type LanguageCode,
 } from '../../utils/templateApi';
@@ -82,7 +86,10 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   const { user } = useAuth();
   const [subTab, setSubTab] = useState(0); // 0: Templates, 1: Recruiter Numbers
   const [channelTab, setChannelTab] = useState<Channel>('sms'); // For templates tab
+  const [languageFilter, setLanguageFilter] = useState<'all' | LanguageCode>('all');
   const [templates, setTemplates] = useState<UnifiedMessageTemplate[]>([]);
+  const [automationRules, setAutomationRules] = useState<MessageAutomationRule[]>([]);
+  const [triggerCatalog, setTriggerCatalog] = useState<TriggerCatalogItem[]>([]);
   const [messageTypes, setMessageTypes] = useState<MessageTypeConfig[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +110,23 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     includeStopFooter: false,
     active: true,
   });
+  const [ruleForm, setRuleForm] = useState<{
+    ruleId: string;
+    triggerKey: string;
+    deliveryChannels: { sms: boolean; email: boolean; push: boolean };
+    status: AutomationRuleStatus;
+  }>({
+    ruleId: '',
+    triggerKey: '',
+    deliveryChannels: { sms: true, email: false, push: false },
+    status: 'active',
+  });
+  const derivedTemplateChannel: Channel =
+    ruleForm.deliveryChannels.email && !ruleForm.deliveryChannels.sms
+      ? 'email'
+      : ruleForm.deliveryChannels.sms && !ruleForm.deliveryChannels.email
+        ? 'sms'
+        : channelTab;
   const [previewText, setPreviewText] = useState('');
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
   
@@ -112,14 +136,45 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   const [selectedTestRecipient, setSelectedTestRecipient] = useState<string>('');
   const [testSending, setTestSending] = useState(false);
   const [testSendResult, setTestSendResult] = useState<{ success: boolean; message?: string } | null>(null);
+  const [testDiagnostics, setTestDiagnostics] = useState<{
+    missingVariables: string[];
+    resolvedVariablesCount: number;
+    renderedBody?: string;
+  } | null>(null);
 
   useEffect(() => {
     if (tenantId) {
     loadTemplates();
       loadMessageTypes();
+      loadAutomationRules();
+      loadTriggerCatalog();
       loadTestRecipients();
     }
-  }, [tenantId, channelTab]);
+  }, [tenantId, channelTab, languageFilter]);
+
+  const loadAutomationRules = async () => {
+    try {
+      const result = await listAutomationRules(tenantId);
+      if (result.success) {
+        setAutomationRules(result.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load automation rules:', err);
+      setAutomationRules([]);
+    }
+  };
+
+  const loadTriggerCatalog = async () => {
+    try {
+      const result = await listTriggerCatalog();
+      if (result.success) {
+        setTriggerCatalog(result.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to load trigger catalog:', err);
+      setTriggerCatalog([]);
+    }
+  };
 
   const loadTestRecipients = async () => {
     try {
@@ -187,6 +242,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     try {
       const result = await listTemplates(tenantId, {
         channel: channelTab,
+        language: languageFilter === 'all' ? undefined : languageFilter,
         active: undefined, // Get all templates
       });
       if (result.success) {
@@ -229,6 +285,26 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         includeStopFooter: template.includeStopFooter,
         active: template.active,
       });
+      const linkedRule = automationRules.find((rule) => rule.templateId === template.id);
+      if (linkedRule) {
+        setRuleForm({
+          ruleId: linkedRule.ruleId,
+          triggerKey: linkedRule.triggerKey,
+          deliveryChannels: linkedRule.deliveryChannels,
+          status: linkedRule.status,
+        });
+      } else {
+        setRuleForm({
+          ruleId: `rule_${template.id}`,
+          triggerKey: '',
+          deliveryChannels: {
+            sms: template.channel === 'sms',
+            email: template.channel === 'email',
+            push: false,
+          },
+          status: template.active ? 'active' : 'draft',
+        });
+      }
     } else {
       setEditingTemplate(null);
       setTemplateForm({
@@ -242,6 +318,12 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         variables: [],
         includeStopFooter: channelTab === 'sms',
         active: true,
+      });
+      setRuleForm({
+        ruleId: '',
+        triggerKey: '',
+        deliveryChannels: { sms: channelTab === 'sms', email: channelTab === 'email', push: false },
+        status: 'active',
       });
     }
     setTemplateDialogOpen(true);
@@ -263,7 +345,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       includeStopFooter: channelTab === 'sms',
       active: true,
     });
+    setRuleForm({
+      ruleId: '',
+      triggerKey: '',
+      deliveryChannels: { sms: channelTab === 'sms', email: channelTab === 'email', push: false },
+      status: 'active',
+    });
     setPreviewText('');
+    setTestDiagnostics(null);
   };
 
   const updatePreview = () => {
@@ -302,7 +391,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     };
 
     // Local rendering from form data
-    if (templateForm.channel === 'email' && templateForm.htmlBody) {
+    if (derivedTemplateChannel === 'email' && templateForm.htmlBody) {
       setPreviewText(renderLocal(templateForm.htmlBody));
     } else {
       setPreviewText(renderLocal(templateForm.body || ''));
@@ -315,7 +404,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }, 500);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateForm.body, templateForm.htmlBody, templateForm.subject, templateForm.messageTypeId]);
+  }, [templateForm.body, templateForm.htmlBody, templateForm.subject, templateForm.messageTypeId, derivedTemplateChannel]);
 
   const handleSaveTemplate = async () => {
     if (!templateForm.name || !templateForm.messageTypeId) {
@@ -328,8 +417,18 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       return;
     }
 
-    if (templateForm.channel === 'email' && !templateForm.subject) {
+    if (derivedTemplateChannel === 'email' && !templateForm.subject) {
       setError('Subject is required for email templates');
+      return;
+    }
+
+    if (
+      ruleForm.triggerKey &&
+      !ruleForm.deliveryChannels.sms &&
+      !ruleForm.deliveryChannels.email &&
+      !ruleForm.deliveryChannels.push
+    ) {
+      setError('Enable at least one delivery channel for an automation rule');
       return;
     }
 
@@ -347,7 +446,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
       const templateData: Omit<UnifiedMessageTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'> = {
         messageTypeId: templateForm.messageTypeId,
-        channel: templateForm.channel || channelTab,
+        channel: derivedTemplateChannel,
         language: templateForm.language || 'en',
         name: templateForm.name,
         body: templateForm.body || templateForm.htmlBody || '',
@@ -358,22 +457,50 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         active: templateForm.active !== false,
       };
 
+      let savedTemplateId = editingTemplate?.id;
       if (editingTemplate) {
-        await updateTemplate(tenantId, editingTemplate.id!, {
+        if (!editingTemplate.id) {
+          throw new Error('Template id missing for update');
+        }
+        const updateResult = await updateTemplate(tenantId, editingTemplate.id, {
           ...templateData,
           createdBy: editingTemplate.createdBy,
         });
+        savedTemplateId = updateResult.data.id;
         setSuccess(true);
       } else {
-        await createTemplate({
+        const createResult = await createTemplate({
           ...templateData,
           tenantId,
           createdBy: user?.uid || 'system',
         });
+        savedTemplateId = createResult.data.id;
         setSuccess(true);
       }
+
+      if (savedTemplateId && ruleForm.triggerKey) {
+        const ruleId = ruleForm.ruleId || `rule_${savedTemplateId}`;
+        const payload = {
+          ruleId,
+          name: templateForm.name || 'Untitled rule',
+          triggerKey: ruleForm.triggerKey,
+          templateId: savedTemplateId,
+          deliveryChannels: ruleForm.deliveryChannels,
+          status: ruleForm.status,
+          language: templateForm.language || 'en',
+          priority: 0,
+        };
+        const existingRule = automationRules.find((rule) => rule.ruleId === ruleId);
+        if (existingRule) {
+          await updateAutomationRule(tenantId, ruleId, payload);
+        } else {
+          await createAutomationRule({ tenantId, ...payload });
+        }
+      }
+
       handleCloseTemplateDialog();
       loadTemplates();
+      loadAutomationRules();
     } catch (err: any) {
       setError(err.message || 'Failed to save template');
     } finally {
@@ -390,9 +517,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     setError(null);
 
     try {
+      const linkedRule = automationRules.find((rule) => rule.templateId === templateId);
+      if (linkedRule) {
+        await deleteAutomationRule(tenantId, linkedRule.ruleId);
+      }
       await deleteTemplate(tenantId, templateId);
       setSuccess(true);
       loadTemplates();
+      loadAutomationRules();
     } catch (err: any) {
       setError(err.message || 'Failed to delete template');
     } finally {
@@ -405,7 +537,10 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     setError(null);
 
     try {
-      await updateTemplate(tenantId, template.id!, {
+      if (!template.id) {
+        throw new Error('Template id missing');
+      }
+      await updateTemplate(tenantId, template.id, {
         active: !template.active,
       });
       loadTemplates();
@@ -469,6 +604,39 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     setError(null);
 
     try {
+      if (ruleForm.triggerKey && editingTemplate?.id) {
+        const automationResult = await testAutomationTemplate({
+          tenantId,
+          userId: selectedTestRecipient,
+          templateId: editingTemplate.id,
+          triggerKey: ruleForm.triggerKey,
+          contextOverrides: {
+            status: 'submitted',
+          },
+          send: true,
+        });
+        setTestDiagnostics({
+          missingVariables: automationResult.missingVariables || [],
+          resolvedVariablesCount: Object.keys(
+            automationResult.resolvedVariables || {}
+          ).length,
+          renderedBody: automationResult.renderedBody,
+        });
+        const sentViaRule = !!automationResult.dispatchResult?.sent;
+        setTestSendResult({
+          success: sentViaRule,
+          message: sentViaRule
+            ? 'Automation test sent using rule dispatch.'
+            : 'Automation rule executed but did not send (check channels/rule/template state).',
+        });
+        if (sentViaRule) {
+          setSuccess(true);
+        }
+        return;
+      } else {
+        setTestDiagnostics(null);
+      }
+
       // Build context with sample data
       const sampleContext: Record<string, any> = {
         firstName: 'John',
@@ -491,7 +659,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         selectedTestRecipient,
         templateForm.messageTypeId,
         sampleContext,
-        templateForm.channel ? [templateForm.channel] : undefined
+        [derivedTemplateChannel]
       );
 
       if (result.success) {
@@ -571,26 +739,43 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         <Box>
           {/* Channel Selector - Using Toggle Buttons */}
           <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <ToggleButtonGroup
-              value={channelTab}
-              exclusive
-              onChange={(e, newValue) => {
-                if (newValue !== null) {
-                  setChannelTab(newValue as Channel);
-                }
-              }}
-              aria-label="channel selector"
-              sx={{ height: 40 }}
-            >
-              <ToggleButton value="sms" aria-label="SMS templates">
-                <SmsIcon sx={{ mr: 1 }} />
-                SMS Templates
-              </ToggleButton>
-              <ToggleButton value="email" aria-label="Email templates">
-                <EmailIcon sx={{ mr: 1 }} />
-                Email Templates
-              </ToggleButton>
-            </ToggleButtonGroup>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <ToggleButtonGroup
+                value={channelTab}
+                exclusive
+                onChange={(e, newValue) => {
+                  if (newValue !== null) {
+                    setChannelTab(newValue as Channel);
+                  }
+                }}
+                aria-label="channel selector"
+                sx={{ height: 40 }}
+              >
+                <ToggleButton value="sms" aria-label="SMS templates">
+                  <SmsIcon sx={{ mr: 1 }} />
+                  SMS Templates
+                </ToggleButton>
+                <ToggleButton value="email" aria-label="Email templates">
+                  <EmailIcon sx={{ mr: 1 }} />
+                  Email Templates
+                </ToggleButton>
+              </ToggleButtonGroup>
+              <ToggleButtonGroup
+                value={languageFilter}
+                exclusive
+                onChange={(e, newValue) => {
+                  if (newValue !== null) {
+                    setLanguageFilter(newValue as 'all' | LanguageCode);
+                  }
+                }}
+                aria-label="language filter"
+                sx={{ height: 40 }}
+              >
+                <ToggleButton value="all" aria-label="All languages">ALL</ToggleButton>
+                <ToggleButton value="en" aria-label="English templates">EN</ToggleButton>
+                <ToggleButton value="es" aria-label="Spanish templates">ES</ToggleButton>
+              </ToggleButtonGroup>
+            </Stack>
             
             <Button
               variant="contained"
@@ -604,6 +789,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
           <Box sx={{ mb: 2 }}>
             <Typography variant="h6" sx={{ mb: 1 }}>
               {channelTab === 'sms' ? 'SMS' : 'Email'} Templates
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Tenant: {tenantId} {languageFilter !== 'all' ? `- ${languageFilter.toUpperCase()} only` : ''}
             </Typography>
           </Box>
 
@@ -625,6 +813,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 <TableHead>
                   <TableRow>
                     <TableCell>Name</TableCell>
+                    <TableCell>Template ID</TableCell>
+                    <TableCell>Trigger</TableCell>
+                    <TableCell>Delivery</TableCell>
                     <TableCell>Message Type</TableCell>
                     <TableCell>Language</TableCell>
                     <TableCell>Preview</TableCell>
@@ -634,11 +825,32 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 </TableHead>
                 <TableBody>
                   {templates.map((template) => (
+                    (() => {
+                      const linkedRule = automationRules.find((rule) => rule.templateId === template.id);
+                      return (
                     <TableRow key={template.id}>
                       <TableCell>
                         <Typography variant="body2" fontWeight={500}>
                           {template.name}
                         </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                          {template.id}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">
+                          {linkedRule?.triggerKey || 'Not configured'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Stack direction="row" spacing={0.5}>
+                          {linkedRule?.deliveryChannels?.sms && <Chip label="SMS" size="small" variant="outlined" />}
+                          {linkedRule?.deliveryChannels?.email && <Chip label="EMAIL" size="small" variant="outlined" />}
+                          {linkedRule?.deliveryChannels?.push && <Chip label="PUSH" size="small" variant="outlined" />}
+                          {!linkedRule && <Typography variant="caption" color="text.secondary">None</Typography>}
+                        </Stack>
                       </TableCell>
                       <TableCell>
                         <Chip 
@@ -671,16 +883,25 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                         </Tooltip>
                       </TableCell>
                       <TableCell>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={template.active}
-                              onChange={() => handleToggleTemplate(template)}
+                        <Stack direction="row" spacing={1} alignItems="center">
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={template.active}
+                                onChange={() => handleToggleTemplate(template)}
+                                size="small"
+                              />
+                            }
+                            label={template.active ? 'Active' : 'Inactive'}
+                          />
+                          {linkedRule && (
+                            <Chip
                               size="small"
+                              color={linkedRule.status === 'active' ? 'success' : 'default'}
+                              label={linkedRule.status === 'active' ? 'Rule Active' : 'Rule Draft'}
                             />
-                          }
-                          label={template.active ? 'Active' : 'Inactive'}
-                        />
+                          )}
+                        </Stack>
                       </TableCell>
                       <TableCell align="right">
                         <Stack direction="row" spacing={0.5} justifyContent="flex-end">
@@ -704,7 +925,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                             <IconButton
                               size="small"
                               color="error"
-                              onClick={() => handleDeleteTemplate(template.id!)}
+                              onClick={() => template.id && handleDeleteTemplate(template.id)}
                             >
                               <DeleteIcon fontSize="small" />
                             </IconButton>
@@ -712,6 +933,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                         </Stack>
                       </TableCell>
                     </TableRow>
+                      );
+                    })()
                   ))}
                 </TableBody>
               </Table>
@@ -799,20 +1022,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             </FormControl>
 
             <Grid container spacing={2}>
-              <Grid item xs={6}>
-              <FormControl fullWidth>
-                  <InputLabel>Channel</InputLabel>
-                    <Select
-                    value={templateForm.channel || channelTab}
-                    label="Channel"
-                    onChange={(e) => setTemplateForm({ ...templateForm, channel: e.target.value as Channel })}
-                  >
-                    <MenuItem value="sms">SMS</MenuItem>
-                    <MenuItem value="email">Email</MenuItem>
-                    </Select>
-                </FormControl>
-              </Grid>
-              <Grid item xs={6}>
+              <Grid item xs={12}>
                 <FormControl fullWidth>
                   <InputLabel>Language</InputLabel>
                   <Select
@@ -827,8 +1037,130 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               </Grid>
             </Grid>
 
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Stack spacing={2}>
+                <Typography variant="subtitle2">Automation Rule</Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={12} sm={6}>
+                    <TextField
+                      label="Rule ID"
+                      value={ruleForm.ruleId}
+                      onChange={(e) =>
+                        setRuleForm((prev) => ({ ...prev, ruleId: e.target.value }))
+                      }
+                      fullWidth
+                      helperText="Unique key used by triggers (auto-filled if blank)."
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6}>
+                    <FormControl fullWidth>
+                      <InputLabel>Status</InputLabel>
+                      <Select
+                        value={ruleForm.status}
+                        label="Status"
+                        onChange={(e) =>
+                          setRuleForm((prev) => ({
+                            ...prev,
+                            status: e.target.value as AutomationRuleStatus,
+                          }))
+                        }
+                      >
+                        <MenuItem value="draft">Draft</MenuItem>
+                        <MenuItem value="active">Active</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <FormControl fullWidth>
+                      <InputLabel>Trigger Key</InputLabel>
+                      <Select
+                        value={ruleForm.triggerKey}
+                        label="Trigger Key"
+                        onChange={(e) =>
+                          setRuleForm((prev) => ({
+                            ...prev,
+                            triggerKey: e.target.value,
+                          }))
+                        }
+                      >
+                        <MenuItem value="">
+                          <em>No automation rule</em>
+                        </MenuItem>
+                        {triggerCatalog.map((trigger) => (
+                          <MenuItem key={trigger.key} value={trigger.key}>
+                            {trigger.label} ({trigger.key})
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="caption" color="text.secondary">
+                      Delivery channels
+                    </Typography>
+                    <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={ruleForm.deliveryChannels.sms}
+                            onChange={(e) =>
+                              setRuleForm((prev) => ({
+                                ...prev,
+                                deliveryChannels: {
+                                  ...prev.deliveryChannels,
+                                  sms: e.target.checked,
+                                },
+                              }))
+                            }
+                            size="small"
+                          />
+                        }
+                        label="SMS"
+                      />
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={ruleForm.deliveryChannels.email}
+                            onChange={(e) =>
+                              setRuleForm((prev) => ({
+                                ...prev,
+                                deliveryChannels: {
+                                  ...prev.deliveryChannels,
+                                  email: e.target.checked,
+                                },
+                              }))
+                            }
+                            size="small"
+                          />
+                        }
+                        label="Email"
+                      />
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={ruleForm.deliveryChannels.push}
+                            onChange={(e) =>
+                              setRuleForm((prev) => ({
+                                ...prev,
+                                deliveryChannels: {
+                                  ...prev.deliveryChannels,
+                                  push: e.target.checked,
+                                },
+                              }))
+                            }
+                            size="small"
+                          />
+                        }
+                        label="Push"
+                      />
+                    </Stack>
+                  </Grid>
+                </Grid>
+              </Stack>
+            </Paper>
+
             {/* Email Subject Field */}
-            {templateForm.channel === 'email' && (
+            {derivedTemplateChannel === 'email' && (
                   <TextField
                 label="Email Subject"
                 value={templateForm.subject || ''}
@@ -840,7 +1172,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             )}
 
             {/* Template Body */}
-            {templateForm.channel === 'email' ? (
+            {derivedTemplateChannel === 'email' ? (
               /* Email HTML Body with Rich Text Editor */
               <Box>
                 <Typography variant="subtitle2" gutterBottom>
@@ -928,7 +1260,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                   <Typography variant="subtitle2" fontWeight={600}>
                     Preview
                   </Typography>
-                  {templateForm.channel === 'email' && (
+                  {derivedTemplateChannel === 'email' && (
                     <Stack direction="row" spacing={1}>
                       <Button
                         size="small"
@@ -959,7 +1291,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     border: previewMode === 'mobile' ? '2px solid #1976d2' : '1px solid #e0e0e0',
                   }}
                 >
-                  {templateForm.channel === 'email' && templateForm.subject && (
+                  {derivedTemplateChannel === 'email' && templateForm.subject && (
                     <Box sx={{ mb: 2, pb: 1, borderBottom: '1px solid #e0e0e0' }}>
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
                         Subject:
@@ -976,12 +1308,12 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                       },
                     }}
                     dangerouslySetInnerHTML={
-                      templateForm.channel === 'email' && templateForm.htmlBody 
+                      derivedTemplateChannel === 'email' && templateForm.htmlBody 
                         ? { __html: previewText } 
                         : undefined
                     }
                   >
-                    {templateForm.channel !== 'email' || !templateForm.htmlBody ? (
+                    {derivedTemplateChannel !== 'email' || !templateForm.htmlBody ? (
                       <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                         {previewText}
                       </Typography>
@@ -992,7 +1324,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             )}
 
             {/* Include STOP Footer (SMS only) */}
-            {templateForm.channel === 'sms' && (
+            {derivedTemplateChannel === 'sms' && (
             <FormControlLabel
               control={
                 <Switch
@@ -1034,7 +1366,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               disabled={
                 !templateForm.messageTypeId ||
                 (!templateForm.body && !templateForm.htmlBody) ||
-                (templateForm.channel === 'email' && !templateForm.subject)
+                (derivedTemplateChannel === 'email' && !templateForm.subject)
               }
               sx={{ minWidth: 120 }}
             >
@@ -1048,7 +1380,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 !templateForm.name ||
                 !templateForm.messageTypeId ||
                 (!templateForm.body && !templateForm.htmlBody) ||
-                (templateForm.channel === 'email' && !templateForm.subject)
+                (derivedTemplateChannel === 'email' && !templateForm.subject)
               }
           >
             {loading ? <CircularProgress size={20} /> : editingTemplate ? 'Update' : 'Create'}
@@ -1076,6 +1408,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
           setTestSendDialogOpen(false);
           setSelectedTestRecipient('');
           setTestSendResult(null);
+          setTestDiagnostics(null);
         }}
         maxWidth="sm"
         fullWidth
@@ -1136,13 +1469,13 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               loading={testRecipients.length === 0}
             />
 
-            {templateForm.channel && (
+            {derivedTemplateChannel && (
               <Box>
                 <Typography variant="subtitle2" gutterBottom>
                   Channel
                 </Typography>
                 <Chip
-                  label={templateForm.channel.toUpperCase()}
+                  label={derivedTemplateChannel.toUpperCase()}
                   size="small"
                   color="primary"
                   variant="outlined"
@@ -1155,6 +1488,20 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 {testSendResult.message}
               </Alert>
             )}
+
+            {testDiagnostics && (
+              <Alert severity={testDiagnostics.missingVariables.length ? 'warning' : 'success'}>
+                {testDiagnostics.missingVariables.length
+                  ? `Missing variables: ${testDiagnostics.missingVariables.join(', ')}`
+                  : `All variables resolved (${testDiagnostics.resolvedVariablesCount} values).`}
+                {testDiagnostics.renderedBody ? (
+                  <Typography variant="caption" sx={{ display: 'block', mt: 1 }}>
+                    Render preview: {testDiagnostics.renderedBody.slice(0, 160)}
+                    {testDiagnostics.renderedBody.length > 160 ? '...' : ''}
+                  </Typography>
+                ) : null}
+              </Alert>
+            )}
           </Stack>
         </DialogContent>
         <DialogActions>
@@ -1163,6 +1510,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               setTestSendDialogOpen(false);
               setSelectedTestRecipient('');
               setTestSendResult(null);
+              setTestDiagnostics(null);
             }}
           >
             Close

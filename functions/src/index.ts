@@ -87,6 +87,11 @@ import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCalla
 import { associationsIntegrityReport, associationsIntegrityNightly } from './telemetry/metrics';
 import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
 import { onCompanyLocationCreated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
+import {
+  backfillMetroMasterFromLocations,
+  backfillMetroMasterFromLocationsHttp,
+  cleanupTenantStandaloneMetros,
+} from './metroMasterAutoSync';
 import { onCompanyLocationUpdated } from './onCompanyLocationUpdatedDisabled';
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
@@ -194,6 +199,8 @@ export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDe
 export { updateCompanyLocationMirrorCallable, batchUpdateCompanyLocationMirrorsCallable } from './companyLocationUpdateOptimized';
 export { updateCompanyPipelineTotalsCallable, batchUpdateCompanyPipelineTotalsCallable } from './pipelineTotalsOptimized';
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
+export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp };
+export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 
 // Auth Functions
@@ -11365,6 +11372,15 @@ export {
   deleteTemplateApi,
   listMessageTypesApi
 } from './messaging/templatesApi';
+
+export {
+  listAutomationRulesApi,
+  createAutomationRuleApi,
+  updateAutomationRuleApi,
+  deleteAutomationRuleApi,
+  listTriggerCatalogApi,
+  testAutomationTemplateApi
+} from './messaging/messageAutomationRulesApi';
 
 export {
   listThreadsApi,

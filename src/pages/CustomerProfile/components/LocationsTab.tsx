@@ -32,6 +32,7 @@ import { Autocomplete } from '@react-google-maps/api';
 
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { db } from '../../../firebase';
+import { ensureCityInSmartGroups } from '../../../services/smartGroupMetroSync';
 
 interface LocationsTabProps {
   tenantId: string;
@@ -128,6 +129,7 @@ const LocationsTab: React.FC<LocationsTabProps> = ({ tenantId }) => {
         customerLng: geo.lng,
         createdAt: serverTimestamp(),
       });
+      ensureCityInSmartGroups(tenantId, form.city || '', form.state || '').catch(() => {});
       setForm({ nickname: '', street: '', city: '', state: '', zip: '', phone: '' });
       setSuccess(true);
       fetchLocations();

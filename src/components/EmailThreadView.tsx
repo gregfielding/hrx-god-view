@@ -516,7 +516,9 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
         setStarred(threadWithMessages.starred || false);
         // Mark as read in background (non-blocking)
         if ((threadWithMessages.unreadCount || 0) > 0 && !threadWasMarkedAsRead) {
-          markThreadRead();
+          markThreadRead().catch((err) => {
+            console.error('EmailThreadView: Failed to mark cached thread as read', err);
+          });
         }
       }
     }
@@ -630,26 +632,28 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
   }, [autoOpenReply, thread, loading, replyDrawerOpen]);
 
   const markThreadRead = async () => {
-    // Fire and forget - don't block UI
-    try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+    if (!threadId || !tenantId || !user?.uid) {
+      throw new Error('Missing required context to mark thread read');
+    }
 
-      await fetch(
-        `${API_BASE_URL}/updateEmailThreadApi?threadId=${encodeURIComponent(threadId)}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tenantId,
-            userId: user?.uid,
-            read: true,
-          }),
-        }
-      );
-    } catch (err) {
-      console.error('Failed to mark thread as read:', err);
-      // Non-critical error, don't show to user
+    const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL ||
+      'https://us-central1-hrx1-d3beb.cloudfunctions.net';
+
+    const response = await fetch(
+      `${API_BASE_URL}/updateEmailThreadApi?threadId=${encodeURIComponent(threadId)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tenantId,
+          userId: user.uid,
+          read: true,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Failed to mark thread as read (${response.status})`);
     }
   };
 

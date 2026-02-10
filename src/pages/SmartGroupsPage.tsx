@@ -589,11 +589,6 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     loadResidenceData,
   ]);
 
-  const clearMetro = () => {
-    setMetroFilter(null);
-    setAreaFilter(null);
-    setCityFilter(null);
-  };
   const clearArea = () => {
     setAreaFilter(null);
     setCityFilter(null);
@@ -602,6 +597,16 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
   const clearCategory = () => setCategoryFilter(null);
 
   const metroOptions = getMergedMetroOptions(customMetros);
+  const metroSelectOptions = useMemo(
+    () => [
+      { value: '', label: 'All metros' },
+      ...metroOptions.map((m) => ({ value: m, label: formatGeoLabel(m) })),
+      { value: OTHER_METRO_VALUE, label: 'Other (non-metro)' },
+    ],
+    [metroOptions]
+  );
+  const selectedMetroOption =
+    metroSelectOptions.find((o) => o.value === (metroFilter ?? '')) ?? metroSelectOptions[0];
   const areaOptions = metroFilter ? getMergedSubareaOptionsForMetro(metroFilter, customMetros) : [];
   const cityOptions =
     metroFilter && areaFilter
@@ -970,13 +975,22 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
       )}
 
       <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-      <Box sx={{ mb: 2, flexShrink: 0 }}>
+      <Box
+        sx={{
+          mb: 2,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          columnGap: 2,
+          rowGap: 1,
+          flexWrap: "wrap",
+        }}
+      >
         <ToggleButtonGroup
           value={filterMode}
           exclusive
           onChange={handleFilterModeChange}
           size="small"
-          sx={{ mb: 1 }}
         >
           <ToggleButton value="application" aria-label="By application location">
             <WorkIcon sx={{ mr: 0.5 }} /> By application location
@@ -991,7 +1005,6 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             exclusive
             onChange={(_, v: ResidenceSubMode | null) => v && setResidenceSubMode(v)}
             size="small"
-            sx={{ ml: 0 }}
           >
             <ToggleButton value="area">In an area</ToggleButton>
             <ToggleButton value="radius">Within radius of address</ToggleButton>
@@ -1011,33 +1024,21 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         {filterMode === 'application' && (
           <>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          <FormControl size="small" sx={{ minWidth: 180 }}>
-            <InputLabel id="smart-metro-label">Metro</InputLabel>
-            <Select
-              labelId="smart-metro-label"
-              label="Metro"
-              value={metroFilter ?? ''}
-              onChange={(e) => {
-                const v = e.target.value as string;
-                setMetroFilter(v || null);
-                setAreaFilter(null);
-                setCityFilter(null);
-              }}
-            >
-              <MenuItem value="">All metros</MenuItem>
-              {metroOptions.map((m) => (
-                <MenuItem key={m} value={m}>
-                  {formatGeoLabel(m)}
-                </MenuItem>
-              ))}
-              <MenuItem value={OTHER_METRO_VALUE}>Other (non-metro)</MenuItem>
-            </Select>
-          </FormControl>
-          {metroFilter && (
-            <IconButton size="small" onClick={clearMetro} aria-label="Clear metro" sx={{ p: 0.5 }}>
-              <ClearIcon fontSize="small" />
-            </IconButton>
-          )}
+          <Autocomplete
+            size="small"
+            options={metroSelectOptions}
+            value={selectedMetroOption}
+            isOptionEqualToValue={(a, b) => a.value === b.value}
+            getOptionLabel={(option) => option.label}
+            onChange={(_, option) => {
+              const v = option?.value ?? '';
+              setMetroFilter(v || null);
+              setAreaFilter(null);
+              setCityFilter(null);
+            }}
+            sx={{ minWidth: 240 }}
+            renderInput={(params) => <TextField {...params} label="Metro" />}
+          />
         </Box>
 
         {metroFilter && metroFilter !== OTHER_METRO_VALUE && (
@@ -1137,33 +1138,21 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         {filterMode === 'residence' && residenceSubMode === 'area' && (
           <>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-              <FormControl size="small" sx={{ minWidth: 180 }}>
-                <InputLabel id="res-metro-label">Metro</InputLabel>
-                <Select
-                  labelId="res-metro-label"
-                  label="Metro"
-                  value={metroFilter ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value as string;
-                    setMetroFilter(v || null);
-                    setAreaFilter(null);
-                    setCityFilter(null);
-                  }}
-                >
-                  <MenuItem value="">All metros</MenuItem>
-                  {metroOptions.map((m) => (
-                    <MenuItem key={m} value={m}>
-                      {formatGeoLabel(m)}
-                    </MenuItem>
-                  ))}
-                  <MenuItem value={OTHER_METRO_VALUE}>Other (non-metro)</MenuItem>
-                </Select>
-              </FormControl>
-              {metroFilter && (
-                <IconButton size="small" onClick={clearMetro} aria-label="Clear metro" sx={{ p: 0.5 }}>
-                  <ClearIcon fontSize="small" />
-                </IconButton>
-              )}
+              <Autocomplete
+                size="small"
+                options={metroSelectOptions}
+                value={selectedMetroOption}
+                isOptionEqualToValue={(a, b) => a.value === b.value}
+                getOptionLabel={(option) => option.label}
+                onChange={(_, option) => {
+                  const v = option?.value ?? '';
+                  setMetroFilter(v || null);
+                  setAreaFilter(null);
+                  setCityFilter(null);
+                }}
+                sx={{ minWidth: 240 }}
+                renderInput={(params) => <TextField {...params} label="Metro" />}
+              />
             </Box>
             {metroFilter && metroFilter !== OTHER_METRO_VALUE && (
               <>
@@ -1272,6 +1261,22 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                   setRadiusAddress(e.target.value);
                   setRadiusLat(null);
                   setRadiusLng(null);
+                }}
+                InputProps={{
+                  endAdornment: radiusAddress ? (
+                    <IconButton
+                      size="small"
+                      aria-label="Clear address"
+                      onClick={() => {
+                        setRadiusAddress('');
+                        setRadiusLat(null);
+                        setRadiusLng(null);
+                      }}
+                      edge="end"
+                    >
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  ) : undefined,
                 }}
                 sx={{ minWidth: 280 }}
               />

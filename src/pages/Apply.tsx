@@ -19,6 +19,7 @@ import {
   Link,
   CircularProgress,
   Paper,
+  MenuItem,
 } from '@mui/material';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import { doc, setDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
@@ -27,6 +28,10 @@ import { auth, db } from '../firebase';
 import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
+const detectDefaultLanguage = (): 'en' | 'es' => {
+  if (typeof navigator === 'undefined') return 'en';
+  return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
+};
 
 const Apply: React.FC = () => {
   const navigate = useNavigate();
@@ -41,6 +46,7 @@ const Apply: React.FC = () => {
   const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>(detectDefaultLanguage());
   const [smsConsent, setSmsConsent] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -259,6 +265,7 @@ const Apply: React.FC = () => {
         jobTitle: '',
         linkedinUrl: '',
         preferredName: '',
+        preferredLanguage,
         // Languages and skills
         languages: [],
         skills: [],
@@ -517,6 +524,21 @@ const Apply: React.FC = () => {
               required
               size="medium"
             />
+
+            {/* Date of Birth */}
+            <TextField
+              fullWidth
+              select
+              label="Preferred Message Language"
+              value={preferredLanguage}
+              onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
+              disabled={loading}
+              helperText="This controls SMS/email language. App UI remains in English for now."
+              size="medium"
+            >
+              <MenuItem value="en">English</MenuItem>
+              <MenuItem value="es">Spanish</MenuItem>
+            </TextField>
 
             {/* Date of Birth */}
             <TextField

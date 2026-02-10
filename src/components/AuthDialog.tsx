@@ -17,6 +17,7 @@ import {
   Link,
   Checkbox,
   FormControlLabel,
+  MenuItem,
   useTheme,
   useMediaQuery,
 } from '@mui/material';
@@ -46,6 +47,11 @@ interface AuthDialogProps {
   onAuthSuccess: () => void;
 }
 
+const detectDefaultLanguage = (): 'en' | 'es' => {
+  if (typeof navigator === 'undefined') return 'en';
+  return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
+};
+
 const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess }) => {
   const { setCreatingUserProfile } = useAuth();
   const theme = useTheme();
@@ -67,6 +73,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
   const [acknowledgedPrivacy, setAcknowledgedPrivacy] = useState(false);
   const [phone, setPhone] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>(detectDefaultLanguage());
   
   // Refs for focus management
   const emailRef = useRef<HTMLInputElement>(null);
@@ -107,6 +114,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setFirstName('');
     setLastName('');
     setPhone('');
+    setPreferredLanguage(detectDefaultLanguage());
     setError(null);
     setSuccess(null);
     setShowPassword(false);
@@ -284,6 +292,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         onboarded: false,
         // Public jobs board specific
         source: 'public_jobs_board',
+        preferredLanguage,
         // Consent tracking
         userAgreements: {
           termsOfUse: {
@@ -685,6 +694,22 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   )
                 }}
               />
+            )}
+
+            {activeTab === 0 && (
+              <TextField
+                fullWidth
+                select
+                label="Preferred Message Language"
+                value={preferredLanguage}
+                onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
+                disabled={loading}
+                helperText="Message templates can send in this language."
+                size={isMobile ? 'medium' : 'medium'}
+              >
+                <MenuItem value="en">English</MenuItem>
+                <MenuItem value="es">Spanish</MenuItem>
+              </TextField>
             )}
 
             {activeTab === 0 && (

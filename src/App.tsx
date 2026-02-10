@@ -328,8 +328,9 @@ const IntegrationsTabWrapper: React.FC = () => {
 
 // Wrapper component for MessagingTab to provide tenantId
 const MessagingTabWrapper: React.FC = () => {
-  const { tenantId } = useAuth();
-  return tenantId ? <MessagingTab tenantId={tenantId} /> : null;
+  const { tenantId, activeTenant } = useAuth();
+  const effectiveTenantId = activeTenant?.id || tenantId;
+  return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
 };
 
 function App() {

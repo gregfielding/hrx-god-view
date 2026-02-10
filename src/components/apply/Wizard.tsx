@@ -69,6 +69,10 @@ const deepStripUndefined = (value: any): any => {
 };
 
 const steps = ['Personal Info', 'Address', 'Work Eligibility', 'Profile Picture', 'Resume', 'Skills', 'Education', 'Licenses and Certifications', 'Work Experience', 'Bio', 'Preferences', 'Requirements'];
+const detectDefaultLanguage = (): 'en' | 'es' => {
+  if (typeof navigator === 'undefined') return 'en';
+  return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
+};
 
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid }) => {
   const theme = useTheme();
@@ -745,6 +749,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               onboarded: false,
               role: 'Tenant',
               orgType: 'Tenant',
+              preferredLanguage:
+                (String((formData?.personal as any)?.preferredLanguage || '').toLowerCase() === 'es'
+                  ? 'es'
+                  : detectDefaultLanguage()),
               isActive: true,
               skills: [],
               certifications: [],
@@ -818,6 +826,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
           if (p.phone) update.phone = String(p.phone).trim();
           if (p.dob) update.dob = String(p.dob).trim();
+          update.preferredLanguage =
+            String((p as any).preferredLanguage || '').toLowerCase() === 'es'
+              ? 'es'
+              : detectDefaultLanguage();
           
           const addr: any = {};
           if (p.street) addr.street = String(p.street).trim();

@@ -92,7 +92,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const [statusFilter, setStatusFilter] = useState<string>('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderWithDetails | null>(null);
-  const [sortField, setSortField] = useState<string>('createdAt');
+  const [sortField, setSortField] = useState<string>('jobOrderNumber');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [companyFilter, setCompanyFilter] = useState<string>('all');
   const [page, setPage] = useState(0);
@@ -154,6 +154,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
         }
 
         // recruiterName is computed client-side, so use createdAt for Firestore order when sorting by recruiter
+        // jobOrderNumber is supported by Firestore orderBy (index required)
         const orderByField = sortField === 'recruiterName' ? 'createdAt' : sortField;
         constraints.push(orderBy(orderByField, sortDirection));
         constraints.push(limit(effectivePageSize));
@@ -259,6 +260,14 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           const nb = (b.recruiterName || 'Unassigned').toLowerCase();
           const cmp = na.localeCompare(nb);
           return sortDirection === 'asc' ? cmp : -cmp;
+        });
+      }
+      // Sort by job order number client-side when not using Firestore orderBy (e.g. My Orders)
+      if (sortField === 'jobOrderNumber' && effectiveOnlyMyOrders) {
+        newJobOrders.sort((a, b) => {
+          const aNum = Number(a.jobOrderNumber) || 0;
+          const bNum = Number(b.jobOrderNumber) || 0;
+          return sortDirection === 'desc' ? bNum - aNum : aNum - bNum;
         });
       }
 
@@ -568,8 +577,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
               },
             }}
           >
+            <MenuItem value="jobOrderNumber">Job Order #</MenuItem>
             <MenuItem value="createdAt">Newest First</MenuItem>
-            <MenuItem value="jobOrderNumber">Order Number</MenuItem>
             <MenuItem value="status">Status</MenuItem>
           </Select>
         </FormControl>
@@ -656,7 +665,13 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     textTransform: 'uppercase', 
                     fontSize: '0.75rem',
                   }}>
-                    #
+                    <TableSortLabel
+                      active={sortField === 'jobOrderNumber'}
+                      direction={sortField === 'jobOrderNumber' ? sortDirection : 'desc'}
+                      onClick={(e) => { e.stopPropagation(); handleSort('jobOrderNumber'); }}
+                    >
+                      #
+                    </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ 
                     fontWeight: 700, 

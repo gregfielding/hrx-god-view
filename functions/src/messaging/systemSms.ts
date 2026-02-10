@@ -14,6 +14,8 @@ import { logger } from 'firebase-functions/v2';
 import { createOutboundRequest } from './smsOutboundQueue';
 import { getOrCreateThreadForUser } from './twoWayMessaging';
 import { FieldValue, Timestamp } from 'firebase-admin/firestore';
+import { getTemplate, renderTemplate } from './templateEngine';
+import type { LanguageCode } from './templateEngine';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -22,6 +24,12 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export const SYSTEM_WELCOME_MESSAGE_TYPE_ID = 'system_onboarding_welcome';
+const DEFAULT_WELCOME_TEMPLATE_NAME = 'System Onboarding Welcome (SMS EN)';
+const DEFAULT_WELCOME_TEMPLATE_BODY =
+  'Thanks for signing up with C1 Staffing — we are excited to help you find your next opportunity.';
+const DEFAULT_WELCOME_TEMPLATE_NAME_ES = 'System Onboarding Welcome (SMS ES)';
+const DEFAULT_WELCOME_TEMPLATE_BODY_ES =
+  'Gracias por registrarte con C1 Staffing. Nos emociona ayudarte a encontrar tu proxima oportunidad.';
 
 function normalizeRole(val: any): string {
   return String(val || '').trim().toLowerCase();
@@ -71,6 +79,91 @@ async function hasRecentWelcomeDedupe(tenantId: string, dedupeKey: string, windo
   return createdAt.toMillis() >= cutoff.toMillis();
 }
 
+async function hasExactWelcomeTemplate(
+  tenantId: string,
+  language: LanguageCode
+): Promise<boolean> {
+  const snap = await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('messageTemplates')
+    .where('messageTypeId', '==', SYSTEM_WELCOME_MESSAGE_TYPE_ID)
+    .where('channel', '==', 'sms')
+    .where('language', '==', language)
+    .limit(1)
+    .get();
+  return !snap.empty;
+}
+
+async function createDefaultWelcomeTemplate(
+  tenantId: string,
+  language: LanguageCode
+): Promise<void> {
+  const isSpanish = language === 'es';
+  await db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('messageTemplates')
+    .add({
+      messageTypeId: SYSTEM_WELCOME_MESSAGE_TYPE_ID,
+      channel: 'sms',
+      language,
+      name: isSpanish ? DEFAULT_WELCOME_TEMPLATE_NAME_ES : DEFAULT_WELCOME_TEMPLATE_NAME,
+      body: isSpanish ? DEFAULT_WELCOME_TEMPLATE_BODY_ES : DEFAULT_WELCOME_TEMPLATE_BODY,
+      variables: ['firstName', 'fullName'],
+      includeStopFooter: false,
+      active: true,
+      version: 1,
+      createdBy: 'system',
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+}
+
+async function ensureDefaultWelcomeTemplate(tenantId: string): Promise<void> {
+  const hasEnglish = await hasExactWelcomeTemplate(tenantId, 'en');
+  if (!hasEnglish) {
+    await createDefaultWelcomeTemplate(tenantId, 'en');
+  }
+
+  const hasSpanish = await hasExactWelcomeTemplate(tenantId, 'es');
+  if (!hasSpanish) {
+    await createDefaultWelcomeTemplate(tenantId, 'es');
+  }
+}
+
+async function resolveWelcomeBody(args: {
+  tenantId: string;
+  userData?: any;
+  messageBody?: string;
+}): Promise<string> {
+  if ((args.messageBody || '').trim()) {
+    return (args.messageBody || '').trim();
+  }
+
+  const language = args.userData?.preferredLanguage === 'es' ? 'es' : 'en';
+  await ensureDefaultWelcomeTemplate(args.tenantId);
+  const template = await getTemplate(
+    args.tenantId,
+    SYSTEM_WELCOME_MESSAGE_TYPE_ID,
+    'sms',
+    language
+  );
+  if (!template) {
+    return DEFAULT_WELCOME_TEMPLATE_BODY;
+  }
+
+  const variables = {
+    firstName: args.userData?.firstName || '',
+    lastName: args.userData?.lastName || '',
+    fullName:
+      `${args.userData?.firstName || ''} ${args.userData?.lastName || ''}`.trim() ||
+      args.userData?.displayName ||
+      '',
+  };
+  return await renderTemplate(template, variables, args.tenantId);
+}
+
 export async function enqueueSystemWelcomeSms(params: {
   tenantId?: string;
   userId: string;
@@ -98,9 +191,11 @@ export async function enqueueSystemWelcomeSms(params: {
     return { ok: true, skipped: true, reason: 'Welcome SMS deduped (72h window)' };
   }
 
-  const body =
-    (params.messageBody || '').trim() ||
-    "Thanks for signing up with C1 Staffing — we’re excited to help you find your next opportunity.";
+  const body = await resolveWelcomeBody({
+    tenantId: resolvedTenantId,
+    userData: params.userData,
+    messageBody: params.messageBody,
+  });
 
   // Prefer a fixed Twilio number so replies map to the same thread.
   const twilioNumber = (process.env.TWILIO_MESSAGING_PHONE_NUMBER || '').trim();

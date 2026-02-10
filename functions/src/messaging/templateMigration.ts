@@ -207,56 +207,32 @@ export async function getTemplateWithLegacyFallback(
   legacyTriggerStatus?: string
 ): Promise<{ template: any; source: 'new' | 'legacy' } | null> {
   try {
-    // Try new template system first
+    // Canonical path: new template system only.
+    // Legacy collection fallback has been retired; we preserve compatibility
+    // by adapting old `{var}` placeholders into `{{var}}` when needed.
     const { getTemplate } = await import('./templateEngine');
     const newTemplate = await getTemplate(tenantId, messageTypeId, channel, language);
     
     if (newTemplate) {
-      return { template: newTemplate, source: 'new' };
+      return {
+        template: {
+          ...newTemplate,
+          body: (newTemplate.body || '').replace(/\{([a-zA-Z0-9_]+)\}/g, '{{$1}}'),
+        },
+        source: 'new',
+      };
     }
-    
-    // Fallback to legacy system if category/trigger provided
-    if (legacyCategory && legacyTriggerType) {
-      logger.info(`Template not found in new system, checking legacy for ${legacyCategory}/${legacyTriggerType}`);
-      
-      let legacyQuery = db
-        .collection('tenants')
-        .doc(tenantId)
-        .collection('smsTemplates')
-        .where('category', '==', legacyCategory)
-        .where('triggerType', '==', legacyTriggerType)
-        .where('enabled', '==', true);
-      
-      if (legacyTriggerStatus) {
-        legacyQuery = legacyQuery.where('triggerStatus', '==', legacyTriggerStatus) as any;
-      }
-      
-      const legacySnapshot = await legacyQuery.limit(1).get();
-      
-      if (!legacySnapshot.empty) {
-        const legacyTemplate = legacySnapshot.docs[0].data() as LegacySmsTemplate;
-        logger.info(`Using legacy template ${legacySnapshot.docs[0].id} (consider migrating)`);
-        
-        // Convert legacy template to MessageTemplate-like structure
-        return {
-          template: {
-            id: legacySnapshot.docs[0].id,
-            tenantId,
-            messageTypeId,
-            channel,
-            language,
-            name: legacyTemplate.name,
-            body: legacyTemplate.messageTemplate,
-            variables: legacyTemplate.variables || [],
-            includeStopFooter: true,
-            active: legacyTemplate.enabled,
-            version: 1,
-          },
-          source: 'legacy',
-        };
-      }
+    if (legacyCategory || legacyTriggerType || legacyTriggerStatus) {
+      logger.info('Legacy fallback disabled: no smsTemplates lookup performed', {
+        tenantId,
+        messageTypeId,
+        channel,
+        language,
+        legacyCategory,
+        legacyTriggerType,
+        legacyTriggerStatus,
+      });
     }
-    
     return null;
   } catch (error: any) {
     logger.error(`Error getting template with legacy fallback:`, error);

@@ -8,7 +8,6 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { defineSecret } from 'firebase-functions/params';
 import { sendLegacyApplicationStatusMessage } from './messaging/legacyMessageHelpers';
-import { resolveTemplate } from './smsTemplates';
 import { shouldSendNotification } from './utils/notificationSettings';
 import { resolveTemplateVariables, TemplateVariableContext } from './utils/templateVariableResolver';
 

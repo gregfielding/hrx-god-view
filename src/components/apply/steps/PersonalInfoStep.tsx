@@ -103,6 +103,8 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [dobDisplayValue, setDobDisplayValue] = useState(formatDateForDisplay(value.dob || ''));
+  const selectedPreferredLanguage: 'en' | 'es' =
+    value.preferredLanguage === 'es' ? 'es' : 'en';
   
   // Sync display value when value.dob changes externally
   useEffect(() => {
@@ -505,6 +507,20 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
+          <FormControl fullWidth>
+            <InputLabel id="apply-preferred-language-mobile-label">Preferred Message Language</InputLabel>
+            <Select
+              labelId="apply-preferred-language-mobile-label"
+              label="Preferred Message Language"
+              value={selectedPreferredLanguage}
+              onChange={(e) => handle('preferredLanguage', e.target.value as string)}
+            >
+              <MenuItem value="en">English</MenuItem>
+              <MenuItem value="es">Spanish</MenuItem>
+            </Select>
+          </FormControl>
+        </Grid>
+        <Grid item xs={12} md={6}>
           <TextField 
             fullWidth 
             required
@@ -598,6 +614,20 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                     }} 
                   />
                 </ResumeSuggestionField>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <FormControl fullWidth>
+                  <InputLabel id="apply-preferred-language-desktop-label">Preferred Message Language</InputLabel>
+                  <Select
+                    labelId="apply-preferred-language-desktop-label"
+                    label="Preferred Message Language"
+                    value={selectedPreferredLanguage}
+                    onChange={(e) => handle('preferredLanguage', e.target.value as string)}
+                  >
+                    <MenuItem value="en">English</MenuItem>
+                    <MenuItem value="es">Spanish</MenuItem>
+                  </Select>
+                </FormControl>
               </Grid>
               <Grid item xs={12} md={6}>
                 <TextField 

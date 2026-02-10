@@ -62,11 +62,10 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import PageHeader from '../components/PageHeader';
 import ContactHoverCard from '../components/ContactHoverCard';
 import StandardTablePagination from '../components/StandardTablePagination';
-import { collection, doc, getDoc } from 'firebase/firestore';
-import { db } from '../firebase';
 import { useNavigate } from 'react-router-dom';
 import { useEmailRealtime } from '../hooks/useEmailRealtime';
 import { useEmailShortcuts } from '../hooks/useEmailShortcuts';
+import { useGoogleStatus } from '../contexts/GoogleStatusContext';
 import { subscribeToToasts, showSuccessToast, showErrorToast, showUndoToast } from '../utils/emailToast';
 import { executeOptimisticUpdate, createStarUpdate, createMarkReadUpdate, createDeleteUpdate } from '../utils/emailOptimisticUpdates';
 import { createDebouncedSearch, searchEmailThreads } from '../utils/emailSearch';
@@ -137,6 +136,7 @@ interface EmailThread {
 
 const UserInboxPage: React.FC = () => {
   const { user, activeTenant } = useAuth();
+  const { googleStatus, loading: googleStatusLoading, refreshStatus } = useGoogleStatus();
   const navigate = useNavigate();
   const theme = useTheme();
   
@@ -147,8 +147,7 @@ const UserInboxPage: React.FC = () => {
   const isSmallScreen = useMediaQuery(theme.breakpoints.down('md')); // xs and sm screens (< 960px)
   
   const effectiveTenantId = activeTenant?.id || '';
-  const [gmailConnected, setGmailConnected] = useState<boolean>(false);
-  const [loadingGmailStatus, setLoadingGmailStatus] = useState(true);
+  const [hasResolvedGoogleStatus, setHasResolvedGoogleStatus] = useState(false);
   const [activeTab, setActiveTab] = useState<'email'>('email');
   const [allMessageLogs, setAllMessageLogs] = useState<MessageLog[]>([]);
   const [smsThreads, setSmsThreads] = useState<SmsThread[]>([]);
@@ -174,6 +173,8 @@ const UserInboxPage: React.FC = () => {
   const [syncingGmail, setSyncingGmail] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
   const [backgroundSyncMessage, setBackgroundSyncMessage] = useState<string | null>(null);
+  const syncingGmailRef = useRef(false);
+  const gmailSyncBackoffUntilRef = useRef<number>(0);
   // Optimistic mark-as-read: thread IDs we've marked read locally before Firestore updates
   const [optimisticReadThreadIds, setOptimisticReadThreadIds] = useState<Set<string>>(new Set());
 
@@ -333,6 +334,9 @@ const UserInboxPage: React.FC = () => {
   // Mobile swipe state (track swipe state per thread)
   const [swipeStates, setSwipeStates] = useState<Map<string, { startX: number; startY: number; currentX: number; currentY: number; isSwiping: boolean; direction: 'left' | 'right' | null }>>(new Map());
 
+  const gmailConnected = !!googleStatus.gmail.connected;
+  const loadingGmailStatus = !hasResolvedGoogleStatus || googleStatusLoading;
+
   // Real-time email threads (use when not searching)
   // Increase limit when starred filter is active to ensure all starred threads are loaded
   const realtimeLimit = activeFilter === 'starred' ? 1000 : 200;
@@ -404,7 +408,7 @@ const UserInboxPage: React.FC = () => {
   // Removed unified inbox - inbox is now email-only per decoupling spec
 
   // Gmail sync function
-  const handleSyncGmail = async (silent = false) => {
+  const handleSyncGmail = useCallback(async (silent = false) => {
     if (!user?.uid || !effectiveTenantId) {
       if (!silent) {
       setError('User or tenant not found');
@@ -412,11 +416,17 @@ const UserInboxPage: React.FC = () => {
       return;
     }
 
-    // Prevent multiple simultaneous syncs
-    if (syncingGmail) {
+    // Respect cooldown when Gmail returns provider rate-limit errors.
+    if (Date.now() < gmailSyncBackoffUntilRef.current) {
       return;
     }
 
+    // Prevent multiple simultaneous syncs
+    if (syncingGmailRef.current) {
+      return;
+    }
+
+    syncingGmailRef.current = true;
     setSyncingGmail(true);
     if (!silent) {
       setError(null);
@@ -435,6 +445,7 @@ const UserInboxPage: React.FC = () => {
 
     // Stop spinner after 2s and show background message so UI doesn't block
     const stopSpinnerTimer = setTimeout(() => {
+      syncingGmailRef.current = false;
       setSyncingGmail(false);
       if (!silent) {
         setBackgroundSyncMessage('Syncing Gmail in background. New emails will appear automatically.');
@@ -445,6 +456,7 @@ const UserInboxPage: React.FC = () => {
     syncPromise
       .then((result) => {
         clearTimeout(stopSpinnerTimer);
+        syncingGmailRef.current = false;
         setSyncingGmail(false);
         setBackgroundSyncMessage(null);
         const data = result.data as any;
@@ -453,7 +465,6 @@ const UserInboxPage: React.FC = () => {
           return;
         }
         const syncedCount = data?.syncedCount ?? data?.newEmails ?? 0;
-        if (activeTab === 'email') loadEmailThreads();
         if (!silent) {
           if (syncedCount > 0) {
             setSyncSuccess(`Synced ${syncedCount} email${syncedCount !== 1 ? 's' : ''} from Gmail`);
@@ -466,14 +477,19 @@ const UserInboxPage: React.FC = () => {
       })
       .catch((error: any) => {
         clearTimeout(stopSpinnerTimer);
+        syncingGmailRef.current = false;
         setSyncingGmail(false);
         setBackgroundSyncMessage(null);
         console.error('Error syncing Gmail emails:', error);
+        const message = String(error?.message || '');
+        if (/rate.?limit|resource_exhausted|quota|internal/i.test(message)) {
+          gmailSyncBackoffUntilRef.current = Date.now() + 15 * 60 * 1000;
+        }
         if (!silent) {
           setError(`Failed to sync Gmail emails: ${error?.message || 'Unknown error'}`);
         }
       });
-  };
+  }, [user?.uid, effectiveTenantId]);
 
   // Reset search state when searchQuery becomes empty
   useEffect(() => {
@@ -485,57 +501,40 @@ const UserInboxPage: React.FC = () => {
     }
   }, [searchQuery]);
 
-  // Check Gmail connection status
+  // Resolve Google status from shared provider (same source as the Google chip).
   useEffect(() => {
-    const checkGmailStatus = async () => {
-      if (!user?.uid) {
-        setGmailConnected(false);
-        setLoadingGmailStatus(false);
-        return;
-      }
+    if (!user?.uid) {
+      setHasResolvedGoogleStatus(false);
+      return;
+    }
+    if (!googleStatusLoading) {
+      setHasResolvedGoogleStatus(true);
+    }
+  }, [user?.uid, googleStatusLoading]);
 
-      setLoadingGmailStatus(true);
-      try {
-        // Use force=true to bypass rate limiting and sampling for inbox check
-        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
-        const result = await getGmailStatus({ userId: user.uid, force: true });
-        const data = result.data as { 
-          connected?: boolean; 
-          success?: boolean;
-          syncStatus?: string;
-          rateLimited?: boolean;
-          sampled?: boolean;
-        };
-        
-        // Check if Gmail is actually connected (not rate limited or sampled)
-        // If rateLimited or sampled, we should still check if tokens exist
-        if (data.rateLimited || data.sampled) {
-          // If rate limited or sampled, assume connected if we have tokens
-          // This prevents showing "Connect Gmail" when it's actually connected
-          // We'll verify by checking if we have email threads or by checking user data directly
-          setGmailConnected(true); // Optimistically assume connected to avoid false negatives
-        } else {
-          setGmailConnected(data.connected || false);
-        }
-      } catch (err) {
-        console.error('Error checking Gmail status:', err);
-        // On error, don't assume disconnected - might be a temporary issue
-        // Check if user has gmailTokens in Firestore as fallback
-        try {
-          const userDoc = await getDoc(doc(db, 'users', user.uid));
-          const userData = userDoc.data();
-          setGmailConnected(!!userData?.gmailTokens?.access_token);
-        } catch (fallbackErr) {
-          console.error('Error checking Gmail tokens fallback:', fallbackErr);
-          setGmailConnected(false);
-        }
-      } finally {
-        setLoadingGmailStatus(false);
+  // Keep Inbox Gmail gate in sync with OAuth popup completion and tab focus.
+  useEffect(() => {
+    if (!user?.uid) return;
+    const onMessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; event?: string } | null;
+      if (
+        data?.type === 'google-auth-success' ||
+        data?.event === 'google-auth-success'
+      ) {
+        refreshStatus(true);
       }
     };
-
-    checkGmailStatus();
-  }, [user?.uid]);
+    const onFocus = () => {
+      refreshStatus(true);
+    };
+    window.addEventListener('message', onMessage);
+    window.addEventListener('focus', onFocus);
+    refreshStatus(true);
+    return () => {
+      window.removeEventListener('message', onMessage);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [user?.uid, refreshStatus, effectiveTenantId]);
 
   // Twilio number check removed - SMS now has dedicated /text-messages page per decoupling spec
 
@@ -556,14 +555,14 @@ const UserInboxPage: React.FC = () => {
 
     // Auto-sync on initial load (after a short delay to let page render)
     const initialSyncTimer = setTimeout(() => {
-      if (!syncingGmail) {
+      if (!syncingGmailRef.current) {
         handleSyncGmail(true); // Silent sync on page load
       }
     }, 2000); // Wait 2 seconds after page load
 
     // Set up periodic polling (every 30 seconds)
     const pollingInterval = setInterval(() => {
-      if (!syncingGmail && activeTab === 'email' && gmailConnected) {
+      if (!syncingGmailRef.current && activeTab === 'email' && gmailConnected) {
         handleSyncGmail(true); // Silent sync for polling
       }
     }, 30000); // Poll every 30 seconds
@@ -572,19 +571,19 @@ const UserInboxPage: React.FC = () => {
       clearTimeout(initialSyncTimer);
       clearInterval(pollingInterval);
     };
-  }, [user?.uid, effectiveTenantId, gmailConnected, activeTab, syncingGmail, handleSyncGmail]);
+  }, [user?.uid, effectiveTenantId, gmailConnected, activeTab, handleSyncGmail]);
 
   // Reconciliation: Gmail API reports unread but Firestore list has none (or is empty) — trigger background sync
   const reconciliationTriggeredRef = useRef(false);
   useEffect(() => {
-    if (!user?.uid || !effectiveTenantId || !gmailConnected || activeTab !== 'email' || syncingGmail) return;
+    if (!user?.uid || !effectiveTenantId || !gmailConnected || activeTab !== 'email' || syncingGmailRef.current) return;
     const gmailUnread = (gmailMailboxCounts.primary ?? 0) + (gmailMailboxCounts.social ?? 0) + (gmailMailboxCounts.promotions ?? 0) + (gmailMailboxCounts.updates ?? 0) + (gmailMailboxCounts.forums ?? 0) + (gmailMailboxCounts.spam ?? 0);
     const firestoreUnread = displayThreads.reduce((sum, t) => sum + (t.unreadCount || 0), 0);
     if (gmailUnread > 0 && firestoreUnread === 0 && !reconciliationTriggeredRef.current) {
       reconciliationTriggeredRef.current = true;
       handleSyncGmail(true);
     }
-  }, [user?.uid, effectiveTenantId, gmailConnected, activeTab, syncingGmail, gmailMailboxCounts, displayThreads, handleSyncGmail]);
+  }, [user?.uid, effectiveTenantId, gmailConnected, activeTab, gmailMailboxCounts, displayThreads, handleSyncGmail]);
 
   // Clear optimistic read overrides when Firestore delivers the thread with unreadCount 0
   useEffect(() => {
@@ -1223,6 +1222,13 @@ const UserInboxPage: React.FC = () => {
           : thread
       )
     );
+    setSearchResults(prevThreads =>
+      prevThreads.map(thread =>
+        thread.id === threadId
+          ? { ...thread, unreadCount }
+          : thread
+      )
+    );
   };
 
   const handleToggleSelect = (threadId: string, event: React.MouseEvent) => {
@@ -1700,7 +1706,15 @@ const UserInboxPage: React.FC = () => {
   };
 
   // Calculate counts for filter badges (use effective threads so optimistic read is reflected)
-  const unreadCount = effectiveDisplayThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
+  // When category filter is active, count unread threads matching that category to match displayed list
+  const unreadCount = useMemo(() => {
+    if (['primary', 'social', 'promotions', 'updates', 'forums', 'spam'].includes(activeFilter)) {
+      // For category views, count unread threads matching the category (from filtered threads)
+      return filteredEmailThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
+    }
+    // For other views (starred, sent, etc.), count all unread threads
+    return effectiveDisplayThreads.reduce((sum, thread) => sum + (thread.unreadCount || 0), 0);
+  }, [activeFilter, filteredEmailThreads, effectiveDisplayThreads]);
   const starredCount = effectiveDisplayThreads.filter(t => t.starred).length;
 
   // Derive mailbox badge counts from Firestore threads when available so badges match the list (single source of truth)
@@ -3466,6 +3480,12 @@ const UserInboxPage: React.FC = () => {
         tenantId={effectiveTenantId || ''}
         autoOpenReply={autoOpenReply}
         onThreadUpdated={(threadId, unreadCount) => {
+          setOptimisticReadThreadIds(prev => {
+            const next = new Set(prev);
+            if (unreadCount === 0) next.add(threadId);
+            else next.delete(threadId);
+            return next;
+          });
           updateThreadReadStatus(threadId, unreadCount);
         }}
         allThreadIds={effectiveDisplayThreads.map(t => t.id)}

@@ -43,6 +43,7 @@ import { getRegistryPath, setDeep, getRegistryIdForField } from '../utils/regist
 import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
+import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -1087,10 +1088,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     setError(null);
     
     try {
-      // Get company and location names
+      // Get company and location names (and worksite city/state for Smart Groups metro sync)
       let companyName = '';
       let worksiteName = '';
-      
+      let worksiteCity = '';
+      let worksiteState = '';
+
       if (formData.companyId) {
         const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', formData.companyId);
         const companySnap = await getDoc(companyRef);
@@ -1106,6 +1109,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         if (locationSnap.exists()) {
           const locationData = locationSnap.data() as any;
           worksiteName = locationData.nickname || locationData.name || '';
+          worksiteCity = locationData.city || locationData.address?.city || '';
+          worksiteState = locationData.state || locationData.address?.state || '';
         }
       }
 
@@ -1386,6 +1391,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         
         setSuccess('Job order updated successfully!');
         console.log('✅ Job order updated successfully');
+        ensureCityInSmartGroups(tenantId, worksiteCity, worksiteState).catch(() => {});
       } else {
         // Create new job order
         const jobOrdersRef = collection(db, p.jobOrders(tenantId));
@@ -1405,8 +1411,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
         await addDoc(jobOrdersRef, cleanJobOrderData);
         setSuccess('Job order created successfully!');
+        ensureCityInSmartGroups(tenantId, worksiteCity, worksiteState).catch(() => {});
       }
-      
+
       // Call onSave callback if provided
       if (onSave) {
         onSave();

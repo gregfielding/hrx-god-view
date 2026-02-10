@@ -40,6 +40,30 @@ export interface MessageTypeConfig {
   enabled: boolean;
 }
 
+export type AutomationRuleStatus = 'draft' | 'active';
+
+export interface MessageAutomationRule {
+  id?: string;
+  ruleId: string;
+  name: string;
+  triggerKey: string;
+  templateId: string;
+  deliveryChannels: {
+    sms: boolean;
+    email: boolean;
+    push: boolean;
+  };
+  status: AutomationRuleStatus;
+  language?: LanguageCode;
+  priority?: number;
+}
+
+export interface TriggerCatalogItem {
+  key: string;
+  label: string;
+  description: string;
+}
+
 const API_BASE_URL = 'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
 /**
@@ -320,6 +344,103 @@ export async function sendTestMessage(
     throw new Error(error.error?.message || 'Failed to send test message');
   }
 
+  return await response.json();
+}
+
+export async function listAutomationRules(
+  tenantId: string
+): Promise<{ success: boolean; data: MessageAutomationRule[] }> {
+  const params = new URLSearchParams({ tenantId });
+  const response = await fetch(`${API_BASE_URL}/listAutomationRulesApi?${params.toString()}`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Failed to fetch automation rules' } }));
+    throw new Error(error.error?.message || 'Failed to fetch automation rules');
+  }
+  return await response.json();
+}
+
+export async function createAutomationRule(
+  payload: { tenantId: string } & Omit<MessageAutomationRule, 'id'>
+): Promise<{ success: boolean; data: MessageAutomationRule }> {
+  const response = await fetch(`${API_BASE_URL}/createAutomationRuleApi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Failed to create automation rule' } }));
+    throw new Error(error.error?.message || 'Failed to create automation rule');
+  }
+  return await response.json();
+}
+
+export async function updateAutomationRule(
+  tenantId: string,
+  ruleId: string,
+  updates: Partial<MessageAutomationRule>
+): Promise<{ success: boolean; data: MessageAutomationRule }> {
+  const params = new URLSearchParams({ tenantId, ruleId });
+  const response = await fetch(`${API_BASE_URL}/updateAutomationRuleApi?${params.toString()}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Failed to update automation rule' } }));
+    throw new Error(error.error?.message || 'Failed to update automation rule');
+  }
+  return await response.json();
+}
+
+export async function deleteAutomationRule(
+  tenantId: string,
+  ruleId: string
+): Promise<{ success: boolean }> {
+  const params = new URLSearchParams({ tenantId, ruleId });
+  const response = await fetch(`${API_BASE_URL}/deleteAutomationRuleApi?${params.toString()}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Failed to delete automation rule' } }));
+    throw new Error(error.error?.message || 'Failed to delete automation rule');
+  }
+  return await response.json();
+}
+
+export async function listTriggerCatalog(): Promise<{ success: boolean; data: TriggerCatalogItem[] }> {
+  const response = await fetch(`${API_BASE_URL}/listTriggerCatalogApi`);
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Failed to load trigger catalog' } }));
+    throw new Error(error.error?.message || 'Failed to load trigger catalog');
+  }
+  return await response.json();
+}
+
+export async function testAutomationTemplate(payload: {
+  tenantId: string;
+  userId: string;
+  templateId: string;
+  triggerKey: string;
+  applicationId?: string;
+  assignmentId?: string;
+  contextOverrides?: Record<string, any>;
+  send?: boolean;
+}): Promise<{
+  success: boolean;
+  renderedBody?: string;
+  resolvedVariables?: Record<string, any>;
+  missingVariables?: string[];
+  dispatchResult?: any;
+}> {
+  const response = await fetch(`${API_BASE_URL}/testAutomationTemplateApi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: { message: 'Failed to test automation template' } }));
+    throw new Error(error.error?.message || 'Failed to test automation template');
+  }
   return await response.json();
 }
 

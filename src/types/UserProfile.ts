@@ -71,6 +71,7 @@ export interface UserProfile {
   phoneVerifiedAt?: Date; // When phone was verified
   dob?: string; // Date of birth for eligibility verification
   dateOfBirth?: Date;
+  preferredLanguage?: 'en' | 'es'; // Preferred language for templated messaging
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   avatar?: string; // file URL
 
