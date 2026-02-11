@@ -158,6 +158,7 @@ export async function resolveTemplateVariables(
     locationCity: resolveLocationCity(resolvedContext),
     locationState: resolveLocationState(resolvedContext),
     locationName: resolveLocationName(resolvedContext),
+    locationPhrase: resolveLocationPhrase(resolvedContext),
     locationAddress: resolveLocationAddress(resolvedContext),
     locationZipCode: resolveLocationZipCode(resolvedContext),
     
@@ -239,6 +240,9 @@ async function enrichContext(
           if (!enriched.jobOrderId && data?.jobOrderId) enriched.jobOrderId = data.jobOrderId;
           if (!enriched.jobPostId && data?.jobPostId) enriched.jobPostId = data.jobPostId;
           if (!enriched.shiftId && data?.shiftId) enriched.shiftId = data.shiftId;
+          if (!enriched.locationId && (data?.locationId || data?.locationIds?.[0])) {
+            enriched.locationId = data.locationId || data.locationIds?.[0];
+          }
         }
       } catch (err) {
         logger.warn(`Failed to fetch assignment ${context.assignmentId}:`, err);
@@ -461,19 +465,36 @@ function resolveLocationState(context: TemplateVariableContext): string {
   );
 }
 
+/** Firestore doc IDs are ~20 alphanumeric chars; never use them as location names in SMS */
+function looksLikeDocId(value: string): boolean {
+  if (!value || typeof value !== 'string') return false;
+  const s = value.trim();
+  return s.length >= 15 && s.length <= 30 && /^[a-zA-Z0-9]+$/.test(s);
+}
+
 function resolveLocationName(context: TemplateVariableContext): string {
-  return (
+  const raw = (
+    context.locationData?.nickname ||
+    context.locationData?.title ||
     context.locationData?.name ||
     context.locationData?.locationName ||
     context.jobOrderData?.worksiteName ||
     context.jobOrderData?.locationName ||
     context.jobPostData?.worksiteName ||
     context.jobPostData?.locationName ||
+    context.assignmentData?.locationNickname ||
     context.assignmentData?.worksiteName ||
     context.assignmentData?.locationName ||
     context.applicationData?.locationName ||
     ''
   );
+  return looksLikeDocId(raw) ? '' : raw;
+}
+
+/** " at San Ramon" when locationName is valid, "" otherwise. Use in templates to avoid "at ." when empty. */
+function resolveLocationPhrase(context: TemplateVariableContext): string {
+  const name = resolveLocationName(context);
+  return name?.trim() ? ` at ${name.trim()}` : '';
 }
 
 function resolveLocationAddress(context: TemplateVariableContext): string {
@@ -556,13 +577,13 @@ function resolveAssignmentTimeRange(context: TemplateVariableContext): string {
 
 /**
  * URL to jobs board posting where worker can accept/decline assignment.
- * Used in Assignment Created messages: "Click the link below to ACCEPT or DECLINE"
+ * Used in Assignment Created messages. Prefer "View details and respond:" over "Click to ACCEPT or DECLINE" (carrier-filter friendly).
  */
 function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): string {
   const assignmentId = context.assignmentId;
   const jobPostId = context.assignmentData?.jobPostId || context.jobPostId || context.jobPostData?.id;
   const shiftId = context.assignmentData?.shiftId || context.shiftId || '';
-  const baseUrl = `https://${process.env.GCLOUD_PROJECT || 'hrx1-d3beb'}.web.app`;
+  const baseUrl = 'https://hrxone.com';
   if (jobPostId && assignmentId) {
     const params = new URLSearchParams({
       assignmentId,
@@ -698,6 +719,7 @@ export function getAvailableVariables(): Array<{ name: string; description: stri
     { name: 'locationCity', description: 'City where job is located', example: 'Las Vegas' },
     { name: 'locationState', description: 'State where job is located', example: 'NV' },
     { name: 'locationName', description: 'Worksite/location name', example: 'Main Location' },
+    { name: 'locationPhrase', description: '" at Location" when location exists, "" otherwise. Use to avoid "at ." when empty.', example: ' at San Ramon' },
     { name: 'locationAddress', description: 'Full location address', example: '123 Main St, Las Vegas, NV' },
     { name: 'locationZipCode', description: 'Location ZIP code', example: '89101' },
     { name: 'companyName', description: 'Company/client name', example: 'Acme Corp' },
@@ -708,7 +730,7 @@ export function getAvailableVariables(): Array<{ name: string; description: stri
     { name: 'assignmentStatus', description: 'Assignment status', example: 'confirmed' },
     { name: 'assignmentDate', description: 'Assignment date', example: '12/20/2024' },
     { name: 'assignmentTimeRange', description: 'Assignment time range', example: '9:00 AM - 5:00 PM' },
-    { name: 'assignmentAcceptDeclineUrl', description: 'URL to accept or decline assignment (Assignment Created trigger)', example: 'https://hrx1-d3beb.web.app/c1/jobs-board/post123?assignmentId=...' },
+    { name: 'assignmentAcceptDeclineUrl', description: 'URL to accept or decline assignment (Assignment Created trigger)', example: 'https://hrxone.com/c1/jobs-board/post123?assignmentId=...' },
     { name: 'shiftId', description: 'Shift ID', example: 'shift456' },
     { name: 'shiftDate', description: 'Shift date', example: '12/25/2024' },
     { name: 'shiftTimeRange', description: 'Shift time range', example: '8:00 AM - 4:00 PM' },

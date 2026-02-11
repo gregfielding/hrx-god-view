@@ -197,26 +197,19 @@ export function renderTemplate(
 ): Promise<string> {
   return new Promise(async (resolve, reject) => {
     try {
-      // Verify all required variables exist
-      const missingVars: string[] = [];
-      for (const varName of template.variables) {
-        if (!(varName in context) || context[varName] == null) {
-          missingVars.push(varName);
+      // Fill in any missing variables with '' (avoids failing when template uses new vars before functions redeploy)
+      const mergedContext = { ...context };
+      for (const varName of template.variables || []) {
+        if (!(varName in mergedContext) || mergedContext[varName] == null) {
+          mergedContext[varName] = '';
         }
-      }
-      
-      if (missingVars.length > 0) {
-        const error = `Missing required template variables: ${missingVars.join(', ')}`;
-        logger.error(`Template rendering failed for ${template.messageTypeId}: ${error}`);
-        reject(new Error(error));
-        return;
       }
       
       // Render template body
       let rendered = template.body;
       
       // Replace variables using {{variableName}} syntax
-      for (const [key, value] of Object.entries(context)) {
+      for (const [key, value] of Object.entries(mergedContext)) {
         const placeholder = `{{${key}}}`;
         const stringValue = value != null ? String(value) : '';
         rendered = rendered.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), stringValue);

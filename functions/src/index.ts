@@ -21,6 +21,7 @@ import sgMail from '@sendgrid/mail';
 import { runFirestoreTriggerTests } from './testFirestoreTriggers';
 import type { TestResult } from './testFirestoreTriggers';
 import { logger } from './utils/logger';
+import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from './twilio';
 import { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
@@ -203,7 +204,7 @@ export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp };
 export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
-export { placementsCreateAssignments, respondToAssignment } from './placementsApi';
+export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment } from './placementsApi';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -8431,7 +8432,12 @@ export const logCustomerAITrainingDeleted = onDocumentDeleted('customers/{custom
 // --- Assignment Firestore Triggers ---
 
 // Firestore trigger: Log assignment creation and send SMS notification
-export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assignments/{assignmentId}', async (event) => {
+export const logAssignmentCreated = onDocumentCreated(
+  {
+    document: 'tenants/{tenantId}/assignments/{assignmentId}',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (event) => {
   const assignmentId = event.params.assignmentId;
   const tenantId = event.params.tenantId;
   const assignment = event.data?.data();
@@ -8450,8 +8456,8 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
         // Fetch user phone number
         const userDoc = await admin.firestore().doc(`users/${assignment.userId}`).get();
         const userData = userDoc.data();
-        
-        if (userData?.phoneE164 && userData?.phoneVerified) {
+        const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
+        if (phoneE164) {
           // Fetch job order and details for message
           let jobTitle = assignment.jobTitle || 'a position';
           let checkInInstructions = '';
@@ -8484,7 +8490,7 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
             }
           }
           
-          // Create message
+          // Create message (carrier-friendly: avoid "congratulations", "click", ALL CAPS to reduce 30007 filtering)
           const firstName = assignment.firstName || userData.firstName || 'there';
           const worksiteName = assignment.locationNickname || assignment.worksiteName || '';
           const locationText = worksiteName ? ` at ${worksiteName}` : '';
@@ -8492,16 +8498,16 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
           const postingPath = assignment.jobPostId
             ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
             : '/c1/jobs-board';
-          const jobUrl = `https://hrx1-d3beb.web.app${postingPath}`;
+          const jobUrl = `https://hrxone.com${postingPath}`;
           const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
-          const message = `Hi ${firstName}, congratulations - you've been hired for ${jobTitle}${dateTimeInfo}${locationText}. Click to accept or decline: ${jobUrl}.${instructionsText}`;
+          const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
           
           // PHASE 3: Route through orchestrator instead of direct Twilio call
           const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
           const result = await sendLegacyAssignmentMessage({
             tenantId,
             userId: assignment.userId,
-            phoneE164: userData.phoneE164,
+            phoneE164,
             message,
             messageTypeId: 'assignment_created',
             source: 'assignment_created',
@@ -8510,12 +8516,12 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
           });
           
           if (result.success) {
-            logger.info(`SMS sent for assignment ${assignmentId} to ${userData.phoneE164}`);
+            logger.info(`SMS sent for assignment ${assignmentId} to ${phoneE164}`);
           } else {
-            logger.warn(`SMS failed for assignment ${assignmentId} to ${userData.phoneE164}: ${result.error}`);
+            logger.warn(`SMS failed for assignment ${assignmentId} to ${phoneE164}: ${result.error}`);
           }
         } else {
-          logger.info(`Skipping SMS for assignment ${assignmentId} - user ${assignment.userId} has no verified phone`);
+          logger.info(`Skipping SMS for assignment ${assignmentId} - user ${assignment.userId} has no phone number`);
         }
       } catch (smsError: any) {
         // Don't fail assignment creation if SMS fails
@@ -8532,7 +8538,12 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
 });
 
 // Firestore trigger: Log assignment update and send SMS for status changes
-export const logAssignmentUpdated = onDocumentUpdated('tenants/{tenantId}/assignments/{assignmentId}', async (event) => {
+export const logAssignmentUpdated = onDocumentUpdated(
+  {
+    document: 'tenants/{tenantId}/assignments/{assignmentId}',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (event) => {
   const assignmentId = event.params.assignmentId;
   const tenantId = event.params.tenantId;
   const before = event.data?.before.data();

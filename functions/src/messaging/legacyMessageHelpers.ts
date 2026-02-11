@@ -353,6 +353,8 @@ export async function sendLegacyAssignmentMessage(args: {
       messageTypeId: args.messageTypeId || 'assignment_created',
       variables: {
         _rawMessage: args.message,
+        _directMessage: true,
+        _message: args.message,
       },
       metadata: {
         assignmentId: args.assignmentId,

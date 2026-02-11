@@ -183,7 +183,7 @@ export const placementsCreateAssignments = onCall(async (request) => {
   const locationData = locationSnap?.exists ? locationSnap.data() || {} : {};
   const latitude = locationData.latitude ?? locationData.lat ?? 0;
   const longitude = locationData.longitude ?? locationData.lng ?? 0;
-  const locationNickname = locationData.nickname || locationData.title || jobOrder.worksiteName || String(locationId || '');
+  const locationNickname = locationData.nickname || locationData.title || locationData.name || locationData.locationName || jobOrder.worksiteName || '';
 
   const postingSnap = await db
     .collection(`tenants/${tenantId}/job_postings`)
@@ -441,4 +441,61 @@ export const respondToAssignment = onCall(async (request) => {
     );
   }
   return { success: true, status: 'declined' };
+});
+
+/**
+ * Cancel an assignment and revert to Placed state.
+ * Deletes the assignment and creates a placement so the worker shows as "Placed" again.
+ * For testing / recruiter use.
+ */
+export const placementsCancelAssignment = onCall(async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const {
+    tenantId,
+    assignmentId,
+    shiftId,
+    userId,
+  } = (request.data || {}) as {
+    tenantId?: string;
+    assignmentId?: string;
+    shiftId?: string;
+    userId?: string;
+  };
+
+  if (!tenantId || !assignmentId || !shiftId || !userId) {
+    throw new HttpsError('invalid-argument', 'tenantId, assignmentId, shiftId, and userId are required');
+  }
+  if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+    throw new HttpsError('permission-denied', 'Insufficient permissions to cancel assignments');
+  }
+
+  const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+  const assignmentSnap = await assignmentRef.get();
+  if (!assignmentSnap.exists) {
+    throw new HttpsError('not-found', 'Assignment not found');
+  }
+  const assignmentData = assignmentSnap.data() || {};
+  if (assignmentData.userId !== userId || assignmentData.shiftId !== shiftId) {
+    throw new HttpsError('invalid-argument', 'Assignment does not match userId/shiftId');
+  }
+
+  const placementId = `${shiftId}__${userId}`;
+  const placementRef = db.doc(`tenants/${tenantId}/placements/${placementId}`);
+
+  await db.runTransaction(async (tx) => {
+    tx.delete(assignmentRef);
+    tx.set(placementRef, {
+      tenantId,
+      jobOrderId: assignmentData.jobOrderId,
+      shiftId,
+      userId,
+      createdBy: request.auth!.uid,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  });
+
+  return { success: true };
 });

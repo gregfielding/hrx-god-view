@@ -258,16 +258,20 @@ async function shouldUseChannel(
   userData: admin.firestore.DocumentData,
   context: MessageContext
 ): Promise<{ allowed: boolean; reason?: string }> {
-  // PHASE 4: Check tenant-scoped notification settings first
-  if (tenantNotificationSettings) {
-    const channelAllowed = isChannelAllowedForUser(
-      channel,
-      context.messageTypeId,
-      tenantNotificationSettings
-    );
-    
-    if (!channelAllowed) {
-      return { allowed: false, reason: `Channel ${channel} disabled in tenant notification settings` };
+  // Test sends: skip tenant notification setting blocks (user explicitly chose recipient for test)
+  const isTestSend = context.metadata?.testSend === true;
+  if (!isTestSend) {
+    // PHASE 4: Check tenant-scoped notification settings first
+    if (tenantNotificationSettings) {
+      const channelAllowed = isChannelAllowedForUser(
+        channel,
+        context.messageTypeId,
+        tenantNotificationSettings
+      );
+      
+      if (!channelAllowed) {
+        return { allowed: false, reason: `Channel ${channel} disabled in tenant notification settings` };
+      }
     }
   }
   
@@ -280,16 +284,46 @@ async function shouldUseChannel(
     // Align with notificationSettings: missing/undefined = opted in (smsOptIn !== false)
     const smsOptIn = (tenantConsent?.smsOptIn ?? userData.smsOptIn) !== false;
     
-    // Check if SMS opt-in is required
+    // Always block if user has blocked SMS (STOP keyword)
+    if (smsBlockedSystem) {
+      return { allowed: false, reason: 'User has blocked SMS (STOP keyword)' };
+    }
+
+    // Test sends (e.g. Send Test Message in Messaging UI): relax consent/verification for intentional test
+    if (isTestSend) {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      return { allowed: true };
+    }
+
+    // Assignment-created: recruiter explicitly offered position - allow SMS if user has phone (relax verification)
+    if (context.messageTypeId === 'assignment_created') {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      return { allowed: true };
+    }
+
+    // Application status messages: attempt SMS if user has phone (relax verification to reach applicants)
+    const isApplicationMessage =
+      context.messageTypeId?.startsWith('application_') ||
+      ['application_received', 'application_screened', 'application_advanced', 'application_hired', 'application_rejected', 'application_waitlisted', 'application_status_update'].includes(context.messageTypeId || '');
+    if (isApplicationMessage) {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      return { allowed: true };
+    }
+    
+    // Check if SMS opt-in is required for non-test sends
     if (messageTypeConfig.requiresExplicitSmsOptIn) {
       // Check SMS consent (tenant-scoped or legacy)
       if (!smsOptIn) {
         return { allowed: false, reason: 'SMS consent not given' };
-      }
-      
-      // Check if user has blocked SMS (STOP keyword)
-      if (smsBlockedSystem) {
-        return { allowed: false, reason: 'User has blocked SMS (STOP keyword)' };
       }
       
       // Check notification settings (legacy)
@@ -473,13 +507,16 @@ async function deliverSMS(
       }
     }
     
-    // PHASE 5.1: Check rate limits before sending
-    const rateLimitCheck = await checkRateLimits({
-      tenantId: context.tenantId,
-      userId: context.userId,
-      messageTypeId: context.messageTypeId,
-      channel: 'sms',
-    });
+    // PHASE 5.1: Check rate limits before sending (skip for test sends)
+    const isTestSend = context.metadata?.testSend === true;
+    const rateLimitCheck = isTestSend
+      ? { allowed: true }
+      : await checkRateLimits({
+          tenantId: context.tenantId,
+          userId: context.userId,
+          messageTypeId: context.messageTypeId,
+          channel: 'sms',
+        });
 
     if (!rateLimitCheck.allowed && 'reason' in rateLimitCheck && 'details' in rateLimitCheck) {
       // Create log entry with suppressed status
@@ -520,11 +557,13 @@ async function deliverSMS(
       };
     }
 
-    // PHASE 5.2: Check quiet hours before sending
-    const quietHoursCheck = await isQuietHours({
-      tenantId: context.tenantId,
-      messageTypeId: context.messageTypeId,
-    });
+    // PHASE 5.2: Check quiet hours before sending (skip for test sends)
+    const quietHoursCheck = isTestSend
+      ? false
+      : await isQuietHours({
+          tenantId: context.tenantId,
+          messageTypeId: context.messageTypeId,
+        });
 
     if (quietHoursCheck) {
       // Create log entry with suppressed status

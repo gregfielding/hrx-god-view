@@ -83,9 +83,10 @@ export const onApplicationCreated = onDocumentCreated(
           return { success: true };
         }
 
-        // Check if user has verified phone
-        if (!userData.phoneE164 || !userData.phoneVerified) {
-          logger.info(`User ${userId} has no verified phone, skipping SMS for application ${applicationId}`);
+        // Require at least one phone number (attempt send even if not verified)
+        const phoneE164 = (userData.phoneE164 || userData.phone || '').trim();
+        if (!phoneE164) {
+          logger.info(`User ${userId} has no phone number, skipping SMS for application ${applicationId}`);
           return { success: true };
         }
 
@@ -167,7 +168,7 @@ export const onApplicationCreated = onDocumentCreated(
           const result = await sendLegacyApplicationStatusMessage({
             tenantId,
             userId,
-            phoneE164: userData.phoneE164,
+            phoneE164,
             message,
             source: 'application_created',
             sourceId: applicationId,
@@ -179,7 +180,7 @@ export const onApplicationCreated = onDocumentCreated(
           });
 
           if (result.success) {
-            logger.info(`SMS sent for new application ${applicationId} to ${userData.phoneE164}. Message: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
+            logger.info(`SMS sent for new application ${applicationId} to ${phoneE164}. Message: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`);
           } else {
             logger.warn(`Failed to send SMS for application ${applicationId}: ${result.error}`);
           }
@@ -249,9 +250,10 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           return { success: true };
         }
 
-        // Check if user has verified phone
-        if (!userData.phoneE164 || !userData.phoneVerified) {
-          logger.info(`User ${userId} has no verified phone, skipping SMS for application ${applicationId}`);
+        // Require at least one phone number (attempt send even if not verified)
+        const phoneE164 = (userData.phoneE164 || userData.phone || '').trim();
+        if (!phoneE164) {
+          logger.info(`User ${userId} has no phone number, skipping SMS for application ${applicationId}`);
           return { success: true };
         }
 
@@ -327,15 +329,18 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           const jobTitle = variables.jobTitle;
 
           switch (newStatus) {
+            case 'submitted':
+              message = `Thanks for submitting your application for ${jobTitle}, ${firstName}. We'll review it and get back to you soon.`;
+              break;
             case 'screened':
               message = `Hi ${firstName}, your application for ${jobTitle} has been screened. We'll contact you soon.`;
               break;
             case 'advanced':
             case 'interview':
-              message = `Congratulations ${firstName}! Your application for ${jobTitle} has advanced to the next stage. Check your account for details.`;
+              message = `Hi ${firstName}, your application for ${jobTitle} has advanced to the next stage. Check your account for details.`;
               break;
             case 'offer':
-              message = `Congratulations ${firstName}! You've received an offer for ${jobTitle}. Please check your account for details.`;
+              message = `Hi ${firstName}, you've received an offer for ${jobTitle}. Please check your account for details.`;
               break;
             case 'hired':
               message = `Welcome to the team ${firstName}! Your application for ${jobTitle} has been accepted.`;
@@ -372,7 +377,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           const result = await sendLegacyApplicationStatusMessage({
             tenantId,
             userId,
-            phoneE164: userData.phoneE164,
+            phoneE164,
             message,
             source: 'application_status_changed',
             sourceId: applicationId,
@@ -384,7 +389,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           });
 
           if (result.success) {
-            logger.info(`SMS sent for application status change ${applicationId} (${oldStatus} → ${newStatus}) to ${userData.phoneE164}`);
+            logger.info(`SMS sent for application status change ${applicationId} (${oldStatus} → ${newStatus}) to ${phoneE164}`);
           } else {
             logger.warn(`Failed to send SMS for application ${applicationId}: ${result.error}`);
           }

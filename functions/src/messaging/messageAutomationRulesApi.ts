@@ -1,6 +1,7 @@
-import { onRequest } from 'firebase-functions/v2/https';
+import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import { FieldValue } from 'firebase-admin/firestore';
 import {
   AutomationRuleStatus,
   createAutomationRule,
@@ -27,19 +28,28 @@ const VALID_RULE_STATUS: AutomationRuleStatus[] = ['draft', 'active'];
 
 /** Sample values for template variables when testing without real assignment/application context */
 const TEST_SAMPLE_VARIABLES: Record<string, string> = {
-  assignmentAcceptDeclineUrl: `https://${process.env.GCLOUD_PROJECT || 'hrx1-d3beb'}.web.app/c1/jobs-board?assignmentId=sample&intent=assignment_response`,
+  assignmentAcceptDeclineUrl: 'https://hrxone.com/c1/jobs-board?assignmentId=sample&intent=assignment_response',
   assignmentId: 'sample-assignment-id',
   assignmentStatus: 'proposed',
   assignmentDate: new Date().toLocaleDateString(),
   assignmentTimeRange: '9:00 AM - 5:00 PM',
   jobPostId: 'sample-job-post',
+  jobPostTitle: 'Warehouse Associate',
   jobOrderId: 'sample-job-order',
+  jobOrderName: 'Sample Job Order',
+  jobTitle: 'Warehouse Associate',
   shiftId: 'sample-shift',
   shiftDate: new Date().toLocaleDateString(),
   shiftTimeRange: '9:00 AM - 5:00 PM',
   shiftStartTime: '9:00 AM',
   shiftEndTime: '5:00 PM',
   applicationId: 'sample-application-id',
+  locationCity: 'San Francisco',
+  locationState: 'CA',
+  locationName: 'Main Warehouse',
+  locationAddress: '123 Main St',
+  locationZipCode: '94102',
+  companyName: 'Sample Company',
 };
 
 function hasDeliveryChannelEnabled(
