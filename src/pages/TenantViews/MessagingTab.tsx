@@ -444,8 +444,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       return;
     }
 
-    if (derivedTemplateChannel === 'email' && !templateForm.subject) {
-      setError('Subject is required for email templates');
+    if (ruleForm.deliveryChannels.email && !templateForm.subject) {
+      setError('Subject is required when Email is enabled');
       return;
     }
 
@@ -1331,20 +1331,25 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                         label="Push"
                       />
                     </Stack>
+                    {ruleForm.deliveryChannels.email && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        For emails with attachments or rich formatting, create a dedicated email-only template in the Email Templates tab.
+                      </Typography>
+                    )}
                   </Grid>
                 </Grid>
               </Stack>
             </Paper>
 
-            {/* Email Subject Field */}
-            {derivedTemplateChannel === 'email' && (
+            {/* Email Subject Field - show whenever Email is a delivery channel */}
+            {ruleForm.deliveryChannels.email && (
               <TextField
                 label="Email Subject"
                 value={templateForm.subject || ''}
                 onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })}
                 fullWidth
                 required
-                helperText="Subject line for the email"
+                helperText="Subject line for the email (required when Email is enabled)"
               />
             )}
 

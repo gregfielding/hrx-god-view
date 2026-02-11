@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect, useRef } from 'react';
 import {
   Box,
   Card,
@@ -31,6 +31,7 @@ import {
   Badge as LicenseIcon,
   Lock as LockedIcon,
   LockOpen as UnlockedIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -40,18 +41,22 @@ import {
   getDoc,
   doc,
   onSnapshot,
+  setDoc,
   updateDoc,
+  deleteDoc,
   serverTimestamp,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../../firebase';
+import { useAuth } from '../../contexts/AuthContext';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 
 interface PlacementsTabProps {
   tenantId: string;
   jobOrderId: string;
   jobOrder: JobOrder | null;
+  onJobOrderUpdated?: () => void;
 }
 
 interface Shift {
@@ -89,7 +94,8 @@ interface Worker {
   licenses?: any[];
   aiProfileScore?: number;
   aiJobFitScore?: number;
-  isAssignedToShift?: boolean; // Track if worker is assigned to the selected shift
+  isAssignedToShift?: boolean; // In Assignments column (placed or assigned)
+  isPlacementOnly?: boolean;   // Placed but not yet offered - no Assignment, no messages
   assignmentStatus?: string;
   assignmentId?: string;
   confirmationStatus?: 'accepted' | 'confirmed'; // Track confirmation status
@@ -101,7 +107,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   tenantId,
   jobOrderId,
   jobOrder,
+  onJobOrderUpdated,
 }) => {
+  const { user } = useAuth();
   // Generate a unique storage key for this job order
   const storageKey = `placements_filters_${tenantId}_${jobOrderId}`;
   
@@ -136,6 +144,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
   const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
+  const [placementUserIds, setPlacementUserIds] = useState<Set<string>>(new Set());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -216,6 +225,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [licenseModalOpen, setLicenseModalOpen] = useState(false);
   const [selectedLicenses, setSelectedLicenses] = useState<any[]>([]);
   const [assignmentIdByUserId, setAssignmentIdByUserId] = useState<Map<string, string>>(new Map());
+  // Track optimistically added placement IDs so onSnapshot doesn't overwrite them before Firestore confirms
+  const pendingPlacementAddsRef = useRef<Set<string>>(new Set());
 
   // Load user groups for workforce dropdown
   useEffect(() => {
@@ -420,6 +431,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         setWorkers([]);
         return;
       }
+      if (selectedWorkforce === 'choose_group') {
+        setWorkers([]);
+        setLoading(false);
+        return;
+      }
 
       setLoading(true);
       setError(null);
@@ -578,6 +594,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   useEffect(() => {
     if (!tenantId || !selectedShiftId) {
       setAssignmentStatusByUserId(new Map());
+      setAssignmentIdByUserId(new Map());
       return;
     }
 
@@ -585,6 +602,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const assignmentsQuery = query(assignmentsRef, where('shiftId', '==', selectedShiftId));
     const unsubscribe = onSnapshot(
       assignmentsQuery,
+      { includeMetadataChanges: true },
       (snapshot) => {
         const nextStatus = new Map<string, string>();
         const nextIds = new Map<string, string>();
@@ -608,44 +626,82 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return () => unsubscribe();
   }, [tenantId, selectedShiftId]);
 
+  // Real-time placements (placed but not yet assigned - no Assignment created, no messages sent).
+  useEffect(() => {
+    if (!tenantId || !selectedShiftId) {
+      setPlacementUserIds(new Set());
+      return;
+    }
+
+    const placementsRef = collection(db, 'tenants', tenantId, 'placements');
+    const placementsQuery = query(placementsRef, where('shiftId', '==', selectedShiftId));
+    const unsubscribe = onSnapshot(
+      placementsQuery,
+      { includeMetadataChanges: true },
+      (snapshot) => {
+        const ids = new Set<string>();
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data() as any;
+          const userId = String(data?.userId || '');
+          if (userId) {
+            ids.add(userId);
+            pendingPlacementAddsRef.current.delete(userId); // Confirmed by server
+          }
+        });
+        // Merge in optimistically added IDs so we don't overwrite with stale snapshot (race with local write)
+        pendingPlacementAddsRef.current.forEach((id) => ids.add(id));
+        setPlacementUserIds(ids);
+      },
+      (err) => {
+        console.warn('Placements onSnapshot error:', err);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [tenantId, selectedShiftId]);
+
   const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
   const safeSelectedWorkforce = workforceOptions.some((o) => o.value === selectedWorkforce) ? selectedWorkforce : '';
 
-  // Build workforce options based on job order labor pool and visibility settings
+  // Build workforce options: Applicants, Candidates, [last used group from Choose Group], labor pool groups, Choose Group
   function getWorkforceOptions() {
     const options: Array<{ value: string; label: string }> = [
       { value: 'applicants', label: 'Applicants' },
       { value: 'candidates', label: 'Candidates' },
     ];
     
-    // Get labor pool groups from job order (preferred)
-    // This is the dedicated "Labor Pool" setting for the job order
-    const laborPoolGroups = (jobOrder as any)?.laborPoolGroups || [];
-    
-    // Also check legacy job posting visibility groups for backwards compatibility
-    const visibility = jobOrder?.visibility || (jobOrder as any)?.jobsBoardVisibility;
-    const restrictedGroups = jobOrder?.restrictedGroups || [];
-    
-    // Combine both sources of groups (labor pool + posting visibility)
-    const allGroupIds = new Set<string>([
-      ...laborPoolGroups,
-      ...(visibility === 'group_restricted' ? restrictedGroups : [])
-    ]);
-    
-    // Add each unique group to the options
-    if (allGroupIds.size > 0) {
-      allGroupIds.forEach((groupId: string) => {
-        const group = userGroups.find(g => g.id === groupId);
-        if (group) {
-          options.push({
-            value: `group_${groupId}`,
-            label: group.groupName
-          });
-        }
-      });
+    // Add last group selected via "Choose Group" (stored on job order for quick re-select)
+    const lastGroup = (jobOrder as any)?.placementsLastGroup;
+    if (lastGroup?.id && lastGroup?.groupName) {
+      const alreadyAdded = options.some((o) => o.value === `group_${lastGroup.id}`);
+      if (!alreadyAdded) {
+        options.push({
+          value: `group_${lastGroup.id}`,
+          label: lastGroup.groupName,
+        });
+      }
     }
     
+    // Get labor pool groups from job order (preferred)
+    const laborPoolGroups = (jobOrder as any)?.laborPoolGroups || [];
+    const visibility = jobOrder?.visibility || (jobOrder as any)?.jobsBoardVisibility;
+    const restrictedGroups = jobOrder?.restrictedGroups || [];
+    const allGroupIds = new Set<string>([
+      ...laborPoolGroups,
+      ...(visibility === 'group_restricted' ? restrictedGroups : []),
+    ]);
+    
+    // Add labor pool groups not already in options
+    allGroupIds.forEach((groupId: string) => {
+      if (options.some((o) => o.value === `group_${groupId}`)) return;
+      const group = userGroups.find((g) => g.id === groupId);
+      if (group) {
+        options.push({ value: `group_${groupId}`, label: group.groupName });
+      }
+    });
+    
+    options.push({ value: 'choose_group', label: 'Choose Group' });
     return options;
   }
 
@@ -671,18 +727,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       const data = response.data as any;
       const createdCount = Array.isArray(data?.created) ? data.created.length : 0;
       const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
-      const warnings = Array.isArray(data?.created)
-        ? data.created.flatMap((item: any) => Array.isArray(item.warnings) ? item.warnings : [])
-        : [];
 
       if (createdCount === 0 && skipped.length > 0) {
         setError(`No assignments created. ${skipped.map((s: any) => s.reason).join(', ')}`);
       } else {
         setError(null);
-        const sameDayWarn = warnings.includes('same_day_second_shift_warning')
-          ? ' Warning: one or more workers already have another shift on the same day.'
-          : '';
-        alert(`Created ${createdCount} assignment${createdCount === 1 ? '' : 's'}.${sameDayWarn}`);
       }
     } catch (err: any) {
       console.error('Error assigning workers to shift:', err);
@@ -696,52 +745,56 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     await assignWorkersToShift([worker.id]);
   };
 
-  // Handle promoting Placed (proposed/accepted) to Assigned (confirmed)
+  // Handle offering position: create Assignment (sends accept/decline message) and remove placement.
   const handleConfirmPlacement = async (worker: Worker) => {
-    if (!tenantId || !selectedShiftId || !worker.assignmentId) return;
-    const rawStatus = String(worker.assignmentStatus || '').toLowerCase();
-    if (!['proposed', 'accepted'].includes(rawStatus)) return;
+    if (!worker.isPlacementOnly || !selectedShift) return;
     try {
       setError(null);
-      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', worker.assignmentId);
-      await updateDoc(assignmentRef, {
-        status: 'confirmed',
-        confirmedAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
+      await assignWorkersToShift([worker.id]);
+      await deletePlacement(worker);
     } catch (err: any) {
-      console.error('Error confirming placement:', err);
-      setError(err?.message || 'Failed to confirm placement');
+      console.error('Error offering position:', err);
+      setError(err?.message || 'Failed to offer position');
     }
   };
 
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
-  const hasRequiredSelections = Boolean(selectedShiftId && selectedWorkforce);
-  const showContent = hasRequiredSelections;
+  const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
+  // Placed = placement only (no Assignment). Assigned = has Assignment (offered, worker may accept/decline).
   const workersWithAssignmentState = useMemo(
     () =>
       workers.map((worker) => {
-        const status = assignmentStatusByUserId.get(worker.id);
-        if (!status) {
+        const assignmentStatus = assignmentStatusByUserId.get(worker.id);
+        const hasPlacement = placementUserIds.has(worker.id);
+        const hasAssignment = Boolean(assignmentStatus);
+
+        if (!hasPlacement && !hasAssignment) {
           return {
             ...worker,
             isAssignedToShift: false,
+            isPlacementOnly: false,
             assignmentStatus: undefined,
+            assignmentId: undefined,
             confirmationStatus: undefined,
           };
         }
 
-        const confirmationStatus: 'accepted' | 'confirmed' =
-          status === 'confirmed' || status === 'active' ? 'confirmed' : 'accepted';
+        const confirmationStatus: 'accepted' | 'confirmed' | undefined =
+          assignmentStatus && (assignmentStatus === 'confirmed' || assignmentStatus === 'active')
+            ? 'confirmed'
+            : assignmentStatus
+              ? 'accepted'
+              : undefined;
         return {
           ...worker,
           isAssignedToShift: true,
-          assignmentStatus: status,
+          isPlacementOnly: hasPlacement && !hasAssignment,
+          assignmentStatus: assignmentStatus,
           assignmentId: assignmentIdByUserId.get(worker.id),
           confirmationStatus,
         };
       }),
-    [workers, assignmentStatusByUserId, assignmentIdByUserId],
+    [workers, assignmentStatusByUserId, assignmentIdByUserId, placementUserIds],
   );
   const assignedWorkers = useMemo(
     () => workersWithAssignmentState.filter((worker) => worker.isAssignedToShift),
@@ -793,33 +846,72 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     event.preventDefault();
     event.stopPropagation();
     setIsAssignmentDragOver(false);
-    const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME);
+    const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME) || event.dataTransfer.getData('text/plain');
     if (!workerId) return;
-    const worker = unassignedWorkers.find((w) => w.id === workerId);
+    const worker = availableWorkers.find((w) => w.id === workerId);
     if (worker) {
-      handleAssignToShift(worker, selectedShift);
+      createPlacement(worker);
+    }
+  };
+
+  const createPlacement = async (worker: Worker) => {
+    if (!tenantId || !selectedShiftId || !jobOrderId || !user?.uid) {
+      setError('Missing required information to place worker');
+      return;
+    }
+    const placementId = `${selectedShiftId}__${worker.id}`;
+    try {
+      setError(null);
+      // Optimistic update: show in Assignments immediately; track so onSnapshot doesn't overwrite
+      pendingPlacementAddsRef.current.add(worker.id);
+      setPlacementUserIds((prev) => new Set([...prev, worker.id]));
+      const placementRef = doc(db, 'tenants', tenantId, 'placements', placementId);
+      await setDoc(placementRef, {
+        tenantId,
+        jobOrderId,
+        shiftId: selectedShiftId,
+        userId: worker.id,
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+      });
+    } catch (err: any) {
+      console.error('Error placing worker:', err);
+      setError(err?.message || 'Failed to place worker');
+      // Revert optimistic update on error
+      pendingPlacementAddsRef.current.delete(worker.id);
+      setPlacementUserIds((prev) => {
+        const next = new Set(prev);
+        next.delete(worker.id);
+        return next;
+      });
+    }
+  };
+
+  const deletePlacement = async (worker: Worker) => {
+    if (!tenantId || !selectedShiftId) return;
+    if (!worker.isPlacementOnly) return;
+    const placementId = `${selectedShiftId}__${worker.id}`;
+    try {
+      setError(null);
+      // Optimistic update: remove from Assignments immediately
+      setPlacementUserIds((prev) => {
+        const next = new Set(prev);
+        next.delete(worker.id);
+        return next;
+      });
+      const placementRef = doc(db, 'tenants', tenantId, 'placements', placementId);
+      await deleteDoc(placementRef);
+    } catch (err: any) {
+      console.error('Error removing placement:', err);
+      setError(err?.message || 'Failed to remove placement');
+      // Revert optimistic update on error
+      setPlacementUserIds((prev) => new Set([...prev, worker.id]));
     }
   };
 
   const handleUnplaceToWorkerPool = async (worker: Worker) => {
-    if (!tenantId || !selectedShiftId) return;
-    const rawStatus = String(worker.assignmentStatus || '').toLowerCase();
-    // Only allow dragging back while still in Placed state.
-    if (!['proposed', 'accepted'].includes(rawStatus)) return;
-
-    const assignmentId = worker.assignmentId || `${selectedShiftId}__${worker.id}`;
-    try {
-      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', assignmentId);
-      await updateDoc(assignmentRef, {
-        status: 'canceled',
-        canceledAt: serverTimestamp(),
-        cancellationReason: 'manual_unplace',
-        updatedAt: serverTimestamp(),
-      });
-    } catch (err: any) {
-      console.error('Error moving placed worker back to pool:', err);
-      setError(err?.message || 'Failed to move worker back to pool');
-    }
+    if (!worker.isPlacementOnly) return;
+    await deletePlacement(worker);
   };
 
   const handleWorkerPoolDragOver = (event: React.DragEvent) => {
@@ -833,7 +925,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     event.preventDefault();
     event.stopPropagation();
     setIsWorkerPoolDragOver(false);
-    const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME);
+    const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME) || event.dataTransfer.getData('text/plain');
     if (!workerId) return;
     const assignedWorker = assignedWorkers.find((w) => w.id === workerId);
     if (assignedWorker) {
@@ -869,104 +961,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         Placements for this Job Order
       </Typography>
 
-      {/* Filters */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
-          <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-            Select a shift and workforce to view and manage placements
-          </Typography>
-          <Grid container spacing={2} sx={{ mt: 0.25 }}>
-              {/* Shift Picker - Shows all upcoming shifts */}
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Shift</InputLabel>
-                  <Select
-                    value={safeSelectedShiftId}
-                    label="Shift"
-                    onChange={(e) => setSelectedShiftId(e.target.value)}
-                    disabled={loading || shifts.length === 0}
-                  >
-                    {shifts.length === 0 ? (
-                      <MenuItem disabled>
-                        {loading ? 'Loading shifts...' : 'No upcoming shifts available'}
-                      </MenuItem>
-                    ) : (
-                      shifts.map((shift) => {
-                        // Format the date for display
-                        const shiftDate: any = shift.shiftDate;
-                        let formattedDate = '';
-                        if (shiftDate) {
-                          let date: Date;
-                          if (typeof shiftDate === 'string') {
-                            date = new Date(shiftDate);
-                          } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
-                            date = shiftDate.toDate();
-                          } else if (shiftDate instanceof Date) {
-                            date = shiftDate;
-                          } else {
-                            date = new Date();
-                          }
-                          formattedDate = date.toLocaleDateString('en-US', { 
-                            weekday: 'short', 
-                            month: 'short', 
-                            day: 'numeric',
-                            year: 'numeric'
-                          });
-                        }
-                        
-                        return (
-                          <MenuItem key={shift.id} value={shift.id}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Typography variant="body2" fontWeight={600}>
-                                  {formattedDate}
-                                </Typography>
-                                {shift.spotsRemaining !== undefined && (
-                                  <Chip 
-                                    size="small" 
-                                    label={`${shift.spotsRemaining} spots`} 
-                                    sx={{ ml: 1 }}
-                                    color={shift.spotsRemaining > 0 ? 'success' : 'default'}
-                                  />
-                                )}
-                              </Box>
-                              <Typography variant="caption" color="text.secondary">
-                                {shift.shiftTitle || 'Shift'} • {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
-                              </Typography>
-                            </Box>
-                          </MenuItem>
-                        );
-                      })
-                    )}
-                  </Select>
-                </FormControl>
-              </Grid>
-
-              {/* Workforce Dropdown */}
-              <Grid item xs={12} sm={6}>
-                <FormControl fullWidth>
-                  <InputLabel>Workforce</InputLabel>
-                  <Select
-                    value={safeSelectedWorkforce}
-                    label="Workforce"
-                    onChange={(e) => setSelectedWorkforce(e.target.value)}
-                  >
-                    <MenuItem value="">
-                      <em>Select workforce</em>
-                    </MenuItem>
-                    {workforceOptions.map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
-              </Grid>
-            </Grid>
-          </CardContent>
-        </Card>
-
-        {/* Error Message */}
+      {/* Error Message */}
         {error && (
           <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError(null)}>
             {error}
@@ -990,6 +985,69 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                     Shift Details
                   </Typography>
+                  <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                    <InputLabel>Shift</InputLabel>
+                    <Select
+                      value={safeSelectedShiftId}
+                      label="Shift"
+                      onChange={(e) => setSelectedShiftId(e.target.value)}
+                      disabled={loading || shifts.length === 0}
+                    >
+                      <MenuItem value="">
+                        <em>Select shift</em>
+                      </MenuItem>
+                      {shifts.length === 0 ? (
+                        <MenuItem disabled>
+                          {loading ? 'Loading shifts...' : 'No upcoming shifts available'}
+                        </MenuItem>
+                      ) : (
+                        shifts.map((shift) => {
+                          const shiftDate: any = shift.shiftDate;
+                          let formattedDate = '';
+                          if (shiftDate) {
+                            let date: Date;
+                            if (typeof shiftDate === 'string') {
+                              date = new Date(shiftDate);
+                            } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
+                              date = shiftDate.toDate();
+                            } else if (shiftDate instanceof Date) {
+                              date = shiftDate;
+                            } else {
+                              date = new Date();
+                            }
+                            formattedDate = date.toLocaleDateString('en-US', {
+                              weekday: 'short',
+                              month: 'short',
+                              day: 'numeric',
+                              year: 'numeric',
+                            });
+                          }
+                          return (
+                            <MenuItem key={shift.id} value={shift.id}>
+                              <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <Typography variant="body2" fontWeight={600}>
+                                    {formattedDate}
+                                  </Typography>
+                                  {shift.spotsRemaining !== undefined && (
+                                    <Chip
+                                      size="small"
+                                      label={`${shift.spotsRemaining} spots`}
+                                      sx={{ ml: 1 }}
+                                      color={shift.spotsRemaining > 0 ? 'success' : 'default'}
+                                    />
+                                  )}
+                                </Box>
+                                <Typography variant="caption" color="text.secondary">
+                                  {shift.shiftTitle || 'Shift'} • {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
+                                </Typography>
+                              </Box>
+                            </MenuItem>
+                          );
+                        })
+                      )}
+                    </Select>
+                  </FormControl>
                   {selectedShift && (
                     <Stack spacing={1.25}>
                       <Typography variant="subtitle1" fontWeight={700}>
@@ -1147,27 +1205,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     }}
                   >
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                      Drag workers here to place them on this shift.
+                      Drag workers here to place them (no message sent). Click Placed chip to offer position.
                     </Typography>
+                    {!selectedShiftId ? (
+                      <Alert severity="info" sx={{ py: 2 }}>
+                        Select a shift to view placements.
+                      </Alert>
+                    ) : (
                     <Stack spacing={1}>
                       {assignedWorkers.map((worker) => {
-                        const rawStatus = String(worker.assignmentStatus || '').toLowerCase();
-                        const canDragBackToPool = ['proposed', 'accepted'].includes(rawStatus);
-                        const statusLabel =
-                          rawStatus === 'confirmed' || rawStatus === 'active'
-                            ? 'Assigned'
-                            : rawStatus === 'proposed' || rawStatus === 'accepted'
-                              ? 'Placed'
-                              : worker.confirmationStatus === 'accepted'
-                                ? 'Placed'
-                                : 'Assigned';
-                        const statusColor =
-                          rawStatus === 'confirmed' || rawStatus === 'active'
-                            ? 'success'
-                            : rawStatus === 'proposed' || rawStatus === 'accepted'
-                              ? 'info'
-                              : 'default';
-                        const isPlaced = statusLabel === 'Placed';
+                        const isPlaced = Boolean(worker.isPlacementOnly);
+                        const statusLabel = isPlaced ? 'Placed' : 'Assigned';
+                        const statusColor = isPlaced ? 'info' : 'success';
+                        const canDragBackToPool = isPlaced; // Only Placed (no Assignment) can be dragged back
+                        const useUnlockedIcon = isPlaced; // Placed = unlocked, Assigned = locked
                         return (
                           <Paper
                             key={worker.id}
@@ -1191,12 +1242,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 {[worker.city, worker.state].filter(Boolean).join(', ') || 'Location unavailable'}
                               </Typography>
                             </Box>
-                            <Tooltip title={isPlaced ? 'Click to assign (confirm)' : undefined}>
+                            <Tooltip title={isPlaced ? 'Click to offer position (sends accept/decline message)' : undefined}>
                               <Chip
                                 size="small"
                                 label={statusLabel}
                                 color={statusColor}
-                                icon={isPlaced ? <UnlockedIcon fontSize="small" /> : <LockedIcon fontSize="small" />}
+                                icon={useUnlockedIcon ? <UnlockedIcon fontSize="small" /> : <LockedIcon fontSize="small" />}
                                 onClick={isPlaced ? () => handleConfirmPlacement(worker) : undefined}
                                 sx={{
                                   ...(isPlaced && {
@@ -1213,10 +1264,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       })}
                       {assignedWorkers.length === 0 && (
                         <Alert severity="info">
-                          No assignments for this shift yet.
+                          No workers placed or assigned yet.
                         </Alert>
                       )}
                     </Stack>
+                    )}
                   </Box>
                 </CardContent>
               </Card>
@@ -1229,8 +1281,74 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                     Worker Pool ({availableWorkers.length})
                   </Typography>
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
-                    Drag into Assignments to place. Drag Placed workers back here to unplace.
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 1, flexWrap: 'wrap' }}>
+                    <FormControl size="small" sx={{ minWidth: 160, flex: 1 }}>
+                      <InputLabel>Workforce</InputLabel>
+                      <Select
+                        value={safeSelectedWorkforce}
+                        label="Workforce"
+                        onChange={(e) => setSelectedWorkforce(e.target.value)}
+                      >
+                        <MenuItem value="">
+                          <em>Select workforce</em>
+                        </MenuItem>
+                        {workforceOptions.map((option) => (
+                          <MenuItem key={option.value} value={option.value}>
+                            {option.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    {selectedWorkforce.startsWith('group_') && (
+                      <Tooltip title="Clear group selection">
+                        <IconButton
+                          size="small"
+                          onClick={() => setSelectedWorkforce('choose_group')}
+                          sx={{ mt: 0.5 }}
+                        >
+                          <ClearIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                  </Box>
+                  {safeSelectedWorkforce === 'choose_group' && (
+                    <FormControl fullWidth size="small" sx={{ mb: 1 }}>
+                      <InputLabel>Group</InputLabel>
+                      <Select
+                        value=""
+                        label="Group"
+                        displayEmpty
+                        onChange={async (e) => {
+                          const groupId = e.target.value as string;
+                          if (!groupId) return;
+                          const group = userGroups.find((g) => g.id === groupId);
+                          if (!group) return;
+                          setSelectedWorkforce(`group_${groupId}`);
+                          try {
+                            const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+                            await updateDoc(jobOrderRef, {
+                              placementsLastGroup: { id: groupId, groupName: group.groupName },
+                              updatedAt: serverTimestamp(),
+                            });
+                            onJobOrderUpdated?.();
+                          } catch (err) {
+                            console.error('Error saving placements last group:', err);
+                          }
+                        }}
+                      >
+                        <MenuItem value="">
+                          <em>Select a group</em>
+                        </MenuItem>
+                        {userGroups.map((g) => (
+                          <MenuItem key={g.id} value={g.id}>
+                            {g.groupName}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  )}
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                    Drag into Assignments to place. Drop Placed workers here to unplace.
                   </Typography>
 
                   <Box
@@ -1240,13 +1358,30 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     sx={{
                       borderRadius: 1,
                       border: '1px dashed',
-                      borderColor: isWorkerPoolDragOver ? 'warning.main' : 'transparent',
-                      bgcolor: isWorkerPoolDragOver ? 'rgba(255, 152, 0, 0.08)' : 'transparent',
+                      borderColor: isWorkerPoolDragOver ? 'warning.main' : 'divider',
+                      bgcolor: isWorkerPoolDragOver ? 'rgba(255, 152, 0, 0.08)' : 'rgba(0,0,0,0.02)',
+                      minHeight: 220,
+                      p: 1,
                       transition: 'all 0.15s ease',
-                      p: isWorkerPoolDragOver ? 0.5 : 0,
+                      boxShadow: isWorkerPoolDragOver ? 2 : 0,
                     }}
                   >
-                  {availableWorkers.length === 0 ? (
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      Drop Placed workers here to unplace
+                    </Typography>
+                  {!safeSelectedWorkforce ? (
+                    <Alert severity="info" sx={{ py: 2 }}>
+                      Select a workforce to view workers.
+                    </Alert>
+                  ) : safeSelectedWorkforce === 'choose_group' ? (
+                    <Alert severity="info" sx={{ py: 2 }}>
+                      Select a group above to view its members.
+                    </Alert>
+                  ) : !selectedShiftId ? (
+                    <Alert severity="info" sx={{ py: 2 }}>
+                      Select a shift to view worker pool.
+                    </Alert>
+                  ) : availableWorkers.length === 0 ? (
                     <Alert severity="info">
                       No available workers for the selected workforce option.
                     </Alert>
@@ -1414,13 +1549,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Card>
             </Grid>
           </Grid>
-        )}
-
-        {/* Empty State */}
-        {!loading && !hasRequiredSelections && !error && (
-          <Alert severity="info">
-            Please select a shift and workforce option to view placements.
-          </Alert>
         )}
 
         {/* Resume Modal */}

@@ -150,6 +150,9 @@ export interface JobOrder {
   // Metadata
   createdBy: string;
   dealId?: string; // Link back to originating CRM deal
+
+  // Placements tab: last workforce group selected via "Choose Group" (for quick re-select)
+  placementsLastGroup?: { id: string; groupName: string };
 }
 
 export interface JobOrderContact {

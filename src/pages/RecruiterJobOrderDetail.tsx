@@ -80,7 +80,7 @@ import {
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -210,7 +210,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [bulkStatusMenuAnchor, setBulkStatusMenuAnchor] = useState<HTMLElement | null>(null);
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
-  
+  const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
+
   // Favorites hook for starring applicants
   const { isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -333,6 +334,44 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
     fetchApplicants();
   }, [jobOrderId, connectedJobPosts, tenantId]);
+
+  // Subscribe to assignments for this job order (Placements status: Placed, Assigned)
+  useEffect(() => {
+    if (!tenantId || !jobOrderId) {
+      setAssignmentStatusByUserId(new Map());
+      return;
+    }
+    const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+    const assignmentsQuery = query(
+      assignmentsRef,
+      where('jobOrderId', '==', jobOrderId),
+    );
+    const unsubscribe = onSnapshot(
+      assignmentsQuery,
+      (snapshot) => {
+        const nextStatus = new Map<string, string>();
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data() as Record<string, unknown>;
+          const userId = String(data?.userId || data?.candidateId || '');
+          const status = String(data?.status || 'proposed').toLowerCase();
+          if (!userId) return;
+          if (['declined', 'canceled', 'cancelled'].includes(status)) return;
+          // Keep highest status: confirmed/active > proposed/accepted
+          const existing = nextStatus.get(userId);
+          if (!existing) {
+            nextStatus.set(userId, status);
+            return;
+          }
+          const rank = (s: string) =>
+            ['confirmed', 'active'].includes(s) ? 2 : ['proposed', 'accepted'].includes(s) ? 1 : 0;
+          if (rank(status) > rank(existing)) nextStatus.set(userId, status);
+        });
+        setAssignmentStatusByUserId(nextStatus);
+      },
+      (err) => console.warn('Assignments onSnapshot error:', err),
+    );
+    return () => unsubscribe();
+  }, [tenantId, jobOrderId]);
 
   const handleViewApplicant = (uid: string) => {
     // Open in new tab
@@ -1134,18 +1173,27 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   </TableCell>
                   <TableCell>{renderInterviewCell(applicant)}</TableCell>
                   <TableCell>
-                    <Chip 
-                      label={applicant.applicationStatus || 'submitted'}
-                      size="small"
-                      color={
+                    {(() => {
+                      const placementStatus = assignmentStatusByUserId.get(applicant.uid);
+                      const isAssigned = placementStatus && ['confirmed', 'active'].includes(placementStatus);
+                      const isPlaced = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
+                      const displayLabel = isAssigned ? 'Assigned' : isPlaced ? 'Placed' : (applicant.applicationStatus || 'submitted');
+                      const displayColor = isAssigned ? 'success' : isPlaced ? 'info' :
                         applicant.applicationStatus === 'accepted' ? 'success' :
                         applicant.applicationStatus === 'rejected' ? 'error' :
-                        applicant.applicationStatus === 'waitlisted' ? 'warning' :
-                        'default'
-                      }
-                      onClick={(e) => handleOpenStatusMenu(e, applicant.uid)}
-                      sx={{ cursor: 'pointer' }}
-                    />
+                        applicant.applicationStatus === 'waitlisted' ? 'warning' : 'default';
+                      return (
+                        <Tooltip title={isAssigned || isPlaced ? `Application: ${applicant.applicationStatus || 'submitted'}` : undefined}>
+                          <Chip 
+                            label={displayLabel}
+                            size="small"
+                            color={displayColor}
+                            onClick={(e) => handleOpenStatusMenu(e, applicant.uid)}
+                            sx={{ cursor: 'pointer' }}
+                          />
+                        </Tooltip>
+                      );
+                    })()}
                     <Menu
                       anchorEl={statusMenuAnchor[applicant.uid]}
                       open={Boolean(statusMenuAnchor[applicant.uid])}
@@ -3978,6 +4026,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           tenantId={tenantId || ''}
           jobOrderId={jobOrderId || ''}
           jobOrder={jobOrder}
+          onJobOrderUpdated={fetchJobOrder}
         />
       </TabPanel>
 
