@@ -75,6 +75,8 @@ import {
   ContentCopy as ContentCopyIcon,
   Language as ExternalLinkIcon,
   ArrowBack as ArrowBackIcon,
+  Email as EmailIcon,
+  Sms as SmsIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -106,6 +108,7 @@ import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/r
 import CreateTaskDialog from '../components/CreateTaskDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
 import AddJobOrderNoteDialog from '../components/recruiter/AddJobOrderNoteDialog';
+import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -203,6 +206,10 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
+  const [selectedApplicantIds, setSelectedApplicantIds] = useState<Set<string>>(new Set());
+  const [bulkStatusMenuAnchor, setBulkStatusMenuAnchor] = useState<HTMLElement | null>(null);
+  const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
+  const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
   
   // Favorites hook for starring applicants
   const { isFavorite, toggleFavorite } = useFavorites('users');
@@ -394,6 +401,57 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     return data;
   }, [applicants, applicantsSortBy, applicantsSortDirection]);
 
+  const displayedApplicants = applicantsSortBy === 'interview' ? sortedApplicants : applicants;
+  const isAllSelected = displayedApplicants.length > 0 && selectedApplicantIds.size === displayedApplicants.length;
+  const isSomeSelected = selectedApplicantIds.size > 0;
+
+  const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (event.target.checked) {
+      setSelectedApplicantIds(new Set(displayedApplicants.map((a) => a.uid)));
+    } else {
+      setSelectedApplicantIds(new Set());
+    }
+  };
+
+  const handleSelectOne = (uid: string) => {
+    setSelectedApplicantIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  };
+
+  const handleBulkChangeStatus = (newStatus: string) => {
+    const ids = Array.from(selectedApplicantIds);
+    ids.forEach((uid) => {
+      const applicant = applicants.find((a) => a.uid === uid);
+      if (applicant) handleChangeStatus(applicant, newStatus);
+    });
+    setBulkStatusMenuAnchor(null);
+    setSelectedApplicantIds(new Set());
+  };
+
+  const handleOpenBulkStatusMenu = (event: React.MouseEvent<HTMLElement>) => {
+    setBulkStatusMenuAnchor(event.currentTarget);
+  };
+
+  const handleCloseBulkStatusMenu = () => {
+    setBulkStatusMenuAnchor(null);
+  };
+
+  const bulkRecipientsAndIds = React.useMemo(() => {
+    const selected = applicants.filter((a) => selectedApplicantIds.has(a.uid));
+    const recipients: MessageRecipient[] = selected.map((a) => ({
+      userId: a.uid,
+      name: a.displayName || [a.firstName, a.lastName].filter(Boolean).join(' ').trim() || a.uid,
+      email: a.email,
+      phone: a.phone,
+    }));
+    const recipientUserIds = selected.map((a) => a.uid);
+    return { recipients, recipientUserIds };
+  }, [applicants, selectedApplicantIds]);
+
   const renderInterviewCell = (applicant: Applicant) => {
     const lastAt = applicant.scoreSummary?.interviewLastAt;
     const lastScore = applicant.scoreSummary?.interviewLastScore10;
@@ -409,25 +467,19 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
-      // Find the application ID from applicationData
-      const applicationId = Object.keys(applicant.applicationData)[0] || 
-        `${tenantId}_${applicant.applicationData.jobId}`;
+      const jobId = applicant.applicationData?.jobId || '';
+      const tenantAppDocId = applicant.applicationData?.id || `${applicant.uid}_${jobId}`;
 
-      // Update the status in the user's applicationData
-      const userRef = doc(db, 'users', applicant.uid);
-      await updateDoc(userRef, {
-        [`applicationData.${applicationId}.status`]: newStatus,
-        [`applicationData.${applicationId}.updatedAt`]: new Date()
+      // Canonical write: tenant application doc
+      const applicationRef = doc(db, 'tenants', tenantId, 'applications', tenantAppDocId);
+      await updateDoc(applicationRef, {
+        status: newStatus,
+        updatedAt: serverTimestamp()
       });
 
-      // TODO: Log activity
-
-      // Update local state
-      setApplicants(prev => 
-        prev.map(a => 
-          a.uid === applicant.uid 
-            ? { ...a, applicationStatus: newStatus }
-            : a
+      setApplicants(prev =>
+        prev.map(a =>
+          a.uid === applicant.uid ? { ...a, applicationStatus: newStatus } : a
         )
       );
 
@@ -503,38 +555,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
 
     try {
-      const userRef = doc(db, 'users', applicant.uid);
-      const userDoc = await getDoc(userRef);
-      const userData = userDoc.exists() ? userDoc.data() : {};
-      const allApplicationData = userData?.applicationData || {};
-
-      // Find the correct application ID for this job in the user's applicationData
-      let applicationIdToRemove: string | null = null;
-      for (const [appId, appData] of Object.entries(allApplicationData)) {
-        const app = appData as any;
-        if (
-          (app.jobId && connectedJobPosts.some((post) => post.id === app.jobId)) ||
-          app.jobOrderId === jobOrderId
-        ) {
-          applicationIdToRemove = appId;
-          break;
-        }
-      }
-
-      // Update user doc only if we found the application there (e.g. not yet withdrawn)
-      if (applicationIdToRemove) {
-        const updatedApplicationData = { ...allApplicationData };
-        delete updatedApplicationData[applicationIdToRemove];
-        const currentApplicationIds = userData?.applicationIds || [];
-        const updatedApplicationIds = currentApplicationIds.filter((id: string) => id !== applicationIdToRemove);
-        await updateDoc(userRef, {
-          applicationData: updatedApplicationData,
-          applicationIds: updatedApplicationIds,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      // Always mark/update the tenant application doc so it disappears from the list (use actual doc id from list)
+      // Canonical write: mark tenant application deleted so it disappears from recruiter view
       const tenantAppDocId = applicant.applicationData?.id;
       if (tenantId && tenantAppDocId) {
         try {
@@ -590,41 +611,23 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
       const targetJobOrder = targetJobOrderDoc.data();
 
-      // Get the user document to find the correct application ID
-      const userRef = doc(db, 'users', selectedApplicant.uid);
-      const userDoc = await getDoc(userRef);
-      
-      if (!userDoc.exists()) {
-        alert('User not found');
-        return;
-      }
-
-      const userData = userDoc.data();
-      const applicationData = userData.applicationData || {};
-      
-      // Find the application that matches this job order
-      let targetApplicationId: string | null = null;
-      for (const [appId, appData] of Object.entries(applicationData)) {
-        const app = appData as any;
-        if (app.jobOrderId === jobOrderId || app.jobId === selectedApplicant.applicationData.jobId) {
-          targetApplicationId = appId;
-          break;
-        }
-      }
-
-      if (!targetApplicationId) {
+      const currentApplicationDocId = selectedApplicant.applicationData?.id;
+      if (!currentApplicationDocId) {
         console.error('Could not find application to switch');
         alert('Could not find application to switch');
         return;
       }
 
-
       // Create a unique application ID for the new job order
       const newApplicationId = `${tenantId}_${targetJobOrderId}_${Date.now()}`;
+      const newTenantAppDocId = `${selectedApplicant.uid}_${targetJobOrderId}_${Date.now()}`;
       
-      // Create a new application entry for the target job order
+      // Create a new canonical tenant application for the target job order
       const newApplicationData = {
         applicationId: newApplicationId,
+        id: newTenantAppDocId,
+        tenantId,
+        userId: selectedApplicant.uid,
         jobId: null, // No specific job post, this is a switched application
         jobOrderId: targetJobOrderId,
         jobOrderName: targetJobOrder.jobOrderName || '',
@@ -640,21 +643,32 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         updatedAt: new Date(),
         source: 'job_switch',
         switchedFrom: jobOrderId,
-        switchedFromApplicationId: targetApplicationId,
+        switchedFromApplicationId: currentApplicationDocId,
         switchedAt: new Date(),
         switchedBy: user?.uid
       };
 
-      // Remove old application and add new one
-      const updatedApplicationData = { ...applicationData };
-      delete updatedApplicationData[targetApplicationId];
-      updatedApplicationData[newApplicationId] = newApplicationData;
+      const [currentApplicationRef, newApplicationRef] = [
+        doc(db, 'tenants', tenantId, 'applications', currentApplicationDocId),
+        doc(db, 'tenants', tenantId, 'applications', newTenantAppDocId),
+      ];
 
-      // Update the user document
-      await updateDoc(userRef, {
-        applicationData: updatedApplicationData,
-        updatedAt: new Date()
+      // Soft-delete current application and create the new application
+      await updateDoc(currentApplicationRef, {
+        status: 'deleted',
+        deletedAt: serverTimestamp(),
+        deletedBy: user?.uid,
+        updatedAt: serverTimestamp(),
       });
+      await setDoc(
+        newApplicationRef,
+        {
+          ...newApplicationData,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
 
       // TODO: Log activity
 
@@ -738,10 +752,12 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       // Get the first connected job post to use as the jobId
       const jobId = connectedJobPosts[0]?.id || `manual_${Date.now()}`;
       const applicationId = `${tenantId}_${jobId}`;
+      const tenantAppDocId = `${selectedUserId}_${jobId}`;
       
       // Create application data
       const applicationData = {
         applicationId,
+        id: tenantAppDocId,
         jobId,
         jobOrderId: jobOrderId,
         jobOrderName: jobOrder.jobOrderName || '',
@@ -760,12 +776,25 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         addedBy: user?.uid
       };
       
-      // Update user document
+      // 1) Create tenant application doc (source of truth for recruiter application list)
+      const tenantApplicationRef = doc(db, 'tenants', tenantId, 'applications', tenantAppDocId);
+      await setDoc(
+        tenantApplicationRef,
+        {
+          ...applicationData,
+          tenantId,
+          userId: selectedUserId,
+          status: 'submitted',
+          candidate: false,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      // Read user profile data for immediate local row update (no user application mirror write)
       const userRef = doc(db, 'users', selectedUserId);
-      await updateDoc(userRef, {
-        [`applicationData.${applicationId}`]: applicationData,
-        updatedAt: new Date()
-      });
+      const userDoc = await getDoc(userRef);
       
       // TODO: Log activity
 
@@ -781,15 +810,18 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       } catch (queueErr) {
       }
       
-      // Refresh applicants list - re-fetch to get Firestore Timestamp
-      const userDoc = await getDoc(userRef);
       if (userDoc.exists()) {
         const userData = userDoc.data();
-        const savedApplicationData = userData.applicationData?.[applicationId];
+        const savedApplicationData = {
+          ...applicationData,
+          tenantId,
+          userId: selectedUserId,
+          id: tenantAppDocId,
+        };
         
         // Calculate Profile Score
         const profileScore = calculateProfileScore(userData);
-        const fitScore = savedApplicationData?.scores?.fitScore ?? null;
+        const fitScore = (savedApplicationData as any)?.scores?.fitScore ?? null;
         
         const newApplicant: Applicant = {
           uid: selectedUserId,
@@ -799,12 +831,14 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           email: userData.email || '',
           phone: userData.phone || userData.phoneE164 || '',
           avatar: userData.avatar,
-          applicationData: savedApplicationData,
+          applicationData: {
+            ...savedApplicationData,
+          },
           city: userData.city || userData.addressInfo?.city || '',
           state: userData.state || userData.addressInfo?.state || '',
           workEligibility: userData.workEligibility || false,
           phoneVerified: userData.phoneVerified || false,
-          appliedAt: savedApplicationData?.appliedAt,
+          appliedAt: savedApplicationData.appliedAt,
           applicationStatus: 'submitted',
           profileScore,
           fitScore
@@ -872,10 +906,84 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           sx={{ borderBottom: 1, borderColor: 'divider' }}
         />
         <CardContent sx={{ p: 0 }}>
+          {isSomeSelected && (
+            <Box
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                px: 2,
+                py: 1.5,
+                borderBottom: 1,
+                borderColor: 'divider',
+                bgcolor: 'action.hover',
+              }}
+            >
+              <Typography variant="body2" color="text.secondary">
+                {selectedApplicantIds.size} selected
+              </Typography>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<EmailIcon />}
+                onClick={() => {
+                  setBulkDrawerChannel('email');
+                  setBulkDrawerOpen(true);
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Bulk Email
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<SmsIcon />}
+                onClick={() => {
+                  setBulkDrawerChannel('sms');
+                  setBulkDrawerOpen(true);
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Bulk SMS
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<CheckCircleIcon />}
+                onClick={handleOpenBulkStatusMenu}
+              >
+                Change status
+              </Button>
+              <Menu
+                anchorEl={bulkStatusMenuAnchor}
+                open={Boolean(bulkStatusMenuAnchor)}
+                onClose={handleCloseBulkStatusMenu}
+                anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+              >
+                <MenuItem onClick={() => handleBulkChangeStatus('submitted')}>Submitted</MenuItem>
+                <MenuItem onClick={() => handleBulkChangeStatus('accepted')}>Accepted</MenuItem>
+                <MenuItem onClick={() => handleBulkChangeStatus('waitlisted')}>Waitlisted</MenuItem>
+                <MenuItem onClick={() => handleBulkChangeStatus('rejected')}>Rejected</MenuItem>
+              </Menu>
+              <Button size="small" onClick={() => setSelectedApplicantIds(new Set())}>
+                Clear selection
+              </Button>
+            </Box>
+          )}
           <TableContainer>
             <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'grey.50' }}>
+                <TableCell padding="checkbox" sx={{ width: 48 }}>
+                  <Checkbox
+                    indeterminate={isSomeSelected && !isAllSelected}
+                    checked={isAllSelected}
+                    onChange={handleSelectAll}
+                    size="small"
+                    aria-label="select all applicants"
+                  />
+                </TableCell>
                 <TableCell sx={{ width: 60 }}></TableCell>
                 <TableCell>Applicant</TableCell>
                 <TableCell>Contact</TableCell>
@@ -907,6 +1015,15 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   hover
                   sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
                 >
+                  <TableCell padding="checkbox" sx={{ width: 48 }}>
+                    <Checkbox
+                      checked={selectedApplicantIds.has(applicant.uid)}
+                      onChange={() => handleSelectOne(applicant.uid)}
+                      size="small"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${applicant.displayName}`}
+                    />
+                  </TableCell>
                   <TableCell sx={{ py: 1 }}>
                     <FavoriteButton
                       itemId={applicant.uid}
@@ -1233,6 +1350,20 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         </Button>
       </DialogActions>
     </Dialog>
+
+    <MessageDrawer
+      open={bulkDrawerOpen}
+      onClose={() => setBulkDrawerOpen(false)}
+      recipients={bulkRecipientsAndIds.recipients}
+      tenantId={tenantId}
+      bulkSystemMode={true}
+      recipientUserIds={bulkRecipientsAndIds.recipientUserIds}
+      defaultChannels={[bulkDrawerChannel]}
+      onSend={() => {
+        setSelectedApplicantIds(new Set());
+        setBulkDrawerOpen(false);
+      }}
+    />
     </>
   );
 };

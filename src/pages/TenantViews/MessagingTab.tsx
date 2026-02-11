@@ -3,7 +3,7 @@
  * Manage SMS and Email templates and recruiter phone numbers
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -39,6 +39,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   ButtonGroup,
+  TableSortLabel,
 } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -94,7 +95,11 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
-  
+
+  // Table sort (Name, Trigger, Message Type)
+  const [templateSortBy, setTemplateSortBy] = useState<'name' | 'trigger' | 'messageType'>('name');
+  const [templateSortOrder, setTemplateSortOrder] = useState<'asc' | 'desc'>('asc');
+
   // Template dialog state
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<UnifiedMessageTemplate | null>(null);
@@ -125,17 +130,29 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     ruleForm.deliveryChannels.email && !ruleForm.deliveryChannels.sms
       ? 'email'
       : ruleForm.deliveryChannels.sms && !ruleForm.deliveryChannels.email
-        ? 'sms'
-        : channelTab;
+      ? 'sms'
+      : channelTab;
   const [previewText, setPreviewText] = useState('');
   const [previewMode, setPreviewMode] = useState<'desktop' | 'mobile'>('desktop');
-  
+
   // Test send dialog state
   const [testSendDialogOpen, setTestSendDialogOpen] = useState(false);
-  const [testRecipients, setTestRecipients] = useState<Array<{ id: string; name: string; email?: string; phone?: string; securityLevel?: number; securityLevelLabel?: string }>>([]);
+  const [testRecipients, setTestRecipients] = useState<
+    Array<{
+      id: string;
+      name: string;
+      email?: string;
+      phone?: string;
+      securityLevel?: number;
+      securityLevelLabel?: string;
+    }>
+  >([]);
   const [selectedTestRecipient, setSelectedTestRecipient] = useState<string>('');
   const [testSending, setTestSending] = useState(false);
-  const [testSendResult, setTestSendResult] = useState<{ success: boolean; message?: string } | null>(null);
+  const [testSendResult, setTestSendResult] = useState<{
+    success: boolean;
+    message?: string;
+  } | null>(null);
   const [testDiagnostics, setTestDiagnostics] = useState<{
     missingVariables: string[];
     resolvedVariablesCount: number;
@@ -144,7 +161,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
   useEffect(() => {
     if (tenantId) {
-    loadTemplates();
+      loadTemplates();
       loadMessageTypes();
       loadAutomationRules();
       loadTriggerCatalog();
@@ -182,10 +199,10 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       // Query all users and filter client-side to include all security levels
       const usersQuery = query(
         collection(db, 'users'),
-        limit(500) // Increased limit to get more users
+        limit(500), // Increased limit to get more users
       );
       const snapshot = await getDocs(usersQuery);
-      
+
       // Security level labels for display
       const securityLevelLabels: Record<number, string> = {
         0: 'Applicant',
@@ -197,20 +214,24 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         6: 'Manager',
         7: 'Admin',
       };
-      
+
       const recipients = snapshot.docs
-        .map(doc => {
+        .map((doc) => {
           const data = doc.data();
-          
+
           // Check if user belongs to this tenant
           if (!data.tenantIds || !data.tenantIds[tenantId]) {
             return null;
           }
-          
-          const name = `${data.firstName || ''} ${data.lastName || ''}`.trim() || data.displayName || data.email || 'Unknown';
+
+          const name =
+            `${data.firstName || ''} ${data.lastName || ''}`.trim() ||
+            data.displayName ||
+            data.email ||
+            'Unknown';
           const tenantData = data.tenantIds[tenantId] || {};
           const securityLevel = parseInt(tenantData.securityLevel || data.securityLevel || '0');
-          
+
           return {
             id: doc.id,
             name,
@@ -228,7 +249,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
           }
           return a.name.localeCompare(b.name);
         });
-      
+
       setTestRecipients(recipients);
     } catch (err) {
       console.error('Failed to load test recipients:', err);
@@ -260,8 +281,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       const result = await getMessageTypes(tenantId);
       if (result.success) {
         // Filter to only types that support the current channel
-        const filtered = result.data.filter(type => 
-          type.enabled && type.defaultChannels.includes(channelTab)
+        const filtered = result.data.filter(
+          (type) => type.enabled && type.defaultChannels.includes(channelTab),
         );
         setMessageTypes(filtered);
       }
@@ -404,7 +425,13 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }, 500);
     return () => clearTimeout(timeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateForm.body, templateForm.htmlBody, templateForm.subject, templateForm.messageTypeId, derivedTemplateChannel]);
+  }, [
+    templateForm.body,
+    templateForm.htmlBody,
+    templateForm.subject,
+    templateForm.messageTypeId,
+    derivedTemplateChannel,
+  ]);
 
   const handleSaveTemplate = async () => {
     if (!templateForm.name || !templateForm.messageTypeId) {
@@ -437,14 +464,15 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
     try {
       // Extract variables from body, htmlBody, and subject
-      const allText = [
-        templateForm.body,
-        templateForm.htmlBody,
-        templateForm.subject,
-      ].filter(Boolean).join(' ');
+      const allText = [templateForm.body, templateForm.htmlBody, templateForm.subject]
+        .filter(Boolean)
+        .join(' ');
       const variables = extractVariables(allText);
 
-      const templateData: Omit<UnifiedMessageTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'> = {
+      const templateData: Omit<
+        UnifiedMessageTemplate,
+        'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'
+      > = {
         messageTypeId: templateForm.messageTypeId,
         channel: derivedTemplateChannel,
         language: templateForm.language || 'en',
@@ -467,7 +495,6 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
           createdBy: editingTemplate.createdBy,
         });
         savedTemplateId = updateResult.data.id;
-        setSuccess(true);
       } else {
         const createResult = await createTemplate({
           ...templateData,
@@ -475,7 +502,6 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
           createdBy: user?.uid || 'system',
         });
         savedTemplateId = createResult.data.id;
-        setSuccess(true);
       }
 
       if (savedTemplateId && ruleForm.triggerKey) {
@@ -498,10 +524,12 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         }
       }
 
+      setSuccess(true);
       handleCloseTemplateDialog();
       loadTemplates();
       loadAutomationRules();
     } catch (err: any) {
+      setSuccess(false);
       setError(err.message || 'Failed to save template');
     } finally {
       setLoading(false);
@@ -553,7 +581,10 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
   const handleDuplicateTemplate = async (template: UnifiedMessageTemplate) => {
     try {
-      const duplicatedTemplate: Omit<UnifiedMessageTemplate, 'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'> = {
+      const duplicatedTemplate: Omit<
+        UnifiedMessageTemplate,
+        'id' | 'createdAt' | 'updatedAt' | 'version' | 'createdBy'
+      > = {
         messageTypeId: template.messageTypeId,
         channel: template.channel,
         language: template.language,
@@ -579,9 +610,86 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   };
 
   const getMessageTypeLabel = (messageTypeId: string): string => {
-    const type = messageTypes.find(t => t.id === messageTypeId);
+    const type = messageTypes.find((t) => t.id === messageTypeId);
     return type?.label || messageTypeId;
   };
+
+  const sortedTemplates = useMemo(() => {
+    const getTriggerKey = (t: UnifiedMessageTemplate) =>
+      automationRules.find((r) => r.templateId === t.id)?.triggerKey ?? '';
+    const getMessageType = (t: UnifiedMessageTemplate) => getMessageTypeLabel(t.messageTypeId);
+    const cmp = (a: UnifiedMessageTemplate, b: UnifiedMessageTemplate): number => {
+      let aVal: string, bVal: string;
+      if (templateSortBy === 'name') {
+        aVal = (a.name || '').toLowerCase();
+        bVal = (b.name || '').toLowerCase();
+      } else if (templateSortBy === 'trigger') {
+        aVal = getTriggerKey(a).toLowerCase();
+        bVal = getTriggerKey(b).toLowerCase();
+      } else {
+        aVal = getMessageType(a).toLowerCase();
+        bVal = getMessageType(b).toLowerCase();
+      }
+      const order = templateSortOrder === 'asc' ? 1 : -1;
+      return order * (aVal < bVal ? -1 : aVal > bVal ? 1 : 0);
+    };
+    return [...templates].sort(cmp);
+  }, [templates, automationRules, messageTypes, templateSortBy, templateSortOrder]);
+
+  const handleTemplateSort = (column: 'name' | 'trigger' | 'messageType') => {
+    if (templateSortBy === column) {
+      setTemplateSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setTemplateSortBy(column);
+      setTemplateSortOrder('asc');
+    }
+  };
+
+  const missingEsDiagnostics = useMemo(() => {
+    const templateById = new Map(
+      templates
+        .filter((template) => !!template.id)
+        .map((template) => [template.id as string, template]),
+    );
+
+    const hasSpanishVariant = (messageTypeId: string, channel: Channel) =>
+      templates.some(
+        (template) =>
+          template.messageTypeId === messageTypeId &&
+          template.channel === channel &&
+          template.language === 'es',
+      );
+
+    return automationRules
+      .filter((rule) => rule.status === 'active')
+      .map((rule) => {
+        const linkedTemplate = rule.templateId ? templateById.get(rule.templateId) : undefined;
+        if (!linkedTemplate) {
+          return {
+            ruleId: rule.ruleId,
+            triggerKey: rule.triggerKey,
+            messageTypeId: '',
+            channel: 'sms' as Channel,
+            reason: 'Missing linked template',
+          };
+        }
+
+        const missingSpanish = !hasSpanishVariant(
+          linkedTemplate.messageTypeId,
+          linkedTemplate.channel,
+        );
+        if (!missingSpanish) return null;
+
+        return {
+          ruleId: rule.ruleId,
+          triggerKey: rule.triggerKey,
+          messageTypeId: linkedTemplate.messageTypeId,
+          channel: linkedTemplate.channel,
+          reason: 'Missing ES variant',
+        };
+      })
+      .filter((item): item is NonNullable<typeof item> => item !== null);
+  }, [automationRules, templates]);
 
   const handleTestSend = async () => {
     if (!selectedTestRecipient || !templateForm.messageTypeId) {
@@ -592,7 +700,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     // Warn if template is not saved yet
     if (!editingTemplate?.id) {
       const shouldContinue = window.confirm(
-        'This template has not been saved yet. The test will use the template data from the form. Do you want to continue?'
+        'This template has not been saved yet. The test will use the template data from the form. Do you want to continue?',
       );
       if (!shouldContinue) {
         return;
@@ -617,9 +725,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         });
         setTestDiagnostics({
           missingVariables: automationResult.missingVariables || [],
-          resolvedVariablesCount: Object.keys(
-            automationResult.resolvedVariables || {}
-          ).length,
+          resolvedVariablesCount: Object.keys(automationResult.resolvedVariables || {}).length,
           renderedBody: automationResult.renderedBody,
         });
         const sentViaRule = !!automationResult.dispatchResult?.sent;
@@ -650,8 +756,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         shiftTime: '9:00 AM',
         shiftEndTime: '5:00 PM',
         companyName: 'Test Company',
-        email: testRecipients.find(r => r.id === selectedTestRecipient)?.email || '',
-        phone: testRecipients.find(r => r.id === selectedTestRecipient)?.phone || '',
+        email: testRecipients.find((r) => r.id === selectedTestRecipient)?.email || '',
+        phone: testRecipients.find((r) => r.id === selectedTestRecipient)?.phone || '',
       };
 
       const result = await sendTestMessage(
@@ -659,17 +765,21 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         selectedTestRecipient,
         templateForm.messageTypeId,
         sampleContext,
-        [derivedTemplateChannel]
+        [derivedTemplateChannel],
       );
 
       if (result.success) {
         setTestSendResult({
           success: true,
-          message: `Test message sent successfully via ${result.dispatchedChannels?.join(', ') || 'selected channel'}`,
+          message: `Test message sent successfully via ${
+            result.dispatchedChannels?.join(', ') || 'selected channel'
+          }`,
         });
         setSuccess(true);
       } else {
-        const errorMsg = result.warnings?.join(', ') || 'Failed to send test message. Please check that the template exists and is active.';
+        const errorMsg =
+          result.warnings?.join(', ') ||
+          'Failed to send test message. Please check that the template exists and is active.';
         setTestSendResult({
           success: false,
           message: errorMsg,
@@ -681,7 +791,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       setError(errorMessage);
       setTestSendResult({
         success: false,
-        message: errorMessage.includes('index') 
+        message: errorMessage.includes('index')
           ? 'Template lookup failed. A Firestore index may need to be created. Check the console for details.'
           : errorMessage,
       });
@@ -693,7 +803,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
   return (
     <Box sx={{ width: '100%', px: { xs: 2, md: 3 }, py: 2 }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Manage SMS and Email message templates and recruiter phone number assignments. Templates support variables like {'{firstName}'}, {'{jobTitle}'}, and {'{locationCity}'}.
+        Manage SMS and Email message templates and recruiter phone number assignments. Templates
+        support variables like {'{firstName}'}, {'{jobTitle}'}, and {'{locationCity}'}.
       </Typography>
 
       {/* Main Section Selector - Using Button Group */}
@@ -703,14 +814,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             variant={subTab === 0 ? 'contained' : 'outlined'}
             startIcon={<SmsIcon />}
             onClick={() => setSubTab(0)}
-            sx={{ 
+            sx={{
               textTransform: 'none',
               px: 3,
-              ...(subTab === 0 && { 
+              ...(subTab === 0 && {
                 bgcolor: 'primary.main',
                 color: 'white',
-                '&:hover': { bgcolor: 'primary.dark' }
-              })
+                '&:hover': { bgcolor: 'primary.dark' },
+              }),
             }}
           >
             Templates
@@ -719,14 +830,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             variant={subTab === 1 ? 'contained' : 'outlined'}
             startIcon={<PhoneIcon />}
             onClick={() => setSubTab(1)}
-            sx={{ 
+            sx={{
               textTransform: 'none',
               px: 3,
-              ...(subTab === 1 && { 
+              ...(subTab === 1 && {
                 bgcolor: 'primary.main',
                 color: 'white',
-                '&:hover': { bgcolor: 'primary.dark' }
-              })
+                '&:hover': { bgcolor: 'primary.dark' },
+              }),
             }}
           >
             Recruiter Numbers
@@ -738,7 +849,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       {subTab === 0 && (
         <Box>
           {/* Channel Selector - Using Toggle Buttons */}
-          <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box
+            sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+          >
             <Stack direction="row" spacing={1} alignItems="center">
               <ToggleButtonGroup
                 value={channelTab}
@@ -771,12 +884,18 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 aria-label="language filter"
                 sx={{ height: 40 }}
               >
-                <ToggleButton value="all" aria-label="All languages">ALL</ToggleButton>
-                <ToggleButton value="en" aria-label="English templates">EN</ToggleButton>
-                <ToggleButton value="es" aria-label="Spanish templates">ES</ToggleButton>
+                <ToggleButton value="all" aria-label="All languages">
+                  ALL
+                </ToggleButton>
+                <ToggleButton value="en" aria-label="English templates">
+                  EN
+                </ToggleButton>
+                <ToggleButton value="es" aria-label="Spanish templates">
+                  ES
+                </ToggleButton>
               </ToggleButtonGroup>
             </Stack>
-            
+
             <Button
               variant="contained"
               startIcon={<AddIcon />}
@@ -791,9 +910,25 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               {channelTab === 'sms' ? 'SMS' : 'Email'} Templates
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              Tenant: {tenantId} {languageFilter !== 'all' ? `- ${languageFilter.toUpperCase()} only` : ''}
+              Tenant: {tenantId}{' '}
+              {languageFilter !== 'all' ? `- ${languageFilter.toUpperCase()} only` : ''}
             </Typography>
           </Box>
+
+          {missingEsDiagnostics.length > 0 && (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              {`${missingEsDiagnostics.length} active automation template(s) are missing an ES variant.`}{' '}
+              Add Spanish templates for these trigger/message-type pairs:{' '}
+              {missingEsDiagnostics
+                .map(
+                  (item) =>
+                    `${item.triggerKey} -> ${getMessageTypeLabel(
+                      item.messageTypeId,
+                    )} (${item.channel.toUpperCase()})`,
+                )
+                .join(', ')}
+            </Alert>
+          )}
 
           {loading && templates.length === 0 ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
@@ -801,22 +936,43 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             </Box>
           ) : templates.length === 0 ? (
             <Alert severity="info">
-              No {channelTab === 'sms' ? 'SMS' : 'email'} templates found. Create your first template to get started.
+              No {channelTab === 'sms' ? 'SMS' : 'email'} templates found. Create your first
+              template to get started.
             </Alert>
           ) : (
-            <TableContainer 
-              component={Paper} 
-              variant="outlined"
-              sx={{ overflowX: 'auto' }}
-            >
+            <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
               <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1 } }}>
                 <TableHead>
                   <TableRow>
-                    <TableCell>Name</TableCell>
+                    <TableCell sortDirection={templateSortBy === 'name' ? templateSortOrder : false}>
+                      <TableSortLabel
+                        active={templateSortBy === 'name'}
+                        direction={templateSortBy === 'name' ? templateSortOrder : 'asc'}
+                        onClick={() => handleTemplateSort('name')}
+                      >
+                        Name
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell>Template ID</TableCell>
-                    <TableCell>Trigger</TableCell>
+                    <TableCell sortDirection={templateSortBy === 'trigger' ? templateSortOrder : false}>
+                      <TableSortLabel
+                        active={templateSortBy === 'trigger'}
+                        direction={templateSortBy === 'trigger' ? templateSortOrder : 'asc'}
+                        onClick={() => handleTemplateSort('trigger')}
+                      >
+                        Trigger
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell>Delivery</TableCell>
-                    <TableCell>Message Type</TableCell>
+                    <TableCell sortDirection={templateSortBy === 'messageType' ? templateSortOrder : false}>
+                      <TableSortLabel
+                        active={templateSortBy === 'messageType'}
+                        direction={templateSortBy === 'messageType' ? templateSortOrder : 'asc'}
+                        onClick={() => handleTemplateSort('messageType')}
+                      >
+                        Message Type
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell>Language</TableCell>
                     <TableCell>Preview</TableCell>
                     <TableCell>Status</TableCell>
@@ -824,118 +980,132 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {templates.map((template) => (
+                  {sortedTemplates.map((template) =>
                     (() => {
-                      const linkedRule = automationRules.find((rule) => rule.templateId === template.id);
-                      return (
-                    <TableRow key={template.id}>
-                      <TableCell>
-                        <Typography variant="body2" fontWeight={500}>
-                          {template.name}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
-                          {template.id}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">
-                          {linkedRule?.triggerKey || 'Not configured'}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Stack direction="row" spacing={0.5}>
-                          {linkedRule?.deliveryChannels?.sms && <Chip label="SMS" size="small" variant="outlined" />}
-                          {linkedRule?.deliveryChannels?.email && <Chip label="EMAIL" size="small" variant="outlined" />}
-                          {linkedRule?.deliveryChannels?.push && <Chip label="PUSH" size="small" variant="outlined" />}
-                          {!linkedRule && <Typography variant="caption" color="text.secondary">None</Typography>}
-                        </Stack>
-                      </TableCell>
-                      <TableCell>
-                        <Chip 
-                          label={getMessageTypeLabel(template.messageTypeId)} 
-                          size="small" 
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={template.language.toUpperCase()} size="small" />
-                      </TableCell>
-                      <TableCell>
-                        <Tooltip title={template.body || template.htmlBody || ''}>
-                          <Typography
-                            variant="body2"
-                            sx={{
-                              maxWidth: 300,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {template.channel === 'email' && template.subject ? (
-                              <strong>{template.subject}</strong>
-                            ) : (
-                              (template.body || template.htmlBody || '').substring(0, 60)
-                            )}
-                            ...
-                          </Typography>
-                        </Tooltip>
-                      </TableCell>
-                      <TableCell>
-                        <Stack direction="row" spacing={1} alignItems="center">
-                          <FormControlLabel
-                            control={
-                              <Switch
-                                checked={template.active}
-                                onChange={() => handleToggleTemplate(template)}
-                                size="small"
-                              />
-                            }
-                            label={template.active ? 'Active' : 'Inactive'}
-                          />
-                          {linkedRule && (
-                            <Chip
-                              size="small"
-                              color={linkedRule.status === 'active' ? 'success' : 'default'}
-                              label={linkedRule.status === 'active' ? 'Rule Active' : 'Rule Draft'}
-                            />
-                          )}
-                        </Stack>
-                      </TableCell>
-                      <TableCell align="right">
-                        <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                          <Tooltip title="Edit">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleOpenTemplateDialog(template)}
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Duplicate">
-                            <IconButton
-                              size="small"
-                              onClick={() => handleDuplicateTemplate(template)}
-                            >
-                              <ContentCopyIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                          <Tooltip title="Delete">
-                            <IconButton
-                              size="small"
-                              color="error"
-                              onClick={() => template.id && handleDeleteTemplate(template.id)}
-                            >
-                              <DeleteIcon fontSize="small" />
-                            </IconButton>
-                          </Tooltip>
-                        </Stack>
-                      </TableCell>
-                    </TableRow>
+                      const linkedRule = automationRules.find(
+                        (rule) => rule.templateId === template.id,
                       );
-                    })()
-                  ))}
+                      return (
+                        <TableRow key={template.id}>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>
+                              {template.name}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                              {template.id}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2">
+                              {linkedRule?.triggerKey || 'Not configured'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={0.5}>
+                              {linkedRule?.deliveryChannels?.sms && (
+                                <Chip label="SMS" size="small" variant="outlined" />
+                              )}
+                              {linkedRule?.deliveryChannels?.email && (
+                                <Chip label="EMAIL" size="small" variant="outlined" />
+                              )}
+                              {linkedRule?.deliveryChannels?.push && (
+                                <Chip label="PUSH" size="small" variant="outlined" />
+                              )}
+                              {!linkedRule && (
+                                <Typography variant="caption" color="text.secondary">
+                                  None
+                                </Typography>
+                              )}
+                            </Stack>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={getMessageTypeLabel(template.messageTypeId)}
+                              size="small"
+                              variant="outlined"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Chip label={template.language.toUpperCase()} size="small" />
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip title={template.body || template.htmlBody || ''}>
+                              <Typography
+                                variant="body2"
+                                sx={{
+                                  maxWidth: 300,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                              >
+                                {template.channel === 'email' && template.subject ? (
+                                  <strong>{template.subject}</strong>
+                                ) : (
+                                  (template.body || template.htmlBody || '').substring(0, 60)
+                                )}
+                                ...
+                              </Typography>
+                            </Tooltip>
+                          </TableCell>
+                          <TableCell>
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <FormControlLabel
+                                control={
+                                  <Switch
+                                    checked={template.active}
+                                    onChange={() => handleToggleTemplate(template)}
+                                    size="small"
+                                  />
+                                }
+                                label={template.active ? 'Active' : 'Inactive'}
+                              />
+                              {linkedRule && (
+                                <Chip
+                                  size="small"
+                                  color={linkedRule.status === 'active' ? 'success' : 'default'}
+                                  label={
+                                    linkedRule.status === 'active' ? 'Rule Active' : 'Rule Draft'
+                                  }
+                                />
+                              )}
+                            </Stack>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+                              <Tooltip title="Edit">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleOpenTemplateDialog(template)}
+                                >
+                                  <EditIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Duplicate">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleDuplicateTemplate(template)}
+                                >
+                                  <ContentCopyIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Delete">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => template.id && handleDeleteTemplate(template.id)}
+                                >
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </Stack>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })(),
+                  )}
                 </TableBody>
               </Table>
             </TableContainer>
@@ -944,20 +1114,11 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
       )}
 
       {/* Recruiter Numbers Tab */}
-      {subTab === 1 && (
-        <RecruiterNumbersTab tenantId={tenantId} />
-      )}
+      {subTab === 1 && <RecruiterNumbersTab tenantId={tenantId} />}
 
       {/* Template Dialog */}
-      <Dialog
-        open={templateDialogOpen}
-        onClose={handleCloseTemplateDialog}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          {editingTemplate ? 'Edit Template' : 'Create Template'}
-        </DialogTitle>
+      <Dialog open={templateDialogOpen} onClose={handleCloseTemplateDialog} maxWidth="md" fullWidth>
+        <DialogTitle>{editingTemplate ? 'Edit Template' : 'Create Template'}</DialogTitle>
         <DialogContent>
           <Stack spacing={3} sx={{ mt: 1 }}>
             <TextField
@@ -973,7 +1134,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               <Select
                 value={templateForm.messageTypeId}
                 label="Message Type"
-                onChange={(e) => setTemplateForm({ ...templateForm, messageTypeId: e.target.value })}
+                onChange={(e) =>
+                  setTemplateForm({ ...templateForm, messageTypeId: e.target.value })
+                }
               >
                 {(() => {
                   // Group message types by category
@@ -985,7 +1148,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     return acc;
                   }, {} as Record<string, MessageTypeConfig[]>);
 
-                  const categoryOrder = ['system', 'transactional', 'compliance', 'engagement', 'chat', 'marketing'];
+                  const categoryOrder = [
+                    'system',
+                    'transactional',
+                    'compliance',
+                    'engagement',
+                    'chat',
+                    'marketing',
+                  ];
                   const categoryLabels: Record<string, string> = {
                     system: 'System',
                     transactional: 'Transactional',
@@ -995,28 +1165,35 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     marketing: 'Marketing',
                   };
 
-                  return categoryOrder.map(category => {
-                    const types = grouped[category] || [];
-                    if (types.length === 0) return null;
-                    
-                    return [
-                      <MenuItem key={`category-${category}`} disabled sx={{ fontWeight: 600 }}>
-                        {categoryLabels[category] || category}
-                      </MenuItem>,
-                      ...types.map((type) => (
-                        <MenuItem key={type.id} value={type.id} sx={{ pl: 3 }}>
-                    <Box>
-                            <Typography variant="body2">{type.label}</Typography>
-                            {type.description && (
-                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                {type.description}
-                      </Typography>
-                            )}
-                    </Box>
-                  </MenuItem>
-                      )),
-                    ];
-                  }).flat().filter(Boolean);
+                  return categoryOrder
+                    .map((category) => {
+                      const types = grouped[category] || [];
+                      if (types.length === 0) return null;
+
+                      return [
+                        <MenuItem key={`category-${category}`} disabled sx={{ fontWeight: 600 }}>
+                          {categoryLabels[category] || category}
+                        </MenuItem>,
+                        ...types.map((type) => (
+                          <MenuItem key={type.id} value={type.id} sx={{ pl: 3 }}>
+                            <Box>
+                              <Typography variant="body2">{type.label}</Typography>
+                              {type.description && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{ display: 'block' }}
+                                >
+                                  {type.description}
+                                </Typography>
+                              )}
+                            </Box>
+                          </MenuItem>
+                        )),
+                      ];
+                    })
+                    .flat()
+                    .filter(Boolean);
                 })()}
               </Select>
             </FormControl>
@@ -1028,7 +1205,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                   <Select
                     value={templateForm.language || 'en'}
                     label="Language"
-                    onChange={(e) => setTemplateForm({ ...templateForm, language: e.target.value as LanguageCode })}
+                    onChange={(e) =>
+                      setTemplateForm({ ...templateForm, language: e.target.value as LanguageCode })
+                    }
                   >
                     <MenuItem value="en">English</MenuItem>
                     <MenuItem value="es">Spanish</MenuItem>
@@ -1045,9 +1224,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     <TextField
                       label="Rule ID"
                       value={ruleForm.ruleId}
-                      onChange={(e) =>
-                        setRuleForm((prev) => ({ ...prev, ruleId: e.target.value }))
-                      }
+                      onChange={(e) => setRuleForm((prev) => ({ ...prev, ruleId: e.target.value }))}
                       fullWidth
                       helperText="Unique key used by triggers (auto-filled if blank)."
                     />
@@ -1161,11 +1338,11 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
             {/* Email Subject Field */}
             {derivedTemplateChannel === 'email' && (
-                  <TextField
+              <TextField
                 label="Email Subject"
                 value={templateForm.subject || ''}
                 onChange={(e) => setTemplateForm({ ...templateForm, subject: e.target.value })}
-                    fullWidth
+                fullWidth
                 required
                 helperText="Subject line for the email"
               />
@@ -1179,17 +1356,19 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                   Email Body
                 </Typography>
                 <EmailTemplateEditor
-                  key={`email-editor-${editingTemplate?.id || 'new'}-${templateForm.htmlBody?.substring(0, 50) || ''}`}
+                  key={`email-editor-${editingTemplate?.id || 'new'}-${
+                    templateForm.htmlBody?.substring(0, 50) || ''
+                  }`}
                   htmlBody={templateForm.htmlBody || templateForm.body || ''}
                   onChange={(newHtmlBody) => {
                     setTemplateForm({ ...templateForm, htmlBody: newHtmlBody, body: newHtmlBody });
                     // Auto-extract variables
                     const allText = [newHtmlBody, templateForm.subject].filter(Boolean).join(' ');
-                    setTemplateForm(prev => ({ ...prev, variables: extractVariables(allText) }));
+                    setTemplateForm((prev) => ({ ...prev, variables: extractVariables(allText) }));
                   }}
                   variables={templateForm.variables || []}
                   onVariablesChange={(variables) => {
-                    setTemplateForm(prev => ({ ...prev, variables }));
+                    setTemplateForm((prev) => ({ ...prev, variables }));
                   }}
                   availableVariables={[
                     'firstName',
@@ -1215,23 +1394,23 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               </Box>
             ) : (
               /* SMS Template Body */
-            <TextField
-              label="Message Template"
+              <TextField
+                label="Message Template"
                 value={templateForm.body}
                 onChange={(e) => {
                   const newBody = e.target.value;
                   setTemplateForm({ ...templateForm, body: newBody });
                   // Auto-extract variables
                   const allText = [newBody, templateForm.subject].filter(Boolean).join(' ');
-                  setTemplateForm(prev => ({ ...prev, variables: extractVariables(allText) }));
+                  setTemplateForm((prev) => ({ ...prev, variables: extractVariables(allText) }));
                 }}
-              fullWidth
-              required
-              multiline
-              rows={4}
+                fullWidth
+                required
+                multiline
+                rows={4}
                 helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, etc."
                 placeholder="Hi {{firstName}}. Thank you for applying to be a {{jobTitle}} in {{locationCity}}."
-            />
+              />
             )}
 
             {/* Variables Display */}
@@ -1256,7 +1435,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             {/* Enhanced Preview */}
             {previewText && (
               <Box>
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    mb: 1,
+                  }}
+                >
                   <Typography variant="subtitle2" fontWeight={600}>
                     Preview
                   </Typography>
@@ -1281,10 +1467,10 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     </Stack>
                   )}
                 </Box>
-                <Paper 
-                  variant="outlined" 
-                  sx={{ 
-                    p: 2, 
+                <Paper
+                  variant="outlined"
+                  sx={{
+                    p: 2,
                     bgcolor: 'grey.50',
                     maxWidth: previewMode === 'mobile' ? '375px' : '100%',
                     mx: previewMode === 'mobile' ? 'auto' : 0,
@@ -1293,7 +1479,11 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 >
                   {derivedTemplateChannel === 'email' && templateForm.subject && (
                     <Box sx={{ mb: 2, pb: 1, borderBottom: '1px solid #e0e0e0' }}>
-                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: 'block', mb: 0.5 }}
+                      >
                         Subject:
                       </Typography>
                       <Typography variant="subtitle1" fontWeight={600}>
@@ -1308,8 +1498,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                       },
                     }}
                     dangerouslySetInnerHTML={
-                      derivedTemplateChannel === 'email' && templateForm.htmlBody 
-                        ? { __html: previewText } 
+                      derivedTemplateChannel === 'email' && templateForm.htmlBody
+                        ? { __html: previewText }
                         : undefined
                     }
                   >
@@ -1325,11 +1515,11 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
             {/* Include STOP Footer (SMS only) */}
             {derivedTemplateChannel === 'sms' && (
-            <FormControlLabel
-              control={
-                <Switch
+              <FormControlLabel
+                control={
+                  <Switch
                     checked={templateForm.includeStopFooter ?? false}
-                  onChange={(e) =>
+                    onChange={(e) =>
                       setTemplateForm({ ...templateForm, includeStopFooter: e.target.checked })
                     }
                   />
@@ -1342,9 +1532,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               control={
                 <Switch
                   checked={templateForm.active ?? true}
-                  onChange={(e) =>
-                    setTemplateForm({ ...templateForm, active: e.target.checked })
-                  }
+                  onChange={(e) => setTemplateForm({ ...templateForm, active: e.target.checked })}
                 />
               }
               label="Active"
@@ -1372,9 +1560,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
             >
               Send Test
             </Button>
-          <Button
-            onClick={handleSaveTemplate}
-            variant="contained"
+            <Button
+              onClick={handleSaveTemplate}
+              variant="contained"
               disabled={
                 loading ||
                 !templateForm.name ||
@@ -1382,9 +1570,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 (!templateForm.body && !templateForm.htmlBody) ||
                 (derivedTemplateChannel === 'email' && !templateForm.subject)
               }
-          >
-            {loading ? <CircularProgress size={20} /> : editingTemplate ? 'Update' : 'Create'}
-          </Button>
+            >
+              {loading ? <CircularProgress size={20} /> : editingTemplate ? 'Update' : 'Create'}
+            </Button>
           </Box>
         </DialogActions>
       </Dialog>
@@ -1417,13 +1605,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         <DialogContent>
           <Stack spacing={3} sx={{ mt: 1 }}>
             <Alert severity="info">
-              Send a test message to verify your template. The message will use sample data for variables.
+              Send a test message to verify your template. The message will use sample data for
+              variables.
             </Alert>
 
             <Autocomplete
               options={testRecipients}
               getOptionLabel={(option) => option.name || 'Unknown'}
-              value={testRecipients.find(r => r.id === selectedTestRecipient) || null}
+              value={testRecipients.find((r) => r.id === selectedTestRecipient) || null}
               onChange={(_, newValue) => setSelectedTestRecipient(newValue?.id || '')}
               renderInput={(params) => (
                 <TextField
@@ -1458,14 +1647,19 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
               )}
               filterOptions={(options, { inputValue }) => {
                 const searchTerm = inputValue.toLowerCase();
-                return options.filter(option =>
-                  option.name.toLowerCase().includes(searchTerm) ||
-                  option.email?.toLowerCase().includes(searchTerm) ||
-                  option.phone?.includes(searchTerm) ||
-                  option.securityLevelLabel?.toLowerCase().includes(searchTerm)
+                return options.filter(
+                  (option) =>
+                    option.name.toLowerCase().includes(searchTerm) ||
+                    option.email?.toLowerCase().includes(searchTerm) ||
+                    option.phone?.includes(searchTerm) ||
+                    option.securityLevelLabel?.toLowerCase().includes(searchTerm),
                 );
               }}
-              noOptionsText={testRecipients.length === 0 ? "No recipients found. Users must have an email or phone number." : "No matching recipients"}
+              noOptionsText={
+                testRecipients.length === 0
+                  ? 'No recipients found. Users must have an email or phone number.'
+                  : 'No matching recipients'
+              }
               loading={testRecipients.length === 0}
             />
 
@@ -1545,8 +1739,12 @@ interface RecruiterNumberAssignment {
 const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) => {
   const { user } = useAuth();
   const [assignments, setAssignments] = useState<RecruiterNumberAssignment[]>([]);
-  const [availableNumbers, setAvailableNumbers] = useState<Array<{ phoneNumber: string; sid: string; friendlyName: string }>>([]);
-  const [recruiters, setRecruiters] = useState<Array<{ id: string; name: string; email: string }>>([]);
+  const [availableNumbers, setAvailableNumbers] = useState<
+    Array<{ phoneNumber: string; sid: string; friendlyName: string }>
+  >([]);
+  const [recruiters, setRecruiters] = useState<Array<{ id: string; name: string; email: string }>>(
+    [],
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -1555,7 +1753,15 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
   const [selectedRecruiterId, setSelectedRecruiterId] = useState('');
   const [selectedNumberSid, setSelectedNumberSid] = useState('');
   const [searchAreaCode, setSearchAreaCode] = useState('');
-  const [searchResults, setSearchResults] = useState<Array<{ phoneNumber: string; friendlyName: string; locality?: string; region?: string; capabilities: { voice: boolean; sms: boolean; mms: boolean } }>>([]);
+  const [searchResults, setSearchResults] = useState<
+    Array<{
+      phoneNumber: string;
+      friendlyName: string;
+      locality?: string;
+      region?: string;
+      capabilities: { voice: boolean; sms: boolean; mms: boolean };
+    }>
+  >([]);
   const [searching, setSearching] = useState(false);
 
   // Firebase functions
@@ -1591,62 +1797,65 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
 
       // Load recruiters: must have tenant ID, security level 5-7, and recruiter: true
       // Get all users and filter client-side to avoid index requirements
-      const allUsersQuery = query(
-        collection(db, 'users'),
-        limit(500)
-      );
+      const allUsersQuery = query(collection(db, 'users'), limit(500));
       const allUsersSnapshot = await getDocs(allUsersQuery);
-      
-      console.log(`Loading recruiters for tenant ${tenantId}, total users: ${allUsersSnapshot.docs.length}`);
-      
+
+      console.log(
+        `Loading recruiters for tenant ${tenantId}, total users: ${allUsersSnapshot.docs.length}`,
+      );
+
       // Filter to recruiters with:
       // 1. User has this tenant ID
       // 2. Security level 5-7 (check both root and tenant-specific)
       // 3. recruiter: true
       const recruitersList = allUsersSnapshot.docs
-        .filter(doc => {
+        .filter((doc) => {
           const data = doc.data();
-          
+
           // Check if user has access to this tenant
-          const hasTenantAccess = 
+          const hasTenantAccess =
             data.tenantId === tenantId ||
             data.activeTenantId === tenantId ||
-            (data.tenantIds && (
-              (Array.isArray(data.tenantIds) && data.tenantIds.includes(tenantId)) ||
-              (typeof data.tenantIds === 'object' && tenantId in data.tenantIds)
-            ));
-          
+            (data.tenantIds &&
+              ((Array.isArray(data.tenantIds) && data.tenantIds.includes(tenantId)) ||
+                (typeof data.tenantIds === 'object' && tenantId in data.tenantIds)));
+
           if (!hasTenantAccess) {
             return false;
           }
-          
+
           // Check security level (5-7)
           const rootSecurityLevel = parseInt(data.securityLevel || '0');
-          const tenantSecurityLevel = data.tenantIds?.[tenantId]?.securityLevel 
-            ? parseInt(String(data.tenantIds[tenantId].securityLevel)) 
+          const tenantSecurityLevel = data.tenantIds?.[tenantId]?.securityLevel
+            ? parseInt(String(data.tenantIds[tenantId].securityLevel))
             : null;
-          
+
           // Include if security level is between 5-7 (either root or tenant-specific)
-          const effectiveSecurityLevel = tenantSecurityLevel !== null ? tenantSecurityLevel : rootSecurityLevel;
+          const effectiveSecurityLevel =
+            tenantSecurityLevel !== null ? tenantSecurityLevel : rootSecurityLevel;
           const hasValidSecurityLevel = effectiveSecurityLevel >= 5 && effectiveSecurityLevel <= 7;
-          
+
           if (!hasValidSecurityLevel) {
-            console.log(`User ${data.email} filtered out: security level ${effectiveSecurityLevel} not in range 5-7`);
+            console.log(
+              `User ${data.email} filtered out: security level ${effectiveSecurityLevel} not in range 5-7`,
+            );
             return false;
           }
-          
+
           // Check recruiter flag - must be explicitly true
           // But also check if recruiter field might be stored as string 'true' or boolean true
           const isRecruiter = data.recruiter === true || data.recruiter === 'true';
-          
+
           if (!isRecruiter) {
-            console.log(`User ${data.email} filtered out: recruiter flag is ${data.recruiter} (expected true)`);
+            console.log(
+              `User ${data.email} filtered out: recruiter flag is ${data.recruiter} (expected true)`,
+            );
             return false;
           }
-          
+
           return true;
         })
-        .map(doc => {
+        .map((doc) => {
           const data = doc.data();
           return {
             id: doc.id,
@@ -1654,8 +1863,11 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
             email: data.email,
           };
         });
-      
-      console.log(`Found ${recruitersList.length} recruiters for tenant ${tenantId}:`, recruitersList.map(r => `${r.name} (${r.email})`));
+
+      console.log(
+        `Found ${recruitersList.length} recruiters for tenant ${tenantId}:`,
+        recruitersList.map((r) => `${r.name} (${r.email})`),
+      );
       setRecruiters(recruitersList);
     } catch (err: any) {
       setError(err.message || 'Failed to load data');
@@ -1733,7 +1945,8 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
       </Box>
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Assign dedicated Twilio phone numbers to recruiters for direct SMS messaging. Each recruiter can have their own number for two-way conversations with applicants.
+        Assign dedicated Twilio phone numbers to recruiters for direct SMS messaging. Each recruiter
+        can have their own number for two-way conversations with applicants.
       </Typography>
 
       {loading && assignments.length === 0 ? (
@@ -1743,11 +1956,7 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
       ) : assignments.length === 0 ? (
         <Alert severity="info">No number assignments found. Assign a number to get started.</Alert>
       ) : (
-        <TableContainer 
-          component={Paper} 
-          variant="outlined"
-          sx={{ overflowX: 'auto' }}
-        >
+        <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
           <Table size="small" sx={{ '& .MuiTableCell-root': { py: 1 } }}>
             <TableHead>
               <TableRow>
@@ -1771,14 +1980,22 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
                     ) : assignment.twilioNumber ? (
                       <Typography variant="body2">{assignment.twilioNumber}</Typography>
                     ) : (
-                      <Typography variant="body2" color="text.secondary">Not assigned</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Not assigned
+                      </Typography>
                     )}
                   </TableCell>
                   <TableCell>
                     <Chip
-                      label={assignment.useMainNumber || assignment.twilioNumber ? 'Active' : 'Not Assigned'}
+                      label={
+                        assignment.useMainNumber || assignment.twilioNumber
+                          ? 'Active'
+                          : 'Not Assigned'
+                      }
                       size="small"
-                      color={assignment.useMainNumber || assignment.twilioNumber ? 'success' : 'default'}
+                      color={
+                        assignment.useMainNumber || assignment.twilioNumber ? 'success' : 'default'
+                      }
                     />
                   </TableCell>
                   <TableCell align="right">
@@ -1800,7 +2017,12 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
       )}
 
       {/* Assign Number Dialog */}
-      <Dialog open={assignDialogOpen} onClose={() => setAssignDialogOpen(false)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={assignDialogOpen}
+        onClose={() => setAssignDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle>Assign Phone Number</DialogTitle>
         <DialogContent>
           <Stack spacing={3} sx={{ mt: 1 }}>
@@ -1837,7 +2059,18 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
 
             {availableNumbers.length === 0 && (
               <Alert severity="warning">
-                No available numbers found. <Link href="#" onClick={(e) => { e.preventDefault(); setPurchaseDialogOpen(true); setAssignDialogOpen(false); }}>Search & Purchase Numbers</Link> or use the main number.
+                No available numbers found.{' '}
+                <Link
+                  href="#"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setPurchaseDialogOpen(true);
+                    setAssignDialogOpen(false);
+                  }}
+                >
+                  Search & Purchase Numbers
+                </Link>{' '}
+                or use the main number.
               </Alert>
             )}
           </Stack>
@@ -1855,12 +2088,22 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
       </Dialog>
 
       {/* Purchase Number Dialog */}
-      <Dialog open={purchaseDialogOpen} onClose={() => { setPurchaseDialogOpen(false); setSearchResults([]); setSearchAreaCode(''); }} maxWidth="md" fullWidth>
+      <Dialog
+        open={purchaseDialogOpen}
+        onClose={() => {
+          setPurchaseDialogOpen(false);
+          setSearchResults([]);
+          setSearchAreaCode('');
+        }}
+        maxWidth="md"
+        fullWidth
+      >
         <DialogTitle>Search & Purchase Phone Number</DialogTitle>
         <DialogContent>
           <Stack spacing={3} sx={{ mt: 1 }}>
             <Alert severity="info">
-              Search for available phone numbers to purchase from Twilio. Numbers cost approximately $1/month plus per-message fees.
+              Search for available phone numbers to purchase from Twilio. Numbers cost approximately
+              $1/month plus per-message fees.
             </Alert>
 
             <Grid container spacing={2}>
@@ -1911,11 +2154,7 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
                 <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 600 }}>
                   Available Numbers ({searchResults.length})
                 </Typography>
-                <TableContainer 
-                  component={Paper} 
-                  variant="outlined"
-                  sx={{ overflowX: 'auto' }}
-                >
+                <TableContainer component={Paper} variant="outlined" sx={{ overflowX: 'auto' }}>
                   <Table size="small">
                     <TableHead>
                       <TableRow>
@@ -1950,7 +2189,12 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
                                 <Chip label="SMS" size="small" color="primary" variant="outlined" />
                               )}
                               {number.capabilities.voice && (
-                                <Chip label="Voice" size="small" color="secondary" variant="outlined" />
+                                <Chip
+                                  label="Voice"
+                                  size="small"
+                                  color="secondary"
+                                  variant="outlined"
+                                />
                               )}
                               {number.capabilities.mms && (
                                 <Chip label="MMS" size="small" color="success" variant="outlined" />
@@ -1992,13 +2236,20 @@ const RecruiterNumbersTab: React.FC<RecruiterNumbersTabProps> = ({ tenantId }) =
 
             {searchResults.length === 0 && !searching && (
               <Alert severity="info">
-                Enter an area code (optional) and click "Search Numbers" to find available phone numbers.
+                Enter an area code (optional) and click "Search Numbers" to find available phone
+                numbers.
               </Alert>
             )}
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => { setPurchaseDialogOpen(false); setSearchResults([]); setSearchAreaCode(''); }}>
+          <Button
+            onClick={() => {
+              setPurchaseDialogOpen(false);
+              setSearchResults([]);
+              setSearchAreaCode('');
+            }}
+          >
             Close
           </Button>
         </DialogActions>

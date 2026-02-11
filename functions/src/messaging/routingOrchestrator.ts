@@ -277,7 +277,8 @@ async function shouldUseChannel(
     const tenantConsent = await getTenantSmsConsent(context.tenantId, context.userId);
     
     const smsBlockedSystem = tenantConsent?.smsBlockedSystem ?? userData.smsBlockedSystem ?? false;
-    const smsOptIn = tenantConsent?.smsOptIn ?? userData.smsOptIn ?? false;
+    // Align with notificationSettings: missing/undefined = opted in (smsOptIn !== false)
+    const smsOptIn = (tenantConsent?.smsOptIn ?? userData.smsOptIn) !== false;
     
     // Check if SMS opt-in is required
     if (messageTypeConfig.requiresExplicitSmsOptIn) {

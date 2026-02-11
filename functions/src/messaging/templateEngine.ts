@@ -359,6 +359,26 @@ export async function updateTemplate(
 }
 
 /**
+ * Permanently delete a template
+ */
+export async function deleteTemplate(
+  tenantId: string,
+  templateId: string
+): Promise<void> {
+  const templateRef = db
+    .collection('tenants')
+    .doc(tenantId)
+    .collection('messageTemplates')
+    .doc(templateId);
+  const doc = await templateRef.get();
+  if (!doc.exists) {
+    throw new Error(`Template ${templateId} not found`);
+  }
+  await templateRef.delete();
+  logger.info(`Template deleted: ${templateId}`);
+}
+
+/**
  * Get all templates for a message type
  */
 export async function getTemplatesByMessageType(

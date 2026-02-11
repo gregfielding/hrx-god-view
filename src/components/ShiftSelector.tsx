@@ -26,7 +26,8 @@ interface ShiftSelectorProps {
   onApplyToShift?: (shiftId: string) => void; // New callback for individual shift applications
   appliedShifts?: string[]; // Array of shift IDs the user has already applied to
   shiftStatuses?: Record<string, string>; // Map of shiftId -> application status
-  onConfirmShift?: (shiftId: string) => void; // Callback for confirming a shift assignment
+  onConfirmShift?: (shiftId: string) => void; // Callback for accepting a shift assignment
+  onDeclineShift?: (shiftId: string) => void; // Callback for declining a shift assignment
   disabled?: boolean;
   jobPostId?: string; // For building application URLs
   tenantId?: string; // For building application URLs
@@ -40,6 +41,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   appliedShifts = [],
   shiftStatuses = {},
   onConfirmShift,
+  onDeclineShift,
   disabled = false,
   jobPostId,
   tenantId,
@@ -257,7 +259,18 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                             },
                           }}
                         >
-                          Click to Confirm
+                          Click to Accept
+                        </Button>
+                        <Button
+                          variant="contained"
+                          color="error"
+                          onClick={() => onDeclineShift?.(shift.shiftId)}
+                          sx={{
+                            minWidth: 140,
+                            fontWeight: 600,
+                          }}
+                        >
+                          Decline this Job
                         </Button>
                       </>
                     ) : hasApplied ? (

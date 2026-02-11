@@ -62,6 +62,20 @@ export type RateLimitResult =
     };
 
 /**
+ * Message types that are transactional (application/assignment status) and should
+ * not be blocked by per-user rate limits so status updates always reach the user.
+ */
+const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
+  'application_received',
+  'application_status_change',
+  'application_waitlisted',
+  'application_rejected',
+  'application_screened',
+  'application_advanced',
+  'application_hired',
+]);
+
+/**
  * Default rate limit configuration
  */
 const DEFAULT_RATE_LIMITS: RateLimitConfig = {
@@ -174,6 +188,37 @@ export async function checkRateLimits(
   const { tenantId, userId, messageTypeId, channel } = args;
 
   try {
+    // Transactional application status messages are exempt from per-user limits
+    // so status updates (waitlisted, rejected, etc.) always reach the user
+    if (RATE_LIMIT_EXEMPT_MESSAGE_TYPES.has(messageTypeId)) {
+      // Still enforce tenant-level limits to prevent abuse
+      const config = await getRateLimitConfig(tenantId);
+      const now = admin.firestore.Timestamp.now();
+      const oneHourAgo = admin.firestore.Timestamp.fromMillis(
+        now.toMillis() - 60 * 60 * 1000
+      );
+      const tenantHourlyLimit = config.defaults.perTenantHourly[channel];
+      const tenantHourlyCount = await countTenantMessages(
+        tenantId,
+        channel,
+        oneHourAgo,
+        now
+      );
+      if (tenantHourlyCount >= tenantHourlyLimit) {
+        return {
+          allowed: false,
+          reason: 'TENANT_LIMIT',
+          details: {
+            limitType: `${channel}Hourly`,
+            limitValue: tenantHourlyLimit,
+            currentCount: tenantHourlyCount,
+            window: '1 hour',
+          },
+        };
+      }
+      return { allowed: true };
+    }
+
     const config = await getRateLimitConfig(tenantId);
     const now = admin.firestore.Timestamp.now();
     const oneHourAgo = admin.firestore.Timestamp.fromMillis(

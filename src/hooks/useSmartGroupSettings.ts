@@ -54,14 +54,10 @@ export function useSmartGroupSettings(tenantId: string | undefined) {
       if (!tenantId) return;
       setError(null);
       const ref = doc(db, 'tenants', tenantId, 'settings', 'smartGroups');
-      await setDoc(
-        ref,
-        { customMetros: metros, updatedAt: new Date() },
-        { merge: true }
-      );
+      await setDoc(ref, { customMetros: metros, updatedAt: new Date() }, { merge: true });
       setCustomMetros(metros);
     },
-    [tenantId]
+    [tenantId],
   );
 
   const addCustomMetro = useCallback(
@@ -69,7 +65,7 @@ export function useSmartGroupSettings(tenantId: string | undefined) {
       const next = { ...customMetros, [metroKey]: metro };
       await saveCustomMetros(next);
     },
-    [customMetros, saveCustomMetros]
+    [customMetros, saveCustomMetros],
   );
 
   const removeCustomMetro = useCallback(
@@ -77,7 +73,7 @@ export function useSmartGroupSettings(tenantId: string | undefined) {
       const { [metroKey]: _, ...rest } = customMetros;
       await saveCustomMetros(rest);
     },
-    [customMetros, saveCustomMetros]
+    [customMetros, saveCustomMetros],
   );
 
   return {

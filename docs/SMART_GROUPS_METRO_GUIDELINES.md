@@ -1,13 +1,13 @@
 # Smart Groups: Metro / Area / City Guidelines
 
-This document describes how metros, areas (subareas), and cities are structured for Smart Groups. Use it when adding new metros via **Settings > Smart Groups** or when defining new metro templates so the code and UI can populate areas and cities consistently.
+This document describes how metros, areas (subareas), and cities are structured for Smart Groups. The app uses a **single built-in hierarchy** from `metroMaster.json`; there are no custom metros or Firestore-backed metro lists.
 
 ---
 
 ## Hierarchy
 
-- **Metro** – A major metropolitan region (e.g. Dallas–Fort Worth, Austin, Houston).
-- **Area (subarea)** – A named part of the metro (e.g. North DFW, South DFW, Central Houston). Craigslist-style regions work well.
+- **Metro** – A major metropolitan region (e.g. Dallas–Fort Worth, Austin, Houston), or “Other [State]” for non-CBSA areas.
+- **Area (subarea)** – A named part of the metro (e.g. county, or “Other” for non-metro). When built from Census, subareas are counties.
 - **City** – A city (or town) that belongs to exactly one area and one metro. Stored as `cityKey`: normalized `city_state` (lowercase, underscores), e.g. `plano_tx`, `houston_tx`.
 
 ---
@@ -17,38 +17,26 @@ This document describes how metros, areas (subareas), and cities are structured 
 1. **Keys**: Use lowercase, underscores only. Examples: `dallas_fort_worth`, `north_dfw`, `plano_tx`.
 2. **City key**: Normalize as `city_state` using the state two-letter abbreviation (e.g. `houston_tx`, `round_rock_tx`). The app uses `toCityKey(city, state)` for this.
 3. **One city, one area, one metro**: Each city maps to a single subarea and a single metro.
-4. **Labels**: Human-readable names are derived from keys by replacing `_` with spaces and title-casing (e.g. `north_dfw` → "North Dfw"). For display you can store a custom `label` per metro/area in templates.
+4. **Labels**: Human-readable names; store a custom `label` per metro/area in the data.
 
 ---
 
-## Auto-generation from worksites
+## Source of truth: metroMaster.json
 
-When company worksite locations are created or updated (company locations, customer worksites), the app ensures the worksite’s city is represented in Smart Groups:
+- **Built-in only**: All metro/area/city options come from **`src/data/metroMaster.json`**. The app does not read or write custom metros to Firestore.
+- **Settings > Smart Groups** shows a read-only list of metros from this file (and a city search to see Metro → Area → City). There is no “Add metro” or “Delete metro” in the UI.
+- **Do not edit metroMaster.json by hand** for ongoing changes. The only supported way to change or expand the hierarchy is to regenerate it using the data pipeline (see below). Exceptions (e.g. one-off fixes) must be documented.
 
-- If the city is already in the built-in hierarchy or in the tenant’s custom metros, nothing is changed.
-- If the city appears in a metro **template** (e.g. Houston), that full metro is added to the tenant’s custom metros (areas and cities from the template).
-- Otherwise a **standalone** metro is added for that city (one “Other” area, one city) so it appears in filters.
+### Data pipeline
 
-Metros added this way are stored in `tenants/{tenantId}/settings/smartGroups` and can be viewed, edited, or removed in **Settings > Smart Groups**.
-
----
-
-## Adding a Metro (Settings UI)
-
-1. Go to **Settings > Smart Groups**.
-2. Click **Add metro**.
-3. Pick a metro from the **template** list (predefined metros that follow these guidelines).  
-   - Choosing a template fills **areas** and **cities** automatically from the guideline-backed data.
-4. Optionally edit areas/cities before saving.
-5. Save to add the metro to your tenant. It will appear in the Smart Groups tab filter (Metro → Area → City).
-
-Templates are defined in `src/data/metroTemplates.json`. To add a new metro template (e.g. for a new region), add an entry there that matches the structure below; then it will appear in the "Add metro" dropdown and areas/cities will populate from that template.
+- To regenerate the full US hierarchy, run **scripts/buildMetroMasterUS.js** with the required Census/OMB inputs (CBSA–county mapping, Places Gazetteer, Counties Gazetteer). See **src/data/README-metros.md** for step-by-step instructions and **scripts/data/README.md** for input file sources.
+- The build ensures each city appears in exactly one metro and one subarea; metros are CBSA-based plus synthetic "Other [State]" for non-CBSA counties.
 
 ---
 
-## Metro Template Structure (JSON)
+## Metro data structure (metroMaster.json)
 
-Each metro in `metroTemplates.json` has this shape:
+Each metro in `metroMaster.json` has this shape:
 
 ```json
 {
@@ -58,35 +46,23 @@ Each metro in `metroTemplates.json` has this shape:
     {
       "subareaKey": "central",
       "label": "Central Houston",
-      "cityKeys": ["houston_tx", "bellaire_tx", "west_university_place_tx"]
-    },
-    {
-      "subareaKey": "north",
-      "label": "North Houston",
-      "cityKeys": ["spring_tx", "the_woodlands_tx", "conroe_tx"]
+      "cities": [
+        { "cityKey": "houston_tx", "city": "Houston", "state": "TX", "coordinates": { "lat": null, "lng": null } }
+      ]
     }
   ]
 }
 ```
 
 - **metroKey**: Unique key for the metro (lowercase, underscores).
-- **label**: Display name (e.g. "Houston").
-- **subareas**: Array of areas. Each has:
-  - **subareaKey**: Unique key within the metro.
-  - **label**: Display name for the area.
-  - **cityKeys**: Array of `city_state` keys (e.g. `houston_tx`).
+- **label**: Display name.
+- **subareas**: Array of areas. Each has **subareaKey**, **label**, and **cities** (array of `{ cityKey, city, state, coordinates }`).
 
-When a user adds a metro from a template, the app copies this structure into tenant settings so that the Smart Groups filters (Metro → Area → City) show the correct options without editing code.
-
----
-
-## Built-in vs Custom Metros
-
-- **Built-in**: Defined in `src/data/metroSubareaSchema.ts` (e.g. Dallas–Fort Worth, Austin). Used for resolving worksite city/state to metro/area when applications are created.
-- **Custom**: Stored in Firestore at `tenants/{tenantId}/settings/smartGroups`. Used for **filter dropdowns** on the Smart Groups tab. Custom metros can later be used for geo resolution when we support tenant-specific hierarchy in the apply flow.
+The app derives a templates-style view (with `cityKeys` per subarea) from this file in `metroMaster.ts` for lookups and filters.
 
 ---
 
 ## Changelog
 
 - Initial: guidelines and template structure for adding metros; Settings > Smart Groups and metro templates.
+- Updated: built-in only; custom metros and Firestore removed; source of truth is metroMaster.json; Settings UI is read-only.

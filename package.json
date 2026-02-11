@@ -71,7 +71,8 @@
     "check:parity": "ts-node scripts/checkFieldParity.ts",
     "test:mapping": "ts-node scripts/testMapping.ts",
     "test:adapter": "ts-node scripts/testDealStageAdapter.ts",
-    "seed-smart-groups": "node scripts/seedSmartGroupsFromApplications.js"
+    "seed-smart-groups": "node scripts/seedSmartGroupsFromApplications.js",
+    "build:metros": "node scripts/buildMetroMasterUS.js"
   },
   "eslintConfig": {
     "extends": [

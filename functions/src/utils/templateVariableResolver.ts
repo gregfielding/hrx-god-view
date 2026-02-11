@@ -359,13 +359,31 @@ function resolvePhone(context: TemplateVariableContext): string {
 }
 
 function resolveJobTitle(context: TemplateVariableContext): string {
-  return (
+  const fromJobOrder =
     context.jobOrderData?.jobTitle ||
+    context.jobOrderData?.title ||
+    context.jobOrderData?.jobTitleName ||
+    context.jobOrderData?.deal?.name ||
+    context.jobOrderData?.deal?.title ||
+    context.jobOrderData?.name;
+  const fromJobPost =
     context.jobPostData?.jobTitle ||
-    context.assignmentData?.jobTitle ||
-    context.shiftData?.jobTitle ||
+    context.jobPostData?.title ||
+    context.jobPostData?.postTitle;
+  const fromApplication =
     context.applicationData?.jobTitle ||
     context.applicationData?.data?.jobTitle ||
+    context.applicationData?.postTitle ||
+    context.applicationData?.jobPostTitle ||
+    context.applicationData?.jobOrderName;
+  return (
+    fromJobOrder ||
+    fromJobPost ||
+    context.assignmentData?.jobTitle ||
+    context.assignmentData?.title ||
+    context.shiftData?.jobTitle ||
+    context.shiftData?.title ||
+    fromApplication ||
     'a position'
   );
 }

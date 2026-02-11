@@ -190,7 +190,7 @@ export const autoWithdrawApplicationsOnHire = onDocumentUpdated(
       const snapshot = await userApplicationsQuery.get();
       
       // Active statuses that should be withdrawn
-      const activeStatuses = ['submitted', 'screened', 'advanced', 'interview', 'offer_pending'];
+      const activeStatuses = ['submitted', 'accepted', 'screened', 'advanced', 'interview', 'offer_pending', 'offer'];
       
       let withdrawnCount = 0;
       

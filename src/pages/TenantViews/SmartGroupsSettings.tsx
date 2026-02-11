@@ -1,50 +1,35 @@
 /**
- * Settings > Smart Groups: manage custom metros.
- * Add metros from guideline-backed templates; areas and cities populate automatically.
- * Click a metro to see subareas; click a subarea to see cities. Search for a city to see its metro → area hierarchy.
+ * Settings > Smart Groups: view built-in metros (Metro → Area → City).
+ * Source of truth is metroMaster.json. Click a metro to see subareas; click a subarea to see cities.
+ * Search for a city to see its metro → area hierarchy.
  */
 
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   Box,
-  Button,
   List,
   ListItem,
   ListItemText,
   Typography,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Chip,
-  Alert,
-  CircularProgress,
   TextField,
   InputAdornment,
   Paper,
 } from '@mui/material';
-import AddIcon from '@mui/icons-material/Add';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import SearchIcon from '@mui/icons-material/Search';
-import RefreshIcon from '@mui/icons-material/Refresh';
 import PlaceIcon from '@mui/icons-material/Place';
 
 import {
-  METRO_OPTIONS,
   getMergedMetroOptions,
   getMergedSubareaOptionsForMetro,
   getMergedCityOptionsForSubarea,
   formatGeoLabel,
   type CustomMetroInput,
 } from '../../data/metroSubareaSchema';
-import { useSmartGroupSettings } from '../../hooks/useSmartGroupSettings';
-import type { CustomMetro } from '../../hooks/useSmartGroupSettings';
-import { METRO_TEMPLATES, getMetroTemplateByKey, type MetroTemplateCompat } from '../../data/metroMaster';
+import { getMetroTemplateByKey } from '../../data/metroMaster';
 
 /** One subarea with label and city keys (built-in + custom merged). */
 export interface SubareaWithCities {
@@ -57,13 +42,11 @@ function getSubareasWithCities(
   metroKey: string,
   customMetros: Record<string, CustomMetroInput>
 ): SubareaWithCities[] {
-  const custom = customMetros[metroKey];
   const template = getMetroTemplateByKey(metroKey);
   const subareaKeys = getMergedSubareaOptionsForMetro(metroKey, customMetros);
   return subareaKeys.map((subareaKey) => {
-    const customSub = custom?.subareas?.find((s) => s.subareaKey === subareaKey);
     const templateSub = template?.subareas?.find((s) => s.subareaKey === subareaKey);
-    const label = customSub?.label ?? templateSub?.label ?? formatGeoLabel(subareaKey);
+    const label = templateSub?.label ?? formatGeoLabel(subareaKey);
     const cityKeys = getMergedCityOptionsForSubarea(metroKey, subareaKey, customMetros);
     return { subareaKey, label, cityKeys };
   });
@@ -84,8 +67,7 @@ function buildCitySearchIndex(
   const hits: CitySearchHit[] = [];
   const metroKeys = getMergedMetroOptions(customMetros);
   for (const metroKey of metroKeys) {
-    const metroLabel =
-      customMetros[metroKey]?.label ?? getMetroTemplateByKey(metroKey)?.label ?? formatGeoLabel(metroKey);
+    const metroLabel = getMetroTemplateByKey(metroKey)?.label ?? formatGeoLabel(metroKey);
     const subareas = getSubareasWithCities(metroKey, customMetros);
     for (const sub of subareas) {
       for (const cityKey of sub.cityKeys) {
@@ -102,36 +84,17 @@ function buildCitySearchIndex(
   return hits;
 }
 
-function toCustomMetro(t: MetroTemplateCompat): CustomMetro {
-  return {
-    label: t.label,
-    subareas: t.subareas.map((s) => ({
-      subareaKey: s.subareaKey,
-      label: s.label,
-      cityKeys: s.cityKeys ?? [],
-    })),
-  };
-}
+const EMPTY_CUSTOM_METROS: Record<string, CustomMetroInput> = {};
 
-const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
-  const { customMetros, loading, error, addCustomMetro, removeCustomMetro } = useSmartGroupSettings(tenantId);
-  const [addOpen, setAddOpen] = useState(false);
-  const [selectedTemplateKey, setSelectedTemplateKey] = useState<string>('');
+const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenantId }) => {
   const [selectedMetroKey, setSelectedMetroKey] = useState<string | null>(null);
   const [selectedSubareaKey, setSelectedSubareaKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSearchCityKey, setSelectedSearchCityKey] = useState<string | null>(null);
-  const [deletingMetroKey, setDeletingMetroKey] = useState<string | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const allMetroKeys = getMergedMetroOptions(customMetros);
-  const builtInSet = new Set(METRO_OPTIONS);
-  const customSet = new Set(Object.keys(customMetros));
-  const availableTemplates = METRO_TEMPLATES.filter(
-    (t) => !builtInSet.has(t.metroKey) && !customSet.has(t.metroKey)
-  );
+  const allMetroKeys = getMergedMetroOptions(EMPTY_CUSTOM_METROS);
 
-  const citySearchIndex = useMemo(() => buildCitySearchIndex(customMetros), [customMetros]);
+  const citySearchIndex = useMemo(() => buildCitySearchIndex(EMPTY_CUSTOM_METROS), []);
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q) return [];
@@ -163,12 +126,10 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
   const selectedMetroLabel =
     selectedMetroKey == null
       ? null
-      : builtInSet.has(selectedMetroKey)
-        ? formatGeoLabel(selectedMetroKey)
-        : customMetros[selectedMetroKey]?.label ?? formatGeoLabel(selectedMetroKey);
+      : getMetroTemplateByKey(selectedMetroKey)?.label ?? formatGeoLabel(selectedMetroKey);
   const subareasForSelected = useMemo(
-    () => (selectedMetroKey == null ? [] : getSubareasWithCities(selectedMetroKey, customMetros)),
-    [selectedMetroKey, customMetros]
+    () => (selectedMetroKey == null ? [] : getSubareasWithCities(selectedMetroKey, EMPTY_CUSTOM_METROS)),
+    [selectedMetroKey]
   );
   const selectedSubarea =
     selectedSubareaKey == null ? null : subareasForSelected.find((s) => s.subareaKey === selectedSubareaKey) ?? null;
@@ -183,57 +144,12 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
     }
   }, [selectedMetroKey, subareasForSelected, selectedSubarea]);
 
-  const handleAdd = async () => {
-    if (!selectedTemplateKey) return;
-    const template = getMetroTemplateByKey(selectedTemplateKey);
-    if (!template) return;
-    await addCustomMetro(template.metroKey, toCustomMetro(template));
-    setAddOpen(false);
-    setSelectedTemplateKey('');
-  };
-
-  const handleRemove = async (metroKey: string) => {
-    if (builtInSet.has(metroKey)) return;
-    setDeleteError(null);
-    setDeletingMetroKey(metroKey);
-    try {
-      await removeCustomMetro(metroKey);
-      if (selectedMetroKey === metroKey) setSelectedMetroKey(null);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setDeleteError(`Could not remove metro: ${message}`);
-    } finally {
-      setDeletingMetroKey(null);
-    }
-  };
-
-  if (loading) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   return (
     <Box sx={{ px: { xs: 2, md: 3 }, py: 2, maxWidth: 960 }}>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
-        Metros define the geographic hierarchy (Metro → Area → City) used in Smart Groups filters. Built-in metros
-        are always available. Metros are also auto-generated when company worksite locations are added (city/state
-        from new locations); you can edit or remove them here. Add more by choosing a template below; areas and
-        cities are filled from the guideline-backed templates.
+        Metros define the geographic hierarchy (Metro → Area → City) used in Smart Groups filters. The list is
+        read-only and comes from the central metro data (metroMaster.json).
       </Typography>
-
-      {error && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => {}}>
-          {error.message}
-        </Alert>
-      )}
-      {deleteError && (
-        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setDeleteError(null)}>
-          {deleteError}
-        </Alert>
-      )}
 
       {/* City search: type a city name to see Metro → Area → City */}
       <TextField
@@ -298,20 +214,9 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
         </Typography>
       )}
 
-      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-        <Typography variant="subtitle1" fontWeight={600}>
-          Current metros
-        </Typography>
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<AddIcon />}
-          onClick={() => setAddOpen(true)}
-          disabled={availableTemplates.length === 0}
-        >
-          Add metro
-        </Button>
-      </Box>
+      <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
+        Current metros
+      </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', md: 'row' } }}>
         {/* Left: metro list */}
@@ -328,8 +233,7 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           }}
         >
           {allMetroKeys.map((metroKey) => {
-            const isBuiltIn = builtInSet.has(metroKey);
-            const label = isBuiltIn ? formatGeoLabel(metroKey) : (customMetros[metroKey]?.label ?? formatGeoLabel(metroKey));
+            const label = getMetroTemplateByKey(metroKey)?.label ?? formatGeoLabel(metroKey);
             const selected = selectedMetroKey === metroKey;
             return (
               <ListItem
@@ -339,22 +243,6 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                   setSelectedMetroKey(metroKey);
                   setSelectedSubareaKey(null);
                 }}
-                secondaryAction={
-                  !isBuiltIn ? (
-                    <IconButton
-                      edge="end"
-                      size="small"
-                      disabled={deletingMetroKey === metroKey}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemove(metroKey);
-                      }}
-                      aria-label={`Remove ${label}`}
-                    >
-                      <DeleteOutlineIcon fontSize="small" />
-                    </IconButton>
-                  ) : null
-                }
                 sx={{
                   cursor: 'pointer',
                   borderRadius: 1,
@@ -363,13 +251,7 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
                   '&:hover': { bgcolor: selected ? 'action.selected' : 'action.hover' },
                 }}
               >
-                <ListItemText
-                  primary={label}
-                  secondary={isBuiltIn ? 'Built-in' : 'Custom'}
-                />
-                {isBuiltIn && (
-                  <Chip label="Built-in" size="small" sx={{ ml: 1 }} variant="outlined" />
-                )}
+                <ListItemText primary={label} />
               </ListItem>
             );
           })}
@@ -393,23 +275,9 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
             </Typography>
           ) : (
             <>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 1 }}>
-                <Typography variant="subtitle1" fontWeight={600}>
-                  {selectedMetroLabel}
-                </Typography>
-                {selectedMetroKey && !builtInSet.has(selectedMetroKey) && !!getMetroTemplateByKey(selectedMetroKey) && (
-                  <Button
-                    size="small"
-                    startIcon={<RefreshIcon />}
-                    onClick={async () => {
-                      const template = getMetroTemplateByKey(selectedMetroKey);
-                      if (template) await addCustomMetro(selectedMetroKey, toCustomMetro(template));
-                    }}
-                  >
-                    Update to latest template
-                  </Button>
-                )}
-              </Box>
+              <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>
+                {selectedMetroLabel}
+              </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 Areas
               </Typography>
@@ -481,51 +349,6 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           )}
         </Paper>
       </Box>
-
-      <Dialog open={addOpen} onClose={() => setAddOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Add metro from template</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Choose a metro template. Areas and cities will be populated automatically from the guidelines.
-          </Typography>
-          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
-            <InputLabel id="smart-metro-template-label">Metro template</InputLabel>
-            <Select
-              labelId="smart-metro-template-label"
-              label="Metro template"
-              value={selectedTemplateKey}
-              onChange={(e) => setSelectedTemplateKey(e.target.value as string)}
-            >
-              {METRO_TEMPLATES.map((t) => {
-                const alreadyAdded = builtInSet.has(t.metroKey) || customSet.has(t.metroKey);
-                return (
-                  <MenuItem key={t.metroKey} value={t.metroKey} disabled={alreadyAdded}>
-                    {t.label}
-                    {alreadyAdded && ' (already added)'}
-                  </MenuItem>
-                );
-              })}
-            </Select>
-          </FormControl>
-          {selectedTemplateKey && (() => {
-            const t = getMetroTemplateByKey(selectedTemplateKey);
-            if (!t) return null;
-            const areaCount = t.subareas.length;
-            const cityCount = t.subareas.reduce((sum, s) => sum + (s.cityKeys?.length ?? 0), 0);
-            return (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                This template adds {areaCount} area{areaCount !== 1 ? 's' : ''} and {cityCount} cit{cityCount === 1 ? 'y' : 'ies'}.
-              </Typography>
-            );
-          })()}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAddOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleAdd} disabled={!selectedTemplateKey}>
-            Add metro
-          </Button>
-        </DialogActions>
-      </Dialog>
     </Box>
   );
 };

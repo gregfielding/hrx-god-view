@@ -11,7 +11,7 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
-import { enqueueSystemWelcomeSms } from './systemSms';
+import { enqueueSystemWelcomeSms, ensureSystemOnboardingWelcomeTemplates } from './systemSms';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
 import { TWILIO_MESSAGING_PHONE_NUMBER } from './twilioSecrets';
@@ -38,7 +38,21 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
     }
 
     try {
-      const phoneE164 = (data?.phoneE164 || '').trim();
+      // Re-fetch user doc so we have latest firstName/lastName (often set in a follow-up write after create)
+      let userData = data;
+      try {
+        const freshSnap = await db.doc(`users/${userId}`).get();
+        if (freshSnap.exists && freshSnap.data()) {
+          userData = freshSnap.data();
+        }
+      } catch (refetchErr: any) {
+        logger.warn('enqueueWelcomeSmsOnUserCreated: could not re-fetch user, using snapshot', {
+          userId,
+          error: refetchErr?.message,
+        });
+      }
+
+      const phoneE164 = (userData?.phoneE164 || '').trim();
       if (!phoneE164) {
         logger.info('Skipping welcome SMS: phoneE164 missing', { userId });
         return;
@@ -46,9 +60,11 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
 
       // Best-effort tenant resolve from user doc
       const tenantId =
-        data?.tenantId ||
-        data?.activeTenantId ||
-        (data?.tenantIds && typeof data.tenantIds === 'object' ? Object.keys(data.tenantIds)[0] : null);
+        userData?.tenantId ||
+        userData?.activeTenantId ||
+        (userData?.tenantIds && typeof userData.tenantIds === 'object'
+          ? Object.keys(userData.tenantIds)[0]
+          : null);
 
       if (!tenantId) {
         logger.info('Skipping welcome SMS: tenantId missing', { userId });
@@ -64,23 +80,41 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
           .collection('settings')
           .doc('messaging')
           .get();
-        const systemSmsEnabled = settingsDoc.exists ? !!settingsDoc.data()?.systemSmsEnabled : false;
+        const systemSmsEnabled = settingsDoc.exists
+          ? !!settingsDoc.data()?.systemSmsEnabled
+          : false;
         if (!systemSmsEnabled) {
-          logger.info('Skipping welcome SMS: tenant messaging.systemSmsEnabled is false', { tenantId, userId });
+          logger.info('Skipping welcome SMS: tenant messaging.systemSmsEnabled is false', {
+            tenantId,
+            userId,
+          });
           return;
         }
       } catch (settingsErr: any) {
         // Fail closed: if we can't read settings, do not send.
-        logger.warn('Skipping welcome SMS: failed to read tenant messaging settings (fail closed)', {
-          tenantId,
-          userId,
-          error: settingsErr?.message,
-        });
+        logger.warn(
+          'Skipping welcome SMS: failed to read tenant messaging settings (fail closed)',
+          {
+            tenantId,
+            userId,
+            error: settingsErr?.message,
+          },
+        );
         return;
       }
 
       // New path: rule-based automation trigger for account creation.
       // Keep legacy enqueue as fallback while rule rollout is in progress.
+      try {
+        await ensureSystemOnboardingWelcomeTemplates(tenantId);
+      } catch (templateSeedErr: any) {
+        logger.warn('Failed to seed default onboarding templates before account-created dispatch', {
+          userId,
+          tenantId,
+          error: templateSeedErr?.message,
+        });
+      }
+
       let dispatched = false;
       try {
         const dispatchResult = await dispatchSystemMessage({
@@ -88,7 +122,7 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
           triggerKey: SYSTEM_TRIGGER_KEYS.accountCreated,
           userId,
           context: {
-            userData: data,
+            userData,
           },
           source: 'system',
           sourceId: userId,
@@ -103,18 +137,24 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
           errors: dispatchResult.errors,
         });
       } catch (dispatchErr: any) {
-        logger.warn('Account-created automation dispatch failed; falling back to legacy welcome SMS', {
-          userId,
-          tenantId,
-          error: dispatchErr?.message,
-        });
+        logger.warn(
+          'Account-created automation dispatch failed; falling back to legacy welcome SMS',
+          {
+            userId,
+            tenantId,
+            error: dispatchErr?.message,
+          },
+        );
       }
 
       if (dispatched) {
-        logger.info('Account-created message sent via automation rule(s); skipping legacy welcome fallback', {
-          userId,
-          tenantId,
-        });
+        logger.info(
+          'Account-created message sent via automation rule(s); skipping legacy welcome fallback',
+          {
+            userId,
+            tenantId,
+          },
+        );
         return;
       }
 
@@ -122,13 +162,18 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
         tenantId,
         userId,
         phoneE164,
-        userData: data,
+        userData,
       });
 
       if (result.skipped) {
         logger.info('Welcome SMS skipped', { userId, tenantId, reason: result.reason });
       } else if (result.ok) {
-        logger.info('Welcome SMS enqueued', { userId, tenantId, requestId: result.requestId, threadId: result.threadId });
+        logger.info('Welcome SMS enqueued', {
+          userId,
+          tenantId,
+          requestId: result.requestId,
+          threadId: result.threadId,
+        });
       } else {
         logger.warn('Welcome SMS enqueue failed', { userId, tenantId, reason: result.reason });
       }
@@ -139,6 +184,5 @@ export const enqueueWelcomeSmsOnUserCreated = onDocumentCreated(
         error: err?.message || String(err),
       });
     }
-  }
+  },
 );
-

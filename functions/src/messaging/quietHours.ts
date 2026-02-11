@@ -42,6 +42,10 @@ const DEFAULT_QUIET_HOURS: QuietHoursConfig = {
     'system_security_alert_sms',
     'stop_confirmation',
     'help_response',
+    // Application status updates (waitlisted, rejected, etc.) — always deliver
+    'application_waitlisted',
+    'application_rejected',
+    'application_status_change',
   ],
 };
 

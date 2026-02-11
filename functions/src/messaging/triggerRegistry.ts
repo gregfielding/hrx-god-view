@@ -7,6 +7,7 @@ export const SYSTEM_TRIGGER_KEYS = {
   applicationStatusOffer: 'application_status_offer',
   applicationStatusHired: 'application_status_hired',
   applicationStatusRejected: 'application_status_rejected',
+  applicationStatusWaitlisted: 'application_status_waitlisted',
   assignmentCreated: 'assignment_created',
   assignmentStatusConfirmed: 'assignment_status_confirmed',
   assignmentStatusActive: 'assignment_status_active',
@@ -64,6 +65,11 @@ export const SYSTEM_TRIGGER_CATALOG: TriggerCatalogEntry[] = [
     description: 'Runs when an application status changes to rejected.',
   },
   {
+    key: SYSTEM_TRIGGER_KEYS.applicationStatusWaitlisted,
+    label: 'Application Waitlisted',
+    description: 'Runs when an application status changes to waitlisted.',
+  },
+  {
     key: SYSTEM_TRIGGER_KEYS.assignmentCreated,
     label: 'Assignment Created',
     description: 'Runs when an assignment is created.',
@@ -102,6 +108,7 @@ export function mapApplicationStatusToTriggerKey(status: string): SystemTriggerK
   if (normalized === 'offer') return SYSTEM_TRIGGER_KEYS.applicationStatusOffer;
   if (normalized === 'hired') return SYSTEM_TRIGGER_KEYS.applicationStatusHired;
   if (normalized === 'rejected') return SYSTEM_TRIGGER_KEYS.applicationStatusRejected;
+  if (normalized === 'waitlisted') return SYSTEM_TRIGGER_KEYS.applicationStatusWaitlisted;
   return null;
 }
 

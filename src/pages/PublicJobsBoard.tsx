@@ -1165,6 +1165,14 @@ const PublicJobsBoard: React.FC = () => {
           cursor: 'default',
           pointerEvents: 'none' as const
         };
+      case 'waitlisted':
+        return {
+          label: 'Waitlisted',
+          backgroundColor: '#ED6C02', // Orange
+          color: '#fff',
+          cursor: 'default',
+          pointerEvents: 'none' as const
+        };
       case 'rejected':
       case 'not accepted':
         return {
@@ -1730,23 +1738,35 @@ const PublicJobsBoard: React.FC = () => {
                         }
                         
                         const buttonProps = getApplicationStatusButton(status);
+                        const helperText = (status || '').toLowerCase() === 'waitlisted'
+                          ? "You're on our shortlist. We'll contact you if a spot opens up."
+                          : (status || '').toLowerCase() === 'rejected' || (status || '').toLowerCase() === 'not accepted'
+                            ? "This role has been filled or we've moved forward with other candidates."
+                            : null;
                         return (
-                          <Button 
-                            variant="contained" 
-                            sx={{ 
-                              width: '50%',
-                              ml: 'auto',
-                              backgroundColor: buttonProps.backgroundColor,
-                              color: buttonProps.color,
-                              '&:hover': {
+                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25, width: '100%' }}>
+                            <Button 
+                              variant="contained" 
+                              sx={{ 
+                                width: '50%',
+                                ml: 'auto',
                                 backgroundColor: buttonProps.backgroundColor,
-                              },
-                              cursor: buttonProps.cursor,
-                              pointerEvents: buttonProps.pointerEvents,
-                            }}
-                          >
-                            {buttonProps.label}
-                          </Button>
+                                color: buttonProps.color,
+                                '&:hover': {
+                                  backgroundColor: buttonProps.backgroundColor,
+                                },
+                                cursor: buttonProps.cursor,
+                                pointerEvents: buttonProps.pointerEvents,
+                              }}
+                            >
+                              {buttonProps.label}
+                            </Button>
+                            {helperText && (
+                              <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right', width: '100%', px: 0.5 }}>
+                                {helperText}
+                              </Typography>
+                            )}
+                          </Box>
                         );
                       }
                       

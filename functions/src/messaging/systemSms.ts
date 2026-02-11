@@ -32,7 +32,9 @@ const DEFAULT_WELCOME_TEMPLATE_BODY_ES =
   'Gracias por registrarte con C1 Staffing. Nos emociona ayudarte a encontrar tu proxima oportunidad.';
 
 function normalizeRole(val: any): string {
-  return String(val || '').trim().toLowerCase();
+  return String(val || '')
+    .trim()
+    .toLowerCase();
 }
 
 function isWorkerOrApplicantForTenant(userData: any, tenantId: string): boolean {
@@ -56,12 +58,18 @@ function getTenantIdForUser(userData: any): string | null {
   return (
     userData?.tenantId ||
     userData?.activeTenantId ||
-    (userData?.tenantIds && typeof userData.tenantIds === 'object' ? Object.keys(userData.tenantIds)[0] : null) ||
+    (userData?.tenantIds && typeof userData.tenantIds === 'object'
+      ? Object.keys(userData.tenantIds)[0]
+      : null) ||
     null
   );
 }
 
-async function hasRecentWelcomeDedupe(tenantId: string, dedupeKey: string, windowHours = 72): Promise<boolean> {
+async function hasRecentWelcomeDedupe(
+  tenantId: string,
+  dedupeKey: string,
+  windowHours = 72,
+): Promise<boolean> {
   const cutoff = Timestamp.fromMillis(Date.now() - windowHours * 60 * 60 * 1000);
   const snap = await db
     .collection('tenants')
@@ -79,10 +87,7 @@ async function hasRecentWelcomeDedupe(tenantId: string, dedupeKey: string, windo
   return createdAt.toMillis() >= cutoff.toMillis();
 }
 
-async function hasExactWelcomeTemplate(
-  tenantId: string,
-  language: LanguageCode
-): Promise<boolean> {
+async function hasExactWelcomeTemplate(tenantId: string, language: LanguageCode): Promise<boolean> {
   const snap = await db
     .collection('tenants')
     .doc(tenantId)
@@ -97,7 +102,7 @@ async function hasExactWelcomeTemplate(
 
 async function createDefaultWelcomeTemplate(
   tenantId: string,
-  language: LanguageCode
+  language: LanguageCode,
 ): Promise<void> {
   const isSpanish = language === 'es';
   await db
@@ -120,7 +125,7 @@ async function createDefaultWelcomeTemplate(
     });
 }
 
-async function ensureDefaultWelcomeTemplate(tenantId: string): Promise<void> {
+export async function ensureSystemOnboardingWelcomeTemplates(tenantId: string): Promise<void> {
   const hasEnglish = await hasExactWelcomeTemplate(tenantId, 'en');
   if (!hasEnglish) {
     await createDefaultWelcomeTemplate(tenantId, 'en');
@@ -142,24 +147,27 @@ async function resolveWelcomeBody(args: {
   }
 
   const language = args.userData?.preferredLanguage === 'es' ? 'es' : 'en';
-  await ensureDefaultWelcomeTemplate(args.tenantId);
+  await ensureSystemOnboardingWelcomeTemplates(args.tenantId);
   const template = await getTemplate(
     args.tenantId,
     SYSTEM_WELCOME_MESSAGE_TYPE_ID,
     'sms',
-    language
+    language,
   );
   if (!template) {
     return DEFAULT_WELCOME_TEMPLATE_BODY;
   }
 
+  // Use fallbacks so we never send literal "{{firstName}}" or empty; "there" is a safe default.
+  const firstName = (args.userData?.firstName || '').trim() || 'there';
+  const lastName = (args.userData?.lastName || '').trim();
   const variables = {
-    firstName: args.userData?.firstName || '',
-    lastName: args.userData?.lastName || '',
+    firstName,
+    lastName: lastName || '',
     fullName:
-      `${args.userData?.firstName || ''} ${args.userData?.lastName || ''}`.trim() ||
+      [firstName !== 'there' ? firstName : '', lastName].filter(Boolean).join(' ') ||
       args.userData?.displayName ||
-      '',
+      firstName,
   };
   return await renderTemplate(template, variables, args.tenantId);
 }
@@ -170,7 +178,14 @@ export async function enqueueSystemWelcomeSms(params: {
   phoneE164?: string;
   userData?: any;
   messageBody?: string;
-}): Promise<{ ok: boolean; skipped?: boolean; reason?: string; requestId?: string; threadId?: string; messageLogId?: string }> {
+}): Promise<{
+  ok: boolean;
+  skipped?: boolean;
+  reason?: string;
+  requestId?: string;
+  threadId?: string;
+  messageLogId?: string;
+}> {
   const resolvedTenantId = params.tenantId || getTenantIdForUser(params.userData);
   if (!resolvedTenantId) {
     return { ok: false, skipped: true, reason: 'Missing tenantId for user' };
@@ -199,7 +214,9 @@ export async function enqueueSystemWelcomeSms(params: {
 
   // Prefer a fixed Twilio number so replies map to the same thread.
   const twilioNumber = (process.env.TWILIO_MESSAGING_PHONE_NUMBER || '').trim();
-  const twilioMasked = twilioNumber ? `***${twilioNumber.replace(/[^\d]/g, '').slice(-4)}` : '(unset)';
+  const twilioMasked = twilioNumber
+    ? `***${twilioNumber.replace(/[^\d]/g, '').slice(-4)}`
+    : '(unset)';
   logger.info('[SMS] Welcome enqueue runtime config', {
     tenantId: resolvedTenantId,
     mode: process.env.SMS_PROVIDER ?? 'mock',
@@ -217,22 +234,21 @@ export async function enqueueSystemWelcomeSms(params: {
         primaryRecruiterId: null,
       });
     } catch (err: any) {
-      logger.warn('Failed to get/create SMS thread for welcome message; proceeding without thread', {
-        tenantId: resolvedTenantId,
-        userId: params.userId,
-        error: err?.message,
-      });
+      logger.warn(
+        'Failed to get/create SMS thread for welcome message; proceeding without thread',
+        {
+          tenantId: resolvedTenantId,
+          userId: params.userId,
+          error: err?.message,
+        },
+      );
     }
   } else {
     logger.warn('TWILIO_MESSAGING_PHONE_NUMBER not set; welcome SMS will not be reply-threaded');
   }
 
   // Create initial message log (queued)
-  const logRef = db
-    .collection('tenants')
-    .doc(resolvedTenantId)
-    .collection('messageLogs')
-    .doc();
+  const logRef = db.collection('tenants').doc(resolvedTenantId).collection('messageLogs').doc();
 
   await logRef.set({
     tenantId: resolvedTenantId,
@@ -280,4 +296,3 @@ export async function enqueueSystemWelcomeSms(params: {
 
   return { ok: true, requestId, threadId, messageLogId: logRef.id };
 }
-

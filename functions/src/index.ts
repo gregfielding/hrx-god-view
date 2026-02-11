@@ -185,6 +185,7 @@ export { archiveAllCrmDeals };
 export { backfillJobPostingLocations } from './backfillJobPostingLocations';
 export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
 export { onJobOrderShiftCancelledCascadeAssignments } from './shiftAssignmentCascades';
+export { onApplicationWithdrawnOrDeletedCascadeAssignments } from './shiftAssignmentCascades';
 export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
 export {
   onAssignmentWriteRecomputeShiftFill,
@@ -202,6 +203,7 @@ export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp };
 export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
+export { placementsCreateAssignments, respondToAssignment } from './placementsApi';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -8442,18 +8444,17 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
   try {
     logger.info(`Assignment created: ${assignmentId} for worker ${assignment.userId || assignment.candidateId}`);
     
-    // Send SMS notification if assignment has required data
-    if (assignment.userId && assignment.status === 'proposed' || assignment.status === 'confirmed') {
+    // Send worker notification if assignment was newly proposed/confirmed
+    if (assignment.userId && (assignment.status === 'proposed' || assignment.status === 'confirmed')) {
       try {
         // Fetch user phone number
         const userDoc = await admin.firestore().doc(`users/${assignment.userId}`).get();
         const userData = userDoc.data();
         
         if (userData?.phoneE164 && userData?.phoneVerified) {
-          // Fetch job order and shift details for message
+          // Fetch job order and details for message
           let jobTitle = assignment.jobTitle || 'a position';
-          let shiftDetails = '';
-          let locationName = assignment.locationNickname || assignment.worksiteName || '';
+          let checkInInstructions = '';
           
           if (assignment.jobOrderId) {
             try {
@@ -8463,6 +8464,9 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
               const jobOrderData = jobOrderDoc.data();
               if (jobOrderData?.jobTitle) {
                 jobTitle = jobOrderData.jobTitle;
+              }
+              if (jobOrderData?.checkInInstructions) {
+                checkInInstructions = String(jobOrderData.checkInInstructions);
               }
             } catch (err) {
               logger.warn(`Failed to fetch job order ${assignment.jobOrderId}:`, err);
@@ -8475,21 +8479,8 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
             const startDate = assignment.startDate.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
             dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
             
-            if (assignment.shiftId) {
-              try {
-                const shiftDoc = await admin.firestore()
-                  .doc(`shifts/${assignment.shiftId}`)
-                  .get();
-                const shiftData = shiftDoc.data();
-                if (shiftData?.startTime && shiftData?.endTime) {
-                  const startTime = shiftData.startTime.toDate ? shiftData.startTime.toDate() : new Date(shiftData.startTime);
-                  const endTime = shiftData.endTime.toDate ? shiftData.endTime.toDate() : new Date(shiftData.endTime);
-                  const timeRange = `${startTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })} - ${endTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
-                  dateTimeInfo += ` from ${timeRange}`;
-                }
-              } catch (err) {
-                logger.warn(`Failed to fetch shift ${assignment.shiftId}:`, err);
-              }
+            if (assignment.startTime && assignment.endTime) {
+              dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
             }
           }
           
@@ -8498,7 +8489,12 @@ export const logAssignmentCreated = onDocumentCreated('tenants/{tenantId}/assign
           const worksiteName = assignment.locationNickname || assignment.worksiteName || '';
           const locationText = worksiteName ? ` at ${worksiteName}` : '';
           
-          const message = `Hi ${firstName}, you've been assigned to ${jobTitle}${dateTimeInfo}${locationText}. Please confirm your availability.`;
+          const postingPath = assignment.jobPostId
+            ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
+            : '/c1/jobs-board';
+          const jobUrl = `https://hrx1-d3beb.web.app${postingPath}`;
+          const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
+          const message = `Hi ${firstName}, congratulations - you've been hired for ${jobTitle}${dateTimeInfo}${locationText}. Click to accept or decline: ${jobUrl}.${instructionsText}`;
           
           // PHASE 3: Route through orchestrator instead of direct Twilio call
           const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
@@ -8563,13 +8559,16 @@ export const logAssignmentUpdated = onDocumentUpdated('tenants/{tenantId}/assign
           
           switch (after.status) {
             case 'confirmed':
-              message = `Hi ${firstName}, your assignment has been confirmed. Check your account for details.`;
+              message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
               break;
             case 'active':
               message = `Hi ${firstName}, your assignment is now active. Thank you!`;
               break;
             case 'completed':
               message = `Hi ${firstName}, your assignment has been marked as completed. Thank you for your work!`;
+              break;
+            case 'declined':
+              message = `Hi ${firstName}, we received your decline for this assignment. Thank you for letting us know.`;
               break;
             case 'cancelled':
             case 'canceled':
@@ -8587,6 +8586,7 @@ export const logAssignmentUpdated = onDocumentUpdated('tenants/{tenantId}/assign
             if (after.status === 'confirmed') messageTypeId = 'assignment_confirmed';
             else if (after.status === 'active') messageTypeId = 'assignment_active';
             else if (after.status === 'completed') messageTypeId = 'assignment_completed';
+            else if (after.status === 'declined') messageTypeId = 'assignment_status_change';
             else if (after.status === 'cancelled' || after.status === 'canceled') messageTypeId = 'assignment_cancelled';
             
             const result = await sendLegacyAssignmentMessage({

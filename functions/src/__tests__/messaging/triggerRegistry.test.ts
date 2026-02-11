@@ -33,6 +33,9 @@ describe('triggerRegistry', () => {
     expect(mapApplicationStatusToTriggerKey('rejected')).to.equal(
       SYSTEM_TRIGGER_KEYS.applicationStatusRejected
     );
+    expect(mapApplicationStatusToTriggerKey('waitlisted')).to.equal(
+      SYSTEM_TRIGGER_KEYS.applicationStatusWaitlisted
+    );
     expect(mapApplicationStatusToTriggerKey('unknown')).to.equal(null);
   });
 

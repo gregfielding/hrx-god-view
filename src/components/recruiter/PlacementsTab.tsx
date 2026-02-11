@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Box,
   Card,
@@ -9,8 +9,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  TextField,
-  Autocomplete,
   Alert,
   CircularProgress,
   Paper,
@@ -24,7 +22,6 @@ import {
   DialogActions,
   Button,
   Link,
-  Divider,
 } from '@mui/material';
 import {
   Description as ResumeIcon,
@@ -32,6 +29,8 @@ import {
   Work as WorkHistoryIcon,
   School as CertIcon,
   Badge as LicenseIcon,
+  Lock as LockedIcon,
+  LockOpen as UnlockedIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -40,13 +39,14 @@ import {
   getDocs,
   getDoc,
   doc,
+  onSnapshot,
   updateDoc,
   serverTimestamp,
-  addDoc,
 } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { httpsCallable } from 'firebase/functions';
+
+import { db, functions } from '../../firebase';
 import { JobOrder } from '../../types/recruiter/jobOrder';
-import { sendWorkerMessage } from '../../utils/phoneVerificationTwilio';
 
 interface PlacementsTabProps {
   tenantId: string;
@@ -90,8 +90,12 @@ interface Worker {
   aiProfileScore?: number;
   aiJobFitScore?: number;
   isAssignedToShift?: boolean; // Track if worker is assigned to the selected shift
+  assignmentStatus?: string;
+  assignmentId?: string;
   confirmationStatus?: 'accepted' | 'confirmed'; // Track confirmation status
 }
+
+const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
 
 const PlacementsTab: React.FC<PlacementsTabProps> = ({
   tenantId,
@@ -129,6 +133,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
+  const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
+  const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
@@ -208,6 +215,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [selectedCerts, setSelectedCerts] = useState<any[]>([]);
   const [licenseModalOpen, setLicenseModalOpen] = useState(false);
   const [selectedLicenses, setSelectedLicenses] = useState<any[]>([]);
+  const [assignmentIdByUserId, setAssignmentIdByUserId] = useState<Map<string, string>>(new Map());
 
   // Load user groups for workforce dropdown
   useEffect(() => {
@@ -418,31 +426,67 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       try {
         let workforceUsers: Worker[] = [];
 
+        const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
+        const isCareerJob = jobType === 'career';
+        const hasShiftMetadata = (applicationData: any) =>
+          Boolean(
+            applicationData?.shiftId ||
+              (Array.isArray(applicationData?.shiftIds) && applicationData.shiftIds.length > 0) ||
+              (Array.isArray(applicationData?.selectedShifts) && applicationData.selectedShifts.length > 0),
+          );
+
+        const matchesSelectedShift = (applicationData: any) =>
+          applicationData.shiftId === selectedShiftId ||
+          (Array.isArray(applicationData.shiftIds) && applicationData.shiftIds.includes(selectedShiftId)) ||
+          (Array.isArray(applicationData.selectedShifts) &&
+            applicationData.selectedShifts.some((s: any) => s.shiftId === selectedShiftId || s.id === selectedShiftId));
+
+        const loadApplicationDocs = async (): Promise<Array<{ id: string; data: any }>> => {
+          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+          const byOrderSnap = await getDocs(
+            query(applicationsRef, where('jobOrderId', '==', jobOrderId)),
+          );
+          let docs = byOrderSnap.docs;
+
+          if (docs.length === 0) {
+            const jobPostingsSnap = await getDocs(
+              query(collection(db, 'tenants', tenantId, 'job_postings'), where('jobOrderId', '==', jobOrderId)),
+            );
+            const jobPostIds = jobPostingsSnap.docs.map((d) => d.id).filter(Boolean).slice(0, 10);
+
+            if (jobPostIds.length > 0) {
+              const byJobIdSnap = await getDocs(
+                query(applicationsRef, where('jobId', 'in', jobPostIds)),
+              );
+              docs = byJobIdSnap.docs;
+
+              if (docs.length === 0) {
+                const byPostIdSnap = await getDocs(
+                  query(applicationsRef, where('postId', 'in', jobPostIds)),
+                );
+                docs = byPostIdSnap.docs;
+              }
+            }
+          }
+
+          return docs.map((d) => ({ id: d.id, data: d.data() }));
+        };
+
         if (selectedWorkforce === 'applicants') {
           // Load applicants for this job order AND this specific shift
-          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-          const applicationsQuery = query(
-            applicationsRef,
-            where('jobOrderId', '==', jobOrderId)
-          );
-          const applicationsSnap = await getDocs(applicationsQuery);
+          const applicationDocs = await loadApplicationDocs();
           
           // Filter applications to only those who applied for this specific shift
           const userIds = new Set<string>();
-          applicationsSnap.docs.forEach(doc => {
-            const data = doc.data();
+          applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
+            const status = String(data.status || 'submitted').toLowerCase();
+            if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
             
-            // Check if this applicant applied for the selected shift
-            // Applications can have shiftId (single) or shiftIds (array) or selectedShifts (array)
-            const hasShift = 
-              data.shiftId === selectedShiftId ||
-              (Array.isArray(data.shiftIds) && data.shiftIds.includes(selectedShiftId)) ||
-              (Array.isArray(data.selectedShifts) && data.selectedShifts.some((s: any) => 
-                s.shiftId === selectedShiftId || s.id === selectedShiftId
-              ));
-            
-            if (hasShift) {
+            const hasShift = matchesSelectedShift(data);
+            // Career applications often don't carry explicit shift linkage; allow them.
+            const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
+            if (hasShift || allowCareerWithoutShift) {
               userIds.add(data.userId);
             }
           });
@@ -463,30 +507,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         } else if (selectedWorkforce === 'candidates') {
           // Load candidates for this job order AND this specific shift
           // Candidates are applicants who have been marked as candidates (shortlist)
-          const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-          const applicationsQuery = query(
-            applicationsRef,
-            where('jobOrderId', '==', jobOrderId),
-            where('candidate', '==', true)  // Filter for applications marked as candidates
-          );
-          const applicationsSnap = await getDocs(applicationsQuery);
+          const applicationDocs = await loadApplicationDocs();
           
           // Filter candidates to only those who applied for this specific shift
           const candidateUserIds = new Set<string>();
-          applicationsSnap.docs.forEach(doc => {
-            const data = doc.data();
-            if (!data.userId || data.status === 'rejected') return;
+          applicationDocs.forEach(({ data }) => {
+            if (!data.userId || data.candidate !== true) return;
+            const status = String(data.status || 'submitted').toLowerCase();
+            if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
             
-            // Check if this candidate applied for the selected shift
-            // Applications can have shiftId (single) or shiftIds (array) or selectedShifts (array)
-            const hasShift = 
-              data.shiftId === selectedShiftId ||
-              (Array.isArray(data.shiftIds) && data.shiftIds.includes(selectedShiftId)) ||
-              (Array.isArray(data.selectedShifts) && data.selectedShifts.some((s: any) => 
-                s.shiftId === selectedShiftId || s.id === selectedShiftId
-              ));
-            
-            if (hasShift) {
+            const hasShift = matchesSelectedShift(data);
+            const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
+            if (hasShift || allowCareerWithoutShift) {
               candidateUserIds.add(data.userId);
             }
           });
@@ -529,67 +561,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           }
         }
         
-        // Check assignment status for each worker if a shift is selected
-        if (selectedShiftId && workforceUsers.length > 0) {
-          // PRIMARY METHOD: Check assignments collection (source of truth)
-          const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
-          
-          // Query all assignments for this shift
-          const assignmentsQuery = query(
-            assignmentsRef,
-            where('shiftId', '==', selectedShiftId)
-          );
-          
-          try {
-            const assignmentsSnapshot = await getDocs(assignmentsQuery);
-            const assignmentsMap = new Map<string, { status: string; assignmentId: string }>();
-            
-            // Build map of userId -> assignment status
-            assignmentsSnapshot.docs.forEach(doc => {
-              const assignmentData = doc.data();
-              const userId = assignmentData.userId || assignmentData.candidateId;
-              if (userId) {
-                assignmentsMap.set(userId, {
-                  status: assignmentData.status || 'proposed',
-                  assignmentId: doc.id
-                });
-              }
-            });
-            
-            // Check each worker's assignment status from assignments collection
-            const workersWithAssignments = workforceUsers.map((worker) => {
-              const assignment = assignmentsMap.get(worker.id);
-              if (assignment) {
-                const status = assignment.status;
-                let confirmationStatus: 'accepted' | 'confirmed' | undefined = undefined;
-                
-                // Map assignment statuses to confirmation status
-                if (status === 'confirmed' || status === 'active') {
-                  confirmationStatus = 'confirmed';
-                } else if (status === 'proposed' || status === 'accepted') {
-                  confirmationStatus = 'accepted';
-                }
-                
-                return {
-                  ...worker,
-                  isAssignedToShift: true,
-                  confirmationStatus
-                };
-              }
-              
-              // If not found in assignments, check applications as fallback
-              return { ...worker, isAssignedToShift: false, confirmationStatus: undefined };
-            });
-            
-            setWorkers(workersWithAssignments);
-          } catch (assignmentErr: any) {
-            console.warn('Error checking assignments collection, falling back to applications:', assignmentErr);
-            // Fallback: Keep existing application-based check logic
-            setWorkers(workforceUsers);
-          }
-        } else {
-          setWorkers(workforceUsers);
-        }
+        // Assignment status is now applied from real-time shift listener below.
+        setWorkers(workforceUsers);
       } catch (err: any) {
         console.error('Error loading workforce:', err);
         setError(err.message || 'Failed to load workforce');
@@ -599,10 +572,48 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadWorkforce();
-  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId]);
+  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, jobOrder]);
+
+  // Real-time assignment status map for the selected shift.
+  useEffect(() => {
+    if (!tenantId || !selectedShiftId) {
+      setAssignmentStatusByUserId(new Map());
+      return;
+    }
+
+    const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+    const assignmentsQuery = query(assignmentsRef, where('shiftId', '==', selectedShiftId));
+    const unsubscribe = onSnapshot(
+      assignmentsQuery,
+      (snapshot) => {
+        const nextStatus = new Map<string, string>();
+        const nextIds = new Map<string, string>();
+        snapshot.docs.forEach((docSnap) => {
+          const data = docSnap.data() as any;
+          const userId = String(data?.userId || data?.candidateId || '');
+          const status = String(data?.status || 'proposed').toLowerCase();
+          if (!userId) return;
+          if (['declined', 'canceled', 'cancelled'].includes(status)) return;
+          nextStatus.set(userId, status);
+          nextIds.set(userId, docSnap.id);
+        });
+        setAssignmentStatusByUserId(nextStatus);
+        setAssignmentIdByUserId(nextIds);
+      },
+      (err) => {
+        console.warn('Assignments onSnapshot error:', err);
+      },
+    );
+
+    return () => unsubscribe();
+  }, [tenantId, selectedShiftId]);
+
+  const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
+  const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
+  const safeSelectedWorkforce = workforceOptions.some((o) => o.value === selectedWorkforce) ? selectedWorkforce : '';
 
   // Build workforce options based on job order labor pool and visibility settings
-  const getWorkforceOptions = () => {
+  function getWorkforceOptions() {
     const options: Array<{ value: string; label: string }> = [
       { value: 'applicants', label: 'Applicants' },
       { value: 'candidates', label: 'Candidates' },
@@ -636,388 +647,123 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
     
     return options;
-  };
+  }
 
-  // Handle assign to shift
-  const handleAssignToShift = async (worker: Worker, shift: Shift | undefined) => {
-    if (!shift || !worker.id || !tenantId || !jobOrderId) {
+  const assignWorkersToShift = async (workerIds: string[]) => {
+    if (!selectedShift || !tenantId || !jobOrderId || workerIds.length === 0) {
       setError('Missing required information to assign shift');
       return;
     }
 
     try {
-      setLoading(true);
       setError(null);
 
-      // Find the application document for this worker + job
-      // Applications are stored at tenants/{tenantId}/applications/{applicationId}
-      // Where applicationId format is: {userId}_{jobId}
-      // We need to find applications by userId and jobOrderId (for gig jobs)
-      
-      // First, get the job posting ID from the job order
-      const jobPostingsRef = collection(db, 'tenants', tenantId, 'job_postings');
-      const jobPostingsQuery = query(
-        jobPostingsRef,
-        where('jobOrderId', '==', jobOrderId)
-      );
-      const jobPostingsSnapshot = await getDocs(jobPostingsQuery);
-      
-      if (jobPostingsSnapshot.empty) {
-        throw new Error('Job posting not found for this job order');
-      }
-      
-      const jobPosting = jobPostingsSnapshot.docs[0];
-      const jobPostId = jobPosting.id;
-      
-      // Try to find existing application
-      // Application ID format is: {userId}_{jobId}
-      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-      const applicationId = `${worker.id}_${jobPostId}`;
-      let applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationId);
-      
-      // Check if application exists, if not, also try querying by userId and jobOrderId
-      let applicationDoc = await getDoc(applicationRef);
-      
-      if (!applicationDoc.exists()) {
-        // Try to find by userId and jobOrderId
-        const applicationQuery = query(
-          applicationsRef,
-          where('userId', '==', worker.id),
-          where('jobOrderId', '==', jobOrderId)
-        );
-        const applicationSnapshot = await getDocs(applicationQuery);
-        
-        if (!applicationSnapshot.empty) {
-          applicationDoc = applicationSnapshot.docs[0];
-          applicationRef = doc(db, 'tenants', tenantId, 'applications', applicationDoc.id);
-        } else {
-          throw new Error('Application not found. Worker must apply first.');
-        }
-      }
-
-      // Update application status to "accepted" and ensure shiftId is set
-      const updateData: any = {
-        status: 'accepted',
-        updatedAt: serverTimestamp(),
-      };
-      
-      // Ensure shiftId is set (for tracking which shift was accepted)
-      const appData = applicationDoc.data();
-      if (appData.shiftId && appData.shiftId !== shift.id) {
-        // If there's already a different shiftId, add this one to shiftIds instead
-        const existingShiftIds = Array.isArray(appData.shiftIds) ? appData.shiftIds : [];
-        if (!existingShiftIds.includes(shift.id)) {
-          updateData.shiftIds = [...existingShiftIds, shift.id];
-        }
-      } else if (!appData.shiftId) {
-        updateData.shiftId = shift.id;
-      }
-      
-      await updateDoc(applicationRef, updateData);
-      
-      // ========================================================================
-      // CHECK FOR DUPLICATE ASSIGNMENT BEFORE CREATING
-      // ========================================================================
-      const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
-      const duplicateCheckQuery = query(
-        assignmentsRef,
-        where('userId', '==', worker.id),
-        where('shiftId', '==', shift.id)
-      );
-      const duplicateSnapshot = await getDocs(duplicateCheckQuery);
-      
-      if (!duplicateSnapshot.empty) {
-        console.warn(`Assignment already exists for worker ${worker.id} on shift ${shift.id}`);
-        setError(`Worker ${worker.displayName} is already assigned to this shift.`);
-        setLoading(false);
-        return;
-      }
-
-      // ========================================================================
-      // CHECK FOR DATE RANGE OVERLAPS (multi-day aware)
-      // ========================================================================
-      const newStart = ((shift as any).shiftDate || '').toString().split('T')[0];
-      const newEnd = (((shift as any).endDate || (shift as any).shiftDate) || '').toString().split('T')[0];
-      if (newStart && newEnd) {
-        const userAssignmentsQuery = query(assignmentsRef, where('userId', '==', worker.id));
-        const userAssignmentsSnap = await getDocs(userAssignmentsQuery);
-
-        const blockingStatuses = new Set(['proposed', 'confirmed', 'active']);
-        const overlap = (aStart: string, aEnd: string, bStart: string, bEnd: string) => {
-          const s1 = aStart <= aEnd ? aStart : aEnd;
-          const e1 = aStart <= aEnd ? aEnd : aStart;
-          const s2 = bStart <= bEnd ? bStart : bEnd;
-          const e2 = bStart <= bEnd ? bEnd : bStart;
-          return s1 <= e2 && s2 <= e1;
-        };
-
-        for (const aDoc of userAssignmentsSnap.docs) {
-          const a = aDoc.data() as any;
-          if (!blockingStatuses.has((a.status || '').toString())) continue;
-          const aStart = (a.startDate || '').toString().split('T')[0];
-          const aEnd = ((a.endDate || a.startDate) || '').toString().split('T')[0];
-          if (!aStart || !aEnd) continue;
-          if (overlap(newStart, newEnd, aStart, aEnd)) {
-            setError(
-              `Worker ${worker.displayName} already has an active assignment overlapping ${newStart} – ${newEnd}.`,
-            );
-            setLoading(false);
-            return;
-          }
-        }
-      }
-      
-      // ========================================================================
-      // CREATE ACTUAL ASSIGNMENT DOCUMENT with all required denormalized fields
-      // ========================================================================
-      
-      // Fetch job order to get company info and location (using canonical path)
-      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
-      const jobOrderSnap = await getDoc(jobOrderRef);
-      if (!jobOrderSnap.exists()) {
-        throw new Error('Job order not found');
-      }
-      const jobOrderData = jobOrderSnap.data();
-      
-      // Fetch location details for coords and nickname
-      const locationId = jobOrder?.worksiteId || jobOrderData.worksiteId || jobOrderData.locationId;
-      if (!locationId) {
-        throw new Error('Job order missing location/worksite ID');
-      }
-      
-      const locationRef = doc(db, 'tenants', tenantId, 'locations', locationId);
-      const locationSnap = await getDoc(locationRef);
-      const locationData = locationSnap.exists() ? locationSnap.data() : {};
-      const locationNickname = locationData.nickname || locationData.title || locationId;
-      const latitude = locationData.latitude || locationData.lat || null;
-      const longitude = locationData.longitude || locationData.lng || null;
-      
-      if (!latitude || !longitude) {
-        console.warn('Location missing coordinates:', locationId);
-      }
-      
-      // Create assignment document with ALL required fields
-      await addDoc(collection(db, 'tenants', tenantId, 'assignments'), {
-        // Core references
+      const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
+      const response = await assignFn({
         tenantId,
         jobOrderId,
-        shiftId: shift.id,
-        candidateId: worker.id,
-        userId: worker.id,
-        applicationId: applicationDoc.id,
-        
-        // Status and dates
-        status: 'confirmed', // Placements start as confirmed
-        startDate: (shift as any).shiftDate || '',
-        endDate: (shift as any).endDate || (shift as any).shiftDate || '', // Multi-day shifts store endDate
-        // Multi-day weekly schedule (optional)
-        weeklySchedule: (shift as any).weeklySchedule || undefined,
-        
-        // Rates (from shift or job order)
-        payRate: (shift as any).payRate || jobOrderData.payRate || 0,
-        billRate: (shift as any).billRate || jobOrderData.billRate || 0,
-        
-        // Timesheet mode
-        timesheetMode: jobOrderData.timesheetMode || 'mobile',
-        
-        // Worker information (denormalized - required)
-        firstName: worker.firstName || worker.displayName?.split(' ')[0] || '',
-        lastName: worker.lastName || worker.displayName?.split(' ').slice(1).join(' ') || '',
-        email: worker.email || '',
-        phone: worker.phone || '',
-        
-        // Company information (denormalized - required)
-        companyId: jobOrderData.companyId || '',
-        companyName: jobOrderData.companyName || '',
-        companyTitle: jobOrderData.companyName || '',
-        
-        // Location information (denormalized - required)
-        locationId: locationId,
-        locationIds: [locationId],
-        locationNickname: locationNickname,
-        worksiteName: locationNickname,
-        latitude: latitude,
-        longitude: longitude,
-        
-        // Job information (denormalized - required)
-        jobOrderType: jobOrderData.jobType || 'gig',
-        jobTitle: (shift as any).defaultJobTitle || jobOrderData.jobTitle || '',
-        shiftTitle: (shift as any).shiftTitle || '',
-        
-        // Audit fields
-        createdBy: 'system', // TODO: Get actual current user ID
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        assignedAt: serverTimestamp(),
+        shiftId: selectedShift.id,
+        userIds: workerIds,
+        sourceType: selectedWorkforce || 'manual',
+        sourceId: selectedWorkforce.startsWith('group_') ? selectedWorkforce.replace('group_', '') : null,
       });
-      
-      console.log(`✅ Assignment created for worker ${worker.id} on shift ${shift.id}`);
 
-      // Get shift details for SMS
-      const startDateAny: any = (shift as any).shiftDate;
-      const endDateAny: any = (shift as any).endDate;
-      let formattedDate = '';
-      const toDateObj = (d: any): Date | null => {
-        if (!d) return null;
-        if (d instanceof Date) return d;
-        if (typeof d === 'string') return new Date(d);
-        if (d?.toDate && typeof d.toDate === 'function') return d.toDate();
-        return null;
-      };
-      const startD = toDateObj(startDateAny);
-      const endD = toDateObj(endDateAny);
-      if (startD) {
-        const fmt = (dt: Date) =>
-          dt.toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          });
-        formattedDate = endD && endD.toISOString().slice(0, 10) !== startD.toISOString().slice(0, 10)
-          ? `${fmt(startD)} – ${fmt(endD)}`
-          : fmt(startD);
-      }
+      const data = response.data as any;
+      const createdCount = Array.isArray(data?.created) ? data.created.length : 0;
+      const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
+      const warnings = Array.isArray(data?.created)
+        ? data.created.flatMap((item: any) => Array.isArray(item.warnings) ? item.warnings : [])
+        : [];
 
-      // Format time
-      const formatTime = (time: any) => {
-        if (!time) return '';
-        if (typeof time === 'string') {
-          // Handle "HH:MM" format
-          const [hour, minute] = time.split(':');
-          const hourNum = parseInt(hour, 10);
-          const ampm = hourNum >= 12 ? 'PM' : 'AM';
-          const displayHour = hourNum % 12 || 12;
-          return `${displayHour}:${minute || '00'} ${ampm}`;
-        }
-        return time.toString();
-      };
-
-      const startTime = formatTime(shift.startTime);
-      const endTime = shift.endTime ? formatTime(shift.endTime) : '';
-      const timeRange = endTime ? `${startTime} to ${endTime}` : startTime;
-
-      // Get job title
-      const jobTitle = (shift as any).defaultJobTitle || jobOrder?.jobTitle || 'this position';
-
-      // Get worksite location name
-      let worksiteName = '';
-      if (jobOrder?.worksiteId && tenantId) {
-        try {
-          const locationRef = doc(db, 'tenants', tenantId, 'locations', jobOrder.worksiteId);
-          const locationDoc = await getDoc(locationRef);
-          if (locationDoc.exists()) {
-            const locationData = locationDoc.data();
-            worksiteName = locationData.nickname || locationData.title || jobOrder.worksiteId;
-          }
-        } catch (err) {
-          console.warn('Failed to fetch worksite name:', err);
-        }
-      }
-      if (!worksiteName && jobOrder?.worksiteName) {
-        worksiteName = jobOrder.worksiteName;
-      }
-
-      // Get worker's phone number in E.164 format
-      let phone: string | null = null;
-      if (worker.phone) {
-        if (worker.phone.startsWith('+')) {
-          phone = worker.phone;
-        } else {
-          // Format as US number (+1)
-          const digits = worker.phone.replace(/\D/g, '');
-          if (digits.length === 10) {
-            phone = `+1${digits}`;
-          } else if (digits.length === 11 && digits.startsWith('1')) {
-            phone = `+${digits}`;
-          }
-        }
-      }
-
-      if (!phone) {
-        throw new Error('Worker phone number not available');
-      }
-
-      // Generate job posting URL
-      // The URL should be the public job board detail page
-      const baseUrl = window.location.origin;
-      const jobUrl = `${baseUrl}/c1/jobs-board/${jobPostId}`;
-
-      // Create SMS message
-      const firstName = worker.firstName || worker.displayName?.split(' ')[0] || 'there';
-      const message = `Hi ${firstName}, you've been accepted for ${jobTitle} on ${formattedDate} from ${timeRange}${worksiteName ? ` at ${worksiteName}` : ''}. Please confirm your assignment: ${jobUrl}`;
-
-      // Send SMS
-      let smsSuccess = false;
-      try {
-        await sendWorkerMessage(phone, message);
-        smsSuccess = true;
-      } catch (smsError: any) {
-        console.error('Failed to send SMS:', smsError);
-        // Don't throw - status update succeeded even if SMS fails
-        smsSuccess = false;
-      }
-
-      // Refresh confirmed applications count - need to check both shiftId and shiftIds
-      if (selectedShiftId) {
-        // Query for applications with shiftId
-        const shiftIdQuery = query(
-          applicationsRef,
-          where('status', '==', 'accepted'),
-          where('shiftId', '==', selectedShiftId)
-        );
-        
-        // Query for applications with shiftIds array containing this shift
-        const shiftIdsQuery = query(
-          applicationsRef,
-          where('status', '==', 'accepted')
-        );
-        
-        const [shiftIdSnapshot, shiftIdsSnapshot] = await Promise.all([
-          getDocs(shiftIdQuery),
-          getDocs(shiftIdsQuery)
-        ]);
-        
-        // Count unique applications that match this shift
-        const matchingAppIds = new Set<string>();
-        shiftIdSnapshot.forEach(doc => matchingAppIds.add(doc.id));
-        shiftIdsSnapshot.forEach(doc => {
-          const data = doc.data();
-          if (Array.isArray(data.shiftIds) && data.shiftIds.includes(selectedShiftId)) {
-            matchingAppIds.add(doc.id);
-          }
-        });
-        
-        setConfirmedApplicationsCount(matchingAppIds.size);
-      }
-
-      // Show success message with SMS status
-      if (smsSuccess) {
-        setError(null);
-        alert(`Successfully assigned ${worker.displayName} to shift. SMS notification sent.`);
+      if (createdCount === 0 && skipped.length > 0) {
+        setError(`No assignments created. ${skipped.map((s: any) => s.reason).join(', ')}`);
       } else {
-        setError('Shift assigned, but SMS notification failed. Please notify the worker manually.');
-        alert(`Successfully assigned ${worker.displayName} to shift. However, SMS notification failed - please notify the worker manually.`);
+        setError(null);
+        const sameDayWarn = warnings.includes('same_day_second_shift_warning')
+          ? ' Warning: one or more workers already have another shift on the same day.'
+          : '';
+        alert(`Created ${createdCount} assignment${createdCount === 1 ? '' : 's'}.${sameDayWarn}`);
       }
-      
-      // Reload workers to update assignment status
-      // Trigger reload by updating selectedShiftId (temporarily) or reloading workforce
-      const currentShiftId = selectedShiftId;
-      setSelectedShiftId(''); // Clear to trigger reload
-      setTimeout(() => {
-        setSelectedShiftId(currentShiftId); // Restore to trigger reload with updated data
-      }, 100);
-      
     } catch (err: any) {
-      console.error('Error assigning to shift:', err);
-      setError(err.message || 'Failed to assign worker to shift');
-    } finally {
-      setLoading(false);
+      console.error('Error assigning workers to shift:', err);
+      setError(err?.message || 'Failed to assign worker(s) to shift');
+    }
+  };
+
+  // Handle assign to shift (create new assignment from pool)
+  const handleAssignToShift = async (worker: Worker, shift: Shift | undefined) => {
+    if (!shift || !worker.id) return;
+    await assignWorkersToShift([worker.id]);
+  };
+
+  // Handle promoting Placed (proposed/accepted) to Assigned (confirmed)
+  const handleConfirmPlacement = async (worker: Worker) => {
+    if (!tenantId || !selectedShiftId || !worker.assignmentId) return;
+    const rawStatus = String(worker.assignmentStatus || '').toLowerCase();
+    if (!['proposed', 'accepted'].includes(rawStatus)) return;
+    try {
+      setError(null);
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', worker.assignmentId);
+      await updateDoc(assignmentRef, {
+        status: 'confirmed',
+        confirmedAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err: any) {
+      console.error('Error confirming placement:', err);
+      setError(err?.message || 'Failed to confirm placement');
     }
   };
 
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
-  const showContent = selectedShiftId && selectedWorkforce && workers.length > 0;
+  const hasRequiredSelections = Boolean(selectedShiftId && selectedWorkforce);
+  const showContent = hasRequiredSelections;
+  const workersWithAssignmentState = useMemo(
+    () =>
+      workers.map((worker) => {
+        const status = assignmentStatusByUserId.get(worker.id);
+        if (!status) {
+          return {
+            ...worker,
+            isAssignedToShift: false,
+            assignmentStatus: undefined,
+            confirmationStatus: undefined,
+          };
+        }
+
+        const confirmationStatus: 'accepted' | 'confirmed' =
+          status === 'confirmed' || status === 'active' ? 'confirmed' : 'accepted';
+        return {
+          ...worker,
+          isAssignedToShift: true,
+          assignmentStatus: status,
+          assignmentId: assignmentIdByUserId.get(worker.id),
+          confirmationStatus,
+        };
+      }),
+    [workers, assignmentStatusByUserId, assignmentIdByUserId],
+  );
+  const assignedWorkers = useMemo(
+    () => workersWithAssignmentState.filter((worker) => worker.isAssignedToShift),
+    [workersWithAssignmentState],
+  );
+  const unassignedWorkers = useMemo(
+    () => workersWithAssignmentState.filter((worker) => !worker.isAssignedToShift),
+    [workersWithAssignmentState],
+  );
+  const availableWorkers = unassignedWorkers;
+  const staffingTarget = useMemo(() => {
+    if (!selectedShift) return null;
+    const value =
+      (selectedShift as any).staffNeeded ??
+      (selectedShift as any).totalStaffRequested ??
+      (selectedShift as any).workersNeeded;
+    return value === undefined || value === null ? null : Number(value);
+  }, [selectedShift]);
+  const staffingFilled = useMemo(
+    () => assignedWorkers.filter((w) => w.confirmationStatus === 'confirmed').length,
+    [assignedWorkers],
+  );
 
   // Debug: Log shift data to help identify field names
   useEffect(() => {
@@ -1029,25 +775,113 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   }, [selectedShift]);
 
+  const handleWorkerDragStart = (event: React.DragEvent, workerId: string) => {
+    event.dataTransfer.setData(WORKER_DRAG_MIME, workerId);
+    // Keep plain text for browser compatibility, but we only read the custom MIME on drop.
+    event.dataTransfer.setData('text/plain', workerId);
+    event.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleAssignmentsDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    setIsAssignmentDragOver(true);
+  };
+
+  const handleAssignmentsDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsAssignmentDragOver(false);
+    const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME);
+    if (!workerId) return;
+    const worker = unassignedWorkers.find((w) => w.id === workerId);
+    if (worker) {
+      handleAssignToShift(worker, selectedShift);
+    }
+  };
+
+  const handleUnplaceToWorkerPool = async (worker: Worker) => {
+    if (!tenantId || !selectedShiftId) return;
+    const rawStatus = String(worker.assignmentStatus || '').toLowerCase();
+    // Only allow dragging back while still in Placed state.
+    if (!['proposed', 'accepted'].includes(rawStatus)) return;
+
+    const assignmentId = worker.assignmentId || `${selectedShiftId}__${worker.id}`;
+    try {
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', assignmentId);
+      await updateDoc(assignmentRef, {
+        status: 'canceled',
+        canceledAt: serverTimestamp(),
+        cancellationReason: 'manual_unplace',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (err: any) {
+      console.error('Error moving placed worker back to pool:', err);
+      setError(err?.message || 'Failed to move worker back to pool');
+    }
+  };
+
+  const handleWorkerPoolDragOver = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+    setIsWorkerPoolDragOver(true);
+  };
+
+  const handleWorkerPoolDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsWorkerPoolDragOver(false);
+    const workerId = event.dataTransfer.getData(WORKER_DRAG_MIME);
+    if (!workerId) return;
+    const assignedWorker = assignedWorkers.find((w) => w.id === workerId);
+    if (assignedWorker) {
+      handleUnplaceToWorkerPool(assignedWorker);
+    }
+  };
+
+  // Guard against browser default drop navigation (e.g. cid:, mailto:, file:).
+  useEffect(() => {
+    const preventWindowDropNavigation = (event: DragEvent) => {
+      event.preventDefault();
+    };
+    window.addEventListener('dragover', preventWindowDropNavigation);
+    window.addEventListener('drop', preventWindowDropNavigation);
+    return () => {
+      window.removeEventListener('dragover', preventWindowDropNavigation);
+      window.removeEventListener('drop', preventWindowDropNavigation);
+    };
+  }, []);
+
   return (
-    <Box>
-      <Typography variant="h6" gutterBottom sx={{ fontWeight: 700, mb: 3 }}>
+    <Box
+      onDragOverCapture={(event) => {
+        // Prevent browser default drop navigation (e.g., cid: URLs).
+        event.preventDefault();
+      }}
+      onDropCapture={(event) => {
+        // Keep drops in-app and avoid page-level navigation.
+        event.preventDefault();
+      }}
+    >
+      <Typography variant="h6" gutterBottom sx={{ fontWeight: 700, mb: 1 }}>
         Placements for this Job Order
       </Typography>
 
       {/* Filters */}
       <Card sx={{ mb: 3 }}>
-        <CardContent>
+        <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
           <Typography variant="subtitle2" color="text.secondary" gutterBottom>
             Select a shift and workforce to view and manage placements
           </Typography>
-          <Grid container spacing={2} sx={{ mt: 1 }}>
+          <Grid container spacing={2} sx={{ mt: 0.25 }}>
               {/* Shift Picker - Shows all upcoming shifts */}
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth>
                   <InputLabel>Shift</InputLabel>
                   <Select
-                    value={selectedShiftId}
+                    value={safeSelectedShiftId}
                     label="Shift"
                     onChange={(e) => setSelectedShiftId(e.target.value)}
                     disabled={loading || shifts.length === 0}
@@ -1113,14 +947,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 <FormControl fullWidth>
                   <InputLabel>Workforce</InputLabel>
                   <Select
-                    value={selectedWorkforce}
+                    value={safeSelectedWorkforce}
                     label="Workforce"
                     onChange={(e) => setSelectedWorkforce(e.target.value)}
                   >
                     <MenuItem value="">
                       <em>Select workforce</em>
                     </MenuItem>
-                    {getWorkforceOptions().map((option) => (
+                    {workforceOptions.map((option) => (
                       <MenuItem key={option.value} value={option.value}>
                         {option.label}
                       </MenuItem>
@@ -1146,39 +980,29 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </Box>
         )}
 
-        {/* Content Area - Shows selected shift and workers */}
+        {/* Content Area - three column board */}
         {!loading && showContent && (
           <Grid container spacing={3}>
-            {/* Selected Shift Info */}
-            <Grid item xs={12} md={4}>
-              <Card>
-                <CardContent>
+            {/* Left: Shift Details */}
+            <Grid item xs={12} lg={3}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                    Selected Shift
+                    Shift Details
                   </Typography>
                   {selectedShift && (
-                    <Stack spacing={2}>
-                      {/* Shift Title */}
-                      <Typography variant="body1" fontWeight={600} sx={{ fontSize: '1.1rem' }}>
+                    <Stack spacing={1.25}>
+                      <Typography variant="subtitle1" fontWeight={700}>
                         {selectedShift.shiftTitle || 'Shift'}
                       </Typography>
-                      
-                      {/* Job Title */}
                       {(selectedShift as any).defaultJobTitle && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                            Job Title
-                          </Typography>
-                          <Typography variant="body2" fontWeight={500}>
-                            {(selectedShift as any).defaultJobTitle}
-                          </Typography>
-                        </Box>
+                        <Typography variant="body2" color="text.secondary">
+                          {(selectedShift as any).defaultJobTitle}
+                        </Typography>
                       )}
-                      
-                      {/* Date and Time */}
-                      <Box>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                          Date & Time
+                      <Paper variant="outlined" sx={{ p: 0.5, bgcolor: 'grey.50' }}>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                          Date
                         </Typography>
                         <Typography variant="body2">
                           {(() => {
@@ -1204,18 +1028,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             return 'No date';
                           })()}
                         </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                          Time
+                        </Typography>
                         {(() => {
-                          // Check for startTime in various possible field names
                           const startTime = (selectedShift as any).startTime || (selectedShift as any).defaultStartTime;
                           const endTime = (selectedShift as any).endTime || (selectedShift as any).defaultEndTime;
-                          
                           if (startTime) {
                             const formatTime = (time: string) => {
                               if (!time) return '';
-                              // Handle formats like "08:00", "08:00 AM", "8:00 AM"
                               let hours: string, minutes: string;
                               if (time.includes(' ')) {
-                                // Format like "08:00 AM"
                                 const parts = time.split(' ');
                                 [hours, minutes] = parts[0].split(':');
                                 const ampm = parts[1] || (parseInt(hours, 10) >= 12 ? 'PM' : 'AM');
@@ -1234,99 +1057,66 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                             const formattedStart = formatTime(startTime);
                             const formattedEnd = endTime ? formatTime(endTime) : null;
                             return (
-                              <Typography variant="body2" fontWeight={500} sx={{ mt: 0.5 }}>
+                              <Typography variant="body2" fontWeight={600}>
                                 {formattedEnd ? `${formattedStart} - ${formattedEnd}` : formattedStart}
                               </Typography>
                             );
                           }
                           return null;
                         })()}
-                      </Box>
-                      
-                      {/* Staff Needed */}
-                      {(() => {
-                        // Check for staffNeeded in various possible field names
-                        const staffNeeded = (selectedShift as any).staffNeeded || (selectedShift as any).totalStaffRequested || (selectedShift as any).workersNeeded;
-                        if (staffNeeded !== undefined && staffNeeded !== null) {
-                          return (
-                            <Box>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                                Staff Needed
-                              </Typography>
-                              <Typography variant="body2" fontWeight={500}>
-                                {staffNeeded}
-                              </Typography>
-                            </Box>
-                          );
-                        }
-                        return null;
-                      })()}
-                      
-                      {/* Staffing Info */}
-                      {(() => {
-                        const staffNeeded = (selectedShift as any).staffNeeded || (selectedShift as any).totalStaffRequested || (selectedShift as any).workersNeeded;
-                        if (selectedShift.spotsRemaining !== undefined || confirmedApplicationsCount > 0 || staffNeeded !== undefined) {
-                          return (
-                            <Box>
-                              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                                Staffing
-                              </Typography>
-                              <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', flexDirection: 'column' }}>
-                                {staffNeeded !== undefined && (
-                                  <Chip 
-                                    label={`${confirmedApplicationsCount}/${staffNeeded} confirmed`}
-                                    size="small"
-                                    color={confirmedApplicationsCount >= staffNeeded ? 'success' : confirmedApplicationsCount > 0 ? 'info' : 'default'}
-                                    variant="outlined"
-                                    sx={{ width: 'fit-content' }}
-                                  />
-                                )}
-                                {selectedShift.spotsRemaining !== undefined && selectedShift.spotsRemaining !== confirmedApplicationsCount && (
-                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                                    {selectedShift.spotsRemaining} spots remaining
-                                  </Typography>
-                                )}
-                              </Box>
-                            </Box>
-                          );
-                        }
-                        return null;
-                      })()}
-                      
-                      {/* Pay Rate */}
+                      </Paper>
+
+                      <Stack direction="row" spacing={1} flexWrap="wrap">
+                        {staffingTarget !== null && (
+                          <Chip
+                            size="small"
+                            label={`${staffingFilled}/${staffingTarget} confirmed`}
+                            color={staffingFilled >= staffingTarget ? 'success' : staffingFilled > 0 ? 'info' : 'default'}
+                            variant="outlined"
+                          />
+                        )}
+                        {selectedShift.spotsRemaining !== undefined && (
+                          <Chip
+                            size="small"
+                            label={`${selectedShift.spotsRemaining} open`}
+                            color={selectedShift.spotsRemaining > 0 ? 'warning' : 'success'}
+                            variant="outlined"
+                          />
+                        )}
+                        {confirmedApplicationsCount > 0 && (
+                          <Chip
+                            size="small"
+                            label={`${confirmedApplicationsCount} app confirmed`}
+                            variant="outlined"
+                          />
+                        )}
+                      </Stack>
+
                       {(selectedShift as any).payRate && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                            Pay Rate
-                          </Typography>
-                          <Typography variant="body2" fontWeight={500}>
-                            ${(selectedShift as any).payRate}/hr
-                          </Typography>
-                        </Box>
+                        <Typography variant="body2">
+                          Pay: <strong>${(selectedShift as any).payRate}/hr</strong>
+                        </Typography>
                       )}
-                      
-                      {/* PO Number */}
+
                       {(selectedShift as any).poNumber && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                            PO Number
-                          </Typography>
-                          <Typography variant="body2">
-                            {(selectedShift as any).poNumber}
-                          </Typography>
-                        </Box>
+                        <Typography variant="body2" color="text.secondary">
+                          PO: {(selectedShift as any).poNumber}
+                        </Typography>
                       )}
-                      
-                      {/* Shift Description */}
+
                       {(selectedShift as any).shiftDescription && (
-                        <Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                            Shift Details
+                        <Tooltip
+                          title={
+                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
+                              {(selectedShift as any).shiftDescription}
+                            </Typography>
+                          }
+                          arrow
+                        >
+                          <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>
+                            Hover for shift notes
                           </Typography>
-                          <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
-                            {(selectedShift as any).shiftDescription}
-                          </Typography>
-                        </Box>
+                        </Tooltip>
                       )}
                     </Stack>
                   )}
@@ -1334,26 +1124,139 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Card>
             </Grid>
 
-            {/* Workers List */}
-            <Grid item xs={12} md={8}>
-              <Card>
-                <CardContent>
+            {/* Center: Assignments */}
+            <Grid item xs={12} lg={4}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                    Available Workers ({workers.length})
+                    Assignments ({assignedWorkers.length})
                   </Typography>
-                  {workers.length === 0 ? (
+                  <Box
+                    onDragOver={handleAssignmentsDragOver}
+                    onDragLeave={() => setIsAssignmentDragOver(false)}
+                    onDrop={handleAssignmentsDrop}
+                    sx={{
+                      borderRadius: 1,
+                      border: '1px dashed',
+                      borderColor: isAssignmentDragOver ? 'primary.main' : 'divider',
+                      bgcolor: isAssignmentDragOver ? 'rgba(0,0,0,0.06)' : 'rgba(0,0,0,0.02)',
+                      minHeight: 220,
+                      p: 1,
+                      transition: 'all 0.15s ease',
+                      boxShadow: isAssignmentDragOver ? 2 : 0,
+                    }}
+                  >
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                      Drag workers here to place them on this shift.
+                    </Typography>
+                    <Stack spacing={1}>
+                      {assignedWorkers.map((worker) => {
+                        const rawStatus = String(worker.assignmentStatus || '').toLowerCase();
+                        const canDragBackToPool = ['proposed', 'accepted'].includes(rawStatus);
+                        const statusLabel =
+                          rawStatus === 'confirmed' || rawStatus === 'active'
+                            ? 'Assigned'
+                            : rawStatus === 'proposed' || rawStatus === 'accepted'
+                              ? 'Placed'
+                              : worker.confirmationStatus === 'accepted'
+                                ? 'Placed'
+                                : 'Assigned';
+                        const statusColor =
+                          rawStatus === 'confirmed' || rawStatus === 'active'
+                            ? 'success'
+                            : rawStatus === 'proposed' || rawStatus === 'accepted'
+                              ? 'info'
+                              : 'default';
+                        const isPlaced = statusLabel === 'Placed';
+                        return (
+                          <Paper
+                            key={worker.id}
+                            variant="outlined"
+                            draggable={canDragBackToPool}
+                            onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
+                            sx={{
+                              p: 0.5,
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              gap: 1,
+                              cursor: canDragBackToPool ? 'grab' : 'default',
+                            }}
+                          >
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography variant="body2" fontWeight={600} noWrap>
+                                {worker.displayName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                {[worker.city, worker.state].filter(Boolean).join(', ') || 'Location unavailable'}
+                              </Typography>
+                            </Box>
+                            <Tooltip title={isPlaced ? 'Click to assign (confirm)' : undefined}>
+                              <Chip
+                                size="small"
+                                label={statusLabel}
+                                color={statusColor}
+                                icon={isPlaced ? <UnlockedIcon fontSize="small" /> : <LockedIcon fontSize="small" />}
+                                onClick={isPlaced ? () => handleConfirmPlacement(worker) : undefined}
+                                sx={{
+                                  ...(isPlaced && {
+                                    cursor: 'pointer',
+                                    zIndex: 50,
+                                    position: 'relative',
+                                    '&:hover': { opacity: 0.9 },
+                                  }),
+                                }}
+                              />
+                            </Tooltip>
+                          </Paper>
+                        );
+                      })}
+                      {assignedWorkers.length === 0 && (
+                        <Alert severity="info">
+                          No assignments for this shift yet.
+                        </Alert>
+                      )}
+                    </Stack>
+                  </Box>
+                </CardContent>
+              </Card>
+            </Grid>
+
+            {/* Right: Worker Pool */}
+            <Grid item xs={12} lg={5}>
+              <Card sx={{ height: '100%' }}>
+                <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
+                    Worker Pool ({availableWorkers.length})
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+                    Drag into Assignments to place. Drag Placed workers back here to unplace.
+                  </Typography>
+
+                  <Box
+                    onDragOver={handleWorkerPoolDragOver}
+                    onDragLeave={() => setIsWorkerPoolDragOver(false)}
+                    onDrop={handleWorkerPoolDrop}
+                    sx={{
+                      borderRadius: 1,
+                      border: '1px dashed',
+                      borderColor: isWorkerPoolDragOver ? 'warning.main' : 'transparent',
+                      bgcolor: isWorkerPoolDragOver ? 'rgba(255, 152, 0, 0.08)' : 'transparent',
+                      transition: 'all 0.15s ease',
+                      p: isWorkerPoolDragOver ? 0.5 : 0,
+                    }}
+                  >
+                  {availableWorkers.length === 0 ? (
                     <Alert severity="info">
-                      No workers available for the selected workforce option.
+                      No available workers for the selected workforce option.
                     </Alert>
                   ) : (
-                    <Stack spacing={1} sx={{ mt: 2 }}>
-                      {workers.map((worker) => {
-                        // Generate resume URL from storagePath if needed
+                    <Stack spacing={1}>
+                      {availableWorkers.map((worker) => {
                         const getResumeUrl = () => {
                           if (worker.resumeUrl) return worker.resumeUrl;
                           if (worker.resume?.downloadUrl) return worker.resume.downloadUrl;
                           if (worker.resume?.storagePath) {
-                            // Generate public URL from storage path
                             return `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(worker.resume.storagePath)}?alt=media`;
                           }
                           return null;
@@ -1369,280 +1272,144 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           <Paper
                             key={worker.id}
                             variant="outlined"
+                            draggable
+                            onDragStart={(event) => handleWorkerDragStart(event, worker.id)}
                             sx={{
-                              p: 2,
+                              p: 0.5,
                               display: 'flex',
                               justifyContent: 'space-between',
                               alignItems: 'center',
-                              gap: 2,
+                              gap: 1,
+                              cursor: 'grab',
                             }}
                           >
-                              {/* Left side - Main info */}
-                              <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-                                <Box>
-                                  <Typography variant="body1" fontWeight={500}>
-                                    {worker.displayName}
-                                  </Typography>
-                                  {(worker.city || worker.state) && (
-                                    <Typography variant="body2" color="text.secondary">
-                                      {[worker.city, worker.state].filter(Boolean).join(', ')}
-                                    </Typography>
-                                  )}
-                                </Box>
-
-                                {/* Contact Info */}
-                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
-                                  {worker.email && (
-                                    <Typography variant="body2" color="text.secondary">
-                                      {worker.email}
-                                    </Typography>
-                                  )}
-                                  {worker.phone && (
-                                    <Typography variant="body2" color="text.secondary">
-                                      {worker.phone}
-                                    </Typography>
-                                  )}
-                                </Box>
-
-                                {/* Skills and Languages in horizontal layout */}
-                                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-                                  {/* Skills */}
-                                  {worker.skills && worker.skills.length > 0 && (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                        Skills:
-                                      </Typography>
-                                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                        {worker.skills.slice(0, 4).map((skill, idx) => (
-                                          <Chip
-                                            key={idx}
-                                            label={skill}
-                                            size="small"
-                                            sx={{ fontSize: '0.7rem', height: 22 }}
-                                          />
-                                        ))}
-                                        {worker.skills.length > 4 && (
-                                          <Chip
-                                            label={`+${worker.skills.length - 4}`}
-                                            size="small"
-                                            sx={{ fontSize: '0.7rem', height: 22 }}
-                                          />
-                                        )}
-                                      </Box>
-                                    </Box>
-                                  )}
-
-                                  {/* Languages */}
-                                  {worker.languages && worker.languages.length > 0 && (
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                      <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                        Languages:
-                                      </Typography>
-                                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                        {worker.languages.slice(0, 3).map((lang, idx) => (
-                                          <Chip
-                                            key={idx}
-                                            label={lang}
-                                            size="small"
-                                            variant="outlined"
-                                            sx={{ fontSize: '0.7rem', height: 22 }}
-                                          />
-                                        ))}
-                                        {worker.languages.length > 3 && (
-                                          <Chip
-                                            label={`+${worker.languages.length - 3}`}
-                                            size="small"
-                                            variant="outlined"
-                                            sx={{ fontSize: '0.7rem', height: 22 }}
-                                          />
-                                        )}
-                                      </Box>
-                                    </Box>
-                                  )}
-                                </Box>
-
-                                {/* AI Scores */}
-                                {(worker.aiProfileScore !== undefined || worker.aiJobFitScore !== undefined) && (
-                                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                                    {worker.aiProfileScore !== undefined && (
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                          Profile:
-                                        </Typography>
-                                        <Chip
-                                          label={worker.aiProfileScore}
-                                          size="small"
-                                          color={worker.aiProfileScore >= 70 ? 'success' : worker.aiProfileScore >= 50 ? 'warning' : 'default'}
-                                          sx={{ fontSize: '0.7rem', height: 22, fontWeight: 600 }}
-                                        />
-                                      </Box>
-                                    )}
-                                    {worker.aiJobFitScore !== undefined && (
-                                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                        <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                                          Job Fit:
-                                        </Typography>
-                                        <Chip
-                                          label={worker.aiJobFitScore}
-                                          size="small"
-                                          color={worker.aiJobFitScore >= 70 ? 'success' : worker.aiJobFitScore >= 50 ? 'warning' : 'default'}
-                                          sx={{ fontSize: '0.7rem', height: 22, fontWeight: 600 }}
-                                        />
-                                      </Box>
-                                    )}
-                                  </Box>
-                                )}
-                              </Box>
-
-                              {/* Right side - Icons and status */}
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                {/* Work Eligibility */}
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
+                              <Typography variant="body2" fontWeight={600} noWrap>
+                                {worker.displayName}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" noWrap>
+                                {[worker.city, worker.state].filter(Boolean).join(', ') || worker.email || worker.phone || 'No contact info'}
+                              </Typography>
+                              <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}>
                                 <Chip
-                                  label={worker.workEligibility ? 'Eligible' : 'Not Eligible'}
                                   size="small"
+                                  label={worker.workEligibility ? 'Eligible' : 'Not eligible'}
                                   color={worker.workEligibility ? 'success' : 'error'}
                                   variant="outlined"
-                                  sx={{ fontSize: '0.75rem' }}
+                                  sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
                                 />
-
-                                {/* Icons */}
-                                <Box sx={{ display: 'flex', gap: 0.5 }}>
-                                  {/* Resume Link */}
-                                  {resumeUrl && (
-                                    <Tooltip title="View Resume">
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                          setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
-                                          setResumeModalOpen(true);
-                                        }}
-                                      >
-                                        <ResumeIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-
-                                  {/* Bio Tooltip */}
-                                  {hasBio && (
-                                    <Tooltip
-                                      title={
-                                        <Box>
-                                          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Bio</Typography>
-                                          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 300 }}>
-                                            {worker.bio}
-                                          </Typography>
-                                        </Box>
-                                      }
-                                      arrow
-                                    >
-                                      <IconButton size="small">
-                                        <BioIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-
-                                  {/* Work History Tooltip */}
-                                  {hasWorkHistory && (
-                                    <Tooltip
-                                      title={
-                                        <Box>
-                                          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Work History</Typography>
-                                          <Box sx={{ maxHeight: 300, overflowY: 'auto', maxWidth: 350 }}>
-                                            {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
-                                              <Box key={idx} sx={{ mb: 1 }}>
-                                                <Typography variant="body2" fontWeight={600}>
-                                                  {job.position || job.title || job.role || 'Position'}
-                                                  {job.company && ` at ${job.company}`}
-                                                </Typography>
-                                                {job.description && (
-                                                  <Typography variant="caption" color="text.secondary">
-                                                    {job.description.length > 100 
-                                                      ? `${job.description.substring(0, 100)}...` 
-                                                      : job.description}
-                                                  </Typography>
-                                                )}
-                                              </Box>
-                                            ))}
-                                            {worker.workHistory && worker.workHistory.length > 3 && (
-                                              <Typography variant="caption" color="text.secondary">
-                                                +{worker.workHistory.length - 3} more
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        </Box>
-                                      }
-                                      arrow
-                                    >
-                                      <IconButton size="small">
-                                        <WorkHistoryIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-
-                                  {/* Certifications */}
-                                  {hasCerts && (
-                                    <Tooltip title={`${worker.certifications?.length} Certification${(worker.certifications?.length || 0) > 1 ? 's' : ''}`}>
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                          setSelectedCerts(worker.certifications || []);
-                                          setCertModalOpen(true);
-                                        }}
-                                      >
-                                        <CertIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-
-                                  {/* Licenses */}
-                                  {hasLicenses && (
-                                    <Tooltip title={`${worker.licenses?.length} License${(worker.licenses?.length || 0) > 1 ? 's' : ''}`}>
-                                      <IconButton
-                                        size="small"
-                                        onClick={() => {
-                                          setSelectedLicenses(worker.licenses || []);
-                                          setLicenseModalOpen(true);
-                                        }}
-                                      >
-                                        <LicenseIcon fontSize="small" />
-                                      </IconButton>
-                                    </Tooltip>
-                                  )}
-                                </Box>
-
-                                {/* Action Button */}
-                                <Button 
-                                  variant="contained"
-                                  color={worker.isAssignedToShift ? "success" : "primary"}
-                                  size="small"
-                                  onClick={() => handleAssignToShift(worker, selectedShift)}
-                                  disabled={!selectedShift || worker.isAssignedToShift}
-                                  sx={worker.isAssignedToShift ? {
-                                    backgroundColor: worker.confirmationStatus === 'confirmed' ? '#2e7d32' : worker.confirmationStatus === 'accepted' ? '#2196F3' : '#2e7d32',
-                                    color: '#fff',
-                                    '&:hover': {
-                                      backgroundColor: worker.confirmationStatus === 'confirmed' ? '#1b5e20' : worker.confirmationStatus === 'accepted' ? '#1976d2' : '#1b5e20',
-                                    },
-                                    '&:disabled': {
-                                      backgroundColor: worker.confirmationStatus === 'confirmed' ? '#2e7d32' : worker.confirmationStatus === 'accepted' ? '#2196F3' : '#2e7d32',
-                                      color: '#fff',
-                                    }
-                                  } : {}}
-                                >
-                                  {worker.isAssignedToShift 
-                                    ? (worker.confirmationStatus === 'confirmed' 
-                                        ? "Confirmed" 
-                                        : worker.confirmationStatus === 'accepted' 
-                                        ? "Accepted" 
-                                        : "Assigned")
-                                    : "Assign to Shift"}
-                                </Button>
+                                {!!worker.skills?.length && (
+                                  <Chip
+                                    size="small"
+                                    label={`${worker.skills.length} skills`}
+                                    sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                                  />
+                                )}
+                                {!!worker.languages?.length && (
+                                  <Chip
+                                    size="small"
+                                    variant="outlined"
+                                    label={`${worker.languages.length} langs`}
+                                    sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                                  />
+                                )}
                               </Box>
-                            </Paper>
+                            </Box>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+                              {resumeUrl && (
+                                <Tooltip title="View resume">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                      setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
+                                      setResumeModalOpen(true);
+                                    }}
+                                  >
+                                    <ResumeIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              {hasBio && (
+                                <Tooltip
+                                  title={
+                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 320 }}>
+                                      {worker.bio}
+                                    </Typography>
+                                  }
+                                  arrow
+                                >
+                                  <IconButton size="small">
+                                    <BioIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              {hasWorkHistory && (
+                                <Tooltip
+                                  title={
+                                    <Box sx={{ maxWidth: 340 }}>
+                                      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Work History</Typography>
+                                      {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
+                                        <Typography key={idx} variant="caption" display="block">
+                                          {job.position || job.title || job.role || 'Position'}{job.company ? ` at ${job.company}` : ''}
+                                        </Typography>
+                                      ))}
+                                    </Box>
+                                  }
+                                  arrow
+                                >
+                                  <IconButton size="small">
+                                    <WorkHistoryIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              {hasCerts && (
+                                <Tooltip title={`${worker.certifications?.length} cert${(worker.certifications?.length || 0) > 1 ? 's' : ''}`}>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                      setSelectedCerts(worker.certifications || []);
+                                      setCertModalOpen(true);
+                                    }}
+                                  >
+                                    <CertIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              {hasLicenses && (
+                                <Tooltip title={`${worker.licenses?.length} license${(worker.licenses?.length || 0) > 1 ? 's' : ''}`}>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => {
+                                      setSelectedLicenses(worker.licenses || []);
+                                      setLicenseModalOpen(true);
+                                    }}
+                                  >
+                                    <LicenseIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              <Button
+                                variant="outlined"
+                                size="small"
+                                onClick={() => handleAssignToShift(worker, selectedShift)}
+                                disabled={!selectedShift}
+                                sx={{
+                                  minWidth: 72,
+                                  height: 28,
+                                  px: 1.25,
+                                  fontSize: '0.75rem',
+                                  lineHeight: 1,
+                                }}
+                              >
+                                Assign
+                              </Button>
+                            </Box>
+                          </Paper>
                         );
                       })}
                     </Stack>
                   )}
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
@@ -1650,7 +1417,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         )}
 
         {/* Empty State */}
-        {!loading && !showContent && !error && (
+        {!loading && !hasRequiredSelections && !error && (
           <Alert severity="info">
             Please select a shift and workforce option to view placements.
           </Alert>

@@ -109,58 +109,36 @@ export interface CustomMetroInput {
   subareas: Array<{ subareaKey: string; label: string; cityKeys: string[] }>;
 }
 
-/** Metro keys merged from built-in + tenant custom (for filter dropdowns). */
-export function getMergedMetroOptions(customMetros?: Record<string, CustomMetroInput> | null): string[] {
-  const set = new Set<string>(METRO_OPTIONS);
-  if (customMetros) {
-    Object.keys(customMetros).forEach((k) => set.add(k));
-  }
-  return Array.from(set).sort();
+/** Metro options for filter dropdowns. Built-in only (custom metros no longer used). */
+export function getMergedMetroOptions(_customMetros?: Record<string, CustomMetroInput> | null): string[] {
+  return [...METRO_OPTIONS];
 }
 
-/** Subarea options for a metro, from built-in + custom. */
+/** Subarea options for a metro. Built-in only. */
 export function getMergedSubareaOptionsForMetro(
   metroKey: string,
-  customMetros?: Record<string, CustomMetroInput> | null
+  _customMetros?: Record<string, CustomMetroInput> | null
 ): string[] {
-  const set = new Set<string>(getSubareaOptionsForMetro(metroKey));
-  const custom = customMetros?.[metroKey];
-  if (custom?.subareas) {
-    custom.subareas.forEach((s) => set.add(s.subareaKey));
-  }
-  return Array.from(set).sort();
+  return getSubareaOptionsForMetro(metroKey);
 }
 
-/** City options for a metro + subarea, from built-in + custom. */
+/** City options for a metro + subarea. Built-in only. */
 export function getMergedCityOptionsForSubarea(
   metroKey: string,
   subareaKey: string,
-  customMetros?: Record<string, CustomMetroInput> | null
+  _customMetros?: Record<string, CustomMetroInput> | null
 ): string[] {
-  const builtIn = getCityOptionsForSubarea(metroKey, subareaKey);
-  const custom = customMetros?.[metroKey]?.subareas?.find((s) => s.subareaKey === subareaKey);
-  const customCities = custom?.cityKeys ?? [];
-  const set = new Set<string>([...builtIn, ...customCities]);
-  return Array.from(set).sort();
+  return getCityOptionsForSubarea(metroKey, subareaKey);
 }
 
-/**
- * All city keys that belong to a metro (built-in + custom).
- * Used for backwards-compatible filtering: applicants in cities not yet in the hierarchy
- * are stored with metroKey like "evansville_in_metro"; when you add Evansville as a metro,
- * matching by cityKey ensures they still show when filtering by that metro.
- */
+/** All city keys that belong to a metro. Built-in only. */
 export function getCityKeysForMetro(
   metroKey: string,
-  customMetros?: Record<string, CustomMetroInput> | null
+  _customMetros?: Record<string, CustomMetroInput> | null
 ): string[] {
   const set = new Set<string>();
   for (const [cityKey, entry] of Object.entries(CITY_TO_SUBAREA_AND_METRO)) {
     if (entry.metroKey === metroKey) set.add(cityKey);
-  }
-  const custom = customMetros?.[metroKey];
-  if (custom?.subareas) {
-    custom.subareas.forEach((s) => (s.cityKeys ?? []).forEach((c) => set.add(c)));
   }
   return Array.from(set);
 }

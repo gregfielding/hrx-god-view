@@ -29,6 +29,10 @@ export async function sendLegacyApplicationStatusMessage(args: {
   sourceId?: string;
   applicationId?: string;
   status?: string;
+  /** Full application doc so template resolver can resolve jobTitle, locationCity, etc. */
+  applicationData?: Record<string, any>;
+  jobOrderId?: string;
+  jobPostId?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
     const triggerKey =
@@ -44,6 +48,9 @@ export async function sendLegacyApplicationStatusMessage(args: {
           applicationId: args.applicationId,
           status: args.status,
           message: args.message,
+          applicationData: args.applicationData,
+          jobOrderId: args.jobOrderId,
+          jobPostId: args.jobPostId,
         },
         metadata: {
           source: args.source,
@@ -69,6 +76,7 @@ export async function sendLegacyApplicationStatusMessage(args: {
       else if (args.status === 'advanced') messageTypeId = 'application_advanced';
       else if (args.status === 'hired') messageTypeId = 'application_hired';
       else if (args.status === 'rejected') messageTypeId = 'application_rejected';
+      else if (args.status === 'waitlisted') messageTypeId = 'application_waitlisted';
       else messageTypeId = 'application_status_update';
     }
     
@@ -77,8 +85,9 @@ export async function sendLegacyApplicationStatusMessage(args: {
       userId: args.userId,
       messageTypeId,
       variables: {
-        // Pass raw message if template not found
-        _rawMessage: args.message,
+        // Pre-built message from trigger (template missing or fallback); orchestrator uses this when _directMessage is true
+        _message: args.message,
+        _directMessage: true,
       },
       metadata: {
         applicationId: args.applicationId,
@@ -86,6 +95,8 @@ export async function sendLegacyApplicationStatusMessage(args: {
       },
       source: 'system',
       sourceId: args.sourceId,
+      // Legacy path: trigger already decided SMS; only attempt SMS so we don't send email instead
+      overrideChannels: ['sms'],
     });
     
     // Convert orchestrator result to legacy format
@@ -99,11 +110,14 @@ export async function sendLegacyApplicationStatusMessage(args: {
       };
     }
     
+    // SMS was not attempted (e.g. skipped by consent/preferences) – surface reason for logging
+    const smsSkipped = result.routingDecision.skippedChannels?.find(s => s.channel === 'sms');
+    const reason = smsSkipped?.reason ?? result.routingDecision.reason ?? 'SMS channel not selected';
     return {
       success: result.success,
       messageId: null,
       status: result.success ? 'sent' : 'failed',
-      error: result.routingDecision.reason,
+      error: reason,
     };
   } catch (error: any) {
     logger.error(`Error sending legacy application message:`, error);

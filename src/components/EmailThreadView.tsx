@@ -445,11 +445,12 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
 
   // Handle drawer close - refresh thread list if thread was marked as read
   const handleClose = useCallback(() => {
-    if (threadWasMarkedAsRead && onThreadUpdated && threadId) {
+    // Guard against forcing "read" if user toggled the thread back to unread while drawer was open.
+    if (threadWasMarkedAsRead && (thread?.unreadCount || 0) === 0 && onThreadUpdated && threadId) {
       onThreadUpdated(threadId, 0); // Pass threadId and unreadCount (0 = read)
     }
     onClose();
-  }, [threadWasMarkedAsRead, onThreadUpdated, threadId, onClose]);
+  }, [threadWasMarkedAsRead, thread?.unreadCount, onThreadUpdated, threadId, onClose]);
 
   // Keyboard navigation
   useEffect(() => {
@@ -683,16 +684,22 @@ const EmailThreadView: React.FC<EmailThreadViewProps> = ({
       }
 
       // Update local UI immediately
+      const nextUnreadCount = shouldMarkRead ? 0 : Math.max(thread?.unreadCount || 0, 1);
       setThread((prev) =>
         prev
           ? {
               ...prev,
-              unreadCount: shouldMarkRead ? 0 : Math.max(prev.unreadCount || 0, 1),
+              unreadCount: nextUnreadCount,
             }
           : prev
       );
       if (shouldMarkRead) {
         setThreadWasMarkedAsRead(true);
+      } else {
+        setThreadWasMarkedAsRead(false);
+      }
+      if (onThreadUpdated && threadId) {
+        onThreadUpdated(threadId, nextUnreadCount);
       }
     } catch (err) {
       console.error('Failed to toggle read status:', err);

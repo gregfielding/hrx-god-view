@@ -357,6 +357,7 @@ export class AssignmentService {
         byStatus: {
           proposed: 0,
           confirmed: 0,
+          declined: 0,
           active: 0,
           completed: 0,
           ended: 0,

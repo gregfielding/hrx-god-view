@@ -109,7 +109,7 @@ export interface ApplicationSortOptions {
 // PHASE 2.2 - ASSIGNMENTS & SCHEDULING TYPES
 // ============================================================================
 
-export type AssignmentStatus = 'proposed' | 'confirmed' | 'active' | 'completed' | 'ended' | 'canceled';
+export type AssignmentStatus = 'proposed' | 'confirmed' | 'declined' | 'active' | 'completed' | 'ended' | 'canceled';
 
 export type TimesheetMode = 'mobile' | 'kiosk' | 'paper';
 

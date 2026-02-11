@@ -13,6 +13,7 @@ import {
   getTemplate,
   createTemplate,
   updateTemplate,
+  deleteTemplate,
   getTemplatesByMessageType,
   MessageTemplate,
   LanguageCode,
@@ -340,8 +341,8 @@ export const updateTemplateApi = onRequest(
 /**
  * DELETE /api/messaging/templates/:id
  * 
- * Soft-delete or archive a template.
- * 
+ * Permanently delete a template.
+ *
  * Implements: HRX Messaging API Spec §2.5
  */
 export const deleteTemplateApi = onRequest(
@@ -367,8 +368,7 @@ export const deleteTemplateApi = onRequest(
         return;
       }
 
-      // Soft delete by setting active = false
-      await updateTemplate(tenantId as string, templateId as string, { active: false });
+      await deleteTemplate(tenantId as string, templateId as string);
 
       response.status(200).json({
         success: true,

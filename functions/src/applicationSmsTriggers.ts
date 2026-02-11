@@ -173,6 +173,9 @@ export const onApplicationCreated = onDocumentCreated(
             sourceId: applicationId,
             applicationId,
             status: applicationData.status || 'submitted',
+            applicationData,
+            jobOrderId: applicationData.jobOrderId,
+            jobPostId: applicationData.jobId || applicationData.postId,
           });
 
           if (result.success) {
@@ -264,7 +267,8 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           else if (newStatus === 'advanced') messageTypeId = 'application_advanced';
           else if (newStatus === 'hired') messageTypeId = 'application_hired';
           else if (newStatus === 'rejected') messageTypeId = 'application_rejected';
-          
+          else if (newStatus === 'waitlisted') messageTypeId = 'application_waitlisted';
+
           const { getTemplateWithLegacyFallback } = await import('./messaging/templateMigration');
           const { renderTemplate } = await import('./messaging/templateEngine');
           
@@ -336,12 +340,14 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             case 'hired':
               message = `Welcome to the team ${firstName}! Your application for ${jobTitle} has been accepted.`;
               break;
+            case 'waitlisted':
+              message = `Hi ${firstName}, you've been waitlisted for ${jobTitle}. We'll contact you if a spot opens up.`;
+              break;
             case 'rejected':
             case 'withdrawn':
               if (newStatus === 'rejected') {
-                message = `Thank you for your interest, ${firstName}. Your application for ${jobTitle} has been reviewed.`;
+                message = `Thank you for your interest, ${firstName}. Unfortunately we won't need you for this role at this time.`;
               } else {
-                // Withdrawn - usually user-initiated, may not need SMS
                 logger.info(`Application ${applicationId} withdrawn - skipping SMS`);
                 return { success: true };
               }
@@ -372,6 +378,9 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             sourceId: applicationId,
             applicationId,
             status: newStatus,
+            applicationData: after,
+            jobOrderId: after.jobOrderId,
+            jobPostId: after.jobId || after.postId,
           });
 
           if (result.success) {

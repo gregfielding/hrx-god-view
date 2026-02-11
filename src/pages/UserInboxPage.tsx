@@ -227,21 +227,26 @@ const UserInboxPage: React.FC = () => {
     preloadTimeoutRef.current.set(threadId, timeout);
   };
 
-  const handleThreadLeave = (threadId: string | null) => {
+  const handleThreadLeave = (threadId: string) => {
     // Only update hover state if drawer is not open
     if (!emailDrawerOpen) {
-      setHoveredThreadId(threadId);
+      setHoveredThreadId(null);
     }
     
     // Cancel any pending preload
-    if (threadId) {
-      const timeout = preloadTimeoutRef.current.get(threadId);
-      if (timeout) {
-        clearTimeout(timeout);
-        preloadTimeoutRef.current.delete(threadId);
-      }
+    const timeout = preloadTimeoutRef.current.get(threadId);
+    if (timeout) {
+      clearTimeout(timeout);
+      preloadTimeoutRef.current.delete(threadId);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      preloadTimeoutRef.current.forEach((timeout) => clearTimeout(timeout));
+      preloadTimeoutRef.current.clear();
+    };
+  }, []);
 
   const setHoveredThreadIdSafe = (id: string | null) => {
     if (!emailDrawerOpen) {
@@ -560,12 +565,13 @@ const UserInboxPage: React.FC = () => {
       }
     }, 2000); // Wait 2 seconds after page load
 
-    // Set up periodic polling (every 30 seconds)
+    // Poll at 5 min to avoid Gmail user-rate limit exceeded (30s was too aggressive)
+    const POLL_INTERVAL_MS = 5 * 60 * 1000;
     const pollingInterval = setInterval(() => {
       if (!syncingGmailRef.current && activeTab === 'email' && gmailConnected) {
         handleSyncGmail(true); // Silent sync for polling
       }
-    }, 30000); // Poll every 30 seconds
+    }, POLL_INTERVAL_MS);
 
     return () => {
       clearTimeout(initialSyncTimer);
@@ -1228,6 +1234,9 @@ const UserInboxPage: React.FC = () => {
           ? { ...thread, unreadCount }
           : thread
       )
+    );
+    setSelectedEmailThread(prev =>
+      prev && prev.id === threadId ? { ...prev, unreadCount } : prev
     );
   };
 
@@ -2823,7 +2832,7 @@ const UserInboxPage: React.FC = () => {
                           <TableRow
                             key={thread.id}
                             onMouseEnter={() => handleThreadHover(thread.id)}
-                            onMouseLeave={() => handleThreadLeave(null)}
+                            onMouseLeave={() => handleThreadLeave(thread.id)}
                             onClick={(e) => {
                               // Don't open if swiping
                               if (!swipeState.isSwiping) {
