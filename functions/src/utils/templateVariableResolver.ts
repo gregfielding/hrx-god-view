@@ -89,6 +89,8 @@ export interface ResolvedVariables {
   assignmentStatus: string;
   assignmentDate: string;
   assignmentTimeRange: string;
+  /** URL to jobs board posting where worker can accept/decline the assignment */
+  assignmentAcceptDeclineUrl: string;
   
   // Shift variables
   shiftId: string;
@@ -172,6 +174,7 @@ export async function resolveTemplateVariables(
     assignmentStatus: assignmentData?.status || '',
     assignmentDate: resolveAssignmentDate(resolvedContext),
     assignmentTimeRange: resolveAssignmentTimeRange(resolvedContext),
+    assignmentAcceptDeclineUrl: resolveAssignmentAcceptDeclineUrl(resolvedContext),
     
     // Shift variables
     shiftId: shiftId || '',
@@ -221,6 +224,24 @@ async function enrichContext(
         }
       } catch (err) {
         logger.warn(`Failed to fetch job order ${context.jobOrderId}:`, err);
+      }
+    }
+
+    // Fetch assignment if we have assignmentId but no assignmentData (needed for assignment_created templates)
+    if (context.assignmentId && !context.assignmentData && context.tenantId) {
+      try {
+        const assignmentDoc = await db
+          .doc(`tenants/${context.tenantId}/assignments/${context.assignmentId}`)
+          .get();
+        if (assignmentDoc.exists) {
+          const data = assignmentDoc.data();
+          enriched.assignmentData = data;
+          if (!enriched.jobOrderId && data?.jobOrderId) enriched.jobOrderId = data.jobOrderId;
+          if (!enriched.jobPostId && data?.jobPostId) enriched.jobPostId = data.jobPostId;
+          if (!enriched.shiftId && data?.shiftId) enriched.shiftId = data.shiftId;
+        }
+      } catch (err) {
+        logger.warn(`Failed to fetch assignment ${context.assignmentId}:`, err);
       }
     }
 
@@ -533,6 +554,29 @@ function resolveAssignmentTimeRange(context: TemplateVariableContext): string {
   return '';
 }
 
+/**
+ * URL to jobs board posting where worker can accept/decline assignment.
+ * Used in Assignment Created messages: "Click the link below to ACCEPT or DECLINE"
+ */
+function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): string {
+  const assignmentId = context.assignmentId;
+  const jobPostId = context.assignmentData?.jobPostId || context.jobPostId || context.jobPostData?.id;
+  const shiftId = context.assignmentData?.shiftId || context.shiftId || '';
+  const baseUrl = `https://${process.env.GCLOUD_PROJECT || 'hrx1-d3beb'}.web.app`;
+  if (jobPostId && assignmentId) {
+    const params = new URLSearchParams({
+      assignmentId,
+      intent: 'assignment_response',
+      ...(shiftId ? { shiftId } : {}),
+    });
+    return `${baseUrl}/c1/jobs-board/${jobPostId}?${params.toString()}`;
+  }
+  if (assignmentId) {
+    return `${baseUrl}/c1/jobs-board?assignmentId=${assignmentId}&intent=assignment_response`;
+  }
+  return `${baseUrl}/c1/jobs-board`;
+}
+
 function resolveShiftDate(context: TemplateVariableContext): string {
   const timestamp = 
     context.shiftData?.date ||
@@ -664,6 +708,7 @@ export function getAvailableVariables(): Array<{ name: string; description: stri
     { name: 'assignmentStatus', description: 'Assignment status', example: 'confirmed' },
     { name: 'assignmentDate', description: 'Assignment date', example: '12/20/2024' },
     { name: 'assignmentTimeRange', description: 'Assignment time range', example: '9:00 AM - 5:00 PM' },
+    { name: 'assignmentAcceptDeclineUrl', description: 'URL to accept or decline assignment (Assignment Created trigger)', example: 'https://hrx1-d3beb.web.app/c1/jobs-board/post123?assignmentId=...' },
     { name: 'shiftId', description: 'Shift ID', example: 'shift456' },
     { name: 'shiftDate', description: 'Shift date', example: '12/25/2024' },
     { name: 'shiftTimeRange', description: 'Shift time range', example: '8:00 AM - 4:00 PM' },

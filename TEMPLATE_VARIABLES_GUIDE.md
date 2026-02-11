@@ -79,6 +79,7 @@ Each variable has a **fallback chain** that tries multiple sources:
 - `{assignmentStatus}` - Assignment status
 - `{assignmentDate}` - Assignment date
 - `{assignmentTimeRange}` - Time range (e.g., "9:00 AM - 5:00 PM")
+- `{assignmentAcceptDeclineUrl}` - URL to jobs board posting where worker can accept/decline (for Assignment Created trigger)
 
 ### Shift Variables
 - `{shiftId}` - Shift ID

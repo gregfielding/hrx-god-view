@@ -25,6 +25,23 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 const VALID_RULE_STATUS: AutomationRuleStatus[] = ['draft', 'active'];
 
+/** Sample values for template variables when testing without real assignment/application context */
+const TEST_SAMPLE_VARIABLES: Record<string, string> = {
+  assignmentAcceptDeclineUrl: `https://${process.env.GCLOUD_PROJECT || 'hrx1-d3beb'}.web.app/c1/jobs-board?assignmentId=sample&intent=assignment_response`,
+  assignmentId: 'sample-assignment-id',
+  assignmentStatus: 'proposed',
+  assignmentDate: new Date().toLocaleDateString(),
+  assignmentTimeRange: '9:00 AM - 5:00 PM',
+  jobPostId: 'sample-job-post',
+  jobOrderId: 'sample-job-order',
+  shiftId: 'sample-shift',
+  shiftDate: new Date().toLocaleDateString(),
+  shiftTimeRange: '9:00 AM - 5:00 PM',
+  shiftStartTime: '9:00 AM',
+  shiftEndTime: '5:00 PM',
+  applicationId: 'sample-application-id',
+};
+
 function hasDeliveryChannelEnabled(
   deliveryChannels:
     | {
@@ -239,8 +256,25 @@ export const testAutomationTemplateApi = onRequest({ cors: true }, async (reques
       ...(contextOverrides || {}),
     };
 
-    const resolvedVariables = await resolveTemplateVariables(templateContext);
-    const missingVariables = (template.variables || []).filter((name: string) => {
+    let resolvedVariables = await resolveTemplateVariables(templateContext);
+
+    // For test sends without real assignment/application context, fill in sample values for
+    // any template variables that are still missing (e.g. assignmentAcceptDeclineUrl)
+    const templateVarNames = template.variables || [];
+    const missing = templateVarNames.filter((name: string) => {
+      const v = resolvedVariables[name];
+      return v === undefined || v === null || v === '';
+    });
+    if (missing.length > 0) {
+      resolvedVariables = { ...resolvedVariables };
+      for (const name of missing) {
+        if (name in TEST_SAMPLE_VARIABLES) {
+          resolvedVariables[name] = TEST_SAMPLE_VARIABLES[name];
+        }
+      }
+    }
+
+    const missingVariables = templateVarNames.filter((name: string) => {
       const value = resolvedVariables[name];
       return value === undefined || value === null || value === '';
     });

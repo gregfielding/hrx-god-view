@@ -1214,11 +1214,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     ) : (
                     <Stack spacing={1}>
                       {assignedWorkers.map((worker) => {
-                        const isPlaced = Boolean(worker.isPlacementOnly);
-                        const statusLabel = isPlaced ? 'Placed' : 'Assigned';
-                        const statusColor = isPlaced ? 'info' : 'success';
-                        const canDragBackToPool = isPlaced; // Only Placed (no Assignment) can be dragged back
-                        const useUnlockedIcon = isPlaced; // Placed = unlocked, Assigned = locked
+                        const isPlacementOnly = Boolean(worker.isPlacementOnly);
+                        // Placed = placement only (no offer sent). Assigned = offer sent, awaiting response. Confirmed = worker accepted.
+                        const isOfferPending = worker.assignmentStatus && ['proposed', 'accepted'].includes(worker.assignmentStatus);
+                        const isConfirmed = worker.assignmentStatus && ['confirmed', 'active'].includes(worker.assignmentStatus);
+                        const statusLabel = isPlacementOnly ? 'Placed' : isConfirmed ? 'Confirmed' : 'Assigned';
+                        const statusColor = isPlacementOnly ? 'info' : isConfirmed ? 'success' : 'primary';
+                        const canDragBackToPool = isPlacementOnly; // Only placement-only (no Assignment) can be dragged back
+                        const useUnlockedIcon = isPlacementOnly; // Placement-only = unlocked; Assigned/Confirmed = locked
                         return (
                           <Paper
                             key={worker.id}
@@ -1242,15 +1245,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 {[worker.city, worker.state].filter(Boolean).join(', ') || 'Location unavailable'}
                               </Typography>
                             </Box>
-                            <Tooltip title={isPlaced ? 'Click to offer position (sends accept/decline message)' : undefined}>
+                            <Tooltip title={isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : undefined}>
                               <Chip
                                 size="small"
                                 label={statusLabel}
                                 color={statusColor}
                                 icon={useUnlockedIcon ? <UnlockedIcon fontSize="small" /> : <LockedIcon fontSize="small" />}
-                                onClick={isPlaced ? () => handleConfirmPlacement(worker) : undefined}
+                                onClick={isPlacementOnly ? () => handleConfirmPlacement(worker) : undefined}
                                 sx={{
-                                  ...(isPlaced && {
+                                  ...(isPlacementOnly && {
                                     cursor: 'pointer',
                                     zIndex: 50,
                                     position: 'relative',

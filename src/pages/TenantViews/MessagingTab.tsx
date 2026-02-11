@@ -1376,7 +1376,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                     setTemplateForm((prev) => ({ ...prev, variables }));
                   }}
                   availableVariables={[
-                    'firstName',
+                    'assignmentAcceptDeclineUrl',
+                  'firstName',
                     'lastName',
                     'fullName',
                     'email',
@@ -1413,7 +1414,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 required
                 multiline
                 rows={4}
-                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, etc."
+                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, {{assignmentAcceptDeclineUrl}}, etc."
                 placeholder="Hi {{firstName}}. Thank you for applying to be a {{jobTitle}} in {{locationCity}}."
               />
             )}

@@ -1175,15 +1175,15 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   <TableCell>
                     {(() => {
                       const placementStatus = assignmentStatusByUserId.get(applicant.uid);
-                      const isAssigned = placementStatus && ['confirmed', 'active'].includes(placementStatus);
-                      const isPlaced = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
-                      const displayLabel = isAssigned ? 'Assigned' : isPlaced ? 'Placed' : (applicant.applicationStatus || 'submitted');
-                      const displayColor = isAssigned ? 'success' : isPlaced ? 'info' :
+                      const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
+                      const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
+                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Assigned' : (applicant.applicationStatus || 'submitted');
+                      const displayColor = isConfirmed ? 'success' : isAssigned ? 'primary' :
                         applicant.applicationStatus === 'accepted' ? 'success' :
                         applicant.applicationStatus === 'rejected' ? 'error' :
                         applicant.applicationStatus === 'waitlisted' ? 'warning' : 'default';
                       return (
-                        <Tooltip title={isAssigned || isPlaced ? `Application: ${applicant.applicationStatus || 'submitted'}` : undefined}>
+                        <Tooltip title={isAssigned || isConfirmed ? `Application: ${applicant.applicationStatus || 'submitted'}` : undefined}>
                           <Chip 
                             label={displayLabel}
                             size="small"
