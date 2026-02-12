@@ -11400,6 +11400,15 @@ export {
   createThreadApi
 } from './messaging/threadsApi';
 
+// Unified Worker Notifications + Inbox (HRX-Unified-Notifications-and-Inbox-Spec)
+export {
+  sendNotificationAndPush,
+  markWorkerNotificationRead,
+  markWorkerThreadRead,
+  sendWorkerThreadMessage,
+  registerWorkerDeviceToken
+} from './messaging/unifiedWorkerNotifications';
+
 // Unified Messaging Framework - Webhooks
 export {
   twilioInboundSmsWebhook,

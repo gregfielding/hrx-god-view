@@ -323,7 +323,15 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           return dateB.getTime() - dateA.getTime();
         });
 
-        setApplicants(applicantsData);
+        // One row per user: same person can have multiple application docs (e.g. multiple job posts)
+        const seenUids = new Set<string>();
+        const deduped = applicantsData.filter((a) => {
+          if (seenUids.has(a.uid)) return false;
+          seenUids.add(a.uid);
+          return true;
+        });
+
+        setApplicants(deduped);
       } catch (error) {
         console.error('Error fetching applicants:', error);
         setApplicants([]);
@@ -355,15 +363,14 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           const userId = String(data?.userId || data?.candidateId || '');
           const status = String(data?.status || 'proposed').toLowerCase();
           if (!userId) return;
-          if (['declined', 'canceled', 'cancelled'].includes(status)) return;
-          // Keep highest status: confirmed/active > proposed/accepted
+          // Include all statuses (incl. declined/cancelled) so Applications table can show Declined/Cancelled
           const existing = nextStatus.get(userId);
           if (!existing) {
             nextStatus.set(userId, status);
             return;
           }
           const rank = (s: string) =>
-            ['confirmed', 'active'].includes(s) ? 2 : ['proposed', 'accepted'].includes(s) ? 1 : 0;
+            ['confirmed', 'active'].includes(s) ? 3 : ['proposed', 'accepted'].includes(s) ? 2 : ['declined', 'canceled', 'cancelled'].includes(s) ? 1 : 0;
           if (rank(status) > rank(existing)) nextStatus.set(userId, status);
         });
         setAssignmentStatusByUserId(nextStatus);
@@ -1177,13 +1184,15 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       const placementStatus = assignmentStatusByUserId.get(applicant.uid);
                       const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
                       const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
-                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Assigned' : (applicant.applicationStatus || 'submitted');
-                      const displayColor = isConfirmed ? 'success' : isAssigned ? 'primary' :
+                      const isDeclined = placementStatus === 'declined';
+                      const isCancelled = placementStatus === 'cancelled' || placementStatus === 'canceled';
+                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Assigned' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : (applicant.applicationStatus || 'submitted');
+                      const displayColor = isConfirmed ? 'success' : isAssigned ? 'primary' : isDeclined || isCancelled ? 'error' :
                         applicant.applicationStatus === 'accepted' ? 'success' :
                         applicant.applicationStatus === 'rejected' ? 'error' :
                         applicant.applicationStatus === 'waitlisted' ? 'warning' : 'default';
                       return (
-                        <Tooltip title={isAssigned || isConfirmed ? `Application: ${applicant.applicationStatus || 'submitted'}` : undefined}>
+                        <Tooltip title={isAssigned || isConfirmed ? `Application: ${applicant.applicationStatus || 'submitted'}` : isDeclined ? 'Worker declined assignment' : isCancelled ? 'Assignment cancelled' : undefined}>
                           <Chip 
                             label={displayLabel}
                             size="small"

@@ -113,6 +113,21 @@ export const p = {
 };
 
 /**
+ * Unified worker notifications + inbox (HRX-Unified-Notifications-and-Inbox-Spec).
+ * Global threads; per-user notifications and device tokens.
+ */
+export const workerNotificationsPaths = {
+  userNotifications: (uid: string) => `users/${uid}/notifications`,
+  userNotification: (uid: string, notificationId: string) => `users/${uid}/notifications/${notificationId}`,
+  userDeviceTokens: (uid: string) => `users/${uid}/deviceTokens`,
+  userDeviceToken: (uid: string, tokenId: string) => `users/${uid}/deviceTokens/${tokenId}`,
+  threads: () => 'threads',
+  thread: (threadId: string) => `threads/${threadId}`,
+  threadMessages: (threadId: string) => `threads/${threadId}/messages`,
+  threadMessage: (threadId: string, messageId: string) => `threads/${threadId}/messages/${messageId}`,
+};
+
+/**
  * Legacy path detection helpers
  * Use these to identify and warn about legacy path usage
  */

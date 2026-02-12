@@ -14,7 +14,7 @@ import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
 import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, getDocs, getCountFromServer, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, getDocs, getCountFromServer, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { db, functions, storage } from '../../firebase'; // adjust path
@@ -124,6 +124,8 @@ const UserProfilePage = () => {
   const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
   const [notesCount, setNotesCount] = useState<number>(0);
   const [interviewsCount, setInterviewsCount] = useState<number>(0);
+  /** Latest interview from subcollection (used for header when scoreSummary is not yet updated) */
+  const [latestInterviewFromSubcollection, setLatestInterviewFromSubcollection] = useState<{ lastAt: Date; lastScore10: number } | null>(null);
   const [employeeOnboardStatus, setEmployeeOnboardStatus] = useState<string | undefined>();
   const [contractorOnboardStatus, setContractorOnboardStatus] = useState<string | undefined>();
   const [onboardingCompletionPct, setOnboardingCompletionPct] = useState<number>(0);
@@ -789,16 +791,38 @@ const UserProfilePage = () => {
           setNotesCount(0);
         }
 
-        // Interviews count - from users/{uid}/interviews subcollection
+        // Interviews count and latest interview - from users/{uid}/interviews (header uses latest when scoreSummary not yet updated)
         if (canViewAdminContent) {
           try {
             const interviewsRef = collection(db, 'users', uid, 'interviews');
-            const interviewsSnapshot = await getDocs(interviewsRef);
+            let interviewsSnapshot;
+            try {
+              const q = query(interviewsRef, orderBy('createdAt', 'desc'));
+              interviewsSnapshot = await getDocs(q);
+            } catch {
+              interviewsSnapshot = await getDocs(interviewsRef);
+            }
             setInterviewsCount(interviewsSnapshot.size);
+            const docs = interviewsSnapshot.docs
+              .map((d) => ({ id: d.id, ...d.data() } as { createdAt?: { toDate?: () => Date }; timestamp?: { toDate?: () => Date }; score10?: number; score?: number; isArchived?: boolean }))
+              .filter((d) => d && d.isArchived !== true);
+            const toTime = (x: typeof docs[0]) => (x?.createdAt?.toDate?.() ?? x?.timestamp?.toDate?.() ?? new Date(0)).getTime();
+            docs.sort((a, b) => toTime(b) - toTime(a));
+            const latest = docs[0];
+            if (latest) {
+              const lastAt = latest.createdAt?.toDate?.() ?? latest.timestamp?.toDate?.() ?? null;
+              const lastScore10 = typeof latest.score10 === 'number' ? latest.score10 : typeof latest.score === 'number' ? latest.score : null;
+              if (lastAt && typeof lastScore10 === 'number' && !Number.isNaN(lastScore10)) {
+                setLatestInterviewFromSubcollection({ lastAt, lastScore10 });
+              } else {
+                setLatestInterviewFromSubcollection(null);
+              }
+            } else {
+              setLatestInterviewFromSubcollection(null);
+            }
           } catch (error: any) {
-            // Silently handle permission errors - Firestore rules may restrict access
-            const isPermissionError = 
-              error?.code === 'permission-denied' || 
+            const isPermissionError =
+              error?.code === 'permission-denied' ||
               error?.code === 'PERMISSION_DENIED' ||
               error?.message?.includes('Missing or insufficient permissions') ||
               error?.message?.includes('permission');
@@ -806,9 +830,11 @@ const UserProfilePage = () => {
               console.error('Error fetching interviews count:', error);
             }
             setInterviewsCount(0);
+            setLatestInterviewFromSubcollection(null);
           }
         } else {
           setInterviewsCount(0);
+          setLatestInterviewFromSubcollection(null);
         }
       } catch (error) {
         console.error('Error fetching counts:', error);
@@ -816,7 +842,7 @@ const UserProfilePage = () => {
     };
 
     fetchCounts();
-  }, [uid, securityLevel]);
+  }, [uid, securityLevel, tabValue]);
 
   // Handle tab query parameter - must be before early returns
   const availableTabs = getAvailableTabs();
@@ -943,6 +969,12 @@ const UserProfilePage = () => {
   const isAdminView = parseInt(securityLevel) >= 5;
   const viewerSecurityLevel = parseInt(securityLevel);
   const isOwnProfile = user?.uid === uid;
+  /**
+   * Staff self-view guardrail: true ONLY when viewer is staff (security 0–4) AND viewing their own record.
+   * Use isStaffViewingOwnRecord for any UI that must apply only to this case. Admin view (5–7) and
+   * "viewing another user's record" must never be affected—keep those paths unchanged.
+   */
+  const isStaffViewingOwnRecord = viewerSecurityLevel >= 0 && viewerSecurityLevel <= 4 && !!uid && user?.uid === uid;
   const canViewAdminContent = viewerSecurityLevel >= 5;
   const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
   // Slightly more yellow-orange + used for borders/text. Button gradient is set where needed.
@@ -1022,12 +1054,10 @@ const UserProfilePage = () => {
   const initials = `${firstName[0] ?? ''}${lastName[0] ?? ''}`.toUpperCase();
 
   const interviewLine = (() => {
-    const lastAt = coerceToDate(scoreSummary?.interviewLastAt);
-    const lastScore = scoreSummary?.interviewLastScore10;
-    const hasInterview =
-      !!lastAt &&
-      typeof lastScore === 'number' &&
-      !Number.isNaN(lastScore);
+    const fromSummary = coerceToDate(scoreSummary?.interviewLastAt) && typeof scoreSummary?.interviewLastScore10 === 'number' && !Number.isNaN(scoreSummary.interviewLastScore10);
+    const lastAt = fromSummary ? coerceToDate(scoreSummary?.interviewLastAt) : (latestInterviewFromSubcollection?.lastAt ?? null);
+    const lastScore = fromSummary ? scoreSummary?.interviewLastScore10 : latestInterviewFromSubcollection?.lastScore10;
+    const hasInterview = !!lastAt && typeof lastScore === 'number' && !Number.isNaN(lastScore);
 
     if (!hasInterview) {
       return { text: 'Not Interviewed', color: '#D32F2F' };
@@ -1177,6 +1207,7 @@ const UserProfilePage = () => {
           showBreadcrumbs={isRecruiterRoute || isWorkforceRoute || user?.uid !== uid}
           breadcrumbPath={breadcrumbPath}
           isAdminView={isAdminView}
+          isStaffViewingOwnRecord={isStaffViewingOwnRecord}
           profileScore={profileScore}
           scoreSummary={scoreSummary}
           scoringDistribution={scoringDistribution}

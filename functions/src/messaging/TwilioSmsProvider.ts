@@ -66,13 +66,14 @@ export class TwilioSmsProvider implements SmsProvider {
         body: params.body,
       };
 
-      // Use direct phone number if available, otherwise use Messaging Service
-      if (fromNumber && fromNumber.trim() !== '') {
+      // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
+      if (messagingServiceSid && messagingServiceSid.trim() !== '') {
+        messageParams.messagingServiceSid = messagingServiceSid;
+        messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
+        logger.info(`Using A2P messaging service (link shortening): ${messagingServiceSid}`);
+      } else if (fromNumber && fromNumber.trim() !== '') {
         messageParams.from = fromNumber;
         logger.info(`Using direct phone number: ${fromNumber}`);
-      } else if (messagingServiceSid && messagingServiceSid.trim() !== '') {
-        messageParams.messagingServiceSid = messagingServiceSid;
-        logger.info(`Using A2P messaging service: ${messagingServiceSid}`);
       } else {
         return {
           success: false,

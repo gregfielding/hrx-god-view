@@ -102,6 +102,8 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
   });
 
   const [originalSettings, setOriginalSettings] = useState<PrivacySettings>(settings);
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
+  const [originalPreferredLanguage, setOriginalPreferredLanguage] = useState<'en' | 'es'>('en');
   const [message, setMessage] = useState('');
   const [showToast, setShowToast] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -159,6 +161,9 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
           },
         };
 
+        const lang = data.preferredLanguage === 'es' ? 'es' : 'en';
+        setPreferredLanguage(lang);
+        setOriginalPreferredLanguage(lang);
         setSettings(currentSettings);
         setOriginalSettings(currentSettings);
       }
@@ -220,12 +225,14 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
         locationSettings: settings.locationSettings,
         notificationSettings: settings.notificationSettings,
         privacySettings: settings.privacySettings,
+        preferredLanguage,
         updatedAt: new Date(),
       });
 
       setMessage('Privacy settings updated successfully');
       setShowToast(true);
       setOriginalSettings(settings);
+      setOriginalPreferredLanguage(preferredLanguage);
     } catch (error) {
       console.error('Error updating privacy settings:', error);
       setMessage('Failed to update privacy settings');
@@ -235,7 +242,9 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
     }
   };
 
-  const hasChanges = JSON.stringify(settings) !== JSON.stringify(originalSettings);
+  const hasChanges =
+    JSON.stringify(settings) !== JSON.stringify(originalSettings) ||
+    preferredLanguage !== originalPreferredLanguage;
 
   if (!canEditSettings()) {
     return (
@@ -360,6 +369,22 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
         </AccordionSummary>
         <AccordionDetails>
           <Grid container spacing={3}>
+            <Grid item xs={12}>
+              <FormControl fullWidth sx={{ maxWidth: 280 }}>
+                <InputLabel>Preferred Message Language</InputLabel>
+                <Select
+                  value={preferredLanguage}
+                  onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
+                  label="Preferred Message Language"
+                >
+                  <MenuItem value="en">English</MenuItem>
+                  <MenuItem value="es">Spanish</MenuItem>
+                </Select>
+              </FormControl>
+              <Typography variant="caption" display="block" sx={{ mt: 0.5, color: 'text.secondary' }}>
+                Language for SMS and email notifications
+              </Typography>
+            </Grid>
             <Grid item xs={12}>
               <Typography variant="subtitle1" gutterBottom>Notification Channels</Typography>
               <FormGroup>

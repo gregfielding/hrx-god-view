@@ -17,6 +17,10 @@ import {
   Button,
   Snackbar,
   Chip,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import {
   Notifications,
@@ -28,6 +32,7 @@ import {
   Save,
   CheckCircle,
   Info,
+  Language,
 } from '@mui/icons-material';
 import { doc, updateDoc, getDoc } from 'firebase/firestore';
 
@@ -72,6 +77,8 @@ const PrivacySettings: React.FC = () => {
     allowLocationSharing: false,
   });
 
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
+
   const [loading, setLoading] = useState(false);
   const [snackbar, setSnackbar] = useState<{
     open: boolean;
@@ -114,6 +121,11 @@ const PrivacySettings: React.FC = () => {
             ...userData.privacySettings,
           }));
         }
+
+        // Load preferred message language
+        if (userData.preferredLanguage === 'es' || userData.preferredLanguage === 'en') {
+          setPreferredLanguage(userData.preferredLanguage);
+        }
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -130,6 +142,7 @@ const PrivacySettings: React.FC = () => {
       await updateDoc(userRef, {
         notificationSettings,
         privacySettings,
+        preferredLanguage,
         updatedAt: new Date(),
       });
       
@@ -203,6 +216,28 @@ const PrivacySettings: React.FC = () => {
           </Typography>
 
           <List>
+            <ListItem>
+              <ListItemIcon>
+                <Language />
+              </ListItemIcon>
+              <ListItemText
+                primary="Preferred Message Language"
+                secondary="Language for SMS and email notifications"
+              />
+              <ListItemSecondaryAction>
+                <FormControl size="small" sx={{ minWidth: 120 }}>
+                  <Select
+                    value={preferredLanguage}
+                    onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
+                    displayEmpty
+                  >
+                    <MenuItem value="en">English</MenuItem>
+                    <MenuItem value="es">Spanish</MenuItem>
+                  </Select>
+                </FormControl>
+              </ListItemSecondaryAction>
+            </ListItem>
+            <Divider sx={{ my: 2 }} />
             <ListItem>
               <ListItemIcon>
                 <Email />

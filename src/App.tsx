@@ -94,6 +94,16 @@ import HelloMessageManagement from './pages/Admin/HelloMessageManagement';
 import AutoContextEngineNew from './pages/Admin/AutoContextEngine';
 import AISelfImprovement from './pages/Admin/AISelfImprovement';
 import InviteTokenValidator from './components/InviteTokenValidator';
+import WorkerRoute from './auth/WorkerRoute';
+import C1WorkerLayout from './layouts/C1WorkerLayout';
+import C1WorkersIndex from './pages/c1/workers/index';
+import C1WorkerDashboard from './pages/c1/workers/dashboard';
+import C1WorkerAssignments from './pages/c1/workers/assignments';
+import C1WorkerProfile from './pages/c1/workers/profile';
+import C1WorkerDocuments from './pages/c1/workers/documents';
+import C1WorkerSupport from './pages/c1/workers/support';
+import C1WorkerNotifications from './pages/c1/workers/notifications';
+import C1WorkerInbox from './pages/c1/workers/inbox';
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 import Help from './pages/Help';
@@ -149,6 +159,12 @@ import InsightReports from './pages/InsightReports';
 
 // Read the Google Maps API key from environment variables
 const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
+
+// C1 worker pages: use same names as default exports to avoid TS "Cannot find name" when referenced in routes
+const WorkerDashboard = C1WorkerDashboard;
+const WorkerProfile = C1WorkerProfile;
+const WorkerDocuments = C1WorkerDocuments;
+const WorkerSupport = C1WorkerSupport;
 
 // Static libraries array to prevent performance warnings (shared across app)
 const googleMapsLibraries: Libraries = ['places', 'maps'];
@@ -374,6 +390,19 @@ function App() {
         <Route path="/:tenantSlug/assignments/:assignmentId" element={<AssignmentDetails />} />
         <Route path="/c1/users/:uid" element={<UserProfile />} />
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
+      </Route>
+
+      {/* Worker namespace /c1/workers/* — guard + layout; admin routes unchanged */}
+      <Route path="/c1/workers" element={<WorkerRoute><C1WorkerLayout /></WorkerRoute>}>
+        <Route index element={<C1WorkersIndex />} />
+        <Route path="dashboard" element={<WorkerDashboard />} />
+        <Route path="assignments" element={<C1WorkerAssignments />} />
+        <Route path="profile" element={<WorkerProfile />} />
+        <Route path="documents" element={<WorkerDocuments />} />
+        <Route path="support" element={<WorkerSupport />} />
+        <Route path="notifications" element={<C1WorkerNotifications />} />
+        <Route path="inbox" element={<C1WorkerInbox />} />
+        <Route path="inbox/:threadId" element={<C1WorkerInbox />} />
       </Route>
       
       <Route

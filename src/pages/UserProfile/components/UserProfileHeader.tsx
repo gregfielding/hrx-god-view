@@ -79,6 +79,8 @@ interface UserProfileHeaderProps {
   showBreadcrumbs?: boolean;
   breadcrumbPath?: Array<{ label: string; href?: string }>;
   isAdminView?: boolean; // True if viewer is admin (security >= 5)
+  /** True only when staff (security 0–4) views their own record. Guard all staff-self-view-only UI with this so admin view is unchanged. */
+  isStaffViewingOwnRecord?: boolean;
   profileScore?: number; // Profile completeness score (0-100)
   scoreSummary?: ScoreSummary;
   scoringDistribution?: ScoringDistribution | null;
@@ -165,6 +167,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   showBreadcrumbs = false,
   breadcrumbPath = [],
   isAdminView = false,
+  isStaffViewingOwnRecord = false,
   profileScore,
   scoreSummary,
   scoringDistribution,

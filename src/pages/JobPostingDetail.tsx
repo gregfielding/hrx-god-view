@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
   Box,
@@ -47,11 +47,11 @@ const JobPostingDetail: React.FC = () => {
   const { tenantId: authTenantId, user } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  
+
   // Determine tenant ID: use auth tenantId if logged in, otherwise extract from URL
   const isC1Route = location.pathname.startsWith('/c1/');
   const resolvedTenantId = authTenantId || (isC1Route ? 'BCiP2bQ9CgVOCTfV6MhD' : null);
-  
+
   const [posting, setPosting] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -63,11 +63,17 @@ const JobPostingDetail: React.FC = () => {
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
+  const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
   useEffect(() => {
     if (!resolvedTenantId || !postId) {
-      console.log('⚠️ Missing tenantId or postId:', { resolvedTenantId, postId, isC1Route, authTenantId });
+      console.log('⚠️ Missing tenantId or postId:', {
+        resolvedTenantId,
+        postId,
+        isC1Route,
+        authTenantId,
+      });
       return;
     }
 
@@ -75,33 +81,45 @@ const JobPostingDetail: React.FC = () => {
       try {
         setLoading(true);
         console.log('🔄 Loading job posting:', { resolvedTenantId, postId });
-        
+
         // Check if this is a job order ID (prefixed with "job-order-")
         if (postId.startsWith('job-order-')) {
           const jobOrderId = postId.replace('job-order-', '');
           console.log('📋 Loading as job order:', jobOrderId);
           const jobOrderRef = doc(db, 'tenants', resolvedTenantId, 'job_orders', jobOrderId);
           const jobOrderSnap = await getDoc(jobOrderRef);
-          
+
           if (jobOrderSnap.exists()) {
             console.log('✅ Job order found');
             const jobOrderData = jobOrderSnap.data();
-            
+
             // Convert job order to posting format
-            const payRate = (jobOrderData.gigPositions?.[0]?.payRate 
-              ? parseFloat(String(jobOrderData.gigPositions[0].payRate)) 
-              : jobOrderData.payRate) || undefined;
-            
-            const jobTitle = jobOrderData.gigPositions?.[0]?.jobTitle || jobOrderData.jobTitle || '';
-            
-            const shift = Array.isArray(jobOrderData.shiftType) 
-              ? jobOrderData.shiftType 
-              : (jobOrderData.shiftType ? [jobOrderData.shiftType] : []);
-            
+            const payRate =
+              (jobOrderData.gigPositions?.[0]?.payRate
+                ? parseFloat(String(jobOrderData.gigPositions[0].payRate))
+                : jobOrderData.payRate) || undefined;
+
+            const jobTitle =
+              jobOrderData.gigPositions?.[0]?.jobTitle || jobOrderData.jobTitle || '';
+
+            const shift = Array.isArray(jobOrderData.shiftType)
+              ? jobOrderData.shiftType
+              : jobOrderData.shiftType
+              ? [jobOrderData.shiftType]
+              : [];
+
             // Convert dates
-            const startDate = jobOrderData.startDate?.toDate ? jobOrderData.startDate.toDate() : (jobOrderData.startDate ? new Date(jobOrderData.startDate) : undefined);
-            const endDate = jobOrderData.endDate?.toDate ? jobOrderData.endDate.toDate() : (jobOrderData.endDate ? new Date(jobOrderData.endDate) : undefined);
-            
+            const startDate = jobOrderData.startDate?.toDate
+              ? jobOrderData.startDate.toDate()
+              : jobOrderData.startDate
+              ? new Date(jobOrderData.startDate)
+              : undefined;
+            const endDate = jobOrderData.endDate?.toDate
+              ? jobOrderData.endDate.toDate()
+              : jobOrderData.endDate
+              ? new Date(jobOrderData.endDate)
+              : undefined;
+
             setPosting({
               id: postId,
               jobOrderId: jobOrderId,
@@ -116,38 +134,66 @@ const JobPostingDetail: React.FC = () => {
                 street: '',
                 city: jobOrderData.worksiteAddress?.city || '',
                 state: jobOrderData.worksiteAddress?.state || '',
-                zipCode: jobOrderData.worksiteAddress?.zipCode || ''
+                zipCode: jobOrderData.worksiteAddress?.zipCode || '',
               },
               startDate: startDate,
               endDate: endDate,
               payRate: payRate,
               showPayRate: jobOrderData.showPayRate || false,
               workersNeeded: jobOrderData.workersNeeded,
-              showWorkersNeeded: jobOrderData.showWorkersNeeded !== undefined ? jobOrderData.showWorkersNeeded : true, // Default to true if not set
+              showWorkersNeeded:
+                jobOrderData.showWorkersNeeded !== undefined
+                  ? jobOrderData.showWorkersNeeded
+                  : true, // Default to true if not set
               eVerifyRequired: jobOrderData.eVerifyRequired || false,
-              backgroundCheckPackages: Array.isArray(jobOrderData.backgroundCheckPackages) ? jobOrderData.backgroundCheckPackages : [],
-              drugScreeningPanels: Array.isArray(jobOrderData.drugScreeningPanels) ? jobOrderData.drugScreeningPanels : [],
-              additionalScreenings: Array.isArray(jobOrderData.additionalScreenings) ? jobOrderData.additionalScreenings : [],
+              backgroundCheckPackages: Array.isArray(jobOrderData.backgroundCheckPackages)
+                ? jobOrderData.backgroundCheckPackages
+                : [],
+              drugScreeningPanels: Array.isArray(jobOrderData.drugScreeningPanels)
+                ? jobOrderData.drugScreeningPanels
+                : [],
+              additionalScreenings: Array.isArray(jobOrderData.additionalScreenings)
+                ? jobOrderData.additionalScreenings
+                : [],
               skills: Array.isArray(jobOrderData.skillsRequired) ? jobOrderData.skillsRequired : [],
-              licensesCerts: Array.isArray(jobOrderData.requiredLicenses) 
-                ? [...jobOrderData.requiredLicenses, ...(Array.isArray(jobOrderData.requiredCertifications) ? jobOrderData.requiredCertifications : [])]
-                : (Array.isArray(jobOrderData.requiredCertifications) ? jobOrderData.requiredCertifications : []),
-              experienceLevels: Array.isArray(jobOrderData.experienceRequired) 
-                ? jobOrderData.experienceRequired 
-                : (jobOrderData.experienceRequired ? [jobOrderData.experienceRequired] : []),
-              educationLevels: Array.isArray(jobOrderData.educationRequired) 
-                ? jobOrderData.educationRequired 
-                : (jobOrderData.educationRequired ? [jobOrderData.educationRequired] : []),
-              languages: Array.isArray(jobOrderData.languagesRequired) ? jobOrderData.languagesRequired : [],
-              physicalRequirements: Array.isArray(jobOrderData.physicalRequirements) 
-                ? jobOrderData.physicalRequirements 
-                : (jobOrderData.physicalRequirements ? [jobOrderData.physicalRequirements] : []),
-              uniformRequirements: Array.isArray(jobOrderData.uniformRequirements) 
-                ? jobOrderData.uniformRequirements 
-                : (jobOrderData.uniformRequirements ? [jobOrderData.uniformRequirements] : []),
-              requiredPpe: Array.isArray(jobOrderData.ppeRequirements) 
-                ? jobOrderData.ppeRequirements 
-                : (jobOrderData.ppeRequirements ? [jobOrderData.ppeRequirements] : []),
+              licensesCerts: Array.isArray(jobOrderData.requiredLicenses)
+                ? [
+                    ...jobOrderData.requiredLicenses,
+                    ...(Array.isArray(jobOrderData.requiredCertifications)
+                      ? jobOrderData.requiredCertifications
+                      : []),
+                  ]
+                : Array.isArray(jobOrderData.requiredCertifications)
+                ? jobOrderData.requiredCertifications
+                : [],
+              experienceLevels: Array.isArray(jobOrderData.experienceRequired)
+                ? jobOrderData.experienceRequired
+                : jobOrderData.experienceRequired
+                ? [jobOrderData.experienceRequired]
+                : [],
+              educationLevels: Array.isArray(jobOrderData.educationRequired)
+                ? jobOrderData.educationRequired
+                : jobOrderData.educationRequired
+                ? [jobOrderData.educationRequired]
+                : [],
+              languages: Array.isArray(jobOrderData.languagesRequired)
+                ? jobOrderData.languagesRequired
+                : [],
+              physicalRequirements: Array.isArray(jobOrderData.physicalRequirements)
+                ? jobOrderData.physicalRequirements
+                : jobOrderData.physicalRequirements
+                ? [jobOrderData.physicalRequirements]
+                : [],
+              uniformRequirements: Array.isArray(jobOrderData.uniformRequirements)
+                ? jobOrderData.uniformRequirements
+                : jobOrderData.uniformRequirements
+                ? [jobOrderData.uniformRequirements]
+                : [],
+              requiredPpe: Array.isArray(jobOrderData.ppeRequirements)
+                ? jobOrderData.ppeRequirements
+                : jobOrderData.ppeRequirements
+                ? [jobOrderData.ppeRequirements]
+                : [],
               // Show flags
               showBackgroundChecks: jobOrderData.showBackgroundChecks || false,
               showDrugScreening: jobOrderData.showDrugScreening || false,
@@ -179,17 +225,18 @@ const JobPostingDetail: React.FC = () => {
           if (postSnap.exists()) {
             console.log('✅ Job posting found:', postSnap.id);
             const postData = postSnap.data();
-            console.log('📊 Post data:', { 
-              id: postSnap.id, 
-              visibility: postData.visibility, 
+            console.log('📊 Post data:', {
+              id: postSnap.id,
+              visibility: postData.visibility,
               status: postData.status,
-              postTitle: postData.postTitle 
+              postTitle: postData.postTitle,
             });
-            setPosting({ 
-              id: postSnap.id, 
+            setPosting({
+              id: postSnap.id,
               ...postData,
               // Ensure showWorkersNeeded defaults to true if not set
-              showWorkersNeeded: postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : true
+              showWorkersNeeded:
+                postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : true,
             });
           } else {
             console.error('❌ Job posting not found:', { resolvedTenantId, postId });
@@ -201,7 +248,7 @@ const JobPostingDetail: React.FC = () => {
         console.error('Error details:', {
           code: err.code,
           message: err.message,
-          stack: err.stack
+          stack: err.stack,
         });
         // Provide more detailed error message
         if (err.code === 'permission-denied') {
@@ -231,28 +278,28 @@ const JobPostingDetail: React.FC = () => {
         // Query applications using the same approach as loadAppliedShifts
         // This respects Firestore security rules better than direct document access
         const applicationsRef = collection(db, 'tenants', resolvedTenantId, 'applications');
-        
+
         // Query by userId and jobId (posting ID)
         const q1 = query(
           applicationsRef,
           where('userId', '==', user.uid),
-          where('jobId', '==', postId)
+          where('jobId', '==', postId),
         );
-        
+
         // Also query by jobOrderId if this is a gig job with a jobOrderId
         const queries: Promise<any>[] = [getDocs(q1)];
-        
+
         if (posting?.jobOrderId) {
           const q2 = query(
             applicationsRef,
             where('userId', '==', user.uid),
-            where('jobOrderId', '==', posting.jobOrderId)
+            where('jobOrderId', '==', posting.jobOrderId),
           );
           queries.push(getDocs(q2));
         }
-        
+
         const snapshots = await Promise.all(queries);
-        
+
         // Find the first application that matches (they should all have the same status)
         let foundStatus: string | null = null;
         let foundDocId: string | null = null;
@@ -265,7 +312,7 @@ const JobPostingDetail: React.FC = () => {
             break;
           }
         }
-        
+
         setApplicationStatus(foundStatus);
         setApplicationDocId(foundDocId);
       } catch (err: any) {
@@ -289,7 +336,7 @@ const JobPostingDetail: React.FC = () => {
         hasPosting: !!posting,
         jobType: posting?.jobType,
         usesDynamicShifts: posting?.usesDynamicShifts,
-        jobOrderId: posting?.jobOrderId
+        jobOrderId: posting?.jobOrderId,
       });
 
       if (!posting || !posting.jobOrderId) {
@@ -307,7 +354,7 @@ const JobPostingDetail: React.FC = () => {
             posting.tenantId,
             posting.jobOrderId!,
             posting.shiftFilterDays || 30,
-            posting.positionJobTitle
+            posting.positionJobTitle,
           );
           console.log('✅ Loaded shifts:', shifts);
           setDynamicShifts(shifts);
@@ -334,7 +381,14 @@ const JobPostingDetail: React.FC = () => {
       }
 
       try {
-        const shiftsRef = collection(db, 'tenants', posting.tenantId, 'job_orders', posting.jobOrderId, 'shifts');
+        const shiftsRef = collection(
+          db,
+          'tenants',
+          posting.tenantId,
+          'job_orders',
+          posting.jobOrderId,
+          'shifts',
+        );
         const snap = await getDocs(query(shiftsRef));
         if (snap.empty) {
           setCareerWeeklyScheduleSummary('');
@@ -343,8 +397,12 @@ const JobPostingDetail: React.FC = () => {
 
         const shifts = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
         // Prefer the "weekly schedule" shift (career multi-day has no endDate)
-        const weekly = shifts.find((s) => s.shiftMode === 'multi' && s.weeklySchedule && !s.endDate) || shifts.find((s) => s.weeklySchedule);
-        const summary = weekly?.weeklySchedule ? formatWeeklyScheduleSummary(weekly.weeklySchedule) : '';
+        const weekly =
+          shifts.find((s) => s.shiftMode === 'multi' && s.weeklySchedule && !s.endDate) ||
+          shifts.find((s) => s.weeklySchedule);
+        const summary = weekly?.weeklySchedule
+          ? formatWeeklyScheduleSummary(weekly.weeklySchedule)
+          : '';
         setCareerWeeklyScheduleSummary(summary || '');
       } catch (err) {
         console.warn('Error loading career weekly schedule:', err);
@@ -357,9 +415,7 @@ const JobPostingDetail: React.FC = () => {
 
   const toggleShift = (shiftId: string) => {
     setSelectedShifts((prev) =>
-      prev.includes(shiftId)
-        ? prev.filter((id) => id !== shiftId)
-        : [...prev, shiftId]
+      prev.includes(shiftId) ? prev.filter((id) => id !== shiftId) : [...prev, shiftId],
     );
   };
 
@@ -376,41 +432,41 @@ const JobPostingDetail: React.FC = () => {
         // Query applications for this job posting that include shiftId
         // For gig jobs, we need to check both jobId (posting ID) and jobOrderId
         const applicationsRef = collection(db, 'tenants', resolvedTenantId, 'applications');
-        
+
         // Query by userId and jobId (posting ID)
         const q1 = query(
           applicationsRef,
           where('userId', '==', user.uid),
-          where('jobId', '==', postId || '')
+          where('jobId', '==', postId || ''),
         );
-        
+
         // Also query by jobOrderId if this is a gig job with a jobOrderId
         const queries: Promise<any>[] = [getDocs(q1)];
-        
+
         if (posting?.jobOrderId) {
           const q2 = query(
             applicationsRef,
             where('userId', '==', user.uid),
-            where('jobOrderId', '==', posting.jobOrderId)
+            where('jobOrderId', '==', posting.jobOrderId),
           );
           queries.push(getDocs(q2));
         }
-        
+
         const snapshots = await Promise.all(queries);
-        
+
         const applied: string[] = [];
         const statuses: Record<string, string> = {};
         const seenDocs = new Set<string>();
-        
+
         snapshots.forEach((snapshot) => {
           snapshot.forEach((doc) => {
             // Avoid duplicates if a doc matches both queries
             if (seenDocs.has(doc.id)) return;
             seenDocs.add(doc.id);
-            
+
             const data = doc.data();
             const appStatus = data.status || 'submitted';
-            
+
             // Check if application has shiftId or shiftIds
             if (data.shiftId) {
               applied.push(data.shiftId);
@@ -419,14 +475,14 @@ const JobPostingDetail: React.FC = () => {
               data.shiftIds.forEach((shiftId: string) => {
                 applied.push(shiftId);
                 // If multiple shifts, use the most advanced status
-                if (!statuses[shiftId] || (appStatus === 'confirmed' || appStatus === 'accepted')) {
+                if (!statuses[shiftId] || appStatus === 'confirmed' || appStatus === 'accepted') {
                   statuses[shiftId] = appStatus;
                 }
               });
             }
           });
         });
-        
+
         console.log(`✅ Loaded applied shifts for user ${user.uid}:`, applied);
         console.log(`✅ Shift statuses:`, statuses);
         setAppliedShifts(applied);
@@ -464,7 +520,9 @@ const JobPostingDetail: React.FC = () => {
   const handleApplyToShift = (shiftId: string) => {
     if (!user) {
       // Redirect to login/signup with return URL and shiftId
-      navigate(`/apply/${posting.tenantId}/${postId}?returnTo=/c1/jobs-board/${postId}&shiftId=${shiftId}`);
+      navigate(
+        `/apply/${posting.tenantId}/${postId}?returnTo=/c1/jobs-board/${postId}&shiftId=${shiftId}`,
+      );
     } else {
       // Navigate to application wizard with shiftId
       navigate(`/apply/${posting.tenantId}/${postId}?shiftId=${shiftId}`);
@@ -499,7 +557,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#4CAF50', // Green
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'waitlisted':
         return {
@@ -507,7 +565,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#ED6C02', // Orange
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'rejected':
       case 'not accepted':
@@ -516,7 +574,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#F44336', // Red
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'withdrawn':
       case 'cancelled':
@@ -525,7 +583,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#9E9E9E',
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'advanced':
       case 'screened':
@@ -536,7 +594,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#2196F3', // Blue
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'accepted':
         return {
@@ -544,7 +602,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#2196F3', // Blue for Accepted button
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'confirmed':
         return {
@@ -552,7 +610,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#4CAF50', // Green
           color: '#fff',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
       case 'submitted':
       case 'new':
@@ -562,7 +620,7 @@ const JobPostingDetail: React.FC = () => {
           backgroundColor: '#FFC700', // Yellow (existing color)
           color: '#000',
           cursor: 'default',
-          pointerEvents: 'none' as const
+          pointerEvents: 'none' as const,
         };
     }
   };
@@ -581,7 +639,12 @@ const JobPostingDetail: React.FC = () => {
 
   const handleApply = async () => {
     // Validation for Gig jobs with dynamic shifts
-    if (posting?.jobType === 'gig' && posting?.usesDynamicShifts && dynamicShifts.length > 0 && selectedShifts.length === 0) {
+    if (
+      posting?.jobType === 'gig' &&
+      posting?.usesDynamicShifts &&
+      dynamicShifts.length > 0 &&
+      selectedShifts.length === 0
+    ) {
       alert('Please select at least one shift before applying.');
       return;
     }
@@ -591,33 +654,38 @@ const JobPostingDetail: React.FC = () => {
       navigate(`/apply/${posting.tenantId}/${postId}?returnTo=/c1/jobs-board/${postId}`);
       return;
     }
-    
+
     try {
       // Check if user has existing application data
-      const { hasExistingApplicationData, getMissingRequiredCertifications, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
-      
+      const {
+        hasExistingApplicationData,
+        getMissingRequiredCertifications,
+        submitQuickApplication,
+      } = await import('../utils/quickApplicationSubmit');
+
       const hasExistingData = await hasExistingApplicationData(user.uid);
-      
+
       if (hasExistingData) {
         // Check if job requires certifications user doesn't have
         const missingCerts = await getMissingRequiredCertifications(user.uid, posting);
-        
+
         if (missingCerts.length === 0) {
           // User has all required certs - submit directly
-          const queryParams = selectedShifts.length > 0 
-            ? `?shifts=${selectedShifts.join(',')}`
-            : '';
-          const returnTo = queryParams ? `/c1/jobs-board/${postId}${queryParams}` : `/c1/jobs-board/${postId}`;
-          
+          const queryParams =
+            selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
+          const returnTo = queryParams
+            ? `/c1/jobs-board/${postId}${queryParams}`
+            : `/c1/jobs-board/${postId}`;
+
           const result = await submitQuickApplication(
             user.uid,
             posting.tenantId,
             postId!,
             posting,
             selectedShifts,
-            returnTo
+            returnTo,
           );
-          
+
           if (result.success) {
             // Success - redirect back to jobs board
             const tenantSlug = posting.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1'; // Default to c1 for now
@@ -626,34 +694,28 @@ const JobPostingDetail: React.FC = () => {
           } else {
             // Error - show alert and navigate to wizard
             alert(result.error || 'Failed to submit application. Please try again.');
-            const queryParams = selectedShifts.length > 0 
-              ? `?shifts=${selectedShifts.join(',')}`
-              : '';
+            const queryParams =
+              selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
             navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
             return;
           }
         } else {
           // Missing certs - navigate to wizard starting at certifications step
-          const queryParams = selectedShifts.length > 0 
-            ? `?shifts=${selectedShifts.join(',')}&step=7`
-            : '?step=7';
+          const queryParams =
+            selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}&step=7` : '?step=7';
           navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
           return;
         }
       } else {
         // First time applicant - navigate to full wizard
-        const queryParams = selectedShifts.length > 0 
-          ? `?shifts=${selectedShifts.join(',')}`
-          : '';
+        const queryParams = selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
         navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
         return;
       }
     } catch (error) {
       console.error('Error in handleApply:', error);
       // Fallback to wizard on error
-      const queryParams = selectedShifts.length > 0 
-        ? `?shifts=${selectedShifts.join(',')}`
-        : '';
+      const queryParams = selectedShifts.length > 0 ? `?shifts=${selectedShifts.join(',')}` : '';
       navigate(`/apply/${posting.tenantId}/${postId}${queryParams}`);
     }
   };
@@ -733,11 +795,17 @@ const JobPostingDetail: React.FC = () => {
       if (decision === 'accept') {
         if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'confirmed' }));
         setApplicationStatus('confirmed');
+        setAcceptedAssignmentId(assignmentId);
         alert('Assignment accepted! We sent your first-day details.');
       } else {
         if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'withdrawn' }));
         setApplicationStatus('withdrawn');
         alert('You declined this job. Your application has been withdrawn.');
+        const jobsBoardUrl = typeof window !== 'undefined' && window.location.origin
+          ? `${window.location.origin}/c1/jobs-board`
+          : 'https://hrxone.com/c1/jobs-board';
+        window.location.href = jobsBoardUrl;
+        return;
       }
     } catch (err) {
       console.error(`Failed to ${decision} assignment:`, err);
@@ -775,7 +843,11 @@ const JobPostingDetail: React.FC = () => {
     return (
       <Box p={3}>
         <Alert severity="error">{error || 'Job posting not found'}</Alert>
-        <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/jobs-board')} sx={{ mt: 2 }}>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/c1/jobs-board')}
+          sx={{ mt: 2 }}
+        >
           Back to Jobs Board
         </Button>
       </Box>
@@ -783,7 +855,19 @@ const JobPostingDetail: React.FC = () => {
   }
 
   // Calculate button props for application status button
-  const statusButtonProps = applicationStatus ? getApplicationStatusButton(applicationStatus) : null;
+  const statusButtonProps = applicationStatus
+    ? getApplicationStatusButton(applicationStatus)
+    : null;
+
+  // Assignment accept/decline link from SMS: show "You've been hired" + I Accept / Decline Job
+  const params = new URLSearchParams(location.search);
+  const urlAssignmentId = params.get('assignmentId');
+  const intent = params.get('intent');
+  const isAssignmentResponseMode = Boolean(urlAssignmentId && intent === 'assignment_response');
+  const assignmentDetailsId = acceptedAssignmentId || urlAssignmentId;
+  const assignmentDetailsUrl = assignmentDetailsId
+    ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com'}/c1/assignments/${assignmentDetailsId}`
+    : null;
 
   // Generate Google Jobs structured data
   const generateJobPostingSchema = () => {
@@ -807,48 +891,51 @@ const JobPostingDetail: React.FC = () => {
     };
 
     const schema = {
-      "@context": "https://schema.org/",
-      "@type": "JobPosting",
-      "title": posting.postTitle,
-      "description": posting.jobDescription || '',
-      "identifier": {
-        "@type": "PropertyValue",
-        "name": posting.companyName || 'HRX',
-        "value": posting.jobPostId || posting.id
+      '@context': 'https://schema.org/',
+      '@type': 'JobPosting',
+      title: posting.postTitle,
+      description: posting.jobDescription || '',
+      identifier: {
+        '@type': 'PropertyValue',
+        name: posting.companyName || 'HRX',
+        value: posting.jobPostId || posting.id,
       },
-      "datePosted": toISOString(posting.createdAt) || new Date().toISOString(),
-      "validThrough": toISOString(posting.expDate),
-      "employmentType": posting.jobType === 'gig' ? 'TEMPORARY' : 'FULL_TIME',
-      "hiringOrganization": {
-        "@type": "Organization",
-        "name": posting.companyName || 'HRX',
-        "sameAs": `https://hrxone.com`
+      datePosted: toISOString(posting.createdAt) || new Date().toISOString(),
+      validThrough: toISOString(posting.expDate),
+      employmentType: posting.jobType === 'gig' ? 'TEMPORARY' : 'FULL_TIME',
+      hiringOrganization: {
+        '@type': 'Organization',
+        name: posting.companyName || 'HRX',
+        sameAs: `https://hrxone.com`,
       },
-      "jobLocation": {
-        "@type": "Place",
-        "address": {
-          "@type": "PostalAddress",
-          "streetAddress": posting.worksiteAddress?.street || '',
-          "addressLocality": posting.worksiteAddress?.city || '',
-          "addressRegion": posting.worksiteAddress?.state || '',
-          "postalCode": posting.worksiteAddress?.zipCode || '',
-          "addressCountry": "US"
-        }
+      jobLocation: {
+        '@type': 'Place',
+        address: {
+          '@type': 'PostalAddress',
+          streetAddress: posting.worksiteAddress?.street || '',
+          addressLocality: posting.worksiteAddress?.city || '',
+          addressRegion: posting.worksiteAddress?.state || '',
+          postalCode: posting.worksiteAddress?.zipCode || '',
+          addressCountry: 'US',
+        },
       },
-      "baseSalary": posting.showPayRate && posting.payRate ? {
-        "@type": "MonetaryAmount",
-        "currency": "USD",
-        "value": {
-          "@type": "QuantitativeValue",
-          "value": posting.payRate,
-          "unitText": "HOUR"
-        }
-      } : undefined,
-      "directApply": true,
-      "applicationContact": {
-        "@type": "ContactPoint",
-        "email": "jobs@c1staffing.com"
-      }
+      baseSalary:
+        posting.showPayRate && posting.payRate
+          ? {
+              '@type': 'MonetaryAmount',
+              currency: 'USD',
+              value: {
+                '@type': 'QuantitativeValue',
+                value: posting.payRate,
+                unitText: 'HOUR',
+              },
+            }
+          : undefined,
+      directApply: true,
+      applicationContact: {
+        '@type': 'ContactPoint',
+        email: 'jobs@c1staffing.com',
+      },
     };
 
     // Remove undefined values
@@ -869,11 +956,11 @@ const JobPostingDetail: React.FC = () => {
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0 }}>
       {/* Google Jobs Structured Data */}
       <Helmet>
-        <title>{posting.postTitle} - {posting.companyName || 'HRX'}</title>
+        <title>
+          {posting.postTitle} - {posting.companyName || 'HRX'}
+        </title>
         <meta name="description" content={posting.jobDescription?.substring(0, 160) || ''} />
-        <script type="application/ld+json">
-          {JSON.stringify(generateJobPostingSchema())}
-        </script>
+        <script type="application/ld+json">{JSON.stringify(generateJobPostingSchema())}</script>
       </Helmet>
 
       {/* Back Button */}
@@ -888,12 +975,29 @@ const JobPostingDetail: React.FC = () => {
 
       {/* Header */}
       <Paper elevation={2} sx={{ ...cardBaseSx, mb: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
+            gap: 2,
+          }}
+        >
           <Box sx={{ flex: 1 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 2 }}>
-              <Typography 
-                variant={isMobile ? 'h5' : 'h4'} 
-                component="h1" 
+            <Box
+              sx={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                mb: 2,
+                flexWrap: 'wrap',
+                gap: 2,
+              }}
+            >
+              <Typography
+                variant={isMobile ? 'h5' : 'h4'}
+                component="h1"
                 sx={{ fontWeight: 'bold', fontSize: isMobile ? '1.25rem' : undefined }}
               >
                 {posting.postTitle}
@@ -913,7 +1017,7 @@ const JobPostingDetail: React.FC = () => {
                 Share
               </Button>
             </Box>
-            
+
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
               {posting.companyName && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -923,7 +1027,7 @@ const JobPostingDetail: React.FC = () => {
                   </Typography>
                 </Box>
               )}
-              
+
               {posting.worksiteAddress?.city && posting.worksiteAddress?.state && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   <LocationIcon fontSize={isMobile ? 'small' : 'small'} color="primary" />
@@ -936,45 +1040,51 @@ const JobPostingDetail: React.FC = () => {
             </Box>
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-              <Chip 
-                label={posting.jobType === 'gig' ? 'Gig' : 'Career'} 
-                color="primary" 
+              <Chip
+                label={posting.jobType === 'gig' ? 'Gig' : 'Career'}
+                color="primary"
                 size="small"
               />
-              
+
               {/* Hide pay rate for gig jobs with shifts - it's shown on individual shift cards instead */}
-              {posting.showPayRate && posting.payRate && !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
-                <Chip 
-                  icon={<MoneyIcon />}
-                  label={`$${posting.payRate}/hr`} 
-                  color="success" 
-                  size="small"
-                />
-              )}
-              
+              {posting.showPayRate &&
+                posting.payRate &&
+                !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
+                  <Chip
+                    icon={<MoneyIcon />}
+                    label={`$${posting.payRate}/hr`}
+                    color="success"
+                    size="small"
+                  />
+                )}
+
               {/* Hide openings count for gig jobs - individual shifts show their own staff needed */}
-              {posting.workersNeeded && posting.showWorkersNeeded !== false && !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
-                <Chip 
-                  icon={<WorkIcon />}
-                  label={`${posting.workersNeeded} position${posting.workersNeeded > 1 ? 's' : ''}`} 
-                  size="small"
-                  variant="outlined"
-                />
-              )}
-              
+              {posting.workersNeeded &&
+                posting.showWorkersNeeded !== false &&
+                !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
+                  <Chip
+                    icon={<WorkIcon />}
+                    label={`${posting.workersNeeded} position${
+                      posting.workersNeeded > 1 ? 's' : ''
+                    }`}
+                    size="small"
+                    variant="outlined"
+                  />
+                )}
+
               {(() => {
                 // For gig jobs with shifts, show next shift date
                 if (posting.jobType === 'gig' && dynamicShifts.length > 0) {
                   // Sort shifts by date and get the earliest one
-                  const sortedShifts = [...dynamicShifts].sort((a, b) => 
-                    new Date(a.shiftDate).getTime() - new Date(b.shiftDate).getTime()
+                  const sortedShifts = [...dynamicShifts].sort(
+                    (a, b) => new Date(a.shiftDate).getTime() - new Date(b.shiftDate).getTime(),
                   );
                   const nextShift = sortedShifts[0];
                   if (nextShift?.shiftDate) {
                     return (
-                      <Chip 
+                      <Chip
                         icon={<ScheduleIcon />}
-                        label={`Next Shift: ${formatDate(nextShift.shiftDate)}`} 
+                        label={`Next Shift: ${formatDate(nextShift.shiftDate)}`}
                         size="small"
                         variant="outlined"
                       />
@@ -984,13 +1094,13 @@ const JobPostingDetail: React.FC = () => {
                 // For non-gig jobs or gigs without shifts, show start date if available
                 if (posting.startDate) {
                   return (
-                    <Chip 
+                    <Chip
                       icon={<ScheduleIcon />}
                       label={
                         posting.jobType === 'career'
                           ? `Estimated Start: ${formatDate(posting.startDate)}`
                           : `Starts ${formatDate(posting.startDate)}`
-                      } 
+                      }
                       size="small"
                       variant="outlined"
                     />
@@ -1002,28 +1112,12 @@ const JobPostingDetail: React.FC = () => {
           </Box>
 
           {/* Hide Apply button for gig jobs with shifts - use individual shift buttons instead */}
-          {!(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
-            statusButtonProps?.label === 'accepted_special' ? (
+          {!(posting.jobType === 'gig' && dynamicShifts.length > 0) &&
+            ((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
                 <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                  Congratulations, you've been hired.
+                  You&apos;ve been hired to work this job. Please click the button to Accept the position.
                 </Typography>
-                <Button
-                  variant="contained"
-                  size={isMobile ? 'small' : 'small'}
-                  disabled
-                  sx={{
-                    borderRadius: '999px',
-                    px: isMobile ? 1.5 : 2,
-                    fontSize: isMobile ? '0.75rem' : undefined,
-                    fontWeight: 600,
-                    backgroundColor: '#2196F3',
-                    color: '#fff',
-                    mb: 1,
-                  }}
-                >
-                  Accepted
-                </Button>
                 <Button
                   variant="contained"
                   size={isMobile ? 'small' : 'small'}
@@ -1040,7 +1134,7 @@ const JobPostingDetail: React.FC = () => {
                     },
                   }}
                 >
-                  Click to Accept
+                  I Accept
                 </Button>
                 <Button
                   variant="contained"
@@ -1054,29 +1148,44 @@ const JobPostingDetail: React.FC = () => {
                     fontWeight: 600,
                   }}
                 >
-                  Decline this Job
+                  Decline Job
                 </Button>
               </Box>
             ) : statusButtonProps?.label === 'confirmed_special' ? (
-              <Button
-                variant="contained"
-                size={isMobile ? 'small' : 'small'}
-                disabled
-                startIcon={<LockIcon />}
-                sx={{
-                  borderRadius: '999px',
-                  px: isMobile ? 1.5 : 2,
-                  fontSize: isMobile ? '0.75rem' : undefined,
-                  fontWeight: 600,
-                  backgroundColor: '#4CAF50',
-                  color: '#fff',
-                }}
-              >
-                Confirmed
-              </Button>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
+                  Congratulations, you&apos;ve been confirmed to work.
+                </Typography>
+                {assignmentDetailsUrl && (
+                  <Button
+                    component={Link}
+                    to={`/c1/assignments/${assignmentDetailsId}`}
+                    variant="contained"
+                    size={isMobile ? 'small' : 'medium'}
+                    sx={{
+                      borderRadius: '999px',
+                      px: isMobile ? 1.5 : 2,
+                      fontSize: isMobile ? '0.75rem' : undefined,
+                      fontWeight: 600,
+                      backgroundColor: '#4CAF50',
+                      color: '#fff',
+                      '&:hover': { backgroundColor: '#45a049' },
+                    }}
+                  >
+                    View Assignment Details
+                  </Button>
+                )}
+              </Box>
             ) : statusButtonProps ? (
               statusButtonProps.label === 'Application Submitted' ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: { xs: 'stretch', sm: 'flex-end' }, gap: 1 }}>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: { xs: 'stretch', sm: 'flex-end' },
+                    gap: 1,
+                  }}
+                >
                   <Button
                     variant="contained"
                     size="small"
@@ -1102,15 +1211,15 @@ const JobPostingDetail: React.FC = () => {
                     color="error"
                     onClick={handleCancelApplication}
                     sx={{
-                        borderRadius: '999px',
-                        px: 2,
-                        fontWeight: 600,
-                      }}
-                      disabled={!applicationDocId}
-                    >
-                      Cancel Application
-                    </Button>
-                  </Box>
+                      borderRadius: '999px',
+                      px: 2,
+                      fontWeight: 600,
+                    }}
+                    disabled={!applicationDocId}
+                  >
+                    Cancel Application
+                  </Button>
+                </Box>
               ) : statusButtonProps.label === 'cancelled' ? (
                 <Button
                   variant="contained"
@@ -1125,7 +1234,9 @@ const JobPostingDetail: React.FC = () => {
                   Apply Again
                 </Button>
               ) : (
-                <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
+                <Box
+                  sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}
+                >
                   <Button
                     variant="contained"
                     size={isMobile ? 'medium' : 'large'}
@@ -1146,7 +1257,11 @@ const JobPostingDetail: React.FC = () => {
                     {statusButtonProps.label}
                   </Button>
                   {applicationStatus && getApplicationStatusHelperText(applicationStatus) && (
-                    <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center', maxWidth: 280 }}>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ textAlign: 'center', maxWidth: 280 }}
+                    >
                       {getApplicationStatusHelperText(applicationStatus)}
                     </Typography>
                   )}
@@ -1165,8 +1280,7 @@ const JobPostingDetail: React.FC = () => {
               >
                 Apply Now
               </Button>
-            )
-          )}
+            ))}
         </Box>
       </Paper>
 
@@ -1215,7 +1329,8 @@ const JobPostingDetail: React.FC = () => {
                   />
                 ) : posting.jobOrderId ? (
                   <Alert severity="info">
-                    No upcoming shifts available at this time. New shifts are added regularly, so check back soon!
+                    No upcoming shifts available at this time. New shifts are added regularly, so
+                    check back soon!
                   </Alert>
                 ) : null}
               </CardContent>
@@ -1226,21 +1341,21 @@ const JobPostingDetail: React.FC = () => {
           {((posting.showBackgroundChecks && posting.backgroundCheckPackages?.length > 0) ||
             (posting.showDrugScreening && posting.drugScreeningPanels?.length > 0) ||
             (posting.showAdditionalScreenings && posting.additionalScreenings?.length > 0) ||
-            (posting.showLicensesCerts && posting.licensesCerts?.length > 0) || 
-            (posting.showSkills && posting.skills?.length > 0) || 
+            (posting.showLicensesCerts && posting.licensesCerts?.length > 0) ||
+            (posting.showSkills && posting.skills?.length > 0) ||
             (posting.showExperience && posting.experienceLevels?.length > 0) ||
             (posting.showEducation && posting.educationLevels?.length > 0) ||
             (posting.showLanguages && posting.languages?.length > 0) ||
             (posting.showPhysicalRequirements && posting.physicalRequirements?.length > 0) ||
-          (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
-          (posting.showRequiredPpe && posting.requiredPpe?.length > 0) ||
-          posting.eVerifyRequired) && (
+            (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
+            (posting.showRequiredPpe && posting.requiredPpe?.length > 0) ||
+            posting.eVerifyRequired) && (
             <Card sx={{ ...cardBaseSx }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Requirements
                 </Typography>
-                
+
                 <Stack spacing={2}>
                   {posting.showBackgroundChecks && posting.backgroundCheckPackages?.length > 0 && (
                     <Box>
@@ -1372,16 +1487,18 @@ const JobPostingDetail: React.FC = () => {
                     </Box>
                   )}
 
-                  {posting.showCustomUniformRequirements && posting.customUniformRequirements && posting.customUniformRequirements.trim() && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Custom Uniform Requirements
-                      </Typography>
-                      <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                        {posting.customUniformRequirements}
-                      </Typography>
-                    </Box>
-                  )}
+                  {posting.showCustomUniformRequirements &&
+                    posting.customUniformRequirements &&
+                    posting.customUniformRequirements.trim() && (
+                      <Box>
+                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                          Custom Uniform Requirements
+                        </Typography>
+                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {posting.customUniformRequirements}
+                        </Typography>
+                      </Box>
+                    )}
 
                   {posting.showRequiredPpe && posting.requiredPpe?.length > 0 && (
                     <Box>
@@ -1396,20 +1513,20 @@ const JobPostingDetail: React.FC = () => {
                     </Box>
                   )}
 
-                {posting.eVerifyRequired && (
-                  <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 1 }}>
-                    <Box
-                      component="img"
-                      src="/img/everify.png"
-                      alt="E-Verify"
-                      sx={{
-                        height: { xs: 32, sm: 36 },
-                        width: 'auto',
-                        objectFit: 'contain',
-                      }}
-                    />
-                  </Box>
-                )}
+                  {posting.eVerifyRequired && (
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 1 }}>
+                      <Box
+                        component="img"
+                        src="/img/everify.png"
+                        alt="E-Verify"
+                        sx={{
+                          height: { xs: 32, sm: 36 },
+                          width: 'auto',
+                          objectFit: 'contain',
+                        }}
+                      />
+                    </Box>
+                  )}
                 </Stack>
               </CardContent>
             </Card>
@@ -1441,9 +1558,9 @@ const JobPostingDetail: React.FC = () => {
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Apply for this Position
                 </Typography>
-                
+
                 <Divider sx={{ my: 2 }} />
-                
+
                 <Stack spacing={2}>
                   {posting.showPayRate && posting.payRate && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -1455,7 +1572,7 @@ const JobPostingDetail: React.FC = () => {
                       </Typography>
                     </Box>
                   )}
-                  
+
                   {posting.workersNeeded && posting.showWorkersNeeded !== false && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
@@ -1466,7 +1583,7 @@ const JobPostingDetail: React.FC = () => {
                       </Typography>
                     </Box>
                   )}
-                  
+
                   {posting.jobType && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
@@ -1477,7 +1594,7 @@ const JobPostingDetail: React.FC = () => {
                       </Typography>
                     </Box>
                   )}
-                  
+
                   {posting.startDate && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
@@ -1505,24 +1622,11 @@ const JobPostingDetail: React.FC = () => {
                   )}
                 </Stack>
 
-                {statusButtonProps?.label === 'accepted_special' ? (
+                {(statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 3 }}>
                     <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                      Congratulations, you've been hired.
+                      You&apos;ve been hired to work this job. Please click the button to Accept the position.
                     </Typography>
-                    <Button
-                      variant="contained"
-                      size="small"
-                      disabled
-                      fullWidth
-                      sx={{
-                        backgroundColor: '#2196F3',
-                        color: '#fff',
-                        fontWeight: 600,
-                      }}
-                    >
-                      Accepted
-                    </Button>
                     <Button
                       variant="contained"
                       size="large"
@@ -1538,7 +1642,7 @@ const JobPostingDetail: React.FC = () => {
                         },
                       }}
                     >
-                      Click to Accept
+                      I Accept
                     </Button>
                     <Button
                       variant="contained"
@@ -1548,27 +1652,34 @@ const JobPostingDetail: React.FC = () => {
                       onClick={handleDeclineAssignment}
                       sx={{ fontWeight: 'bold' }}
                     >
-                      Decline this Job
+                      Decline Job
                     </Button>
                   </Box>
                 ) : statusButtonProps?.label === 'confirmed_special' ? (
-                  <Button
-                    variant="contained"
-                    size="large"
-                    fullWidth
-                    disabled
-                    startIcon={<LockIcon />}
-                    sx={{
-                      mt: 3,
-                      py: 1.5,
-                      fontSize: '1.1rem',
-                      fontWeight: 'bold',
-                      backgroundColor: '#4CAF50',
-                      color: '#fff',
-                    }}
-                  >
-                    Confirmed
-                  </Button>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 3 }}>
+                    <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
+                      Congratulations, you&apos;ve been confirmed to work.
+                    </Typography>
+                    {assignmentDetailsUrl && (
+                      <Button
+                        component={Link}
+                        to={`/c1/assignments/${assignmentDetailsId}`}
+                        variant="contained"
+                        size="large"
+                        fullWidth
+                        sx={{
+                          py: 1.5,
+                          fontSize: '1.1rem',
+                          fontWeight: 'bold',
+                          backgroundColor: '#4CAF50',
+                          color: '#fff',
+                          '&:hover': { backgroundColor: '#45a049' },
+                        }}
+                      >
+                        View Assignment Details
+                      </Button>
+                    )}
+                  </Box>
                 ) : statusButtonProps ? (
                   statusButtonProps.label === 'cancelled' ? (
                     <Button
@@ -1586,7 +1697,7 @@ const JobPostingDetail: React.FC = () => {
                         variant="contained"
                         fullWidth
                         size="large"
-                        sx={{ 
+                        sx={{
                           py: 1.5,
                           backgroundColor: statusButtonProps.backgroundColor,
                           color: statusButtonProps.color,
@@ -1600,7 +1711,11 @@ const JobPostingDetail: React.FC = () => {
                         {statusButtonProps.label}
                       </Button>
                       {applicationStatus && getApplicationStatusHelperText(applicationStatus) && (
-                        <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center' }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ textAlign: 'center' }}
+                        >
                           {getApplicationStatusHelperText(applicationStatus)}
                         </Typography>
                       )}
@@ -1648,4 +1763,3 @@ const JobPostingDetail: React.FC = () => {
 };
 
 export default JobPostingDetail;
-

@@ -421,12 +421,14 @@ export async function sendWorkerMessageInternal(
       body: messageContent,
     };
     
-    if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+    // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
+    if (a2pCampaign && a2pCampaign.trim() !== '') {
+      messageParams.messagingServiceSid = a2pCampaign;
+      messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
+      logger.info(`Using A2P messaging service (link shortening): ${a2pCampaign}`);
+    } else if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
       messageParams.from = messagingPhoneNumber;
       logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
-    } else if (a2pCampaign && a2pCampaign.trim() !== '') {
-      messageParams.messagingServiceSid = a2pCampaign;
-      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
     } else {
       logger.error('Twilio messaging configuration is missing');
       return {
@@ -726,15 +728,14 @@ export const sendWorkerMessage = onCall(
       body: messageContent,
     };
     
-    if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
-      // Use direct phone number (works immediately without A2P 10DLC registration)
+    // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
+    if (a2pCampaign && a2pCampaign.trim() !== '') {
+      messageParams.messagingServiceSid = a2pCampaign;
+      messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
+      logger.info(`Using A2P messaging service (link shortening): ${a2pCampaign}`);
+    } else if (messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
       messageParams.from = messagingPhoneNumber;
       logger.info(`Using direct phone number: ${messagingPhoneNumber}`);
-    } else if (a2pCampaign && a2pCampaign.trim() !== '') {
-      // Fallback to Messaging Service if phone number not configured
-      // Note: Requires A2P 10DLC registration to work
-      messageParams.messagingServiceSid = a2pCampaign;
-      logger.info(`Using A2P messaging service: ${a2pCampaign}`);
     } else {
       throw new HttpsError('internal', 'Twilio messaging configuration is missing. Please configure TWILIO_MESSAGING_PHONE_NUMBER or TWILIO_A2P_CAMPAIGN.');
     }

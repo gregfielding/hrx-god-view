@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
-import { doc, getDoc, getDocs, onSnapshot, collection, query, where, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, getDocs, onSnapshot, collection, query, where, orderBy, limit, updateDoc } from 'firebase/firestore';
 import {
   Avatar,
   Box,
@@ -78,6 +78,8 @@ import ChatGPTDrawer from './chatgpt/ChatGPTDrawer';
 const drawerFullWidth = 240;
 const drawerCollapsedWidth = 64;
 const appBarHeight = 64;
+/** Charcoal for staff (0-4) shell icons and text */
+const STAFF_SHELL_CHARCOAL = '#36454F';
 
 const Layout: React.FC = React.memo(function Layout() {
   // REMOVED: Excessive logging causing re-renders
@@ -251,6 +253,7 @@ const Layout: React.FC = React.memo(function Layout() {
   const setFirstNameWithLog = (value) => { console.log('setFirstName', value); setFirstName(value); };
   const [lastName, setLastName] = useState<string | null>(null);
   const setLastNameWithLog = (value) => { console.log('setLastName', value); setLastName(value); };
+  const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
   
   // Development role switcher state
   const [devRole, setDevRole] = useState<Role>(role);
@@ -459,6 +462,8 @@ const Layout: React.FC = React.memo(function Layout() {
           const data = userSnap.data();
           setFirstName(data.firstName || null);
           setLastName(data.lastName || null);
+          const lang = data.preferredLanguage === 'es' ? 'es' : 'en';
+          setPreferredLanguage(lang);
         }
       }
     };
@@ -954,6 +959,8 @@ const Layout: React.FC = React.memo(function Layout() {
     const secLevel = getEffectiveSecurityLevel;
     return !!(secLevel && ['5', '6', '7'].includes(String(secLevel)));
   }, [getEffectiveSecurityLevel]);
+  // Staff (0-4) see white shell + charcoal icons; admins (5-7) see dark shell + white icons
+  const isStaffShell = !hasAdminLevel;
 
   // Google status context should wrap any component that calls useGoogleStatus (Dashboard, GoogleConnectionChip, CRM, etc.)
   const effectiveGoogleTenantId = activeTenant?.id || tenantId || '';
@@ -990,8 +997,8 @@ const Layout: React.FC = React.memo(function Layout() {
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'flex-start',
-            backgroundColor: '#2E2E2E', // Dark shell background (per style guide)
-            borderRight: 'none', // Remove border
+            backgroundColor: isStaffShell ? '#FFFFFF' : '#2E2E2E', // Staff: white; admins: dark shell
+            borderRight: isStaffShell ? '1px solid rgba(0,0,0,0.08)' : 'none',
             boxShadow: 'none',
             transition: 'none', // Disable any transitions that might cause expansion
           },
@@ -1022,19 +1029,20 @@ const Layout: React.FC = React.memo(function Layout() {
             
             // Clone icon to add color prop directly - same as other menu items
             const dashboardIcon = <DashboardIcon />;
+            const defaultIconColor = isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)';
             const iconWithColor = React.isValidElement(dashboardIcon) 
               ? React.cloneElement(dashboardIcon as React.ReactElement<any>, { 
                   color: 'inherit',
                   sx: { 
                     ...(dashboardIcon as any).props?.sx,
-                    color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                    fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                    color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                    fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                     '& path': {
-                      fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                     },
                     '& .MuiSvgIcon-root': {
-                      color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                      fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                      fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                     },
                   }
                 })
@@ -1056,27 +1064,27 @@ const Layout: React.FC = React.memo(function Layout() {
                       justifyContent: 'center',
                       borderRadius: '9999px',
                       backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
-                      color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
+                      color: isSelected ? '#FFFFFF' : defaultIconColor,
                       '& svg': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& .MuiSvgIcon-root': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& path': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        stroke: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& g': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '&:hover': {
-                        backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
-                        color: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        backgroundColor: isSelected ? '#0057B8' : (isStaffShell ? 'rgba(0,0,0,0.06) !important' : 'rgba(255,255,255,.10) !important'),
+                        color: isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         '& svg': {
-                          fill: isSelected ? '#FFFFFF' : '#FFFFFF',
+                          fill: isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         },
                       },
                       transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
@@ -1156,51 +1164,37 @@ const Layout: React.FC = React.memo(function Layout() {
                       py: 1,
                       justifyContent: 'center',
                       borderRadius: '9999px',
-                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
-                      color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
+                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important',
+                      color: isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
                       '& svg': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
                       },
                       '& .MuiSvgIcon-root': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
                       },
                       '& path': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
+                        stroke: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
                       },
                       '& g': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
                       },
                       '& *': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : ((isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important'),
                       },
                       '&:hover': {
-                        backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
-                        color: isSelected ? '#FFFFFF' : '#FFFFFF',
-                        '& svg': {
-                          fill: '#FFFFFF !important',
-                          color: '#FFFFFF !important',
-                        },
-                        '& .MuiSvgIcon-root': {
-                          fill: '#FFFFFF !important',
-                          color: '#FFFFFF !important',
-                        },
-                        '& path': {
-                          fill: '#FFFFFF !important',
-                          stroke: '#FFFFFF !important',
-                        },
-                        '& g': {
-                          fill: '#FFFFFF !important',
-                        },
-                        '& *': {
-                          fill: '#FFFFFF !important',
-                          color: '#FFFFFF !important',
-                        },
+                        backgroundColor: isSelected ? '#0057B8' : (isStaffShell ? 'rgba(0,0,0,0.06) !important' : 'rgba(255,255,255,.10) !important'),
+                        color: isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
+                        '& svg': { fill: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important', color: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important' },
+                        '& .MuiSvgIcon-root': { fill: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important', color: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important' },
+                        '& path': { fill: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important', stroke: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important' },
+                        '& g': { fill: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important' },
+                        '& *': { fill: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important', color: (isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF')) + ' !important' },
                       },
-                      transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
+                      transition: 'background-color 150ms ease, color 150ms ease',
                       '&.Mui-focusVisible': {
                         backgroundColor: 'transparent !important',
                       },
@@ -1270,6 +1264,7 @@ const Layout: React.FC = React.memo(function Layout() {
                 (pathname === to ||
                   (pathname.startsWith(to + '/') && !(text === 'ChatGPT' && pathname.startsWith('/dashboard'))) ||
                   (isUserDetailsPath && /\/users$/.test(to)));
+              const defaultIconColor = isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)';
               
               // Clone icon to add color prop directly - MUI icons inherit color from parent
               const iconWithColor = React.isValidElement(icon) 
@@ -1277,24 +1272,24 @@ const Layout: React.FC = React.memo(function Layout() {
                     color: 'inherit', // Inherit from parent ListItemIcon color
                     sx: { 
                       ...(icon as any).props?.sx,
-                      color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                      fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                      stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                      color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                      fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                      stroke: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       '& path': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        stroke: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& .MuiSvgIcon-root': {
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& g': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& *': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        stroke: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                     }
                   })
@@ -1318,28 +1313,28 @@ const Layout: React.FC = React.memo(function Layout() {
                       py: 1,
                       justifyContent: 'center',
                       borderRadius: '9999px',
-                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important', // Active: brandPrimary background (per style guide)
-                      color: isSelected ? '#FFFFFF' : 'rgba(255,255,255,.8)', // Active: white icon (per style guide)
+                      backgroundColor: isSelected ? '#0057B8' : 'transparent !important',
+                      color: isSelected ? '#FFFFFF' : defaultIconColor,
                       '& svg': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& .MuiSvgIcon-root': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        color: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        color: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& path': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
-                        stroke: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
+                        stroke: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '& g': {
-                        fill: isSelected ? '#FFFFFF !important' : 'rgba(255,255,255,.8) !important',
+                        fill: isSelected ? '#FFFFFF !important' : (defaultIconColor + ' !important'),
                       },
                       '&:hover': {
-                        backgroundColor: isSelected ? '#0057B8' : 'rgba(255,255,255,.10) !important', // Hover: rgba(255,255,255,.10) (per style guide)
-                        color: isSelected ? '#FFFFFF' : '#FFFFFF',
+                        backgroundColor: isSelected ? '#0057B8' : (isStaffShell ? 'rgba(0,0,0,0.06) !important' : 'rgba(255,255,255,.10) !important'),
+                        color: isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         '& svg': {
-                          fill: isSelected ? '#FFFFFF' : '#FFFFFF',
+                          fill: isSelected ? '#FFFFFF' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         },
                       },
                       transition: 'background-color 150ms ease, color 150ms ease', // 150ms transition (per style guide)
@@ -1474,7 +1469,7 @@ const Layout: React.FC = React.memo(function Layout() {
             }),
         }}
       >
-        {/* Full-width top bar - Dark shell */}
+        {/* Full-width top bar - Staff: white; admins: dark shell */}
         <Box
           sx={{
             position: 'fixed',
@@ -1482,9 +1477,9 @@ const Layout: React.FC = React.memo(function Layout() {
             left: 0,
             right: 0,
             zIndex: 1100,
-            backgroundColor: '#2E2E2E', // Dark shell background (per style guide)
-            borderBottom: 'none', // Remove border
-            boxShadow: '0 2px 8px rgba(0,0,0,.07)', // Subtle top-bar shadow (per style guide)
+            backgroundColor: isStaffShell ? '#FFFFFF' : '#2E2E2E',
+            borderBottom: isStaffShell ? '1px solid rgba(0,0,0,0.08)' : 'none',
+            boxShadow: isStaffShell ? '0 1px 3px rgba(0,0,0,0.06)' : '0 2px 8px rgba(0,0,0,.07)',
             pl: 0, // No left padding - logo aligns with sidebar
             pr: { xs: 2, md: 4 }, // Keep right padding
             py: 1,
@@ -1511,14 +1506,14 @@ const Layout: React.FC = React.memo(function Layout() {
                   height: '52px', 
                   padding: '8px',
                   borderRadius: '12px',
-                  background: 'rgba(255, 255, 255, 0.06)',
+                  background: isStaffShell ? 'rgba(0,0,0,0.06)' : 'rgba(255, 255, 255, 0.06)',
                   display: 'flex', 
                   alignItems: 'center', 
                   justifyContent: 'center',
                   cursor: 'pointer',
                   transition: 'background-color 150ms ease',
                   '&:hover': {
-                    background: 'rgba(255, 255, 255, 0.08)', // Hover glow - subtle increase (per spec)
+                    background: isStaffShell ? 'rgba(0,0,0,0.08)' : 'rgba(255, 255, 255, 0.08)',
                     cursor: 'pointer',
                   },
                   '& img': {
@@ -1559,7 +1554,7 @@ const Layout: React.FC = React.memo(function Layout() {
                 variant="h5" 
                 sx={{ 
                   fontWeight: 600, 
-                  color: '#FFFFFF',
+                  color: isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF',
                   lineHeight: 1.2, // Ensure consistent line height for center alignment
                   display: 'flex',
                   alignItems: 'center',
@@ -1584,15 +1579,15 @@ const Layout: React.FC = React.memo(function Layout() {
                     onClick={() => navigate('/inbox')}
                     sx={{
                       backgroundColor: 'transparent !important',
-                      color: location.pathname.startsWith('/inbox') ? '#0057B8' : 'rgba(255,255,255,.8)',
+                      color: location.pathname.startsWith('/inbox') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
                       '& svg': {
-                        fill: location.pathname.startsWith('/inbox') ? '#0057B8' : 'rgba(255,255,255,.8) !important',
+                        fill: location.pathname.startsWith('/inbox') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important',
                       },
                       '&:hover': { 
                         backgroundColor: 'transparent !important',
-                        color: location.pathname.startsWith('/inbox') ? '#0057B8' : '#FFFFFF',
+                        color: location.pathname.startsWith('/inbox') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         '& svg': {
-                          fill: location.pathname.startsWith('/inbox') ? '#0057B8' : '#FFFFFF',
+                          fill: location.pathname.startsWith('/inbox') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         },
                       },
                     }}
@@ -1611,15 +1606,15 @@ const Layout: React.FC = React.memo(function Layout() {
                     onClick={() => navigate('/messages')}
                     sx={{
                       backgroundColor: 'transparent !important',
-                      color: location.pathname.startsWith('/messages') ? '#0057B8' : 'rgba(255,255,255,.8)',
+                      color: location.pathname.startsWith('/messages') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
                       '& svg': {
-                        fill: location.pathname.startsWith('/messages') ? '#0057B8' : 'rgba(255,255,255,.8) !important',
+                        fill: (location.pathname.startsWith('/messages') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)')) + ' !important',
                       },
                       '&:hover': { 
                         backgroundColor: 'transparent !important',
-                        color: location.pathname.startsWith('/messages') ? '#0057B8' : '#FFFFFF',
+                        color: location.pathname.startsWith('/messages') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         '& svg': {
-                          fill: location.pathname.startsWith('/messages') ? '#0057B8' : '#FFFFFF',
+                          fill: location.pathname.startsWith('/messages') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         },
                       },
                     }}
@@ -1638,15 +1633,15 @@ const Layout: React.FC = React.memo(function Layout() {
                     onClick={() => setAlertsDrawerOpen(true)}
                     sx={{
                       backgroundColor: 'transparent !important',
-                      color: alertsDrawerOpen ? '#0057B8' : 'rgba(255,255,255,.8)',
+                      color: alertsDrawerOpen ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
                       '& svg': {
-                        fill: alertsDrawerOpen ? '#0057B8' : 'rgba(255,255,255,.8) !important',
+                        fill: (alertsDrawerOpen ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)')) + ' !important',
                       },
                       '&:hover': { 
                         backgroundColor: 'transparent !important',
-                        color: alertsDrawerOpen ? '#0057B8' : '#FFFFFF',
+                        color: alertsDrawerOpen ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         '& svg': {
-                          fill: alertsDrawerOpen ? '#0057B8' : '#FFFFFF',
+                          fill: alertsDrawerOpen ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                         },
                       },
                       ...(alertsCriticalCount > 0 && {
@@ -1773,10 +1768,10 @@ const Layout: React.FC = React.memo(function Layout() {
                   sx={{
                     p: 0.5,
                     backgroundColor: 'transparent !important',
-                    color: avatarMenuAnchorEl ? '#0057B8' : 'rgba(255,255,255,.8)',
+                    color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
                     '&:hover': { 
                       backgroundColor: 'transparent !important',
-                      color: avatarMenuAnchorEl ? '#0057B8' : '#FFFFFF',
+                      color: avatarMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
                     },
                   }}
                 >
@@ -1796,15 +1791,15 @@ const Layout: React.FC = React.memo(function Layout() {
                   onClick={toggleDrawer}
                   sx={{ 
                     backgroundColor: 'transparent !important',
-                    color: 'rgba(255,255,255,.8)',
+                    color: isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)',
                     '& svg': {
-                      fill: 'rgba(255,255,255,.8) !important',
+                      fill: (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)') + ' !important',
                     },
                     '&:hover': { 
                       backgroundColor: 'transparent !important',
-                      color: '#FFFFFF',
+                      color: isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF',
                       '& svg': {
-                        fill: '#FFFFFF',
+                        fill: isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF',
                       },
                     },
                   }}
@@ -1845,6 +1840,29 @@ const Layout: React.FC = React.memo(function Layout() {
               }}>
                 My Profile
               </MenuItem>
+              <Divider />
+              <MenuItem disabled sx={{ py: 0.5 }}>
+                <Typography variant="caption" color="text.secondary">Preferred Message Language</Typography>
+              </MenuItem>
+              <MenuItem
+                onClick={async () => {
+                  const next = preferredLanguage === 'es' ? 'en' : 'es';
+                  setPreferredLanguage(next);
+                  setAvatarMenuAnchorEl(null);
+                  if (user?.uid) {
+                    try {
+                      const userRef = doc(db, 'users', user.uid);
+                      await updateDoc(userRef, { preferredLanguage: next, updatedAt: new Date() });
+                    } catch (err) {
+                      console.error('Failed to update preferred language:', err);
+                      setPreferredLanguage(preferredLanguage);
+                    }
+                  }
+                }}
+              >
+                {preferredLanguage === 'es' ? 'English' : 'Español'}
+              </MenuItem>
+              <Divider />
               <MenuItem onClick={() => {
                 navigate('/privacy-settings');
                 setAvatarMenuAnchorEl(null);

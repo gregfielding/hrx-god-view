@@ -22,6 +22,7 @@ import {
   DialogActions,
   Button,
   Link,
+  TextField,
 } from '@mui/material';
 import {
   Description as ResumeIcon,
@@ -32,6 +33,10 @@ import {
   Lock as LockedIcon,
   LockOpen as UnlockedIcon,
   Clear as ClearIcon,
+  Close as CloseIcon,
+  Check as CheckIcon,
+  Error as ErrorIcon,
+  Edit as EditIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -99,6 +104,9 @@ interface Worker {
   assignmentStatus?: string;
   assignmentId?: string;
   confirmationStatus?: 'accepted' | 'confirmed'; // Track confirmation status
+  /** Assignment start date (YYYY-MM-DD); when set, shown on tile instead of city/state */
+  assignmentStartDate?: string;
+  assignmentEndDate?: string;
 }
 
 const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
@@ -144,6 +152,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
   const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
+  const [assignmentStartDateByUserId, setAssignmentStartDateByUserId] = useState<Map<string, string>>(new Map());
   const [placementUserIds, setPlacementUserIds] = useState<Set<string>>(new Set());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
@@ -225,8 +234,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [licenseModalOpen, setLicenseModalOpen] = useState(false);
   const [selectedLicenses, setSelectedLicenses] = useState<any[]>([]);
   const [assignmentIdByUserId, setAssignmentIdByUserId] = useState<Map<string, string>>(new Map());
+  // Assignments column: workers placed/assigned/confirmed/declined for this shift (from Firestore only, not filtered by Workforce)
+  const [assignmentWorkersList, setAssignmentWorkersList] = useState<Worker[]>([]);
+  const lastAssignmentShiftIdRef = useRef<string | null>(null); // clear list only when shift changes, not when workforce changes
   // Track optimistically added placement IDs so onSnapshot doesn't overwrite them before Firestore confirms
   const pendingPlacementAddsRef = useRef<Set<string>>(new Set());
+  // Track optimistically cancelled assignments so UI updates immediately before Firestore propagates
+  const [pendingAssignmentCancels, setPendingAssignmentCancels] = useState<Set<string>>(new Set());
 
   // Load user groups for workforce dropdown
   useEffect(() => {
@@ -236,10 +250,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       try {
         const groupsRef = collection(db, 'tenants', tenantId, 'userGroups');
         const groupsSnap = await getDocs(groupsRef);
-        const groups = groupsSnap.docs.map(doc => ({
-          id: doc.id,
-          groupName: doc.data().groupName || doc.data().name || doc.id
-        }));
+        const groups = groupsSnap.docs.map(doc => {
+          const d = doc.data();
+          const groupName = d.groupName || d.name || d.title || doc.id;
+          return { id: doc.id, groupName };
+        });
         setUserGroups(groups);
       } catch (err) {
         console.error('Error loading user groups:', err);
@@ -489,24 +504,23 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         };
 
         if (selectedWorkforce === 'applicants') {
-          // Load applicants for this job order AND this specific shift
+          // Load applicants for this job order AND this specific shift (exclude candidates — they appear in Candidates pool)
           const applicationDocs = await loadApplicationDocs();
           
-          // Filter applications to only those who applied for this specific shift
           const userIds = new Set<string>();
           applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
+            if (data.candidate === true) return; // Candidates show in "Candidates" workforce only
             const status = String(data.status || 'submitted').toLowerCase();
             if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
             
             const hasShift = matchesSelectedShift(data);
-            // Career applications often don't carry explicit shift linkage; allow them.
             const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
             if (hasShift || allowCareerWithoutShift) {
               userIds.add(data.userId);
             }
           });
-          
+
           // Load user documents with full profile data
           const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
@@ -595,6 +609,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     if (!tenantId || !selectedShiftId) {
       setAssignmentStatusByUserId(new Map());
       setAssignmentIdByUserId(new Map());
+      setAssignmentStartDateByUserId(new Map());
       return;
     }
 
@@ -606,17 +621,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       (snapshot) => {
         const nextStatus = new Map<string, string>();
         const nextIds = new Map<string, string>();
+        const nextStartDates = new Map<string, string>();
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as any;
           const userId = String(data?.userId || data?.candidateId || '');
           const status = String(data?.status || 'proposed').toLowerCase();
           if (!userId) return;
-          if (['declined', 'canceled', 'cancelled'].includes(status)) return;
           nextStatus.set(userId, status);
           nextIds.set(userId, docSnap.id);
+          const startDate = data?.startDate;
+          if (typeof startDate === 'string' && startDate) nextStartDates.set(userId, startDate.split('T')[0]);
+          else if (startDate?.toDate) nextStartDates.set(userId, startDate.toDate().toISOString().split('T')[0]);
         });
         setAssignmentStatusByUserId(nextStatus);
         setAssignmentIdByUserId(nextIds);
+        setAssignmentStartDateByUserId(nextStartDates);
       },
       (err) => {
         console.warn('Assignments onSnapshot error:', err);
@@ -651,6 +670,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         // Merge in optimistically added IDs so we don't overwrite with stale snapshot (race with local write)
         pendingPlacementAddsRef.current.forEach((id) => ids.add(id));
         setPlacementUserIds(ids);
+        // Clear pending cancels for workers now confirmed as placed by server
+        setPendingAssignmentCancels((prev) => {
+          if (prev.size === 0) return prev;
+          const stillPending = new Set(prev);
+          ids.forEach((id) => stillPending.delete(id));
+          return stillPending.size === prev.size ? prev : stillPending;
+        });
       },
       (err) => {
         console.warn('Placements onSnapshot error:', err);
@@ -660,9 +686,103 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return () => unsubscribe();
   }, [tenantId, selectedShiftId]);
 
+  // Assignments column shows all workers for this shift (placements + assignments), independent of Workforce selection
+  const assignedUserIds = useMemo(() => {
+    const ids = new Set<string>(placementUserIds);
+    assignmentStatusByUserId.forEach((_, uid) => ids.add(uid));
+    pendingAssignmentCancels.forEach((uid) => ids.add(uid));
+    return ids;
+  }, [placementUserIds, assignmentStatusByUserId, pendingAssignmentCancels]);
+
+  // Load user docs for everyone in Assignments; clear list only when *shift* changes, not when workforce changes
+  useEffect(() => {
+    if (!selectedShiftId) {
+      setAssignmentWorkersList([]);
+      lastAssignmentShiftIdRef.current = null;
+      return;
+    }
+    if (lastAssignmentShiftIdRef.current !== selectedShiftId) {
+      setAssignmentWorkersList([]);
+      lastAssignmentShiftIdRef.current = selectedShiftId;
+    }
+    if (assignedUserIds.size === 0) {
+      return; // Keep current list when workforce changes; only refresh when we have ids for this shift
+    }
+    let cancelled = false;
+    const load = async () => {
+      const userIds = Array.from(assignedUserIds);
+      const userPromises = userIds.map(async (userId): Promise<Worker | null> => {
+        const userRef = doc(db, 'users', userId);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists() || cancelled) return null;
+        const base = extractWorkerData(userSnap.data(), userId);
+        const isPendingCancel = pendingAssignmentCancels.has(userId);
+        const assignmentStatus = isPendingCancel ? undefined : assignmentStatusByUserId.get(userId);
+        const hasPlacement = placementUserIds.has(userId);
+        const hasAssignment = Boolean(assignmentStatus);
+        const isPlacementOnly = hasPlacement && !hasAssignment;
+        const confirmationStatus: 'accepted' | 'confirmed' | undefined =
+          assignmentStatus && (assignmentStatus === 'confirmed' || assignmentStatus === 'active')
+            ? 'confirmed'
+            : assignmentStatus
+              ? 'accepted'
+              : undefined;
+        return {
+          ...base,
+          isAssignedToShift: true,
+          isPlacementOnly,
+          assignmentStatus,
+          assignmentId: assignmentIdByUserId.get(userId),
+          confirmationStatus,
+          assignmentStartDate: assignmentStartDateByUserId.get(userId),
+        };
+      });
+      const list = await Promise.all(userPromises);
+      if (cancelled) return;
+      const valid = list.filter((w): w is Worker => w !== null);
+      const statusRank = (w: Worker) =>
+        w.confirmationStatus === 'confirmed' ? 2 : w.assignmentStatus ? 1 : 0;
+      valid.sort((a, b) => {
+        const aPlace = a.isPlacementOnly ? 0 : 1;
+        const bPlace = b.isPlacementOnly ? 0 : 1;
+        if (aPlace !== bPlace) return aPlace - bPlace;
+        return statusRank(b) - statusRank(a);
+      });
+      setAssignmentWorkersList(valid);
+      lastAssignmentShiftIdRef.current = selectedShiftId;
+    };
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedShiftId, assignedUserIds, placementUserIds, assignmentStatusByUserId, assignmentIdByUserId, assignmentStartDateByUserId, pendingAssignmentCancels]);
+
   const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
   const safeSelectedWorkforce = workforceOptions.some((o) => o.value === selectedWorkforce) ? selectedWorkforce : '';
+
+  const handleRemoveGroupFromWorkforce = async (groupValue: string) => {
+    if (!groupValue.startsWith('group_') || !tenantId || !jobOrderId) return;
+    const groupId = groupValue.replace('group_', '');
+    try {
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      const job = jobOrder as any;
+      const updates: Record<string, unknown> = { updatedAt: serverTimestamp() };
+      if (job?.placementsLastGroup?.id === groupId) {
+        updates.placementsLastGroup = null;
+      }
+      const laborPoolGroups = Array.isArray(job?.laborPoolGroups) ? job.laborPoolGroups.filter((id: string) => id !== groupId) : [];
+      const restrictedGroups = Array.isArray(job?.restrictedGroups) ? job.restrictedGroups.filter((id: string) => id !== groupId) : [];
+      if (laborPoolGroups.length !== (job?.laborPoolGroups?.length ?? 0)) updates.laborPoolGroups = laborPoolGroups;
+      if (restrictedGroups.length !== (job?.restrictedGroups?.length ?? 0)) updates.restrictedGroups = restrictedGroups;
+      await updateDoc(jobOrderRef, updates);
+      if (selectedWorkforce === groupValue) setSelectedWorkforce('choose_group');
+      onJobOrderUpdated?.();
+    } catch (err) {
+      console.error('Error removing group from workforce:', err);
+      setError((err as Error)?.message ?? 'Failed to remove group');
+    }
+  };
 
   // Build workforce options: Applicants, Candidates, [last used group from Choose Group], labor pool groups, Choose Group
   function getWorkforceOptions() {
@@ -693,13 +813,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     ]);
     
     // Add labor pool groups not already in options
-    allGroupIds.forEach((groupId: string) => {
+      allGroupIds.forEach((groupId: string) => {
       if (options.some((o) => o.value === `group_${groupId}`)) return;
       const group = userGroups.find((g) => g.id === groupId);
-      if (group) {
+        if (group) {
         options.push({ value: `group_${groupId}`, label: group.groupName });
-      }
-    });
+        }
+      });
     
     options.push({ value: 'choose_group', label: 'Choose Group' });
     return options;
@@ -730,7 +850,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
       if (createdCount === 0 && skipped.length > 0) {
         setError(`No assignments created. ${skipped.map((s: any) => s.reason).join(', ')}`);
-      } else {
+        } else {
         setError(null);
       }
     } catch (err: any) {
@@ -758,53 +878,62 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
+  // Cancel assignment and revert to Placed state (for testing).
+  const handleCancelAssignment = async (worker: Worker) => {
+    if (worker.isPlacementOnly || !worker.assignmentId || !selectedShiftId || !jobOrderId) return;
+    try {
+      setError(null);
+      // Optimistic update: show as Placed immediately
+      setPendingAssignmentCancels((prev) => new Set([...prev, worker.id]));
+      const cancelFn = httpsCallable(functions, 'placementsCancelAssignment');
+      await cancelFn({
+        tenantId,
+        assignmentId: worker.assignmentId,
+        shiftId: selectedShiftId,
+        userId: worker.id,
+      });
+      // Keep optimistic state until placements onSnapshot confirms
+    } catch (err: any) {
+      console.error('Error cancelling assignment:', err);
+      setError(err?.message || 'Failed to cancel assignment');
+      setPendingAssignmentCancels((prev) => {
+        const next = new Set(prev);
+        next.delete(worker.id);
+        return next;
+      });
+    }
+  };
+
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
   const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
-  // Placed = placement only (no Assignment). Assigned = has Assignment (offered, worker may accept/decline).
-  const workersWithAssignmentState = useMemo(
-    () =>
-      workers.map((worker) => {
-        const assignmentStatus = assignmentStatusByUserId.get(worker.id);
-        const hasPlacement = placementUserIds.has(worker.id);
-        const hasAssignment = Boolean(assignmentStatus);
-
-        if (!hasPlacement && !hasAssignment) {
-          return {
-            ...worker,
-            isAssignedToShift: false,
-            isPlacementOnly: false,
-            assignmentStatus: undefined,
-            assignmentId: undefined,
-            confirmationStatus: undefined,
-          };
-        }
-
-        const confirmationStatus: 'accepted' | 'confirmed' | undefined =
-          assignmentStatus && (assignmentStatus === 'confirmed' || assignmentStatus === 'active')
-            ? 'confirmed'
-            : assignmentStatus
-              ? 'accepted'
-              : undefined;
-        return {
-          ...worker,
-          isAssignedToShift: true,
-          isPlacementOnly: hasPlacement && !hasAssignment,
-          assignmentStatus: assignmentStatus,
-          assignmentId: assignmentIdByUserId.get(worker.id),
-          confirmationStatus,
-        };
-      }),
-    [workers, assignmentStatusByUserId, assignmentIdByUserId, placementUserIds],
+  // Assignments column: all workers placed/assigned/confirmed/declined for this shift (from Firestore, not filtered by Workforce)
+  const assignedWorkers = assignmentWorkersList;
+  const placedOnlyWorkers = useMemo(
+    () => assignedWorkers.filter((w) => w.isPlacementOnly),
+    [assignedWorkers],
   );
-  const assignedWorkers = useMemo(
-    () => workersWithAssignmentState.filter((worker) => worker.isAssignedToShift),
-    [workersWithAssignmentState],
+  const [assignAllBusy, setAssignAllBusy] = useState(false);
+  const handleAssignAll = async () => {
+    if (placedOnlyWorkers.length === 0 || !selectedShift) return;
+    setAssignAllBusy(true);
+    try {
+      setError(null);
+      await assignWorkersToShift(placedOnlyWorkers.map((w) => w.id));
+      for (const worker of placedOnlyWorkers) {
+        await deletePlacement(worker);
+      }
+    } catch (err: any) {
+      console.error('Error assigning all:', err);
+      setError(err?.message ?? 'Failed to offer positions');
+    } finally {
+      setAssignAllBusy(false);
+    }
+  };
+  // Worker Pool: current workforce selection minus anyone already in Assignments (so they don't appear in both)
+  const availableWorkers = useMemo(
+    () => workers.filter((w) => !assignedUserIds.has(w.id)),
+    [workers, assignedUserIds],
   );
-  const unassignedWorkers = useMemo(
-    () => workersWithAssignmentState.filter((worker) => !worker.isAssignedToShift),
-    [workersWithAssignmentState],
-  );
-  const availableWorkers = unassignedWorkers;
   const staffingTarget = useMemo(() => {
     if (!selectedShift) return null;
     const value =
@@ -817,6 +946,51 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     () => assignedWorkers.filter((w) => w.confirmationStatus === 'confirmed').length,
     [assignedWorkers],
   );
+
+  // Shift start date for display (YYYY-MM-DD and formatted)
+  const shiftStartDateStr = useMemo(() => {
+    if (!selectedShift) return '';
+    const raw = (selectedShift as any).shiftDate;
+    if (!raw) return '';
+    if (typeof raw === 'string') return raw.split('T')[0];
+    if (raw?.toDate && typeof raw.toDate === 'function') return raw.toDate().toISOString().split('T')[0];
+    if (raw instanceof Date) return raw.toISOString().split('T')[0];
+    return '';
+  }, [selectedShift]);
+  const formatDateDisplay = (yyyyMmDd: string) => {
+    if (!yyyyMmDd) return '';
+    const d = new Date(yyyyMmDd + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const [editStartDateWorker, setEditStartDateWorker] = useState<Worker | null>(null);
+  const [editStartDateValue, setEditStartDateValue] = useState('');
+  const [editStartDateSaving, setEditStartDateSaving] = useState(false);
+  const handleOpenEditStartDate = (worker: Worker) => {
+    const current = worker.assignmentStartDate || shiftStartDateStr || '';
+    setEditStartDateWorker(worker);
+    setEditStartDateValue(current || '');
+  };
+  const handleSaveStartDate = async () => {
+    if (!editStartDateWorker?.assignmentId || !tenantId || !editStartDateValue.trim()) {
+      setEditStartDateWorker(null);
+      return;
+    }
+    setEditStartDateSaving(true);
+    try {
+      const assignmentRef = doc(db, 'tenants', tenantId, 'assignments', editStartDateWorker.assignmentId);
+      await updateDoc(assignmentRef, {
+        startDate: editStartDateValue.trim().split('T')[0],
+        updatedAt: serverTimestamp(),
+      });
+      setEditStartDateWorker(null);
+    } catch (err: any) {
+      console.error('Error updating assignment start date:', err);
+      setError(err?.message ?? 'Failed to update start date');
+    } finally {
+      setEditStartDateSaving(false);
+    }
+  };
 
   // Debug: Log shift data to help identify field names
   useEffect(() => {
@@ -968,15 +1142,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </Alert>
         )}
 
-        {/* Loading State */}
-        {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
-            <CircularProgress />
-          </Box>
-        )}
-
-        {/* Content Area - three column board */}
-        {!loading && showContent && (
+        {/* Content Area - three column board (always show so Assignments column never disappears when changing Workforce) */}
+        {showContent && (
           <Grid container spacing={3}>
             {/* Left: Shift Details */}
             <Grid item xs={12} lg={3}>
@@ -984,70 +1151,76 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                     Shift Details
-                  </Typography>
+          </Typography>
                   <FormControl fullWidth size="small" sx={{ mb: 1 }}>
-                    <InputLabel>Shift</InputLabel>
-                    <Select
+                  <InputLabel>Shift</InputLabel>
+                  <Select
                       value={safeSelectedShiftId}
-                      label="Shift"
-                      onChange={(e) => setSelectedShiftId(e.target.value)}
-                      disabled={loading || shifts.length === 0}
-                    >
+                    label="Shift"
+                    onChange={(e) => setSelectedShiftId(e.target.value)}
+                    disabled={loading || shifts.length === 0}
+                  >
                       <MenuItem value="">
                         <em>Select shift</em>
                       </MenuItem>
-                      {shifts.length === 0 ? (
-                        <MenuItem disabled>
-                          {loading ? 'Loading shifts...' : 'No upcoming shifts available'}
-                        </MenuItem>
-                      ) : (
-                        shifts.map((shift) => {
-                          const shiftDate: any = shift.shiftDate;
-                          let formattedDate = '';
-                          if (shiftDate) {
-                            let date: Date;
-                            if (typeof shiftDate === 'string') {
-                              date = new Date(shiftDate);
-                            } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
-                              date = shiftDate.toDate();
-                            } else if (shiftDate instanceof Date) {
-                              date = shiftDate;
-                            } else {
-                              date = new Date();
-                            }
-                            formattedDate = date.toLocaleDateString('en-US', {
-                              weekday: 'short',
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric',
-                            });
+                    {shifts.length === 0 ? (
+                      <MenuItem disabled>
+                        {loading ? 'Loading shifts...' : 'No upcoming shifts available'}
+                      </MenuItem>
+                    ) : (
+                      shifts.map((shift) => {
+                        const shiftDate: any = shift.shiftDate;
+                        let formattedDate = '';
+                        if (shiftDate) {
+                          let date: Date;
+                          if (typeof shiftDate === 'string') {
+                            date = new Date(shiftDate);
+                          } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
+                            date = shiftDate.toDate();
+                          } else if (shiftDate instanceof Date) {
+                            date = shiftDate;
+                          } else {
+                            date = new Date();
                           }
-                          return (
-                            <MenuItem key={shift.id} value={shift.id}>
-                              <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                  <Typography variant="body2" fontWeight={600}>
-                                    {formattedDate}
-                                  </Typography>
-                                  {shift.spotsRemaining !== undefined && (
-                                    <Chip
-                                      size="small"
-                                      label={`${shift.spotsRemaining} spots`}
-                                      sx={{ ml: 1 }}
-                                      color={shift.spotsRemaining > 0 ? 'success' : 'default'}
-                                    />
-                                  )}
-                                </Box>
-                                <Typography variant="caption" color="text.secondary">
-                                  {shift.shiftTitle || 'Shift'} • {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
+                          formattedDate = date.toLocaleDateString('en-US', { 
+                            weekday: 'short', 
+                            month: 'short', 
+                            day: 'numeric',
+                              year: 'numeric',
+                          });
+                        }
+                        const jobTitle = (shift as any).defaultJobTitle ?? (shift as any).jobTitle ?? (jobOrder as any)?.jobTitle ?? '';
+                        return (
+                          <MenuItem key={shift.id} value={shift.id}>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {formattedDate}
                                 </Typography>
+                                {shift.spotsRemaining !== undefined && (
+                                  <Chip 
+                                    size="small" 
+                                    label={`${shift.spotsRemaining} spots`} 
+                                    sx={{ ml: 1 }}
+                                    color={shift.spotsRemaining > 0 ? 'success' : 'default'}
+                                  />
+                                )}
                               </Box>
-                            </MenuItem>
-                          );
-                        })
-                      )}
-                    </Select>
-                  </FormControl>
+                              <Typography variant="caption" color="text.secondary">
+                                {shift.shiftTitle || 'Shift'} • {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
+                              </Typography>
+                              {jobTitle && (
+                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
+                                  {jobTitle}
+                                </Typography>
+                              )}
+                            </Box>
+                          </MenuItem>
+                        );
+                      })
+                    )}
+                  </Select>
+                </FormControl>
                   {selectedShift && (
                     <Stack spacing={1.25}>
                       <Typography variant="subtitle1" fontWeight={700}>
@@ -1055,8 +1228,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       </Typography>
                       {(selectedShift as any).defaultJobTitle && (
                         <Typography variant="body2" color="text.secondary">
-                          {(selectedShift as any).defaultJobTitle}
-                        </Typography>
+                            {(selectedShift as any).defaultJobTitle}
+                          </Typography>
                       )}
                       <Paper variant="outlined" sx={{ p: 0.5, bgcolor: 'grey.50' }}>
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
@@ -1126,11 +1299,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
                       <Stack direction="row" spacing={1} flexWrap="wrap">
                         {staffingTarget !== null && (
-                          <Chip
-                            size="small"
+                                  <Chip 
+                                    size="small"
                             label={`${staffingFilled}/${staffingTarget} confirmed`}
                             color={staffingFilled >= staffingTarget ? 'success' : staffingFilled > 0 ? 'info' : 'default'}
-                            variant="outlined"
+                                    variant="outlined"
                           />
                         )}
                         {selectedShift.spotsRemaining !== undefined && (
@@ -1153,20 +1326,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       {(selectedShift as any).payRate && (
                         <Typography variant="body2">
                           Pay: <strong>${(selectedShift as any).payRate}/hr</strong>
-                        </Typography>
+                          </Typography>
                       )}
-
+                      
                       {(selectedShift as any).poNumber && (
                         <Typography variant="body2" color="text.secondary">
                           PO: {(selectedShift as any).poNumber}
-                        </Typography>
+                          </Typography>
                       )}
-
+                      
                       {(selectedShift as any).shiftDescription && (
                         <Tooltip
                           title={
                             <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
-                              {(selectedShift as any).shiftDescription}
+                            {(selectedShift as any).shiftDescription}
                             </Typography>
                           }
                           arrow
@@ -1186,9 +1359,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             <Grid item xs={12} lg={4}>
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                    Assignments ({assignedWorkers.length})
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      Assignments ({assignedWorkers.length})
+                    </Typography>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      color="primary"
+                      disabled={placedOnlyWorkers.length === 0 || !selectedShiftId || assignAllBusy}
+                      onClick={handleAssignAll}
+                    >
+                      {assignAllBusy ? 'Offering…' : 'Assign All'}
+                    </Button>
+                  </Box>
                   <Box
                     onDragOver={handleAssignmentsDragOver}
                     onDragLeave={() => setIsAssignmentDragOver(false)}
@@ -1215,13 +1399,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     <Stack spacing={1}>
                       {assignedWorkers.map((worker) => {
                         const isPlacementOnly = Boolean(worker.isPlacementOnly);
-                        // Placed = placement only (no offer sent). Assigned = offer sent, awaiting response. Confirmed = worker accepted.
-                        const isOfferPending = worker.assignmentStatus && ['proposed', 'accepted'].includes(worker.assignmentStatus);
+                        const isDeclined = worker.assignmentStatus === 'declined';
+                        const isCancelled = worker.assignmentStatus === 'cancelled' || worker.assignmentStatus === 'canceled';
+                        // Placed = placement only (no offer sent). Assigned = offer sent, awaiting response. Confirmed = worker accepted. Declined/Cancelled = worker or system cancelled.
                         const isConfirmed = worker.assignmentStatus && ['confirmed', 'active'].includes(worker.assignmentStatus);
-                        const statusLabel = isPlacementOnly ? 'Placed' : isConfirmed ? 'Confirmed' : 'Assigned';
-                        const statusColor = isPlacementOnly ? 'info' : isConfirmed ? 'success' : 'primary';
+                        const statusLabel = isPlacementOnly ? 'Placed' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isConfirmed ? 'Confirmed' : 'Assigned';
                         const canDragBackToPool = isPlacementOnly; // Only placement-only (no Assignment) can be dragged back
-                        const useUnlockedIcon = isPlacementOnly; // Placement-only = unlocked; Assigned/Confirmed = locked
                         return (
                           <Paper
                             key={worker.id}
@@ -1237,31 +1420,84 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               cursor: canDragBackToPool ? 'grab' : 'default',
                             }}
                           >
-                            <Box sx={{ minWidth: 0 }}>
+                            <Box sx={{ minWidth: 0, flex: 1 }}>
                               <Typography variant="body2" fontWeight={600} noWrap>
                                 {worker.displayName}
                               </Typography>
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {[worker.city, worker.state].filter(Boolean).join(', ') || 'Location unavailable'}
-                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary" noWrap>
+                                  Starts: {formatDateDisplay(worker.assignmentStartDate || shiftStartDateStr) || '—'}
+                                </Typography>
+                                {!isPlacementOnly && worker.assignmentId && (
+                                  <Tooltip title="Edit start date">
+                                    <IconButton
+                                      size="small"
+                                      sx={{ p: 0, color: 'text.secondary' }}
+                                      onClick={(e) => { e.stopPropagation(); handleOpenEditStartDate(worker); }}
+                                      aria-label="Edit start date"
+                                    >
+                                      <EditIcon sx={{ fontSize: 14 }} />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                              </Box>
                             </Box>
-                            <Tooltip title={isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : undefined}>
-                              <Chip
-                                size="small"
-                                label={statusLabel}
-                                color={statusColor}
-                                icon={useUnlockedIcon ? <UnlockedIcon fontSize="small" /> : <LockedIcon fontSize="small" />}
-                                onClick={isPlacementOnly ? () => handleConfirmPlacement(worker) : undefined}
-                                sx={{
-                                  ...(isPlacementOnly && {
-                                    cursor: 'pointer',
-                                    zIndex: 50,
-                                    position: 'relative',
-                                    '&:hover': { opacity: 0.9 },
-                                  }),
-                                }}
-                              />
-                            </Tooltip>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              {!isPlacementOnly && !isDeclined && !isCancelled && (
+                                <Tooltip title="Cancel assignment (revert to Placed)">
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => handleCancelAssignment(worker)}
+                                    sx={{ color: 'error.main' }}
+                                    aria-label="Cancel assignment"
+                                  >
+                                    <CloseIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              <Tooltip title={isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : isDeclined ? 'Worker declined this assignment' : isCancelled ? 'Assignment was cancelled' : undefined}>
+                                <Chip
+                                  size="small"
+                                  label={statusLabel}
+                                  color={isPlacementOnly ? 'info' : isDeclined || isCancelled ? 'error' : undefined}
+                                  icon={
+                                    isPlacementOnly ? (
+                                      <UnlockedIcon fontSize="small" />
+                                    ) : isDeclined || isCancelled ? (
+                                      <ErrorIcon fontSize="small" />
+                                    ) : isConfirmed ? (
+                                      <CheckIcon fontSize="small" />
+                                    ) : (
+                                      <LockedIcon fontSize="small" />
+                                    )
+                                  }
+                                  onClick={isPlacementOnly ? () => handleConfirmPlacement(worker) : undefined}
+                                  sx={{
+                                    ...(isPlacementOnly && {
+                                      cursor: 'pointer',
+                                      zIndex: 50,
+                                      position: 'relative',
+                                      '&:hover': { opacity: 0.9 },
+                                    }),
+                                    ...((isDeclined || isCancelled) && {
+                                      bgcolor: 'error.main',
+                                      color: 'white',
+                                      '& .MuiChip-icon': { color: 'white' },
+                                    }),
+                                    ...(isConfirmed && {
+                                      bgcolor: 'success.main',
+                                      color: 'white',
+                                      '& .MuiChip-icon': { color: 'white' },
+                                    }),
+                                    ...(!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && {
+                                      bgcolor: '#e8f5e9', // Light green (Material green 50)
+                                      color: 'success.main',
+                                      '& .MuiChip-icon': { color: 'success.main' },
+                                    }),
+                                  }}
+                                />
+                              </Tooltip>
+                            </Box>
                           </Paper>
                         );
                       })}
@@ -1271,7 +1507,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         </Alert>
                       )}
                     </Stack>
-                    )}
+                  )}
                   </Box>
                 </CardContent>
               </Card>
@@ -1295,11 +1531,31 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         <MenuItem value="">
                           <em>Select workforce</em>
                         </MenuItem>
-                        {workforceOptions.map((option) => (
-                          <MenuItem key={option.value} value={option.value}>
-                            {option.label}
-                          </MenuItem>
-                        ))}
+                        {workforceOptions.map((option) => {
+                          const isGroup = option.value.startsWith('group_');
+                          return (
+                            <MenuItem key={option.value} value={option.value}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: 1 }}>
+                                <span>{option.label}</span>
+                                {isGroup && (
+                                  <Tooltip title="Remove group from list">
+                                    <IconButton
+                                      size="small"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleRemoveGroupFromWorkforce(option.value);
+                                      }}
+                                      sx={{ color: 'error.main', p: 0.25 }}
+                                      aria-label="Remove group"
+                                    >
+                                      <CloseIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                              </Box>
+                            </MenuItem>
+                          );
+                        })}
                       </Select>
                     </FormControl>
                     {selectedWorkforce.startsWith('group_') && (
@@ -1316,11 +1572,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                   </Box>
                   {safeSelectedWorkforce === 'choose_group' && (
                     <FormControl fullWidth size="small" sx={{ mb: 1 }}>
-                      <InputLabel>Group</InputLabel>
+                      <InputLabel id="placements-group-select-label" shrink>Group</InputLabel>
                       <Select
+                        labelId="placements-group-select-label"
                         value=""
                         label="Group"
                         displayEmpty
+                        renderValue={(v) => (v === '' ? 'Select a group' : userGroups.find((g) => g.id === v)?.groupName ?? v)}
                         onChange={async (e) => {
                           const groupId = e.target.value as string;
                           if (!groupId) return;
@@ -1384,6 +1642,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     <Alert severity="info" sx={{ py: 2 }}>
                       Select a shift to view worker pool.
                     </Alert>
+                  ) : loading ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                      <CircularProgress size={28} />
+                    </Box>
                   ) : availableWorkers.length === 0 ? (
                     <Alert severity="info">
                       No available workers for the selected workforce option.
@@ -1423,113 +1685,113 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           >
                             <Box sx={{ minWidth: 0, flex: 1 }}>
                               <Typography variant="body2" fontWeight={600} noWrap>
-                                {worker.displayName}
-                              </Typography>
+                                    {worker.displayName}
+                                  </Typography>
                               <Typography variant="caption" color="text.secondary" noWrap>
                                 {[worker.city, worker.state].filter(Boolean).join(', ') || worker.email || worker.phone || 'No contact info'}
-                              </Typography>
+                                    </Typography>
                               <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}>
-                                <Chip
-                                  size="small"
+                                          <Chip
+                                            size="small"
                                   label={worker.workEligibility ? 'Eligible' : 'Not eligible'}
                                   color={worker.workEligibility ? 'success' : 'error'}
                                   variant="outlined"
                                   sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                />
+                                          />
                                 {!!worker.skills?.length && (
-                                  <Chip
-                                    size="small"
+                                          <Chip
+                                            size="small"
                                     label={`${worker.skills.length} skills`}
                                     sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
                                   />
                                 )}
                                 {!!worker.languages?.length && (
-                                  <Chip
-                                    size="small"
-                                    variant="outlined"
+                                          <Chip
+                                            size="small"
+                                            variant="outlined"
                                     label={`${worker.languages.length} langs`}
                                     sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                  />
-                                )}
-                              </Box>
-                            </Box>
+                                          />
+                                        )}
+                                      </Box>
+                                    </Box>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
-                              {resumeUrl && (
+                                  {resumeUrl && (
                                 <Tooltip title="View resume">
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => {
-                                      setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
-                                      setResumeModalOpen(true);
-                                    }}
-                                  >
-                                    <ResumeIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                              {hasBio && (
-                                <Tooltip
-                                  title={
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => {
+                                          setSelectedResume({ url: resumeUrl, fileName: worker.resume?.fileName });
+                                          setResumeModalOpen(true);
+                                        }}
+                                      >
+                                        <ResumeIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                  {hasBio && (
+                                    <Tooltip
+                                      title={
                                     <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 320 }}>
-                                      {worker.bio}
-                                    </Typography>
-                                  }
-                                  arrow
-                                >
-                                  <IconButton size="small">
-                                    <BioIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                              {hasWorkHistory && (
-                                <Tooltip
-                                  title={
+                                            {worker.bio}
+                                          </Typography>
+                                      }
+                                      arrow
+                                    >
+                                      <IconButton size="small">
+                                        <BioIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                  {hasWorkHistory && (
+                                    <Tooltip
+                                      title={
                                     <Box sx={{ maxWidth: 340 }}>
-                                      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Work History</Typography>
-                                      {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
+                                          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Work History</Typography>
+                                            {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
                                         <Typography key={idx} variant="caption" display="block">
                                           {job.position || job.title || job.role || 'Position'}{job.company ? ` at ${job.company}` : ''}
-                                        </Typography>
+                                                </Typography>
                                       ))}
-                                    </Box>
-                                  }
-                                  arrow
-                                >
-                                  <IconButton size="small">
-                                    <WorkHistoryIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                              {hasCerts && (
+                                        </Box>
+                                      }
+                                      arrow
+                                    >
+                                      <IconButton size="small">
+                                        <WorkHistoryIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                  {hasCerts && (
                                 <Tooltip title={`${worker.certifications?.length} cert${(worker.certifications?.length || 0) > 1 ? 's' : ''}`}>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => {
-                                      setSelectedCerts(worker.certifications || []);
-                                      setCertModalOpen(true);
-                                    }}
-                                  >
-                                    <CertIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                              {hasLicenses && (
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => {
+                                          setSelectedCerts(worker.certifications || []);
+                                          setCertModalOpen(true);
+                                        }}
+                                      >
+                                        <CertIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                  {hasLicenses && (
                                 <Tooltip title={`${worker.licenses?.length} license${(worker.licenses?.length || 0) > 1 ? 's' : ''}`}>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => {
-                                      setSelectedLicenses(worker.licenses || []);
-                                      setLicenseModalOpen(true);
-                                    }}
-                                  >
-                                    <LicenseIcon fontSize="small" />
-                                  </IconButton>
-                                </Tooltip>
-                              )}
-                              <Button
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => {
+                                          setSelectedLicenses(worker.licenses || []);
+                                          setLicenseModalOpen(true);
+                                        }}
+                                      >
+                                        <LicenseIcon fontSize="small" />
+                                      </IconButton>
+                                    </Tooltip>
+                                  )}
+                                <Button 
                                 variant="outlined"
-                                size="small"
-                                onClick={() => handleAssignToShift(worker, selectedShift)}
+                                  size="small"
+                                  onClick={() => handleAssignToShift(worker, selectedShift)}
                                 disabled={!selectedShift}
                                 sx={{
                                   minWidth: 72,
@@ -1540,9 +1802,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 }}
                               >
                                 Assign
-                              </Button>
-                            </Box>
-                          </Paper>
+                                </Button>
+                              </Box>
+                            </Paper>
                         );
                       })}
                     </Stack>
@@ -1688,6 +1950,32 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setLicenseModalOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Edit assignment start date */}
+        <Dialog open={!!editStartDateWorker} onClose={() => setEditStartDateWorker(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>Start date</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              {editStartDateWorker?.displayName}
+            </Typography>
+            <TextField
+              type="date"
+              label="Start date"
+              value={editStartDateValue}
+              onChange={(e) => setEditStartDateValue(e.target.value)}
+              fullWidth
+              size="small"
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ max: '9999-12-31' }}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setEditStartDateWorker(null)}>Cancel</Button>
+            <Button variant="contained" onClick={handleSaveStartDate} disabled={editStartDateSaving || !editStartDateValue.trim()}>
+              {editStartDateSaving ? 'Saving…' : 'Save'}
+            </Button>
           </DialogActions>
         </Dialog>
       </Box>
