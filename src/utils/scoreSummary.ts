@@ -166,3 +166,31 @@ export function getRelativeAiScore(
   return Math.round(Math.min(100, 90 + t * 10));
 }
 
+// ─── One Score System (source of truth) ─────────────────────────────────────
+// Where AI score is computed: getScoreSummaryUpdateFromCompleteness() in this file;
+//   completeness comes from calculateCompletenessScore() in applicantScoring.ts.
+// Where it's stored: users/{uid}.scoreSummary.aiScore (and scoreSummary.completenessScore,
+//   scoreSummary.aiScoreUpdatedAt). Optional legacy: top-level users.{uid}.score or .profileScore.
+// What triggers compute: (1) UserProfile on load can backfill when missing; (2) persistScoreSummaryFromProfile()
+//   is called after profile updates (e.g. skills, overview) so stored score stays in sync.
+// TODO: Admin screen may show "stale" if score is only recomputed on profile save/backfill;
+//   consider: trigger persistScoreSummaryFromProfile on blur/navigation from profile, or
+//   expose "Refresh score" in admin until we have a single recompute path (e.g. Cloud Function on user update).
+
+/**
+ * Single adapter for "Hiring Score" / "AI Score" from a user document.
+ * Prefers stored scoreSummary; supports legacy top-level numeric fields.
+ * Use this in worker Job Readiness hero and anywhere we want one consistent score value.
+ */
+export function getUserScore(userDoc: any): number | undefined {
+  if (!userDoc || typeof userDoc !== 'object') return undefined;
+  const raw = userDoc.scoreSummary;
+  const fromSummary =
+    raw && typeof raw === 'object'
+      ? toNumberOrUndefined(raw.aiScore) ?? toNumberOrUndefined(raw.qualityScore)
+      : undefined;
+  if (typeof fromSummary === 'number' && Number.isFinite(fromSummary)) return fromSummary;
+  const legacy = toNumberOrUndefined(userDoc.aiScore) ?? toNumberOrUndefined(userDoc.score) ?? toNumberOrUndefined(userDoc.profileScore);
+  return legacy;
+}
+
