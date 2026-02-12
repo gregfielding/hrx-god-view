@@ -76,9 +76,14 @@ const C1WorkerInbox: React.FC = () => {
   const threadList = (
     <List disablePadding sx={{ borderRight: isDesktop ? 1 : 0, borderColor: 'divider', minWidth: 280 }}>
       {threads.length === 0 ? (
-        <Typography variant="body2" color="text.secondary" sx={{ p: 2 }}>
-          No conversations yet.
-        </Typography>
+        <Box sx={{ p: 2 }}>
+          <Typography variant="body2" color="text.secondary" display="block">
+            No conversations yet.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            If you need help, contact Support.
+          </Typography>
+        </Box>
       ) : (
         threads.map((t) => {
           const unread = uid ? (t.unreadCountByUid?.[uid] ?? 0) : 0;

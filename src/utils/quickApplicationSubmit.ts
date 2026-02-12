@@ -4,6 +4,8 @@ import { logJobApplicationActivity } from './activityLogger';
 import { updateUserSmartGroupOnApply } from '../services/smartGroupService';
 import { checkShiftDateConflict, checkMultipleShiftDateConflicts, extractDateFromShiftDate } from './gigShiftApplicationLimits';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { computeJobScoreSummary } from './jobScore';
+import { getUserScore } from './scoreSummary';
 
 /**
  * Check if user has existing application data (has applied before)
@@ -251,6 +253,36 @@ export async function submitQuickApplication(
       }
     }
     
+    // Job Match Score: v1 rubric if pack has v1 definition, else legacy
+    const requirementPackId = jobPosting?.requirementPackId || jobPosting?.jobOrder?.requirementPackId;
+    let jobScoreSummaryPayload: any = undefined;
+    if (requirementPackId) {
+      const { getRequirementPackV1 } = await import('../data/jobRequirementPacksV1');
+      const { computeJobScoreSummaryV1 } = await import('./jobScoreV1');
+      const packV1 = getRequirementPackV1(requirementPackId);
+      if (packV1) {
+        const summaryV1 = computeJobScoreSummaryV1(
+          userData as any,
+          requirementPackId,
+          getUserScore(userData as any),
+          new Date()
+        );
+        if (summaryV1) {
+          jobScoreSummaryPayload = { ...summaryV1, computedAt: serverTimestamp(), writtenAt: serverTimestamp() };
+        }
+      } else {
+        const summary = computeJobScoreSummary(
+          userData as any,
+          requirementPackId,
+          getUserScore(userData as any),
+          new Date()
+        );
+        if (summary) {
+          jobScoreSummaryPayload = { ...summary, computedAt: serverTimestamp() } as any;
+        }
+      }
+    }
+
     // Create application document
     await setDoc(tRef, {
       userId,
@@ -261,6 +293,7 @@ export async function submitQuickApplication(
       appliedAt: serverTimestamp(),
       submittedAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
+      ...(jobScoreSummaryPayload ? { jobScoreSummary: jobScoreSummaryPayload } : {}),
       data: {
         personal: {
           firstName: userData.firstName,

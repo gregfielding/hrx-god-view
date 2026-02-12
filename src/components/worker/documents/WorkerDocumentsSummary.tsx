@@ -4,22 +4,28 @@
  */
 
 import React from 'react';
-import { Card, CardContent, Stack, Typography, Box } from '@mui/material';
+import { Card, CardContent, Stack, Typography, Box, Link } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WarningIcon from '@mui/icons-material/Warning';
 import ScheduleIcon from '@mui/icons-material/Schedule';
 import BadgeIcon from '@mui/icons-material/Badge';
 import SchoolIcon from '@mui/icons-material/School';
 import GavelIcon from '@mui/icons-material/Gavel';
+import { Link as RouterLink } from 'react-router-dom';
 
 export type SummaryStatus = 'verified' | 'missing' | 'submitted';
 
 export interface WorkerDocumentsSummaryProps {
+  /** From attestation: verified if attested and authorized, else missing */
   eligibilityStatus: SummaryStatus;
   idStatus: SummaryStatus;
   certCount: number;
-  /** Optional placeholder, e.g. "—" */
+  /** Summary of screening orders (background, drug, other, e-verify) from admin; "—" or "None ordered" if none */
   backgroundLabel?: string;
+  /** Hide Gov ID row; show only Work Eligibility, Certifications, Background */
+  hideId?: boolean;
+  /** Work Eligibility is attestation: show "Review answers" link (never Upload/View). When set, CTA goes to this URL (e.g. /c1/workers/profile#work-eligibility). */
+  eligibilityReviewHref?: string;
 }
 
 function StatusIcon({ status }: { status: SummaryStatus }) {
@@ -51,6 +57,8 @@ const WorkerDocumentsSummary: React.FC<WorkerDocumentsSummaryProps> = ({
   idStatus,
   certCount,
   backgroundLabel = '—',
+  hideId = false,
+  eligibilityReviewHref,
 }) => {
   return (
     <Card
@@ -76,28 +84,38 @@ const WorkerDocumentsSummary: React.FC<WorkerDocumentsSummaryProps> = ({
               <Typography variant="caption" color="text.secondary" display="block">
                 Work Eligibility
               </Typography>
-              <Stack direction="row" alignItems="center" spacing={0.5}>
+              <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap">
                 <StatusIcon status={eligibilityStatus} />
                 <Typography variant="body2" fontWeight={500}>
                   {getStatusLabel(eligibilityStatus)}
                 </Typography>
+                {eligibilityReviewHref && (
+                  <Link component={RouterLink} to={eligibilityReviewHref} variant="body2" sx={{ ml: 0.5 }}>
+                    Review answers
+                  </Link>
+                )}
               </Stack>
-            </Box>
-          </Stack>
-          <Stack direction="row" alignItems="center" spacing={1}>
-            <BadgeIcon sx={{ fontSize: 22, color: 'action.active' }} />
-            <Box>
               <Typography variant="caption" color="text.secondary" display="block">
-                ID
+                From your application (attestation)
               </Typography>
-              <Stack direction="row" alignItems="center" spacing={0.5}>
-                <StatusIcon status={idStatus} />
-                <Typography variant="body2" fontWeight={500}>
-                  {getStatusLabel(idStatus)}
-                </Typography>
-              </Stack>
             </Box>
           </Stack>
+          {!hideId && (
+            <Stack direction="row" alignItems="center" spacing={1}>
+              <BadgeIcon sx={{ fontSize: 22, color: 'action.active' }} />
+              <Box>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  ID
+                </Typography>
+                <Stack direction="row" alignItems="center" spacing={0.5}>
+                  <StatusIcon status={idStatus} />
+                  <Typography variant="body2" fontWeight={500}>
+                    {getStatusLabel(idStatus)}
+                  </Typography>
+                </Stack>
+              </Box>
+            </Stack>
+          )}
           <Stack direction="row" alignItems="center" spacing={1}>
             <SchoolIcon sx={{ fontSize: 22, color: 'action.active' }} />
             <Box>
@@ -117,6 +135,9 @@ const WorkerDocumentsSummary: React.FC<WorkerDocumentsSummaryProps> = ({
               </Typography>
               <Typography variant="body2" color="text.secondary">
                 {backgroundLabel}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                From admin orders
               </Typography>
             </Box>
           </Stack>

@@ -89,7 +89,10 @@ export interface UserProfile {
   workStatus: 'Active' | 'On Leave' | 'Terminated' | 'Suspended' | 'Pending';
   workerId?: string; // Optional custom ID from HRIS
   union?: string; // Union name or boolean flag
-  workEligibility?: boolean; // Eligibility for employment in the region
+  /** Legacy/derived: true if authorized to work (from workEligibilityAttestation or legacy boolean). */
+  workEligibility?: boolean;
+  /** Work eligibility attestation (source of truth); workEligibility is derived for compatibility. */
+  workEligibilityAttestation?: import('./workEligibility').WorkEligibilityAttestation;
   languages?: string[]; // Spoken/written languages
 
   // 🧠 Behavioral AI (HRX-Specific) - Auto-generated

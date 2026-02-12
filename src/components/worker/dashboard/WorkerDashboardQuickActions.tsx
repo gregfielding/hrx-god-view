@@ -15,7 +15,7 @@ const ACTIONS = [
   { label: 'Find Work', to: '/c1/jobs-board', icon: <WorkIcon /> },
   { label: 'My Assignments', to: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { label: 'My Applications', to: '/c1/applications', icon: <ListAltIcon /> },
-  { label: 'Upload Documents', to: '/c1/workers/documents', icon: <FolderIcon /> },
+  { label: 'My Documents', to: '/c1/workers/documents', icon: <FolderIcon /> },
 ] as const;
 
 const WorkerDashboardQuickActions: React.FC = () => {

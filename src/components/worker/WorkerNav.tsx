@@ -20,22 +20,18 @@ import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import PersonIcon from '@mui/icons-material/Person';
 import FolderIcon from '@mui/icons-material/Folder';
-import HelpIcon from '@mui/icons-material/Help';
-import NotificationsIcon from '@mui/icons-material/Notifications';
 import InboxIcon from '@mui/icons-material/Inbox';
 
 const drawerWidth = 240;
 
 const navItems = [
   { label: 'Dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
-  { label: 'My Assignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
-  { label: 'Notifications', path: '/c1/workers/notifications', icon: <NotificationsIcon /> },
   { label: 'Inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
-  { label: 'Applications', path: '/c1/applications', icon: <ListAltIcon /> },
+  { label: 'My Assignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
+  { label: 'My Applications', path: '/c1/applications', icon: <ListAltIcon /> },
   { label: 'Jobs Board', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { label: 'Job Readiness', path: '/c1/workers/profile', icon: <PersonIcon /> },
   { label: 'My Documents', path: '/c1/workers/documents', icon: <FolderIcon /> },
-  { label: 'Support', path: '/c1/workers/support', icon: <HelpIcon /> },
 ];
 
 const drawerPaperSx = {

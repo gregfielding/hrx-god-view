@@ -60,6 +60,10 @@ import {
 } from '../../utils/gigShiftApplicationLimits';
 import { logJobApplicationActivity } from '../../utils/activityLogger';
 import { updateUserSmartGroupOnApply } from '../../services/smartGroupService';
+import { computeJobScoreSummary } from '../../utils/jobScore';
+import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
+import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
+import { getUserScore } from '../../utils/scoreSummary';
 
 type WizardProps = {
   tenantId: string;
@@ -1189,19 +1193,24 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             await setDoc(userRef, update, { merge: true });
           }
         } else if (activeStep === 2) {
-          // Work Eligibility → save EEO fields
+          // Work Eligibility → save attestation (not a document) + legacy workEligibility
           const e = formData.eligibility || {};
           const update: any = { updatedAt: serverTimestamp() };
-          if (typeof e.workAuthorized === 'boolean') update.workEligibility = !!e.workAuthorized;
-          if (typeof e.requireSponsorship === 'boolean')
-            update.requireSponsorship = !!e.requireSponsorship;
+          const authorizedToWorkUS = typeof e.workAuthorized === 'boolean' ? !!e.workAuthorized : false;
+          update.workEligibility = authorizedToWorkUS;
+          update.workEligibilityAttestation = {
+            authorizedToWorkUS,
+            requireSponsorship: typeof e.requireSponsorship === 'boolean' ? !!e.requireSponsorship : null,
+            attestedAt: serverTimestamp(),
+            gender: e.gender ? String(e.gender) : null,
+            veteranStatus: e.veteranStatus ? String(e.veteranStatus) : null,
+            disabilityStatus: e.disabilityStatus ? String(e.disabilityStatus) : null,
+          };
+          if (typeof e.requireSponsorship === 'boolean') update.requireSponsorship = !!e.requireSponsorship;
           if (e.gender !== undefined) update.gender = String(e.gender || '');
           if (e.veteranStatus !== undefined) update.veteranStatus = String(e.veteranStatus || '');
-          if (e.disabilityStatus !== undefined)
-            update.disabilityStatus = String(e.disabilityStatus || '');
-          if (Object.keys(update).length > 1) {
-            await setDoc(userRef, update, { merge: true });
-          }
+          if (e.disabilityStatus !== undefined) update.disabilityStatus = String(e.disabilityStatus || '');
+          await setDoc(userRef, update, { merge: true });
         } else if (activeStep === 3) {
           // Profile Picture → save profile picture URL
           const p = formData.profilePicture || {};
@@ -1625,8 +1634,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         profileUpdate.workHistory = quals.workHistory;
         profileUpdate.workExperience = quals.workHistory;
       }
-      if (typeof eligibility.workAuthorized === 'boolean')
-        profileUpdate.workEligibility = !!eligibility.workAuthorized;
+      const authorizedToWorkUS = typeof eligibility.workAuthorized === 'boolean' ? !!eligibility.workAuthorized : false;
+      profileUpdate.workEligibility = authorizedToWorkUS;
+      profileUpdate.workEligibilityAttestation = {
+        authorizedToWorkUS,
+        requireSponsorship: eligibility.requireSponsorship ?? null,
+        attestedAt: serverTimestamp(),
+        sourceApplicationId: tenantId && effectiveUid && jobId ? `${effectiveUid}_${jobId}` : null,
+        gender: eligibility.gender ? String(eligibility.gender) : null,
+        veteranStatus: eligibility.veteranStatus ? String(eligibility.veteranStatus) : null,
+        disabilityStatus: eligibility.disabilityStatus ? String(eligibility.disabilityStatus) : null,
+      };
       if (eligibility.gender) profileUpdate.gender = String(eligibility.gender);
       if (eligibility.veteranStatus)
         profileUpdate.veteranStatus = String(eligibility.veteranStatus);
@@ -1739,6 +1757,55 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
 
           const safeFormData = deepStripUndefined(formData || {}) || {};
+          // Job Score: compute and store if job has a requirement pack
+          let requirementPackId =
+            (posting as any)?.requirementPackId || (posting as any)?.jobOrder?.requirementPackId;
+          if (!requirementPackId && effectiveJobOrderId && tenantId) {
+            try {
+              const joRef = doc(db, 'tenants', tenantId, 'job_orders', effectiveJobOrderId);
+              const joSnap = await getDoc(joRef);
+              if (joSnap.exists()) requirementPackId = (joSnap.data() as any)?.requirementPackId;
+            } catch (_) {}
+          }
+          let jobScoreSummaryPayload: any = undefined;
+          if (requirementPackId) {
+            let userData: any = {};
+            try {
+              const userRef = doc(db, 'users', effectiveUid);
+              const userSnap = await getDoc(userRef);
+              if (userSnap.exists()) userData = userSnap.data() || {};
+            } catch (_) {}
+            const qual = formData?.qualifications || {};
+            const prefs = formData?.preferences || {};
+            const userDocForScore = {
+              ...userData,
+              workEligibility: formData?.eligibility?.workAuthorized ?? userData.workEligibility,
+              firstName: personal.firstName ?? userData.firstName,
+              lastName: personal.lastName ?? userData.lastName,
+              email: personal.email ?? userData.email,
+              phone: personal.phone ?? userData.phone,
+              skills: qual.skills ?? userData.skills,
+              education: qual.education ?? userData.education,
+              certifications: qual.certifications ?? userData.certifications,
+              workExperience: qual.workExperience ?? userData.workExperience ?? userData.workHistory,
+              preferences: prefs?.shiftPreferences
+                ? { ...prefs, shiftPreferences: prefs.shiftPreferences }
+                : userData.preferences,
+              resume: formData?.requirements?.uploaded ?? userData.resume,
+              languages: qual.languages ?? userData.languages,
+            };
+            const packV1 = getRequirementPackV1(requirementPackId);
+            const aiScore = getUserScore(userData);
+            if (packV1) {
+              const summaryV1 = computeJobScoreSummaryV1(userDocForScore, requirementPackId, aiScore, new Date());
+              if (summaryV1)
+                jobScoreSummaryPayload = { ...summaryV1, computedAt: serverTimestamp(), writtenAt: serverTimestamp() };
+            } else {
+              const summary = computeJobScoreSummary(userDocForScore, requirementPackId, aiScore, new Date());
+              if (summary)
+                jobScoreSummaryPayload = { ...summary, computedAt: serverTimestamp() };
+            }
+          }
           await setDoc(
             tRef,
             {
@@ -1757,6 +1824,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 email: personal.email || null,
                 phone: personal.phone || null,
               },
+              ...(jobScoreSummaryPayload ? { jobScoreSummary: jobScoreSummaryPayload } : {}),
               // Store shift information for gig jobs
               ...(selectedShifts.length === 1 ? { shiftId: selectedShifts[0] } : {}),
               ...(selectedShifts.length > 1 ? { shiftIds: selectedShifts } : {}),

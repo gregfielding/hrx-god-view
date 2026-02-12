@@ -20,16 +20,16 @@ export interface StatusCardItem {
 }
 
 export interface WorkerDashboardStatusCardsProps {
-  /** Job Readiness percent (e.g. "72") */
-  readinessPercent: string;
-  /** Documents: "All set" or "1 missing" */
+  /** Job Readiness: number when available, else hidden (show subtext only) */
+  readinessPercent: string | null;
+  /** Documents: "All set" | "Incomplete" | "Not started" */
   documentsStatus: string;
   documentsSubtext: string;
-  /** Active applications count or placeholder */
-  applicationsCount: string;
-  /** Unread messages/updates count or placeholder */
-  messagesUnread: string;
-  messagesSubtext: string;
+  /** Active applications count (number as string) or null to show "Not available yet" */
+  applicationsCount: string | null;
+  /** Support card: no count; show only label + subtext when true */
+  supportCardOnly?: boolean;
+  supportSubtext?: string;
 }
 
 const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
@@ -37,18 +37,19 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
   documentsStatus,
   documentsSubtext,
   applicationsCount,
-  messagesUnread,
-  messagesSubtext,
+  supportCardOnly = true,
+  supportSubtext = 'Get help',
 }) => {
   const navigate = useNavigate();
 
-  const cards: StatusCardItem[] = [
+  const cards: (StatusCardItem & { metricHidden?: boolean })[] = [
     {
       label: 'Job Readiness',
-      metric: `${readinessPercent}%`,
+      metric: readinessPercent != null ? `${readinessPercent}%` : 'Not available yet',
       subtext: 'Unlock more shifts',
       to: '/c1/workers/profile',
       icon: <StarIcon fontSize="small" />,
+      metricHidden: readinessPercent == null,
     },
     {
       label: 'Documents',
@@ -59,41 +60,48 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
     },
     {
       label: 'Applications',
-      metric: applicationsCount,
+      metric: applicationsCount ?? 'Not available yet',
       subtext: 'View your applications',
       to: '/c1/applications',
       icon: <ListAltIcon fontSize="small" />,
+      metricHidden: applicationsCount == null,
     },
     {
-      label: 'Messages / Updates',
-      metric: messagesUnread,
-      subtext: messagesSubtext,
+      label: 'Support',
+      metric: '',
+      subtext: supportSubtext,
       to: '/c1/workers/support',
       icon: <ChatIcon fontSize="small" />,
+      metricHidden: supportCardOnly,
     },
   ];
 
   return (
     <Grid container spacing={2}>
-      {cards.map((c) => (
-        <Grid item xs={6} md={3} key={c.label}>
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-            <CardActionArea onClick={() => navigate(c.to)} sx={{ display: 'block' }}>
-              <CardContent sx={{ py: 2, px: 2 }}>
-                <Typography variant="subtitle2" color="text.secondary">
-                  {c.label}
-                </Typography>
-                <Typography variant="h6" sx={{ fontWeight: 600, mt: 0.5 }}>
-                  {c.metric}
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  {c.subtext}
-                </Typography>
-              </CardContent>
-            </CardActionArea>
-          </Card>
-        </Grid>
-      ))}
+      {cards.map((c) => {
+        const hideMetric = 'metricHidden' in c && c.metricHidden;
+        return (
+          <Grid item xs={6} md={3} key={c.label}>
+            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+              <CardActionArea onClick={() => navigate(c.to)} sx={{ display: 'block' }}>
+                <CardContent sx={{ py: 2, px: 2 }}>
+                  <Typography variant="subtitle2" color="text.secondary">
+                    {c.label}
+                  </Typography>
+                  {!hideMetric && (
+                    <Typography variant="h6" sx={{ fontWeight: 600, mt: 0.5 }}>
+                      {c.metric}
+                    </Typography>
+                  )}
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+                    {c.subtext}
+                  </Typography>
+                </CardContent>
+              </CardActionArea>
+            </Card>
+          </Grid>
+        );
+      })}
     </Grid>
   );
 };

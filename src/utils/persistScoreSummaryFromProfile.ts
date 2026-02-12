@@ -1,30 +1,21 @@
 /**
- * Persist scoreSummary.completenessScore and scoreSummary.aiScore from current profile.
- * Call after profile updates so the stored AI score stays in sync with the formula.
+ * Persist scoreSummary from current profile using Hiring Score v1.1.
+ * Formula: 0.60*Completeness + 0.25*Depth + 0.15*Reliability.
+ * Call after profile updates so the stored Hiring Score stays in sync.
  */
 import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import { calculateCompletenessScore } from './applicantScoring';
-import {
-  getScoreSummaryUpdateFromCompleteness,
-  normalizeScoreSummary,
-  type ScoreSummary,
-} from './scoreSummary';
+import { getScoreSummaryUpdateFromHiringScoreV1 } from './scoreSummary';
 
 export async function persistScoreSummaryFromProfile(userId: string): Promise<void> {
   const userRef = doc(db, 'users', userId);
   const snap = await getDoc(userRef);
   if (!snap.exists()) return;
   const data = snap.data() as any;
-  const completeness = calculateCompletenessScore(data);
-  const existingSummary = normalizeScoreSummary(data.scoreSummary) as ScoreSummary | undefined;
-  const { completenessScore, aiScore } = getScoreSummaryUpdateFromCompleteness(
-    completeness,
-    existingSummary
-  );
+  const payload = getScoreSummaryUpdateFromHiringScoreV1(data);
   await updateDoc(userRef, {
-    'scoreSummary.completenessScore': completenessScore,
-    'scoreSummary.aiScore': aiScore,
+    ...payload,
     'scoreSummary.aiScoreUpdatedAt': serverTimestamp(),
+    'scoreSummary.hiringScoreComputedAt': serverTimestamp(),
   });
 }

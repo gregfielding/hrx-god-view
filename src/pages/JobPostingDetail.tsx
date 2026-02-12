@@ -39,6 +39,7 @@ import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
+import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -63,6 +64,7 @@ const JobPostingDetail: React.FC = () => {
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
+  const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
 
@@ -303,18 +305,24 @@ const JobPostingDetail: React.FC = () => {
         // Find the first application that matches (they should all have the same status)
         let foundStatus: string | null = null;
         let foundDocId: string | null = null;
+        let foundJobScore: JobScoreSummaryStored | null = null;
         for (const snapshot of snapshots) {
           if (!snapshot.empty) {
             const firstDoc = snapshot.docs[0];
             const appData = firstDoc.data();
             foundStatus = appData.status || 'submitted';
             foundDocId = firstDoc.id;
+            const js = appData.jobScoreSummary;
+            if (js && typeof js.jobScore === 'number') {
+              foundJobScore = js as JobScoreSummaryStored;
+            }
             break;
           }
         }
 
         setApplicationStatus(foundStatus);
         setApplicationDocId(foundDocId);
+        setApplicationJobScore(foundJobScore);
       } catch (err: any) {
         // Silently handle permission errors - this is not critical functionality
         // The appliedShifts query will still work to show "Application Submitted"
@@ -323,6 +331,7 @@ const JobPostingDetail: React.FC = () => {
         }
         setApplicationStatus(null);
         setApplicationDocId(null);
+        setApplicationJobScore(null);
       }
     };
 
@@ -1265,6 +1274,36 @@ const JobPostingDetail: React.FC = () => {
                       {getApplicationStatusHelperText(applicationStatus)}
                     </Typography>
                   )}
+                  {applicationStatus && applicationJobScore != null && (
+                    <Card variant="outlined" sx={{ mt: 2, p: 1.5, borderRadius: 2 }}>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Your job fit
+                      </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
+                        {'version' in applicationJobScore && applicationJobScore.version === 'v1' && !applicationJobScore.eligible && (
+                          <Chip size="small" label="Not Eligible" color="error" />
+                        )}
+                        <Chip
+                          size="small"
+                          label={`Score: ${Math.round(applicationJobScore.jobScore)}`}
+                          color={applicationJobScore.eligible ? 'success' : 'default'}
+                        />
+                        {(() => {
+                          const missing = 'version' in applicationJobScore && applicationJobScore.version === 'v1'
+                            ? (applicationJobScore.buckets?.missingRequired ?? []).map((x: any) => x.label)
+                            : ((applicationJobScore as JobScoreSummary).missingLabels ?? []);
+                          return missing.length ? (
+                            <Typography variant="caption" color="text.secondary">
+                              Missing: {missing.slice(0, 3).join(', ')}
+                              {missing.length > 3 ? '…' : ''}
+                            </Typography>
+                          ) : applicationJobScore.eligible ? (
+                            <Typography variant="caption" color="success.main">Eligible</Typography>
+                          ) : null;
+                        })()}
+                      </Box>
+                    </Card>
+                  )}
                 </Box>
               )
             ) : (
@@ -1718,6 +1757,36 @@ const JobPostingDetail: React.FC = () => {
                         >
                           {getApplicationStatusHelperText(applicationStatus)}
                         </Typography>
+                      )}
+                      {applicationStatus && applicationJobScore != null && (
+                        <Card variant="outlined" sx={{ mt: 2, p: 1.5, borderRadius: 2 }}>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Your job fit
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
+                            {'version' in applicationJobScore && applicationJobScore.version === 'v1' && !applicationJobScore.eligible && (
+                              <Chip size="small" label="Not Eligible" color="error" />
+                            )}
+                            <Chip
+                              size="small"
+                              label={`Score: ${Math.round(applicationJobScore.jobScore)}`}
+                              color={applicationJobScore.eligible ? 'success' : 'default'}
+                            />
+                            {(() => {
+                              const missing = 'version' in applicationJobScore && applicationJobScore.version === 'v1'
+                                ? (applicationJobScore.buckets?.missingRequired ?? []).map((x: any) => x.label)
+                                : ((applicationJobScore as JobScoreSummary).missingLabels ?? []);
+                              return missing.length ? (
+                                <Typography variant="caption" color="text.secondary">
+                                  Missing: {missing.slice(0, 3).join(', ')}
+                                  {missing.length > 3 ? '…' : ''}
+                                </Typography>
+                              ) : applicationJobScore.eligible ? (
+                                <Typography variant="caption" color="success.main">Eligible</Typography>
+                              ) : null;
+                            })()}
+                          </Box>
+                        </Card>
                       )}
                     </Box>
                   )

@@ -82,6 +82,9 @@ export interface JobOrder {
   
   // Onboarding
   onboardingRequirements?: string[];
+
+  /** Job Score: requirement pack id for eligibility + fit (e.g. warehouse_w2, general_labor_1099, nursing_w2) */
+  requirementPackId?: string;
   
   // 🆕 Deal Conversion Fields - Discovery Stage
   currentStaffCount?: number;

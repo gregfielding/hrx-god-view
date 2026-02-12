@@ -5,6 +5,7 @@ import { logger } from './utils/logger';
 
 import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
+import ConditionalWorkerLayout from './components/ConditionalWorkerLayout';
 import PageViewTracker from './components/PageViewTracker';
 import Dashboard from './pages/Dashboard';
 import CalendarPage from './pages/CalendarPage';
@@ -373,36 +374,39 @@ function App() {
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/sms-privacy" element={<SMSPrivacy />} />
       
-      {/* Public Jobs Board routes with conditional layout */}
-      <Route element={<ConditionalJobsBoardLayout />}>
-        <Route path="/c1/jobs-board" element={<PublicJobsBoard />} />
-        <Route path="/jobs-board" element={<Navigate to="/c1/jobs-board" replace />} />
-        <Route path="/c1/jobs-board/:postId" element={<JobPostingDetail />} />
-        <Route path="/:tenantSlug/jobs-board/:postId" element={<JobPostingDetail />} />
-        {/* Legacy routes for backwards compatibility */}
-        <Route path="/c1/jobs/:postId" element={<JobPostingDetail />} />
-        <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />
-        <Route path="/c1/applications" element={<UserApplications />} />
-        <Route path="/applications" element={<UserApplications />} />
-        <Route path="/c1/assignments" element={<MyAssignments />} />
-        <Route path="/assignments" element={<MyAssignments />} />
-        <Route path="/c1/assignments/:assignmentId" element={<AssignmentDetails />} />
-        <Route path="/:tenantSlug/assignments/:assignmentId" element={<AssignmentDetails />} />
-        <Route path="/c1/users/:uid" element={<UserProfile />} />
-        <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
+      {/* Unified C1 worker layout — nav and top bar persist; only outlet content changes */}
+      <Route path="/c1" element={<ConditionalWorkerLayout />}>
+        <Route index element={<Navigate to="/c1/workers/dashboard" replace />} />
+        <Route path="workers" element={<Outlet />}>
+          <Route index element={<C1WorkersIndex />} />
+          <Route path="dashboard" element={<WorkerDashboard />} />
+          <Route path="assignments" element={<C1WorkerAssignments />} />
+          <Route path="profile" element={<WorkerProfile />} />
+          <Route path="documents" element={<WorkerDocuments />} />
+          <Route path="support" element={<WorkerSupport />} />
+          <Route path="settings" element={<PrivacySettings />} />
+          <Route path="notifications" element={<C1WorkerNotifications />} />
+          <Route path="inbox" element={<C1WorkerInbox />} />
+          <Route path="inbox/:threadId" element={<C1WorkerInbox />} />
+        </Route>
+        <Route path="jobs-board" element={<PublicJobsBoard />} />
+        <Route path="jobs-board/:postId" element={<JobPostingDetail />} />
+        <Route path="jobs/:postId" element={<JobPostingDetail />} />
+        <Route path="applications" element={<UserApplications />} />
+        <Route path="assignments" element={<MyAssignments />} />
+        <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
+        <Route path="users/:uid" element={<UserProfile />} />
       </Route>
 
-      {/* Worker namespace /c1/workers/* — guard + layout; admin routes unchanged */}
-      <Route path="/c1/workers" element={<WorkerRoute><C1WorkerLayout /></WorkerRoute>}>
-        <Route index element={<C1WorkersIndex />} />
-        <Route path="dashboard" element={<WorkerDashboard />} />
-        <Route path="assignments" element={<C1WorkerAssignments />} />
-        <Route path="profile" element={<WorkerProfile />} />
-        <Route path="documents" element={<WorkerDocuments />} />
-        <Route path="support" element={<WorkerSupport />} />
-        <Route path="notifications" element={<C1WorkerNotifications />} />
-        <Route path="inbox" element={<C1WorkerInbox />} />
-        <Route path="inbox/:threadId" element={<C1WorkerInbox />} />
+      {/* Redirects and non-/c1 routes that still use conditional layout (apply, tenantSlug) */}
+      <Route path="/jobs-board" element={<Navigate to="/c1/jobs-board" replace />} />
+      <Route path="/applications" element={<Navigate to="/c1/applications" replace />} />
+      <Route path="/assignments" element={<Navigate to="/c1/assignments" replace />} />
+      <Route element={<ConditionalJobsBoardLayout />}>
+        <Route path="/:tenantSlug/jobs-board/:postId" element={<JobPostingDetail />} />
+        <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />
+        <Route path="/:tenantSlug/assignments/:assignmentId" element={<AssignmentDetails />} />
+        <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>
       
       <Route

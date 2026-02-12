@@ -50,6 +50,7 @@ import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SellIcon from '@mui/icons-material/Sell';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
+import LanguageIcon from '@mui/icons-material/Language';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
 import Divider from '@mui/material/Divider';
@@ -115,6 +116,7 @@ const Layout: React.FC = React.memo(function Layout() {
   const [alertsUnreadCount, setAlertsUnreadCount] = useState(0);
   const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
   const [avatarMenuAnchorEl, setAvatarMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [alertsDrawerOpen, setAlertsDrawerOpen] = useState(false);
   const { count: mentionsUnreadCount } = useUnreadMentionsCount(user?.uid || null);
   
@@ -1760,6 +1762,27 @@ const Layout: React.FC = React.memo(function Layout() {
               {user && hasAdminLevel && (
                 <MessengerIconButton />
               )}
+
+              {/* Language (flag/globe) - preferred message language */}
+              {user && (
+                <Tooltip title={preferredLanguage === 'es' ? 'Message language: Español' : 'Message language: English'}>
+                  <IconButton
+                    onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
+                    sx={{
+                      p: 0.5,
+                      backgroundColor: 'transparent !important',
+                      color: languageMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
+                      '&:hover': {
+                        backgroundColor: 'transparent !important',
+                        color: languageMenuAnchorEl ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : '#FFFFFF'),
+                      },
+                    }}
+                    aria-label="Preferred message language"
+                  >
+                    <LanguageIcon sx={{ fontSize: 22 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
               
               {/* 👤 Avatar Menu */}
               <Tooltip title="Account menu">
@@ -1841,28 +1864,6 @@ const Layout: React.FC = React.memo(function Layout() {
                 My Profile
               </MenuItem>
               <Divider />
-              <MenuItem disabled sx={{ py: 0.5 }}>
-                <Typography variant="caption" color="text.secondary">Preferred Message Language</Typography>
-              </MenuItem>
-              <MenuItem
-                onClick={async () => {
-                  const next = preferredLanguage === 'es' ? 'en' : 'es';
-                  setPreferredLanguage(next);
-                  setAvatarMenuAnchorEl(null);
-                  if (user?.uid) {
-                    try {
-                      const userRef = doc(db, 'users', user.uid);
-                      await updateDoc(userRef, { preferredLanguage: next, updatedAt: new Date() });
-                    } catch (err) {
-                      console.error('Failed to update preferred language:', err);
-                      setPreferredLanguage(preferredLanguage);
-                    }
-                  }
-                }}
-              >
-                {preferredLanguage === 'es' ? 'English' : 'Español'}
-              </MenuItem>
-              <Divider />
               <MenuItem onClick={() => {
                 navigate('/privacy-settings');
                 setAvatarMenuAnchorEl(null);
@@ -1876,6 +1877,54 @@ const Layout: React.FC = React.memo(function Layout() {
               }}>
                 <LogoutIcon sx={{ mr: 1, fontSize: 20 }} />
                 Log Out
+              </MenuItem>
+            </Menu>
+
+            {/* Language menu (opened from globe icon next to avatar) */}
+            <Menu
+              anchorEl={languageMenuAnchorEl}
+              open={Boolean(languageMenuAnchorEl)}
+              onClose={() => setLanguageMenuAnchorEl(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            >
+              <MenuItem
+                selected={preferredLanguage === 'en'}
+                onClick={async () => {
+                  setLanguageMenuAnchorEl(null);
+                  if (preferredLanguage === 'en') return;
+                  setPreferredLanguage('en');
+                  if (user?.uid) {
+                    try {
+                      const userRef = doc(db, 'users', user.uid);
+                      await updateDoc(userRef, { preferredLanguage: 'en', updatedAt: new Date() });
+                    } catch (err) {
+                      console.error('Failed to update preferred language:', err);
+                      setPreferredLanguage(preferredLanguage);
+                    }
+                  }
+                }}
+              >
+                English
+              </MenuItem>
+              <MenuItem
+                selected={preferredLanguage === 'es'}
+                onClick={async () => {
+                  setLanguageMenuAnchorEl(null);
+                  if (preferredLanguage === 'es') return;
+                  setPreferredLanguage('es');
+                  if (user?.uid) {
+                    try {
+                      const userRef = doc(db, 'users', user.uid);
+                      await updateDoc(userRef, { preferredLanguage: 'es', updatedAt: new Date() });
+                    } catch (err) {
+                      console.error('Failed to update preferred language:', err);
+                      setPreferredLanguage(preferredLanguage);
+                    }
+                  }
+                }}
+              >
+                Español
               </MenuItem>
             </Menu>
           </Box>

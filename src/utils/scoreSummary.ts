@@ -1,3 +1,18 @@
+import { computeHiringScoreV1 } from './hiringScoreV1';
+
+/** v1.1 Hiring Score components (C, D, R). */
+export interface ScoreSummaryComponentsV1 {
+  completeness: number;
+  depth: number;
+  reliability: number;
+}
+
+/** v1.1 explainability for "Top 3 ways to improve". */
+export interface ScoreSummaryExplainabilityV1 {
+  missingFields?: string[];
+  nextActions?: { label: string; priority?: number }[];
+}
+
 export type ScoreSummary = {
   aiScore?: number;
   aiScoreUpdatedAt?: any;
@@ -17,6 +32,11 @@ export type ScoreSummary = {
     responsiveness: number;
     quality: number;
   };
+  /** v1.1 Hiring Score: components and explainability */
+  components?: ScoreSummaryComponentsV1;
+  explainability?: ScoreSummaryExplainabilityV1;
+  hiringScoreVersion?: 'v1.1';
+  hiringScoreComputedAt?: any;
 };
 
 const toNumberOrUndefined = (v: any): number | undefined => {
@@ -28,6 +48,9 @@ const toNumberOrUndefined = (v: any): number | undefined => {
 export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const aiWeightsRaw = raw.aiWeights && typeof raw.aiWeights === 'object' ? raw.aiWeights : undefined;
+
+  const componentsRaw = raw.components && typeof raw.components === 'object' ? raw.components : undefined;
+  const explainabilityRaw = raw.explainability && typeof raw.explainability === 'object' ? raw.explainability : undefined;
 
   return {
     aiScore: toNumberOrUndefined(raw.aiScore),
@@ -53,6 +76,22 @@ export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
           quality: toNumberOrUndefined(aiWeightsRaw.quality) ?? 0,
         }
       : undefined,
+
+    components: componentsRaw
+      ? {
+          completeness: toNumberOrUndefined(componentsRaw.completeness) ?? 0,
+          depth: toNumberOrUndefined(componentsRaw.depth) ?? 0,
+          reliability: toNumberOrUndefined(componentsRaw.reliability) ?? 0,
+        }
+      : undefined,
+    explainability: explainabilityRaw
+      ? {
+          missingFields: Array.isArray(explainabilityRaw.missingFields) ? explainabilityRaw.missingFields : undefined,
+          nextActions: Array.isArray(explainabilityRaw.nextActions) ? explainabilityRaw.nextActions : undefined,
+        }
+      : undefined,
+    hiringScoreVersion: raw.hiringScoreVersion === 'v1.1' ? 'v1.1' : undefined,
+    hiringScoreComputedAt: raw.hiringScoreComputedAt,
   };
 }
 
@@ -176,6 +215,31 @@ export function getRelativeAiScore(
 // TODO: Admin screen may show "stale" if score is only recomputed on profile save/backfill;
 //   consider: trigger persistScoreSummaryFromProfile on blur/navigation from profile, or
 //   expose "Refresh score" in admin until we have a single recompute path (e.g. Cloud Function on user update).
+
+/**
+ * Returns the Firestore update payload for scoreSummary using Hiring Score v1.1.
+ * Use when persisting after profile load or profile update.
+ */
+export function getScoreSummaryUpdateFromHiringScoreV1(userDoc: any): {
+  'scoreSummary.aiScore': number;
+  'scoreSummary.completenessScore': number;
+  'scoreSummary.components': ScoreSummaryComponentsV1;
+  'scoreSummary.explainability': ScoreSummaryExplainabilityV1;
+  'scoreSummary.hiringScoreVersion': 'v1.1';
+  'scoreSummary.hiringScoreComputedAt': any;
+  'scoreSummary.aiScoreUpdatedAt': any;
+} {
+  const result = computeHiringScoreV1(userDoc);
+  return {
+    'scoreSummary.aiScore': result.score,
+    'scoreSummary.completenessScore': result.components.completeness,
+    'scoreSummary.components': result.components,
+    'scoreSummary.explainability': result.explainability,
+    'scoreSummary.hiringScoreVersion': 'v1.1',
+    'scoreSummary.hiringScoreComputedAt': result.computedAt,
+    'scoreSummary.aiScoreUpdatedAt': result.computedAt,
+  };
+}
 
 /**
  * Single adapter for "Hiring Score" / "AI Score" from a user document.

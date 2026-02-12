@@ -11,7 +11,7 @@
  * Phase 2C: getUserScore() adapter in utils/scoreSummary.ts; score source-of-truth documented there.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Container,
   Typography,
@@ -23,19 +23,22 @@ import {
   Alert,
   Button,
 } from '@mui/material';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { userProfileBatcher, flushProfileUpdates } from '../../../utils/userProfileBatching';
 import { getUserScore } from '../../../utils/scoreSummary';
 import WorkerProfileAccordions, { type ReadinessAccordionSection } from '../../../components/worker/profile/WorkerProfileAccordions';
+import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
 import {
   getReadinessPrompts,
   READINESS_SECTION_IDS,
 } from '../../../components/worker/profile/readinessPrompts';
+import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
+import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
 
 const WorkerProfile: React.FC = () => {
-  const { user } = useAuth();
+  const { user, avatarUrl, setAvatarUrl } = useAuth();
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<any>(null);
   const [expandedSection, setExpandedSection] = useState<ReadinessAccordionSection | false>('availability');
@@ -56,9 +59,17 @@ const WorkerProfile: React.FC = () => {
     return () => unsubscribe();
   }, [uid]);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.location.hash) return;
+    if (window.location.hash === '#work-eligibility') {
+      setTimeout(() => document.getElementById('work-eligibility')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
+    }
+  }, []);
+
   const score = getUserScore(userDoc);
   const hasScore = typeof score === 'number' && Number.isFinite(score);
   const prompts = userDoc ? getReadinessPrompts(userDoc) : [];
+  const topImprovements = (userDoc?.scoreSummary?.explainability?.nextActions ?? []).slice(0, 3);
 
   const handleFixNow = useCallback((sectionId: keyof typeof READINESS_SECTION_IDS) => {
     setExpandedSection(sectionId);
@@ -67,6 +78,59 @@ const WorkerProfile: React.FC = () => {
       document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 100);
   }, []);
+
+  const workEligibilityValueFromDoc = useMemo(() => {
+    const a = userDoc?.workEligibilityAttestation;
+    if (a && typeof a === 'object') {
+      return {
+        workAuthorized: a.authorizedToWorkUS === true,
+        requireSponsorship: !!a.requireSponsorship,
+        gender: a.gender ?? '',
+        veteranStatus: a.veteranStatus ?? '',
+        disabilityStatus: a.disabilityStatus ?? '',
+      };
+    }
+    return {
+      workAuthorized: !!userDoc?.workEligibility,
+      requireSponsorship: !!userDoc?.requireSponsorship,
+      gender: userDoc?.gender ?? '',
+      veteranStatus: userDoc?.veteranStatus ?? '',
+      disabilityStatus: userDoc?.disabilityStatus ?? '',
+    };
+  }, [userDoc?.workEligibilityAttestation, userDoc?.workEligibility, userDoc?.requireSponsorship, userDoc?.gender, userDoc?.veteranStatus, userDoc?.disabilityStatus]);
+
+  const [workEligibilityLocal, setWorkEligibilityLocal] = useState(workEligibilityValueFromDoc);
+  useEffect(() => { setWorkEligibilityLocal(workEligibilityValueFromDoc); }, [workEligibilityValueFromDoc]);
+
+  const handleWorkEligibilityUpdate = useCallback(async (value: typeof workEligibilityValueFromDoc) => {
+    if (!uid) return;
+    const attestation = {
+      authorizedToWorkUS: !!value.workAuthorized,
+      requireSponsorship: !!value.requireSponsorship,
+      attestedAt: serverTimestamp(),
+      gender: value.gender || null,
+      veteranStatus: value.veteranStatus || null,
+      disabilityStatus: value.disabilityStatus || null,
+    };
+    const workEligibility = deriveWorkEligibilityFromAttestation(attestation as any);
+    await updateDoc(doc(db, 'users', uid), {
+      workEligibilityAttestation: attestation,
+      workEligibility,
+      requireSponsorship: !!value.requireSponsorship,
+      gender: value.gender || null,
+      veteranStatus: value.veteranStatus || null,
+      disabilityStatus: value.disabilityStatus || null,
+      updatedAt: serverTimestamp(),
+    });
+  }, [uid]);
+
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleWorkEligibilityChange = useCallback((value: typeof workEligibilityValueFromDoc) => {
+    setWorkEligibilityLocal(value);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => { handleWorkEligibilityUpdate(value); }, 500);
+  }, [handleWorkEligibilityUpdate]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
@@ -80,6 +144,16 @@ const WorkerProfile: React.FC = () => {
             Complete your profile to unlock more shifts and higher-paying roles.
           </Typography>
         </Box>
+
+        {/* 0. Basic Identity — avatar, name, contact, address (replaces separate My Profile for workers) */}
+        {uid && (
+          <WorkerBasicIdentityCard
+            uid={uid}
+            userDoc={userDoc}
+            avatarUrl={avatarUrl || (userDoc?.avatar as string) || ''}
+            onAvatarUpdated={setAvatarUrl}
+          />
+        )}
 
         {/* 1. Readiness Hero — same AI score as admin (worker-facing label: Hiring Score) */}
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
@@ -108,7 +182,7 @@ const WorkerProfile: React.FC = () => {
                     mt: 0.5,
                   }}
                 >
-                  {hasScore ? `${Math.round(score)}%` : '—'}
+                  {hasScore ? `${Math.round(score)}%` : 'Score pending'}
                 </Typography>
               </Box>
               <Box sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}>
@@ -131,6 +205,20 @@ const WorkerProfile: React.FC = () => {
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
                 Score will update after your profile syncs.
               </Typography>
+            )}
+            {topImprovements.length > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
+                  Top ways to improve your score
+                </Typography>
+                <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
+                  {topImprovements.map((a: { label?: string }, i: number) => (
+                    <Typography key={i} component="li" variant="body2" color="text.secondary">
+                      {a.label ?? ''}
+                    </Typography>
+                  ))}
+                </Stack>
+              </Box>
             )}
           </CardContent>
         </Card>
@@ -165,6 +253,24 @@ const WorkerProfile: React.FC = () => {
             ))}
           </Stack>
         )}
+
+        {/* Work Eligibility — attestation (deep link target #work-eligibility) */}
+        <Card id="work-eligibility" variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none', scrollMarginTop: 24 }}>
+          <CardContent>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+              Work Eligibility
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Attestation from your application. Update your answers here if needed.
+            </Typography>
+            {uid ? (
+              <WorkEligibilityStep
+                value={workEligibilityLocal}
+                onChange={handleWorkEligibilityChange}
+              />
+            ) : null}
+          </CardContent>
+        </Card>
 
         {/* 3. Accordion modules (existing forms) */}
         {uid ? (

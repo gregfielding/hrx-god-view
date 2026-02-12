@@ -121,9 +121,14 @@ const C1WorkerNotifications: React.FC = () => {
           <CircularProgress />
         </Box>
       ) : filtered.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          No notifications.
-        </Typography>
+        <Box>
+          <Typography variant="body2" color="text.secondary" display="block">
+            No notifications yet.
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            We&apos;ll notify you about applications, documents, and shifts here.
+          </Typography>
+        </Box>
       ) : (
         <List disablePadding>
           {filtered.map((n) => (

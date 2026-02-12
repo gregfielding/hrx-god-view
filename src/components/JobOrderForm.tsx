@@ -44,6 +44,7 @@ import { getOptionsForField } from '../utils/fieldOptions';
 import jobTitlesList from '../data/onetJobTitles.json';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
+import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequirementPacks';
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -248,6 +249,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     physicalRequirements: [],
     ppeRequirements: [],
     ppeProvidedBy: 'company',
+    requirementPackId: '',
     
     // Customer Rules
     attendancePolicy: '',
@@ -758,6 +760,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           physicalRequirements: stageData.scoping?.compliance?.physicalRequirements || [],
           ppeRequirements: stageData.scoping?.compliance?.ppe || [],
           ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
+          requirementPackId: (data as any).requirementPackId || '',
           
           // Customer Rules - from stageData.scoping.customerRules
           attendancePolicy: stageData.scoping?.customerRules?.attendance || '',
@@ -1316,6 +1319,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         ppeRequirements: formData.ppeRequirements || [],
         ppeProvidedBy: formData.ppeProvidedBy || 'company',
         customUniformRequirements: formData.customUniformRequirements || undefined,
+        requirementPackId: formData.requirementPackId || undefined,
         
         // Background Check and Drug Screening
         backgroundCheckPackages: formData.backgroundCheckPackages || [],
@@ -2264,6 +2268,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       <MenuItem value="company">Company</MenuItem>
                       <MenuItem value="worker">Worker</MenuItem>
                       <MenuItem value="both">Both</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <FormControl fullWidth>
+                    <InputLabel>Job Score requirement pack</InputLabel>
+                    <Select
+                      value={formData.requirementPackId || ''}
+                      onChange={(e) => handleInputChange('requirementPackId', e.target.value)}
+                      label="Job Score requirement pack"
+                    >
+                      <MenuItem value="">None</MenuItem>
+                      {getRequirementPackIds().map((id) => (
+                        <MenuItem key={id} value={id}>
+                          {JOB_REQUIREMENT_PACKS[id as keyof typeof JOB_REQUIREMENT_PACKS]?.name ?? id}
+                        </MenuItem>
+                      ))}
                     </Select>
                   </FormControl>
                 </Grid>

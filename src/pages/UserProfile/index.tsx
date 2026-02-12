@@ -24,6 +24,7 @@ import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore, calculateCompletenessScore } from '../../utils/applicantScoring';
+import { getScoreSummaryUpdateFromHiringScoreV1 } from '../../utils/scoreSummary';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
@@ -55,7 +56,7 @@ import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import { logUserActivity } from '../../utils/activityLogger';
-import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal, getScoreSummaryUpdateFromCompleteness } from '../../utils/scoreSummary';
+import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
 import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
 import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 
@@ -561,22 +562,20 @@ const UserProfilePage = () => {
           const normalizedSummary = normalizeScoreSummary((data as any).scoreSummary);
           setScoreSummary(normalizedSummary);
 
-          // Backfill: persist completenessScore and aiScore when missing or when stored is 0 but profile has content
+          // Backfill: persist Hiring Score v1.1 when missing or when stored is 0 but profile has content
           const hasProfileContent = (d: any) =>
             (d?.skills?.length > 0 || d?.workHistory?.length > 0 || d?.certifications?.length > 0);
           const shouldBackfill =
             uid &&
-            (typeof normalizedSummary?.completenessScore !== 'number' ||
+            (normalizedSummary?.hiringScoreVersion !== 'v1.1' ||
+              typeof normalizedSummary?.completenessScore !== 'number' ||
               (normalizedSummary?.completenessScore === 0 && hasProfileContent(data)));
           if (shouldBackfill) {
-            const { completenessScore: c, aiScore: newAi } = getScoreSummaryUpdateFromCompleteness(
-              completeness,
-              normalizedSummary
-            );
+            const payload = getScoreSummaryUpdateFromHiringScoreV1(data);
             updateDoc(doc(db, 'users', uid), {
-              'scoreSummary.completenessScore': c,
-              'scoreSummary.aiScore': newAi,
+              ...payload,
               'scoreSummary.aiScoreUpdatedAt': serverTimestamp(),
+              'scoreSummary.hiringScoreComputedAt': serverTimestamp(),
             }).catch((err) => console.warn('UserProfile: backfill scoreSummary failed', err));
           }
 

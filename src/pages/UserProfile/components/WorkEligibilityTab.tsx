@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useRef, useEffect } from 'react';
 import { Box } from '@mui/material';
 import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
+import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
 
 type Props = {
   user: any;
@@ -8,43 +9,56 @@ type Props = {
 };
 
 const WorkEligibilityTab: React.FC<Props> = ({ user, onUpdate }) => {
-  const initial = useMemo(() => ({
-    workAuthorized: !!user?.workEligibility,
-    requireSponsorship: !!user?.requireSponsorship,
-    gender: user?.gender || '',
-    veteranStatus: user?.veteranStatus || '',
-    disabilityStatus: user?.disabilityStatus || ''
-  }), [user]);
+  const initial = useMemo(() => {
+    const a = user?.workEligibilityAttestation;
+    if (a && typeof a === 'object') {
+      return {
+        workAuthorized: a.authorizedToWorkUS === true,
+        requireSponsorship: !!a.requireSponsorship,
+        gender: a.gender ?? user?.gender ?? '',
+        veteranStatus: a.veteranStatus ?? user?.veteranStatus ?? '',
+        disabilityStatus: a.disabilityStatus ?? user?.disabilityStatus ?? '',
+      };
+    }
+    return {
+      workAuthorized: !!user?.workEligibility,
+      requireSponsorship: !!user?.requireSponsorship,
+      gender: user?.gender || '',
+      veteranStatus: user?.veteranStatus || '',
+      disabilityStatus: user?.disabilityStatus || '',
+    };
+  }, [user]);
 
   const [value, setValue] = useState<any>(initial);
   const debounceRef = useRef<any>(null);
 
-  // Auto-save on change with debounce
   useEffect(() => {
-    // Don't save on initial load
     if (JSON.stringify(value) === JSON.stringify(initial)) return;
-
-    // Clear existing timeout
     if (debounceRef.current) clearTimeout(debounceRef.current);
-
-    // Set new timeout to save after 500ms
     debounceRef.current = setTimeout(async () => {
       try {
+        const attestation = {
+          authorizedToWorkUS: !!value.workAuthorized,
+          requireSponsorship: !!value.requireSponsorship,
+          attestedAt: new Date(),
+          gender: value.gender || null,
+          veteranStatus: value.veteranStatus || null,
+          disabilityStatus: value.disabilityStatus || null,
+        };
+        const workEligibility = deriveWorkEligibilityFromAttestation(attestation as any);
         await onUpdate({
-          workEligibility: !!value.workAuthorized,
+          workEligibilityAttestation: attestation,
+          workEligibility,
           requireSponsorship: !!value.requireSponsorship,
           gender: value.gender || '',
           veteranStatus: value.veteranStatus || '',
-          disabilityStatus: value.disabilityStatus || ''
+          disabilityStatus: value.disabilityStatus || '',
         });
       } catch (error) {
         console.error('Error saving work eligibility:', error);
       }
     }, 500);
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
   }, [value, initial, onUpdate]);
 
   return (

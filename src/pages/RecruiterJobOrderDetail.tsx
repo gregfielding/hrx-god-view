@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 
 import { safeToDate, getJobOrderAge } from '../utils/dateUtils';
 import {
@@ -101,7 +101,11 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
-import { normalizeScoreSummary, formatOneDecimal } from '../utils/scoreSummary';
+import { normalizeScoreSummary, formatOneDecimal, getUserScore } from '../utils/scoreSummary';
+import { getOrComputeJobScoreSummary } from '../utils/jobScore';
+import { getOrComputeJobScoreSummaryV1, computeJobScoreSummaryV1 } from '../utils/jobScoreV1';
+import { getRequirementPackV1 } from '../data/jobRequirementPacksV1';
+import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
@@ -109,6 +113,7 @@ import CreateTaskDialog from '../components/CreateTaskDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
 import AddJobOrderNoteDialog from '../components/recruiter/AddJobOrderNoteDialog';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
+import { computeComplianceSummary } from '../utils/complianceSummary';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -160,6 +165,11 @@ interface Applicant {
   profileScore?: number;
   fitScore?: number | null;
   scoreSummary?: any;
+  /** Job Score (per job); from application.jobScoreSummary or computed (v1 or legacy) */
+  jobScoreSummary?: JobScoreSummaryStored | null;
+  /** v1.1: from users/{uid}.onboarding (when present) */
+  compliancePercent?: number;
+  complianceStatus?: 'compliant' | 'expiring_soon' | 'non_compliant' | 'incomplete';
   // Shift selection (for Gig jobs)
   selectedShifts?: string[];
   shiftAssignments?: Record<string, 'pending' | 'approved' | 'rejected' | 'waitlisted'>;
@@ -178,9 +188,18 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMenuAnchor, setActionMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
-  const [applicantsSortBy, setApplicantsSortBy] = useState<'interview' | null>(null);
+  const [applicantsSortBy, setApplicantsSortBy] = useState<'interview' | 'jobScore' | null>(null);
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
-  
+  const defaultSortAppliedRef = useRef(false);
+
+  // Default sort by Job Score when this job has a requirement pack (once jobOrder is available)
+  useEffect(() => {
+    if (jobOrder?.requirementPackId && !defaultSortAppliedRef.current) {
+      defaultSortAppliedRef.current = true;
+      setApplicantsSortBy('jobScore');
+    }
+  }, [jobOrder?.requirementPackId]);
+
   // Notify parent of count changes
   useEffect(() => {
     if (onCountChange) {
@@ -211,9 +230,162 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
   const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
+  const [refreshingScores, setRefreshingScores] = useState(false);
 
   // Favorites hook for starring applicants
   const { isFavorite, toggleFavorite } = useFavorites('users');
+
+  const fetchApplicants = useCallback(async () => {
+    try {
+      if (!tenantId) {
+        setApplicants([]);
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+
+      const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
+      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+      const appsByOrderQ = query(applicationsRef, where('jobOrderId', '==', jobOrderId));
+      const appsByOrderSnap = await getDocs(appsByOrderQ);
+
+      let appDocs = appsByOrderSnap.docs;
+      if (appDocs.length === 0 && jobPostIds.length > 0) {
+        const slice = jobPostIds.slice(0, 10);
+        const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
+        const appsByPostSnap = await getDocs(appsByPostQ);
+        appDocs = appsByPostSnap.docs;
+      }
+
+      if (appDocs.length === 0) {
+        setApplicants([]);
+        setLoading(false);
+        return;
+      }
+
+      const applicationItems = appDocs.map(d => ({ id: d.id, ...(d.data() as any) }));
+      const userIds = Array.from(new Set(applicationItems.map(a => a.userId).filter(Boolean)));
+
+      const usersRef = collection(db, 'users');
+      const usersSnap = await getDocs(usersRef);
+      const userMap = new Map<string, any>();
+      usersSnap.docs.forEach(u => {
+        if (userIds.includes(u.id)) userMap.set(u.id, u.data());
+      });
+
+      const requirementPackId = (jobOrder as any)?.requirementPackId;
+
+      const applicantsData: Applicant[] = applicationItems
+        .filter((app) => {
+          const status = app.status || 'submitted';
+          return status !== 'withdrawn' && status !== 'deleted';
+        })
+        .map((app) => {
+          const userData = userMap.get(app.userId) || {};
+          const profileScore = calculateProfileScore(userData);
+          const fitScore = app.scores?.fitScore ?? null;
+          const hiringScore = getUserScore(userData);
+          const packV1 = requirementPackId ? getRequirementPackV1(requirementPackId) : null;
+          const jobScoreSummary = packV1
+            ? getOrComputeJobScoreSummaryV1({ ...app, userId: app.userId }, userData, requirementPackId, hiringScore)
+            : getOrComputeJobScoreSummary({ ...app, userId: app.userId }, userData, requirementPackId, hiringScore);
+
+          return {
+            uid: app.userId,
+            displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
+            firstName: userData.firstName || '',
+            lastName: userData.lastName || '',
+            email: userData.email || '',
+            phone: userData.phone || userData.phoneE164 || '',
+            avatar: userData.avatar,
+            applicationData: app,
+            city: userData.city || userData.addressInfo?.city || '',
+            state: userData.state || userData.addressInfo?.state || '',
+            workEligibility: userData.workEligibility || false,
+            phoneVerified: userData.phoneVerified || false,
+            appliedAt: app.appliedAt,
+            applicationStatus: app.status || 'submitted',
+            profileScore,
+            fitScore,
+            scoreSummary: normalizeScoreSummary(userData.scoreSummary),
+            jobScoreSummary: jobScoreSummary || null,
+            ...((): { compliancePercent?: number; complianceStatus?: 'compliant' | 'expiring_soon' | 'non_compliant' | 'incomplete' } => {
+              const onboarding = (userData as any)?.onboarding;
+              if (onboarding?.checklist && Object.keys(onboarding.checklist).length > 0) {
+                const sum = computeComplianceSummary(onboarding.checklist);
+                return { compliancePercent: sum.compliancePercent, complianceStatus: sum.overallStatus };
+              }
+              if (onboarding?.compliancePercent != null || onboarding?.overallStatus) {
+                return { compliancePercent: onboarding.compliancePercent, complianceStatus: onboarding.overallStatus };
+              }
+              return {};
+            })(),
+            selectedShifts: app.selectedShifts || [],
+            shiftAssignments: app.shiftAssignments || {},
+          };
+        });
+
+      applicantsData.sort((a, b) => {
+        const dateA = a.appliedAt?.toDate ? a.appliedAt.toDate() : new Date(0);
+        const dateB = b.appliedAt?.toDate ? b.appliedAt.toDate() : new Date(0);
+        return dateB.getTime() - dateA.getTime();
+      });
+
+      const seenUids = new Set<string>();
+      const deduped = applicantsData.filter((a) => {
+        if (seenUids.has(a.uid)) return false;
+        seenUids.add(a.uid);
+        return true;
+      });
+
+      setApplicants(deduped);
+    } catch (error) {
+      console.error('Error fetching applicants:', error);
+      setApplicants([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [jobOrderId, connectedJobPosts, tenantId, jobOrder]);
+
+  useEffect(() => {
+    fetchApplicants();
+  }, [fetchApplicants]);
+
+  const handleRefreshScores = useCallback(async () => {
+    const requirementPackId = (jobOrder as any)?.requirementPackId;
+    const packV1 = requirementPackId ? getRequirementPackV1(requirementPackId) : null;
+    if (!tenantId || !requirementPackId || !packV1) return;
+
+    const toRefresh = selectedApplicantIds.size > 0
+      ? applicants.filter((a) => selectedApplicantIds.has(a.uid))
+      : applicants;
+    if (toRefresh.length === 0) return;
+
+    setRefreshingScores(true);
+    try {
+      for (const applicant of toRefresh) {
+        const appId = applicant.applicationData?.id;
+        if (!appId) continue;
+        const userSnap = await getDoc(doc(db, 'users', applicant.uid));
+        const userData = userSnap.exists() ? userSnap.data() : {};
+        const aiScore = getUserScore(userData);
+        const summary = computeJobScoreSummaryV1(userData as any, requirementPackId, aiScore, new Date(), {
+          userProfileUpdatedAt: (userData as any)?.profileUpdatedAt ?? (userData as any)?.updatedAt,
+        });
+        if (!summary) continue;
+        const appRef = doc(db, 'tenants', tenantId, 'applications', appId);
+        await updateDoc(appRef, {
+          jobScoreSummary: { ...summary, computedAt: serverTimestamp(), writtenAt: serverTimestamp() },
+          updatedAt: serverTimestamp(),
+        });
+      }
+      await fetchApplicants();
+    } catch (err) {
+      console.error('Refresh scores failed:', err);
+    } finally {
+      setRefreshingScores(false);
+    }
+  }, [tenantId, jobOrder, selectedApplicantIds, applicants, fetchApplicants]);
 
   // Fetch available job orders for switching
   useEffect(() => {
@@ -235,113 +407,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
     fetchJobOrders();
   }, [tenantId, jobOrderId]);
-
-  useEffect(() => {
-    const fetchApplicants = async () => {
-      try {
-        if (!tenantId) {
-          setApplicants([]);
-          setLoading(false);
-          return;
-        }
-        setLoading(true);
-
-        // Build list of connected job post IDs (if any)
-        const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
-
-        // Source of truth: tenant applications collection
-        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-        // Prefer querying by jobOrderId (covers cases where job posts change)
-        const appsByOrderQ = query(applicationsRef, where('jobOrderId', '==', jobOrderId));
-        const appsByOrderSnap = await getDocs(appsByOrderQ);
-
-        // If no results via jobOrderId, fall back to jobId in connected posts
-        let appDocs = appsByOrderSnap.docs;
-        if (appDocs.length === 0 && jobPostIds.length > 0) {
-          // Firestore 'in' supports up to 10 values; slice if needed
-          const slice = jobPostIds.slice(0, 10);
-          const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
-          const appsByPostSnap = await getDocs(appsByPostQ);
-          appDocs = appsByPostSnap.docs;
-        }
-
-        if (appDocs.length === 0) {
-          setApplicants([]);
-          setLoading(false);
-          return;
-        }
-
-        // Gather unique userIds and fetch corresponding user docs
-        const applicationItems = appDocs.map(d => ({ id: d.id, ...(d.data() as any) }));
-        const userIds = Array.from(new Set(applicationItems.map(a => a.userId).filter(Boolean)));
-
-        const usersRef = collection(db, 'users');
-        const usersSnap = await getDocs(usersRef);
-        const userMap = new Map<string, any>();
-        usersSnap.docs.forEach(u => {
-          if (userIds.includes(u.id)) userMap.set(u.id, u.data());
-        });
-
-        // Build applicant rows (exclude withdrawn so they are effectively "removed" from the list)
-        const applicantsData: Applicant[] = applicationItems
-          .filter((app) => {
-            const status = app.status || 'submitted';
-            return status !== 'withdrawn' && status !== 'deleted';
-          })
-          .map((app) => {
-            const userData = userMap.get(app.userId) || {};
-            const profileScore = calculateProfileScore(userData);
-            const fitScore = app.scores?.fitScore ?? null;
-
-            return {
-              uid: app.userId,
-              displayName: userData.displayName || `${userData.firstName || ''} ${userData.lastName || ''}`.trim(),
-              firstName: userData.firstName || '',
-              lastName: userData.lastName || '',
-              email: userData.email || '',
-              phone: userData.phone || userData.phoneE164 || '',
-              avatar: userData.avatar,
-              applicationData: app, // keep the full application object for actions
-              city: userData.city || userData.addressInfo?.city || '',
-              state: userData.state || userData.addressInfo?.state || '',
-              workEligibility: userData.workEligibility || false,
-              phoneVerified: userData.phoneVerified || false,
-              appliedAt: app.appliedAt,
-              applicationStatus: app.status || 'submitted',
-              profileScore,
-              fitScore,
-              scoreSummary: normalizeScoreSummary(userData.scoreSummary),
-              selectedShifts: app.selectedShifts || [],
-              shiftAssignments: app.shiftAssignments || {},
-            };
-          });
-
-        // Sort newest first
-        applicantsData.sort((a, b) => {
-          const dateA = a.appliedAt?.toDate ? a.appliedAt.toDate() : new Date(0);
-          const dateB = b.appliedAt?.toDate ? b.appliedAt.toDate() : new Date(0);
-          return dateB.getTime() - dateA.getTime();
-        });
-
-        // One row per user: same person can have multiple application docs (e.g. multiple job posts)
-        const seenUids = new Set<string>();
-        const deduped = applicantsData.filter((a) => {
-          if (seenUids.has(a.uid)) return false;
-          seenUids.add(a.uid);
-          return true;
-        });
-
-        setApplicants(deduped);
-      } catch (error) {
-        console.error('Error fetching applicants:', error);
-        setApplicants([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchApplicants();
-  }, [jobOrderId, connectedJobPosts, tenantId]);
 
   // Subscribe to assignments for this job order (Placements status: Placed, Assigned)
   useEffect(() => {
@@ -426,7 +491,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     return -1;
   };
 
-  const handleApplicantsSort = (key: 'interview') => {
+  const handleApplicantsSort = (key: 'interview' | 'jobScore') => {
     if (applicantsSortBy === key) {
       setApplicantsSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
       return;
@@ -436,18 +501,30 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   };
 
   const sortedApplicants = React.useMemo(() => {
-    if (applicantsSortBy !== 'interview') return applicants;
-    const data = [...applicants];
-    data.sort((a, b) => {
-      const aM = toMillis(a.scoreSummary?.interviewLastAt);
-      const bM = toMillis(b.scoreSummary?.interviewLastAt);
-      const diff = aM - bM;
-      return applicantsSortDirection === 'asc' ? diff : -diff;
-    });
-    return data;
+    if (applicantsSortBy === 'interview') {
+      const data = [...applicants];
+      data.sort((a, b) => {
+        const aM = toMillis(a.scoreSummary?.interviewLastAt);
+        const bM = toMillis(b.scoreSummary?.interviewLastAt);
+        const diff = aM - bM;
+        return applicantsSortDirection === 'asc' ? diff : -diff;
+      });
+      return data;
+    }
+    if (applicantsSortBy === 'jobScore') {
+      const data = [...applicants];
+      data.sort((a, b) => {
+        const aScore = a.jobScoreSummary?.jobScore ?? -1;
+        const bScore = b.jobScoreSummary?.jobScore ?? -1;
+        const diff = aScore - bScore;
+        return applicantsSortDirection === 'asc' ? diff : -diff;
+      });
+      return data;
+    }
+    return applicants;
   }, [applicants, applicantsSortBy, applicantsSortDirection]);
 
-  const displayedApplicants = applicantsSortBy === 'interview' ? sortedApplicants : applicants;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : applicants;
   const isAllSelected = displayedApplicants.length > 0 && selectedApplicantIds.size === displayedApplicants.length;
   const isSomeSelected = selectedApplicantIds.size > 0;
 
@@ -941,13 +1018,26 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         <CardHeader 
           title={`Applications (${applicants.length})`}
           action={
-            <Button
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={handleOpenAddApplicantDialog}
-            >
-              Add Applicant
-            </Button>
+            <Stack direction="row" alignItems="center" spacing={1}>
+              {jobOrder?.requirementPackId && (
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={refreshingScores || applicants.length === 0}
+                  onClick={handleRefreshScores}
+                  startIcon={refreshingScores ? <CircularProgress size={16} /> : <SaveIcon />}
+                >
+                  {refreshingScores ? 'Refreshing…' : 'Refresh scores'}
+                </Button>
+              )}
+              <Button
+                variant="contained"
+                startIcon={<AddIcon />}
+                onClick={handleOpenAddApplicantDialog}
+              >
+                Add Applicant
+              </Button>
+            </Stack>
           }
           sx={{ borderBottom: 1, borderColor: 'divider' }}
         />
@@ -1037,6 +1127,20 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 <TableCell>Applied</TableCell>
                 <TableCell>Profile</TableCell>
                 <TableCell>Fit</TableCell>
+                {jobOrder?.requirementPackId ? (
+                  <>
+                    <TableCell>
+                      <TableSortLabel
+                        active={applicantsSortBy === 'jobScore'}
+                        direction={applicantsSortBy === 'jobScore' ? applicantsSortDirection : 'desc'}
+                        onClick={() => handleApplicantsSort('jobScore')}
+                      >
+                        Job Score
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell>Missing</TableCell>
+                  </>
+                ) : null}
                 <TableCell>
                   <TableSortLabel
                     active={applicantsSortBy === 'interview'}
@@ -1046,13 +1150,14 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     Interview
                   </TableSortLabel>
                 </TableCell>
+                <TableCell>Compliance</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Level</TableCell>
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {(applicantsSortBy === 'interview' ? sortedApplicants : applicants).map((applicant) => (
+              {displayedApplicants.map((applicant) => (
                 <TableRow 
                   key={
                     applicant.applicationData?.id ||
@@ -1178,7 +1283,85 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </Tooltip>
                     )}
                   </TableCell>
+                  {jobOrder?.requirementPackId ? (
+                    <>
+                      <TableCell>
+                        {applicant.jobScoreSummary != null ? (
+                          (() => {
+                            const s = applicant.jobScoreSummary as any;
+                            const isV1 = s.version === 'v1';
+                            const stale = s.stale?.isStale;
+                            const tooltip = isV1
+                              ? (stale ? 'Score may be outdated (profile or pack changed). Use Refresh scores to update. ' : '') +
+                                `Requirements: ${s.breakdown?.requirements ?? '—'} · Hiring lift: ${s.breakdown?.hiringLift ?? '—'}`
+                              : `Fit: ${s.fitScore ?? '—'} · Hiring: ${s.hiringScoreUsed ?? '—'}`;
+                            const missingLabels = isV1
+                              ? (s.buckets?.missingRequired ?? []).map((x: any) => x.label)
+                              : (s.missingLabels ?? []);
+                            return (
+                              <Tooltip title={tooltip}>
+                                <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap">
+                                  {isV1 && stale && (
+                                    <Chip label="Stale" size="small" variant="outlined" color="warning" sx={{ fontWeight: 500 }} />
+                                  )}
+                                  {isV1 && !s.eligible && (
+                                    <Chip label="Not Eligible" size="small" color="error" sx={{ fontWeight: 600 }} />
+                                  )}
+                                  <Chip
+                                    label={getScoreLabel(s.jobScore)}
+                                    size="small"
+                                    color={getScoreColor(s.jobScore)}
+                                    sx={{ minWidth: 50, fontWeight: 600 }}
+                                  />
+                                </Stack>
+                              </Tooltip>
+                            );
+                          })()
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">—</Typography>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {(() => {
+                          const s = applicant.jobScoreSummary as any;
+                          if (!s) return <Typography variant="caption" color="text.secondary">—</Typography>;
+                          const isV1 = s.version === 'v1';
+                          const labels = isV1 ? (s.buckets?.missingRequired ?? []).map((x: any) => x.label) : (s.missingLabels ?? []);
+                          if (labels.length) {
+                            return (
+                              <Tooltip title={labels.join(', ')}>
+                                <Typography variant="caption" noWrap sx={{ maxWidth: 120 }} color="text.secondary">
+                                  {labels.slice(0, 2).join(', ')}
+                                  {labels.length > 2 ? '…' : ''}
+                                </Typography>
+                              </Tooltip>
+                            );
+                          }
+                          return <Typography variant="caption" color="success.main">Eligible</Typography>;
+                        })()}
+                      </TableCell>
+                    </>
+                  ) : null}
                   <TableCell>{renderInterviewCell(applicant)}</TableCell>
+                  <TableCell>
+                    {applicant.compliancePercent != null ? (
+                      <Tooltip title={applicant.complianceStatus === 'expiring_soon' ? 'Expiring soon' : applicant.complianceStatus === 'non_compliant' ? 'Expired or non-compliant' : applicant.complianceStatus === 'compliant' ? 'Compliant' : 'Incomplete'}>
+                        <Chip
+                          size="small"
+                          label={`${applicant.compliancePercent}%`}
+                          color={
+                            applicant.complianceStatus === 'compliant' ? 'success' :
+                            applicant.complianceStatus === 'expiring_soon' ? 'warning' :
+                            applicant.complianceStatus === 'non_compliant' ? 'error' : 'default'
+                          }
+                          variant="outlined"
+                          sx={{ minWidth: 44 }}
+                        />
+                      </Tooltip>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">—</Typography>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {(() => {
                       const placementStatus = assignmentStatusByUserId.get(applicant.uid);

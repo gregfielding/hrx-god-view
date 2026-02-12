@@ -26,6 +26,9 @@ const ApplyWizardPage: React.FC = () => {
   const effectiveTenantSlug = useMemo(() => rawTenantSlug.toLowerCase(), [rawTenantSlug]);
 
   useEffect(() => {
+    let cancelled = false;
+    const timeoutMs = 15000;
+
     const resolveTenant = async () => {
       try {
         setLoading(true);
@@ -36,42 +39,60 @@ const ApplyWizardPage: React.FC = () => {
           return;
         }
 
-        // If the param looks like a Firestore ID (no dashes and length >= 20),
-        // use it AS-IS (case sensitive). Do not lowercase IDs.
-        const looksLikeId = /^[A-Za-z0-9]{20,}$/.test(rawTenantSlug);
-        if (looksLikeId) {
-          setTenantId(rawTenantSlug);
-          // Fetch the tenant document to get the actual slug
-          const tenantRef = doc(db, 'tenants', rawTenantSlug);
-          const tenantSnap = await getDoc(tenantRef);
-          if (tenantSnap.exists()) {
-            const data = tenantSnap.data() as any;
-            setTenantName(data?.name || null);
-            setActualSlug(data?.slug || null);
+        const finish = () => {
+          if (!cancelled) setLoading(false);
+        };
+
+        const timeoutId = setTimeout(() => {
+          if (!cancelled) {
+            setError('Request timed out. Check your connection or try again.');
+            setLoading(false);
           }
-          return;
-        }
+        }, timeoutMs);
 
-        // Otherwise, resolve by slug (may require elevated permissions)
-        const q = query(collection(db, 'tenants'), where('slug', '==', effectiveTenantSlug), limit(1));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const docSnap = snap.docs[0];
-          setTenantId(docSnap.id);
-          const data = docSnap.data() as any;
-          setTenantName(data?.name || null);
-          setActualSlug(data?.slug || effectiveTenantSlug);
-          return;
-        }
+        try {
+          // If the param looks like a Firestore ID (no dashes and length >= 20),
+          // use it AS-IS (case sensitive). Do not lowercase IDs.
+          const looksLikeId = /^[A-Za-z0-9]{20,}$/.test(rawTenantSlug);
+          if (looksLikeId) {
+            setTenantId(rawTenantSlug);
+            const tenantRef = doc(db, 'tenants', rawTenantSlug);
+            const tenantSnap = await getDoc(tenantRef);
+            if (cancelled) return;
+            if (tenantSnap.exists()) {
+              const data = tenantSnap.data() as any;
+              setTenantName(data?.name || null);
+              setActualSlug(data?.slug || null);
+            }
+            return;
+          }
 
-        setError('Tenant not found');
+          const q = query(collection(db, 'tenants'), where('slug', '==', effectiveTenantSlug), limit(1));
+          const snap = await getDocs(q);
+          if (cancelled) return;
+          if (!snap.empty) {
+            const docSnap = snap.docs[0];
+            setTenantId(docSnap.id);
+            const data = docSnap.data() as any;
+            setTenantName(data?.name || null);
+            setActualSlug(data?.slug || effectiveTenantSlug);
+            return;
+          }
+
+          setError('Tenant not found');
+        } finally {
+          clearTimeout(timeoutId);
+          finish();
+        }
       } catch (e: any) {
-        setError(e?.message || 'Failed to load tenant');
-      } finally {
-        setLoading(false);
+        if (!cancelled) {
+          setError(e?.message || 'Failed to load tenant');
+          setLoading(false);
+        }
       }
     };
     resolveTenant();
+    return () => { cancelled = true; };
   }, [effectiveTenantSlug, rawTenantSlug]);
 
   if (loading) {
