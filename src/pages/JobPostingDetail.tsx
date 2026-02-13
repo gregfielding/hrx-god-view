@@ -29,7 +29,7 @@ import {
   VerifiedUser as VerifiedIcon,
   Lock as LockIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../firebase';
@@ -40,6 +40,8 @@ import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
+import { getRequirementsWithStatus } from '../utils/jobRequirementStatus';
+import { JobRequirementChip } from '../components/JobRequirementChip';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -67,6 +69,8 @@ const JobPostingDetail: React.FC = () => {
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
+  const [userProfile, setUserProfile] = useState<any>(null);
+  const [applicationData, setApplicationData] = useState<any>(null);
 
   useEffect(() => {
     if (!resolvedTenantId || !postId) {
@@ -357,6 +361,42 @@ const JobPostingDetail: React.FC = () => {
 
     loadApplicationStatus();
   }, [posting, user?.uid, resolvedTenantId, postId]);
+
+  // Load user profile for requirement status (skills, languages, education, certs)
+  useEffect(() => {
+    if (!user?.uid) {
+      setUserProfile(null);
+      return;
+    }
+    const load = async () => {
+      try {
+        const ref = doc(db, 'users', user.uid);
+        const snap = await getDoc(ref);
+        setUserProfile(snap.exists() ? snap.data() : null);
+      } catch {
+        setUserProfile(null);
+      }
+    };
+    load();
+  }, [user?.uid]);
+
+  // Load full application data for requirement acks (so we can show met/not met and update on fix)
+  useEffect(() => {
+    if (!resolvedTenantId || !applicationDocId) {
+      setApplicationData(null);
+      return;
+    }
+    const load = async () => {
+      try {
+        const ref = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
+        const snap = await getDoc(ref);
+        setApplicationData(snap.exists() ? snap.data() : null);
+      } catch {
+        setApplicationData(null);
+      }
+    };
+    load();
+  }, [resolvedTenantId, applicationDocId]);
 
   // Load dynamic shifts for Gig jobs
   useEffect(() => {
@@ -772,6 +812,68 @@ const JobPostingDetail: React.FC = () => {
     } catch (err) {
       console.error('Failed to cancel application:', err);
       alert('We were unable to cancel your application. Please try again.');
+    }
+  };
+
+  const handleRequirementFix = async (
+    ackKey: string | undefined,
+    answer: 'Yes' | 'No',
+    category: string,
+    label: string
+  ) => {
+    if (!resolvedTenantId || !applicationDocId || !user?.uid) return;
+    try {
+      const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
+      const snap = await getDoc(appRef);
+      const data = snap.exists() ? snap.data() : {};
+      const existingData = (data as any).data || {};
+      const existingReqs = existingData.requirements || {};
+      const existingAcks = existingReqs.acks || {};
+      const existingAdditionalScreenings = existingReqs.additionalScreenings || {};
+      const nextReqs = { ...existingReqs };
+      if (category === 'additionalScreenings') {
+        nextReqs.additionalScreenings = { ...existingAdditionalScreenings, [label]: answer };
+      } else if (ackKey === 'backgroundScreeningComfort' || ackKey === 'drugScreeningComfort') {
+        nextReqs[ackKey] = answer;
+      } else if (ackKey) {
+        nextReqs.acks = { ...existingAcks, [ackKey]: answer };
+      }
+      await updateDoc(appRef, {
+        data: { ...existingData, requirements: nextReqs },
+        updatedAt: serverTimestamp(),
+      });
+      setApplicationData((prev: any) => {
+        const next = prev ? { ...prev } : {};
+        next.data = next.data || {};
+        next.data.requirements = next.data.requirements || {};
+        if (category === 'additionalScreenings') {
+          next.data.requirements.additionalScreenings = { ...(next.data.requirements.additionalScreenings || {}), [label]: answer };
+        } else if (ackKey === 'backgroundScreeningComfort' || ackKey === 'drugScreeningComfort') {
+          next.data.requirements[ackKey] = answer;
+        } else if (ackKey) {
+          next.data.requirements.acks = { ...(next.data.requirements.acks || {}), [ackKey]: answer };
+        }
+        return next;
+      });
+      if (answer === 'Yes' && (category === 'skills' || category === 'languages')) {
+        const userRef = doc(db, 'users', user.uid);
+        if (category === 'skills') {
+          await updateDoc(userRef, {
+            skills: arrayUnion(label),
+            updatedAt: serverTimestamp(),
+          });
+          setUserProfile((p: any) => ({ ...p, skills: [...(p?.skills || []), label], updatedAt: new Date() }));
+        } else if (category === 'languages') {
+          await updateDoc(userRef, {
+            languages: arrayUnion(label),
+            updatedAt: serverTimestamp(),
+          });
+          setUserProfile((p: any) => ({ ...p, languages: [...(p?.languages || []), label], updatedAt: new Date() }));
+        }
+      }
+    } catch (err) {
+      console.error('Failed to update requirement:', err);
+      alert('We couldn’t save that. Please try again.');
     }
   };
 
@@ -1401,7 +1503,7 @@ const JobPostingDetail: React.FC = () => {
             </Card>
           )}
 
-          {/* Requirements */}
+          {/* Requirements — show met (green check) vs not met (red + Add to fix) when user has application */}
           {((posting.showBackgroundChecks && posting.backgroundCheckPackages?.length > 0) ||
             (posting.showDrugScreening && posting.drugScreeningPanels?.length > 0) ||
             (posting.showAdditionalScreenings && posting.additionalScreenings?.length > 0) ||
@@ -1419,138 +1521,35 @@ const JobPostingDetail: React.FC = () => {
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   Requirements
                 </Typography>
-
+                {user?.uid && applicationDocId && (
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    Green = met (profile or application). Red = not met — use Add to answer Yes/No and update your application.
+                  </Typography>
+                )}
                 <Stack spacing={2}>
-                  {posting.showBackgroundChecks && posting.backgroundCheckPackages?.length > 0 && (
-                    <Box>
+                  {getRequirementsWithStatus(posting, userProfile, applicationData).map((cat) => (
+                    <Box key={cat.category}>
                       <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Background Check Packages
+                        {cat.categoryLabel}
                       </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.backgroundCheckPackages.map((pkg: string, index: number) => (
-                          <Chip key={index} label={pkg} size="small" />
+                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+                        {cat.items.map((item, index) => (
+                          <JobRequirementChip
+                            key={`${cat.category}-${index}`}
+                            item={item}
+                            categoryLabel={cat.categoryLabel}
+                            showFixAction={!!user?.uid && !!applicationDocId}
+                            onFix={
+                              item.ackKey
+                                ? (answer) =>
+                                    handleRequirementFix(item.ackKey!, answer, cat.category, item.label)
+                                : undefined
+                            }
+                          />
                         ))}
                       </Box>
                     </Box>
-                  )}
-
-                  {posting.showDrugScreening && posting.drugScreeningPanels?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Drug Screening Panels
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.drugScreeningPanels.map((panel: string, index: number) => (
-                          <Chip key={index} label={panel} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showAdditionalScreenings && posting.additionalScreenings?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Additional Screenings
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.additionalScreenings.map((screening: string, index: number) => (
-                          <Chip key={index} label={screening} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showLicensesCerts && posting.licensesCerts?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Licenses & Certifications
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.licensesCerts.map((cert: string, index: number) => (
-                          <Chip key={index} label={cert} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showSkills && posting.skills?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Required Skills
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.skills.map((skill: string, index: number) => (
-                          <Chip key={index} label={skill} size="small" variant="outlined" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showExperience && posting.experienceLevels?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Experience
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.experienceLevels.map((exp: string, index: number) => (
-                          <Chip key={index} label={exp} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showEducation && posting.educationLevels?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Education
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.educationLevels.map((edu: string, index: number) => (
-                          <Chip key={index} label={edu} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showLanguages && posting.languages?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Languages
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.languages.map((lang: string, index: number) => (
-                          <Chip key={index} label={lang} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showPhysicalRequirements && posting.physicalRequirements?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Physical Requirements
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.physicalRequirements.map((req: string, index: number) => (
-                          <Chip key={index} label={req} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
-                  {posting.showUniformRequirements && posting.uniformRequirements?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Uniform Requirements
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.uniformRequirements.map((uniform: string, index: number) => (
-                          <Chip key={index} label={uniform} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
+                  ))}
                   {posting.showCustomUniformRequirements &&
                     posting.customUniformRequirements &&
                     posting.customUniformRequirements.trim() && (
@@ -1563,20 +1562,6 @@ const JobPostingDetail: React.FC = () => {
                         </Typography>
                       </Box>
                     )}
-
-                  {posting.showRequiredPpe && posting.requiredPpe?.length > 0 && (
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Required PPE
-                      </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                        {posting.requiredPpe.map((ppe: string, index: number) => (
-                          <Chip key={index} label={ppe} size="small" />
-                        ))}
-                      </Box>
-                    </Box>
-                  )}
-
                   {posting.eVerifyRequired && (
                     <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 1 }}>
                       <Box
