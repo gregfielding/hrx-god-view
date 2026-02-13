@@ -57,8 +57,7 @@ import Divider from '@mui/material/Divider';
 import Tooltip from '@mui/material/Tooltip';
 import { SlackHashIcon } from './icons/SlackHashIcon';
 
-import { db } from '../firebase';
-import { functions } from '../firebase';
+import { db, functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import { useThemeMode } from '../theme/theme';
 import { useAuth } from '../contexts/AuthContext';
@@ -111,7 +110,9 @@ const Layout: React.FC = React.memo(function Layout() {
   const isMobile = useMediaQuery('(max-width:768px)');
   const location = useLocation();
   const navigate = useNavigate();
-  const [inboxUnreadCount, setInboxUnreadCount] = useState(0);
+  const [firestoreInboxTotal, setFirestoreInboxTotal] = useState(0);
+  const [gmailInboxTotal, setGmailInboxTotal] = useState<number | null>(null);
+  const inboxUnreadCount = Math.min(99, gmailInboxTotal ?? firestoreInboxTotal);
   const [messagesUnreadCount, setMessagesUnreadCount] = useState(0);
   const [alertsUnreadCount, setAlertsUnreadCount] = useState(0);
   const [alertsCriticalCount, setAlertsCriticalCount] = useState(0);
@@ -312,83 +313,69 @@ const Layout: React.FC = React.memo(function Layout() {
 
   const [agencyLogoUrl, setAgencyLogoUrl] = useState<string | null>(null);
 
-  // Real-time inbox unread count for nav badge (updates as messages are read)
-  // Uses Gmail API counts to match category tab counts
+  // Inbox nav badge: prefer Gmail mailbox counts (matches Inbox tabs: Primary, Updates, etc.).
+  // Fall back to Firestore thread unread sum when Gmail is not connected.
   useEffect(() => {
-    if (!user?.uid) {
-      setInboxUnreadCount(0);
+    if (!user?.uid || !activeTenant?.id) {
+      setFirestoreInboxTotal(0);
       return;
     }
 
-    const loadTotalUnread = async () => {
+    const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
+    const threadsQuery = query(
+      threadsRef,
+      where('participantUserIds', 'array-contains', user.uid),
+      where('status', '==', 'active'),
+      orderBy('lastMessageAt', 'desc'),
+      limit(500)
+    );
+
+    const unsubscribe = onSnapshot(
+      threadsQuery,
+      (snapshot) => {
+        const total = snapshot.docs.reduce(
+          (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
+          0
+        );
+        setFirestoreInboxTotal(total);
+      },
+      (err) => {
+        console.warn('Inbox unread count listener failed:', err);
+        setFirestoreInboxTotal(0);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [user?.uid, activeTenant?.id]);
+
+  // Gmail mailbox counts: single source of truth for badge so it matches Inbox tabs (e.g. Updates 10).
+  useEffect(() => {
+    if (!user?.uid) {
+      setGmailInboxTotal(null);
+      return;
+    }
+
+    const load = async () => {
       try {
-        const getCounts = httpsCallable(functions, 'getGmailMailboxCounts');
+        const getCounts = httpsCallable<{ userId: string }, { success: boolean; counts?: Record<string, { threadsUnread?: number }> }>(functions, 'getGmailMailboxCounts');
         const result = await getCounts({ userId: user.uid });
-        const data = result.data as any;
-        const counts = data?.counts;
-        if (data?.success && counts) {
-          const total =
-            (counts.primary?.threadsUnread || 0) +
-            (counts.social?.threadsUnread || 0) +
-            (counts.promotions?.threadsUnread || 0) +
-            (counts.updates?.threadsUnread || 0) +
-            (counts.forums?.threadsUnread || 0) +
-            (counts.spam?.threadsUnread || 0);
-          setInboxUnreadCount(total > 99 ? 99 : total);
-        } else {
-          // Fallback: use Firestore listener if Gmail API unavailable
-          if (activeTenant?.id) {
-            try {
-              const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
-              const threadsQuery = query(
-                threadsRef,
-                where('participantUserIds', 'array-contains', user.uid),
-                where('status', '==', 'active'),
-                orderBy('lastMessageAt', 'desc'),
-                limit(500)
-              );
-              const snapshot = await getDocs(threadsQuery);
-              const total = snapshot.docs.reduce(
-                (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
-                0
-              );
-              setInboxUnreadCount(total > 99 ? 99 : total);
-            } catch (err) {
-              console.warn('Inbox unread count fallback failed:', err);
-              setInboxUnreadCount(0);
-            }
-          }
+        const data = result.data;
+        if (!data?.success || !data.counts) {
+          setGmailInboxTotal(null);
+          return;
         }
-      } catch (err) {
-        // Fallback: use Firestore listener if Gmail API fails
-        if (activeTenant?.id) {
-          try {
-            const threadsRef = collection(db, 'tenants', activeTenant.id, 'emailThreads');
-            const threadsQuery = query(
-              threadsRef,
-              where('participantUserIds', 'array-contains', user.uid),
-              where('status', '==', 'active'),
-              orderBy('lastMessageAt', 'desc'),
-              limit(500)
-            );
-            const snapshot = await getDocs(threadsQuery);
-            const total = snapshot.docs.reduce(
-              (sum, d) => sum + (Number((d.data() as any)?.unreadCount) || 0),
-              0
-            );
-            setInboxUnreadCount(total > 99 ? 99 : total);
-          } catch (fallbackErr) {
-            console.warn('Inbox unread count setup failed:', fallbackErr);
-            setInboxUnreadCount(0);
-          }
-        }
+        const c = data.counts;
+        const total = Number(c.primary?.threadsUnread || 0) + Number(c.social?.threadsUnread || 0) + Number(c.promotions?.threadsUnread || 0) + Number(c.updates?.threadsUnread || 0) + Number(c.forums?.threadsUnread || 0) + Number(c.spam?.threadsUnread || 0);
+        setGmailInboxTotal(total);
+      } catch {
+        setGmailInboxTotal(null);
       }
     };
 
-    loadTotalUnread();
-    const interval = setInterval(loadTotalUnread, 30000);
+    load();
+    const interval = setInterval(load, 30000);
     return () => clearInterval(interval);
-  }, [user?.uid, activeTenant?.id]);
+  }, [user?.uid]);
 
   // Real-time listener for unread internal message count
   useEffect(() => {

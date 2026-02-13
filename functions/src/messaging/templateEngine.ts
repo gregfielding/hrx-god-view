@@ -208,17 +208,25 @@ export function renderTemplate(
       // Render template body
       let rendered = template.body;
       
-      // Replace variables using {{variableName}} syntax
+      // Replace variables: support both {{variableName}} and {variableName} (single-brace used by some templates)
       for (const [key, value] of Object.entries(mergedContext)) {
-        const placeholder = `{{${key}}}`;
         const stringValue = value != null ? String(value) : '';
-        rendered = rendered.replace(new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), stringValue);
+        const doublePlaceholder = `{{${key}}}`;
+        const doubleEscaped = doublePlaceholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        rendered = rendered.replace(new RegExp(doubleEscaped, 'g'), stringValue);
+        // Single-brace {key} (in case template was stored or authored with single braces)
+        const keyEscaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        rendered = rendered.replace(new RegExp(`\\{${keyEscaped}\\}`, 'g'), stringValue);
       }
       
-      // Check for unreplaced variables (warn but don't fail)
-      const unreplacedMatches = rendered.match(/\{\{([^}]+)\}\}/g);
-      if (unreplacedMatches) {
-        logger.warn(`Template ${template.id} has unreplaced variables: ${unreplacedMatches.join(', ')}`);
+      // Check for unreplaced variables (warn but don't fail) — both {{x}} and {x}
+      const unreplacedDouble = rendered.match(/\{\{([^}]+)\}\}/g);
+      const unreplacedSingle = rendered.match(/\{(?!\{)([a-zA-Z_][a-zA-Z0-9_]*)\}(?!\})/g);
+      if (unreplacedDouble?.length) {
+        logger.warn(`Template ${template.id} has unreplaced variables: ${unreplacedDouble.join(', ')}`);
+      }
+      if (unreplacedSingle?.length) {
+        logger.warn(`Template ${template.id} has unreplaced single-brace variables: ${unreplacedSingle.join(', ')}`);
       }
       
       // Add STOP footer if needed

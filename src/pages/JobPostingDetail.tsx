@@ -320,6 +320,26 @@ const JobPostingDetail: React.FC = () => {
           }
         }
 
+        // Fallback: load by doc id (uid_jobId) so withdrawn applications are found even if query fails
+        if (foundStatus == null) {
+          const fallbackDocId = `${user.uid}_${postId}`;
+          try {
+            const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', fallbackDocId);
+            const appSnap = await getDoc(appRef);
+            if (appSnap.exists()) {
+              const appData = appSnap.data();
+              foundStatus = appData.status || 'submitted';
+              foundDocId = appSnap.id;
+              const js = appData.jobScoreSummary;
+              if (js && typeof js.jobScore === 'number') {
+                foundJobScore = js as JobScoreSummaryStored;
+              }
+            }
+          } catch {
+            // ignore
+          }
+        }
+
         setApplicationStatus(foundStatus);
         setApplicationDocId(foundDocId);
         setApplicationJobScore(foundJobScore);
@@ -868,6 +888,11 @@ const JobPostingDetail: React.FC = () => {
     ? getApplicationStatusButton(applicationStatus)
     : null;
 
+  // Show "Apply Again" when user previously applied and withdrew or was cancelled
+  const showApplyAgain = Boolean(
+    applicationStatus && ['withdrawn', 'cancelled'].includes(applicationStatus.toLowerCase())
+  );
+
   // Assignment accept/decline link from SMS: show "You've been hired" + I Accept / Decline Job
   const params = new URLSearchParams(location.search);
   const urlAssignmentId = params.get('assignmentId');
@@ -1229,7 +1254,7 @@ const JobPostingDetail: React.FC = () => {
                     Cancel Application
                   </Button>
                 </Box>
-              ) : statusButtonProps.label === 'cancelled' ? (
+              ) : showApplyAgain ? (
                 <Button
                   variant="contained"
                   size="small"
@@ -1720,7 +1745,7 @@ const JobPostingDetail: React.FC = () => {
                     )}
                   </Box>
                 ) : statusButtonProps ? (
-                  statusButtonProps.label === 'cancelled' ? (
+                  showApplyAgain ? (
                     <Button
                       variant="contained"
                       fullWidth

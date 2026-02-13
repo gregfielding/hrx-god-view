@@ -252,10 +252,8 @@ const UserApplications: React.FC = () => {
                     }
                   }}
                   onClick={() => {
-                    // Navigate to specific job posting
-                    // Use tenantId from application if available, otherwise default to c1
-                    const tenantSlug = app.tenantId || 'c1';
-                    navigate(`/${tenantSlug}/jobs-board/${app.jobId}`);
+                    // Navigate to job posting under worker layout (/c1/jobs-board/:postId)
+                    navigate(`/c1/jobs-board/${app.jobId}`);
                   }}
                 >
                   <TableCell>

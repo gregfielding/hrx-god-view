@@ -182,7 +182,29 @@ export async function dispatchSystemMessage(args: DispatchSystemMessageArgs): Pr
 
       sent = sent || result.success;
       if (!result.success) {
-        errors.push(`Rule ${rule.ruleId} send failed`);
+        // Log per-channel results so we can see why SMS/email/push failed (e.g. consent, Twilio, SendGrid)
+        const deliverySummary = (result.deliveryResults || []).map(
+          (r: { channel: string; success: boolean; error?: string }) =>
+            `${r.channel}: ${r.success ? 'ok' : (r.error || 'failed')}`
+        ).join('; ');
+        const skippedSummary = (result.routingDecision?.skippedChannels || []).map(
+          (s: { channel: string; reason: string }) => `${s.channel}=${s.reason}`
+        ).join('; ');
+        logger.warn('Rule send failed – delivery and skip details', {
+          tenantId: args.tenantId,
+          triggerKey: args.triggerKey,
+          ruleId: rule.ruleId,
+          userId: args.userId,
+          deliveryResults: deliverySummary || '(none)',
+          skippedChannels: skippedSummary || '(none)',
+        });
+        const firstFailure = (result.deliveryResults || []).find((r: { success: boolean }) => !r.success);
+        const errDetail = firstFailure?.error
+          ? ` (${firstFailure.channel}: ${firstFailure.error})`
+          : (result.routingDecision?.skippedChannels?.length
+              ? ` (skipped: ${result.routingDecision.skippedChannels.map((s: { channel: string; reason: string }) => `${s.channel}=${s.reason}`).join('; ')})`
+              : '');
+        errors.push(`Rule ${rule.ruleId} send failed${errDetail}`);
         continue;
       }
       // Send only one message per trigger event.

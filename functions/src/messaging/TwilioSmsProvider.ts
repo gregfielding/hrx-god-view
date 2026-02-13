@@ -55,6 +55,16 @@ export class TwilioSmsProvider implements SmsProvider {
       };
     }
 
+    const to = (params.to || '').trim();
+    if (!to) {
+      logger.warn('TwilioSmsProvider: missing or empty "to" (phone). Ensure user has phone or phoneE164.');
+      return {
+        success: false,
+        errorCode: 'MISSING_TO',
+        errorMessage: 'Required parameter "params[\'to\']" missing (no destination phone).',
+      };
+    }
+
     try {
       // Get Twilio configuration
       const fromNumber = TWILIO_MESSAGING_PHONE_NUMBER.value() || process.env.TWILIO_MESSAGING_PHONE_NUMBER;
@@ -62,7 +72,7 @@ export class TwilioSmsProvider implements SmsProvider {
 
       // Build message parameters
       const messageParams: any = {
-        to: params.to,
+        to,
         body: params.body,
       };
 
@@ -92,10 +102,10 @@ export class TwilioSmsProvider implements SmsProvider {
         if ((twilioErr.code === 21705 || twilioErr.code === 30034) && usedMessagingService && fromNumber && fromNumber.trim() !== '') {
           logger.warn(
             `Messaging Service failed (${twilioErr.code}), falling back to direct number`,
-            { to: params.to, error: twilioErr.message }
+            { to, error: twilioErr.message }
           );
           message = await this.client.messages.create({
-            to: params.to,
+            to,
             body: params.body,
             from: fromNumber,
           });
@@ -104,7 +114,7 @@ export class TwilioSmsProvider implements SmsProvider {
         }
       }
 
-      logger.info(`SMS sent via Twilio: ${message.sid} to ${params.to}`);
+      logger.info(`SMS sent via Twilio: ${message.sid} to ${to}`);
 
       return {
         success: true,
@@ -113,7 +123,7 @@ export class TwilioSmsProvider implements SmsProvider {
     } catch (err: any) {
       // Handle A2P 10DLC registration errors (when no fallback was possible)
       if (err.code === 30034) {
-        logger.error(`A2P 10DLC registration required. SMS not sent to ${params.to}`);
+        logger.error(`A2P 10DLC registration required. SMS not sent to ${to}`);
         return {
           success: false,
           errorCode: '30034',
@@ -128,7 +138,7 @@ export class TwilioSmsProvider implements SmsProvider {
       logger.error(`Twilio SMS send failed:`, {
         errorCode,
         errorMessage,
-        to: params.to,
+        to,
         messageTypeId: params.messageTypeId,
       });
 

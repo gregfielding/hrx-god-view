@@ -72,12 +72,13 @@ export async function sendLegacyApplicationStatusMessage(args: {
     // Map source to message type
     let messageTypeId = 'application_received';
     if (args.source === 'application_status_changed') {
-      if (args.status === 'screened') messageTypeId = 'application_screened';
+      if (args.status === 'submitted') messageTypeId = 'application_received'; // re-apply: same as new application
+      else if (args.status === 'screened') messageTypeId = 'application_screened';
       else if (args.status === 'advanced') messageTypeId = 'application_advanced';
       else if (args.status === 'hired') messageTypeId = 'application_hired';
       else if (args.status === 'rejected') messageTypeId = 'application_rejected';
       else if (args.status === 'waitlisted') messageTypeId = 'application_waitlisted';
-      else messageTypeId = 'application_status_update';
+      else messageTypeId = 'application_status_change';
     }
     
     const result = await sendMessage({
@@ -95,8 +96,7 @@ export async function sendLegacyApplicationStatusMessage(args: {
       },
       source: 'system',
       sourceId: args.sourceId,
-      // Legacy path: trigger already decided SMS; only attempt SMS so we don't send email instead
-      overrideChannels: ['sms'],
+      // Use message type default channels (e.g. application_received: sms, email, push) so email is sent too
     });
     
     // Convert orchestrator result to legacy format

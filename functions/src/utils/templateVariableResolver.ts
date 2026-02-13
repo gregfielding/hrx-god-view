@@ -434,20 +434,21 @@ function resolveJobPostTitle(context: TemplateVariableContext): string {
 }
 
 function resolveLocationCity(context: TemplateVariableContext): string {
-  // Try multiple sources and field names
+  // Prefer job posting location (the job they applied to) over worksite/company location
   return (
+    context.jobPostData?.locationCity ||
+    context.jobPostData?.worksiteCity ||
+    context.jobPostData?.address?.city ||
+    context.applicationData?.locationCity ||
+    context.applicationData?.data?.locationCity ||
     context.locationData?.city ||
     context.locationData?.locationCity ||
     context.jobOrderData?.locationCity ||
     context.jobOrderData?.worksiteCity ||
-    context.jobPostData?.locationCity ||
-    context.jobPostData?.worksiteCity ||
     context.assignmentData?.locationCity ||
     context.assignmentData?.worksiteCity ||
     context.shiftData?.locationCity ||
     context.shiftData?.worksiteCity ||
-    context.applicationData?.locationCity ||
-    context.applicationData?.data?.locationCity ||
     context.userData?.address?.city ||
     ''
   );

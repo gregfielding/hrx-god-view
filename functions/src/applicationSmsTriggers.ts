@@ -17,6 +17,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 // Define secrets for Twilio (required for SMS sending)
+// SendGrid uses process.env (SENDGRID_API_KEY, etc.) - set in .env or Firebase config to avoid secret/env conflict
 const twilioAccountSid = defineSecret('TWILIO_ACCOUNT_SID');
 const twilioAuthToken = defineSecret('TWILIO_AUTH_TOKEN');
 const twilioMessagingPhoneNumber = defineSecret('TWILIO_MESSAGING_PHONE_NUMBER');
@@ -34,6 +35,13 @@ export const onApplicationCreated = onDocumentCreated(
     const applicationId = event.params.applicationId;
     const tenantId = event.params.tenantId;
     const applicationData = event.data?.data();
+
+    logger.info(`onApplicationCreated invoked`, {
+      applicationId,
+      tenantId,
+      hasData: !!applicationData,
+      status: applicationData?.status,
+    });
 
     if (!applicationData) {
       logger.error(`onApplicationCreated: Missing data for ${applicationId}`);
@@ -213,6 +221,15 @@ export const onApplicationStatusChanged = onDocumentUpdated(
     const before = event.data?.before.data();
     const after = event.data?.after.data();
 
+    logger.info(`onApplicationStatusChanged invoked`, {
+      applicationId,
+      tenantId,
+      hasBefore: !!before,
+      hasAfter: !!after,
+      oldStatus: before?.status,
+      newStatus: after?.status,
+    });
+
     if (!before || !after) {
       logger.error(`onApplicationStatusChanged: Missing before/after data for ${applicationId}`);
       return { success: false };
@@ -223,12 +240,18 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       const statusChanged = before.status !== after.status;
 
       if (!statusChanged) {
-        // No status change, nothing to do
+        logger.info(`Application ${applicationId}: no status change (${after.status}), skipping SMS`);
         return { success: true };
       }
 
       const oldStatus = before.status;
       const newStatus = after.status;
+
+      // Do not send any notifications when the candidate withdraws
+      if (newStatus === 'withdrawn') {
+        logger.info(`Application ${applicationId} status changed to withdrawn - skipping all notifications`);
+        return { success: true };
+      }
 
       logger.info(`Application ${applicationId} status changed from ${oldStatus} to ${newStatus}`);
 
@@ -262,9 +285,10 @@ export const onApplicationStatusChanged = onDocumentUpdated(
 
         try {
           // PHASE 2.1: Use new template engine with legacy fallback
-          // Map status to message type
-          let messageTypeId = 'application_status_update';
-          if (newStatus === 'screened') messageTypeId = 'application_screened';
+          // When status becomes 'submitted' (e.g. re-apply after withdraw), use same template as new application
+          let messageTypeId = 'application_status_change';
+          if (newStatus === 'submitted') messageTypeId = 'application_received';
+          else if (newStatus === 'screened') messageTypeId = 'application_screened';
           else if (newStatus === 'advanced') messageTypeId = 'application_advanced';
           else if (newStatus === 'hired') messageTypeId = 'application_hired';
           else if (newStatus === 'rejected') messageTypeId = 'application_rejected';
@@ -279,8 +303,8 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             'sms',
             (userData.preferredLanguage || 'en') as 'en' | 'es',
             'application',
-            'applicationStatusChange',
-            newStatus
+            newStatus === 'submitted' ? 'applicationCreated' : 'applicationStatusChange',
+            newStatus === 'submitted' ? 'applicationCreated' : newStatus
           );
 
           if (templateResult) {
@@ -329,7 +353,9 @@ export const onApplicationStatusChanged = onDocumentUpdated(
 
           switch (newStatus) {
             case 'submitted':
+              // Re-apply (withdrawn → submitted) or first-time; same message as application_received
               message = `Thanks for submitting your application for ${jobTitle}, ${firstName}. We'll review it and get back to you soon.`;
+              logger.info(`Application ${applicationId}: using fallback message for status=submitted (re-apply or status change)`);
               break;
             case 'screened':
               message = `Hi ${firstName}, your application for ${jobTitle} has been screened. We'll contact you soon.`;
@@ -372,6 +398,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             return { success: true };
           }
 
+          logger.info(`Sending application status SMS for ${applicationId} (${oldStatus} → ${newStatus}) to ${phoneE164}`);
           // PHASE 3: Route through orchestrator instead of direct Twilio call
           const result = await sendLegacyApplicationStatusMessage({
             tenantId,

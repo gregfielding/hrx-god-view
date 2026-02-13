@@ -114,7 +114,7 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     id: 'application_received',
     label: 'Application Received',
     category: 'transactional',
-    defaultChannels: ['sms', 'email'],
+    defaultChannels: ['sms', 'email', 'push'],
     critical: false,
     allowReply: false,
     requiresExplicitSmsOptIn: true,

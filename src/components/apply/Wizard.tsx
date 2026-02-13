@@ -2111,9 +2111,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         console.warn('Failed to clear wizard storage keys:', cleanupError);
       }
 
-      // Redirect immediately (no flicker back to step 1). Prefer explicit returnTo.
+      // Redirect to the job post they applied to (or explicit returnTo), otherwise jobs board.
       const redirectPath =
-        returnTo || (tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board');
+        returnTo ||
+        (tenantSlug && jobId
+          ? `/${tenantSlug}/jobs-board/${jobId}`
+          : tenantSlug
+            ? `/${tenantSlug}/jobs-board`
+            : '/c1/jobs-board');
       try {
         window.location.replace(redirectPath);
         return;

@@ -4,14 +4,15 @@
  * Fixed links (do not change): /c1/jobs-board, /c1/workers/applications
  */
 
-import React, { useState, useEffect } from 'react';
-import { doc, getDoc } from 'firebase/firestore';
+import React, { useState, useEffect, useCallback } from 'react';
+import { doc, getDoc, updateDoc } from 'firebase/firestore';
 import { Box, Stack } from '@mui/material';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getUserScore } from '../../../utils/scoreSummary';
 import { useOnboarding } from '../../../hooks/useOnboarding';
 import WorkerDashboardHero from '../../../components/worker/dashboard/WorkerDashboardHero';
+import WorkerDashboardSmsToggle from '../../../components/worker/dashboard/WorkerDashboardSmsToggle';
 import WorkerDashboardAlerts from '../../../components/worker/dashboard/WorkerDashboardAlerts';
 import WorkerDashboardStatusCards from '../../../components/worker/dashboard/WorkerDashboardStatusCards';
 import WorkerDashboardQuickActions from '../../../components/worker/dashboard/WorkerDashboardQuickActions';
@@ -54,6 +55,38 @@ const WorkerDashboard: React.FC = () => {
         ? 'Your recruiter will request anything needed'
         : 'Complete required items';
 
+  const smsEnabled =
+    userDoc != null &&
+    userDoc.smsOptIn !== false &&
+    userDoc.smsBlockedSystem !== true;
+
+  const fetchUserDoc = useCallback(() => {
+    if (!user?.uid) return;
+    getDoc(doc(db, 'users', user.uid)).then((snap) => {
+      setUserDoc(snap.exists() ? (snap.data() as Record<string, unknown>) : null);
+    });
+  }, [user?.uid]);
+
+  const handleSmsToggle = useCallback(
+    async (enabled: boolean) => {
+      if (!user?.uid) return;
+      try {
+        const updates: Record<string, unknown> = {
+          smsOptIn: enabled,
+          updatedAt: new Date(),
+        };
+        if (enabled) {
+          updates.smsBlockedSystem = false;
+        }
+        await updateDoc(doc(db, 'users', user.uid), updates);
+        fetchUserDoc();
+      } catch (err) {
+        console.error('Failed to update SMS preference:', err);
+      }
+    },
+    [user?.uid, fetchUserDoc]
+  );
+
   const nextShift = null;
   const alerts = [
     {
@@ -69,6 +102,12 @@ const WorkerDashboard: React.FC = () => {
       <Stack spacing={4} sx={{ py: 2 }}>
         <WorkerDashboardHero firstName={firstName} nextShift={nextShift} />
 
+        <WorkerDashboardSmsToggle
+          smsEnabled={smsEnabled}
+          onToggle={handleSmsToggle}
+          disabled={!user?.uid}
+        />
+
         <WorkerDashboardAlerts alerts={alerts} />
 
         <WorkerDashboardStatusCards
@@ -78,6 +117,7 @@ const WorkerDashboard: React.FC = () => {
           applicationsCount={applicationsCount}
           supportCardOnly
           supportSubtext="Contact support"
+          showSupportCard={false}
         />
 
         <WorkerDashboardQuickActions />

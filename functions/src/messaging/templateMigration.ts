@@ -49,7 +49,7 @@ function mapLegacyToMessageType(
       if (triggerStatus === 'hired') return 'application_hired';
       if (triggerStatus === 'rejected') return 'application_rejected';
       if (triggerStatus === 'waitlisted') return 'application_waitlisted';
-      return 'application_status_update';
+      return 'application_status_change';
     }
   } else if (category === 'assignment') {
     if (triggerType === 'assignmentCreated') {

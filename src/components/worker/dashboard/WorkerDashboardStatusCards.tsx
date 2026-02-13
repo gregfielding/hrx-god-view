@@ -30,6 +30,8 @@ export interface WorkerDashboardStatusCardsProps {
   /** Support card: no count; show only label + subtext when true */
   supportCardOnly?: boolean;
   supportSubtext?: string;
+  /** Set false to hide the Support card (e.g. until support flow is ready) */
+  showSupportCard?: boolean;
 }
 
 const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
@@ -39,8 +41,20 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
   applicationsCount,
   supportCardOnly = true,
   supportSubtext = 'Get help',
+  showSupportCard = false,
 }) => {
   const navigate = useNavigate();
+
+  const supportCard: (StatusCardItem & { metricHidden?: boolean }) | null = showSupportCard
+    ? {
+        label: 'Support',
+        metric: '',
+        subtext: supportSubtext,
+        to: '/c1/workers/support',
+        icon: <ChatIcon fontSize="small" />,
+        metricHidden: supportCardOnly,
+      }
+    : null;
 
   const cards: (StatusCardItem & { metricHidden?: boolean })[] = [
     {
@@ -66,14 +80,7 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
       icon: <ListAltIcon fontSize="small" />,
       metricHidden: applicationsCount == null,
     },
-    {
-      label: 'Support',
-      metric: '',
-      subtext: supportSubtext,
-      to: '/c1/workers/support',
-      icon: <ChatIcon fontSize="small" />,
-      metricHidden: supportCardOnly,
-    },
+    ...(supportCard ? [supportCard] : []),
   ];
 
   return (

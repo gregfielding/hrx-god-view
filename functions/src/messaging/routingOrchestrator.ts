@@ -14,7 +14,7 @@ import { getUserNotificationSettings, NotificationSettings } from '../utils/noti
 import { logMessage, MessageLog, MessageDirection, MessageFromIdentity, MessageStatus, MessageLanguage } from './messageLogging';
 import type { TemplateVariableContext } from '../utils/templateVariableResolver';
 import { getTemplate, renderTemplate, MessageTemplate } from './templateEngine';
-import { getEmailProvider } from './emailProviderFactory';
+import { getEmailProvider, isSendGridConfigured } from './emailProviderFactory';
 import { getSmsProvider } from './smsProviderFactory';
 import { getPushProvider } from './pushProviderFactory';
 import { getTenantSmsConsent } from './tenantConsent';
@@ -308,7 +308,7 @@ async function shouldUseChannel(
     // Application status messages: attempt SMS if user has phone (relax verification to reach applicants)
     const isApplicationMessage =
       context.messageTypeId?.startsWith('application_') ||
-      ['application_received', 'application_screened', 'application_advanced', 'application_hired', 'application_rejected', 'application_waitlisted', 'application_status_update'].includes(context.messageTypeId || '');
+      ['application_received', 'application_screened', 'application_advanced', 'application_hired', 'application_rejected', 'application_waitlisted', 'application_status_change'].includes(context.messageTypeId || '');
     if (isApplicationMessage) {
       const phone = userData.phoneE164 || userData.phone;
       if (!phone) {
@@ -416,9 +416,16 @@ async function deliverMessage(
   }
 }
 
-/**
- * Deliver SMS message
- */
+/** Normalize phone to E.164 for Twilio. Handles (xxx)xxx-xxxx, +1..., 10/11 digits. */
+function toE164(phone: string | undefined): string | null {
+  if (!phone || typeof phone !== 'string') return null;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (digits.length >= 10 && phone.trim().startsWith('+')) return `+${digits}`;
+  return digits.length >= 10 ? `+${digits}` : null;
+}
+
 /**
  * Deliver SMS message
  * 
@@ -628,6 +635,17 @@ async function deliverSMS(
     
     await logRef.set(logDoc);
     
+    // Resolve recipient: allow phoneE164 or phone (application flow may only have phone)
+    const rawPhone = (userData.phoneE164 || userData.phone || '').trim();
+    const toPhoneE164 = rawPhone.startsWith('+') ? rawPhone : toE164(rawPhone);
+    if (!toPhoneE164) {
+      return {
+        channel: 'sms',
+        success: false,
+        error: 'Required parameter "params[\'to\']" missing (no phone number on user)',
+      };
+    }
+
     // Resolve sender identity to get recruiter number if available
     const senderIdentity = await resolveSenderIdentity(context.tenantId, context);
     
@@ -639,7 +657,7 @@ async function deliverSMS(
     
     const result = await smsProvider.sendSms({
       tenantId: context.tenantId,
-      to: userData.phoneE164,
+      to: toPhoneE164,
       from: fromNumber,
       body: messageContent,
       messageTypeId: context.messageTypeId,
@@ -695,12 +713,11 @@ async function deliverEmail(
     let senderIdentity = await resolveSenderIdentity(context.tenantId, context);
 
     // CRITICAL POLICY:
-    // User-composed emails must NEVER fall back to SendGrid/no-reply.
-    // If Gmail isn't connected/usable for the sender, fail loudly.
+    // User-composed emails (recruiter sending, or explicit direct_message type) must NEVER fall back to SendGrid.
+    // System messages (e.g. application_received) use _directMessage for pre-rendered body but should use SendGrid.
     const isUserComposedEmail =
       context.source === 'recruiter' ||
-      context.messageTypeId === 'direct_message' ||
-      context.variables?._directMessage === true;
+      context.messageTypeId === 'direct_message';
     if (isUserComposedEmail) {
       if (senderIdentity.emailProvider !== 'gmail' || !senderIdentity.gmailUserId) {
         return {
@@ -716,6 +733,13 @@ async function deliverEmail(
     let emailProvider;
     try {
       emailProvider = getEmailProvider(senderIdentity);
+      if (senderIdentity?.emailProvider === 'sendgrid') {
+        logger.info('SendGrid available', {
+          configured: isSendGridConfigured(),
+          messageTypeId: context.messageTypeId,
+          userId: context.userId,
+        });
+      }
     } catch (configError: any) {
       logger.warn(`Email provider not configured: ${configError.message}`);
       return {
