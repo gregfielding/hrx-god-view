@@ -29,6 +29,7 @@ const VALID_RULE_STATUS: AutomationRuleStatus[] = ['draft', 'active'];
 /** Sample values for template variables when testing without real assignment/application context */
 const TEST_SAMPLE_VARIABLES: Record<string, string> = {
   assignmentAcceptDeclineUrl: 'https://hrxone.com/c1/jobs-board?assignmentId=sample&intent=assignment_response',
+  assignmentUrl: 'https://hrxone.com/c1/workers/assignments/sample-assignment-id',
   assignmentId: 'sample-assignment-id',
   assignmentStatus: 'proposed',
   assignmentDate: new Date().toLocaleDateString(),

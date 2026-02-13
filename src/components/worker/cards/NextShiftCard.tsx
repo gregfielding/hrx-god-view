@@ -44,7 +44,7 @@ const NextShiftCard: React.FC<NextShiftCardProps> = ({ firstName, nextShift }) =
               variant="contained"
               size="medium"
               sx={{ mt: 2 }}
-              onClick={() => nextShift?.assignmentId && navigate(`/c1/assignments/${nextShift.assignmentId}`)}
+              onClick={() => nextShift?.assignmentId && navigate(`/c1/workers/assignments/${nextShift.assignmentId}`)}
             >
               View Details
             </Button>

@@ -62,7 +62,7 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
                   variant="contained"
                   onClick={() =>
                     nextShift?.assignmentId
-                      ? navigate(`/c1/assignments/${nextShift.assignmentId}`)
+                      ? navigate(`/c1/workers/assignments/${nextShift.assignmentId}`)
                       : navigate('/c1/workers/assignments')
                   }
                 >

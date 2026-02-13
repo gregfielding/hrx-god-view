@@ -134,9 +134,37 @@ const AssignmentDetails: React.FC = () => {
         return;
       }
 
-      // Try legacy structure first (assignments collection with userId)
+      // Try legacy structure first (root assignments collection)
       const assignmentRef = doc(db, 'assignments', assignmentId);
-      const assignmentSnap = await getDoc(assignmentRef);
+      let assignmentSnap = await getDoc(assignmentRef);
+
+      // If not in legacy collection, try tenant-scoped: tenants/{tenantId}/assignments/{assignmentId}
+      if (!assignmentSnap.exists()) {
+        const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
+        const userRef = doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userRef);
+        const tenantIds: string[] = [C1_TENANT_ID];
+        if (userSnap.exists()) {
+          const userData = userSnap.data();
+          if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
+            const keys = Object.keys(userData.tenantIds);
+            tenantIds.length = 0;
+            tenantIds.push(...keys);
+            if (!keys.includes(C1_TENANT_ID)) tenantIds.push(C1_TENANT_ID);
+          }
+        }
+        for (const tid of tenantIds) {
+          const tenantAssignmentRef = doc(db, 'tenants', tid, 'assignments', assignmentId);
+          const snap = await getDoc(tenantAssignmentRef);
+          if (snap.exists()) {
+            const d = snap.data();
+            if ((d?.userId || d?.candidateId) === user.uid) {
+              assignmentSnap = snap;
+              break;
+            }
+          }
+        }
+      }
 
       if (!assignmentSnap.exists()) {
         setError('Assignment not found');
@@ -145,25 +173,33 @@ const AssignmentDetails: React.FC = () => {
       }
 
       const data = assignmentSnap.data();
-      
+      const resolvedTenantId = data.tenantId || (assignmentSnap.ref.parent?.parent?.id);
+
       // Verify this assignment belongs to the current user
-      if (data.userId !== user.uid) {
+      if ((data.userId || data.candidateId) !== user.uid) {
         setError('You do not have permission to view this assignment');
         setLoading(false);
         return;
       }
 
-      // Parse dates
+      // Parse dates (support both Firestore Timestamp and string, and startTime/endTime)
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       let createdAt: Date | undefined;
       let updatedAt: Date | undefined;
 
       if (data.startDate) {
-        startDate = data.startDate.toDate ? data.startDate.toDate() : new Date(data.startDate);
+        const raw = data.startDate;
+        startDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
       }
       if (data.endDate) {
-        endDate = data.endDate.toDate ? data.endDate.toDate() : new Date(data.endDate);
+        const raw = data.endDate;
+        endDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+      } else if (data.startDate && (data.startTime || data.endTime)) {
+        const dateStr = typeof data.startDate === 'string' ? data.startDate : data.startDate?.toDate?.()?.toISOString?.()?.slice(0, 10);
+        if (dateStr && data.endTime) {
+          endDate = new Date(`${dateStr}T${String(data.endTime).slice(0, 5)}:00`);
+        }
       }
       if (data.createdAt) {
         createdAt = data.createdAt.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
@@ -172,23 +208,22 @@ const AssignmentDetails: React.FC = () => {
         updatedAt = data.updatedAt.toDate ? data.updatedAt.toDate() : new Date(data.updatedAt);
       }
 
-      // Get job order details if jobOrderId exists
       const jobTitle = data.jobTitle || '';
       const companyName = data.companyName || '';
-      const location = data.location || data.worksiteName || '';
-      const worksiteName = data.worksiteName || '';
+      const location = data.location || data.worksiteName || data.locationNickname || '';
+      const worksiteName = data.worksiteName || data.locationNickname || '';
       const worksiteAddress = data.worksiteAddress || data.address;
 
       // Load job order details if available
-      if (data.jobOrderId && data.tenantId) {
-        await loadFromJobOrder(data.tenantId, data.jobOrderId, data, assignmentSnap.id);
+      if (data.jobOrderId && resolvedTenantId) {
+        await loadFromJobOrder(resolvedTenantId, data.jobOrderId, data, assignmentSnap.id);
         return;
       }
 
       // If no job order, set assignment with basic data
       setAssignment({
         id: assignmentSnap.id,
-        tenantId: data.tenantId || '',
+        tenantId: resolvedTenantId || '',
         jobOrderId: data.jobOrderId,
         jobTitle,
         companyName,
@@ -198,7 +233,7 @@ const AssignmentDetails: React.FC = () => {
         payRate: data.payRate,
         startDate,
         endDate,
-        status: data.status || 'pending',
+        status: (data.status || 'pending').toLowerCase(),
         hoursWorked: data.hoursWorked,
         totalEarnings: data.totalEarnings,
         notes: data.notes,

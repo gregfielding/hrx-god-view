@@ -270,6 +270,27 @@ export const onApplicationStatusChanged = onDocumentUpdated(
 
       logger.info(`Application ${applicationId} status changed from ${oldStatus} to ${newStatus}`);
 
+      // Do not send rejection when this application has an assignment in good standing (proposed/confirmed/active).
+      // This prevents the worker from getting "Application Rejected" when they were actually placed and/or accepted.
+      if (newStatus === 'rejected') {
+        const assignmentId = after.assignmentId;
+        if (assignmentId) {
+          try {
+            const assignmentSnap = await admin.firestore()
+              .doc(`tenants/${tenantId}/assignments/${assignmentId}`)
+              .get();
+            const assignment = assignmentSnap.data();
+            const assignmentStatus = (assignment?.status || '').toLowerCase();
+            if (['proposed', 'confirmed', 'active'].includes(assignmentStatus)) {
+              logger.info(`Application ${applicationId} status=rejected but assignment ${assignmentId} is ${assignmentStatus}; skipping rejection notification`);
+              return { success: true };
+            }
+          } catch (err) {
+            logger.warn(`Could not check assignment for application ${applicationId}:`, err);
+          }
+        }
+      }
+
       // Get user ID from application (userId or candidateId)
       const userId = after.userId || after.candidateId;
       if (!userId) {

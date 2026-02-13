@@ -222,7 +222,7 @@ export async function generateMenuItems(
         },
         {
           text: 'My Assignments',
-          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/assignments` : '/c1/assignments',
+          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/assignments` : '/c1/workers/assignments',
           icon: 'assignment_turned_in',
           requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
         }

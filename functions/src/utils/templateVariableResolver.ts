@@ -91,6 +91,8 @@ export interface ResolvedVariables {
   assignmentTimeRange: string;
   /** URL to jobs board posting where worker can accept/decline the assignment */
   assignmentAcceptDeclineUrl: string;
+  /** URL to assignment details page (view everything about the assignment) */
+  assignmentUrl: string;
   
   // Shift variables
   shiftId: string;
@@ -176,6 +178,7 @@ export async function resolveTemplateVariables(
     assignmentDate: resolveAssignmentDate(resolvedContext),
     assignmentTimeRange: resolveAssignmentTimeRange(resolvedContext),
     assignmentAcceptDeclineUrl: resolveAssignmentAcceptDeclineUrl(resolvedContext),
+    assignmentUrl: resolveAssignmentUrl(resolvedContext),
     
     // Shift variables
     shiftId: shiftId || '',
@@ -606,6 +609,19 @@ function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): st
   return `${baseUrl}/c1/jobs-board`;
 }
 
+/**
+ * URL to assignment details page where worker can view everything about their assignment.
+ * Used in Assignment Created / confirmed messages. Path: /c1/workers/assignments/:assignmentId
+ */
+function resolveAssignmentUrl(context: TemplateVariableContext): string {
+  const assignmentId = context.assignmentId;
+  const baseUrl = 'https://hrxone.com';
+  if (assignmentId) {
+    return `${baseUrl}/c1/workers/assignments/${assignmentId}`;
+  }
+  return `${baseUrl}/c1/workers/assignments`;
+}
+
 function resolveShiftDate(context: TemplateVariableContext): string {
   const timestamp = 
     context.shiftData?.date ||
@@ -739,6 +755,7 @@ export function getAvailableVariables(): Array<{ name: string; description: stri
     { name: 'assignmentDate', description: 'Assignment date', example: '12/20/2024' },
     { name: 'assignmentTimeRange', description: 'Assignment time range', example: '9:00 AM - 5:00 PM' },
     { name: 'assignmentAcceptDeclineUrl', description: 'URL to accept or decline assignment (Assignment Created trigger)', example: 'https://hrxone.com/c1/jobs-board/post123?assignmentId=...' },
+    { name: 'assignmentUrl', description: 'URL to assignment details page (view everything about your assignment)', example: 'https://hrxone.com/c1/workers/assignments/assign123' },
     { name: 'shiftId', description: 'Shift ID', example: 'shift456' },
     { name: 'shiftDate', description: 'Shift date', example: '12/25/2024' },
     { name: 'shiftTimeRange', description: 'Shift time range', example: '8:00 AM - 4:00 PM' },

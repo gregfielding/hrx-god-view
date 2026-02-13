@@ -42,6 +42,7 @@ import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import { getRequirementsWithStatus } from '../utils/jobRequirementStatus';
 import { JobRequirementChip } from '../components/JobRequirementChip';
+import { logAssignmentUpdateActivity } from '../utils/activityLogger';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -69,6 +70,7 @@ const JobPostingDetail: React.FC = () => {
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
   const [assignmentStartDate, setAssignmentStartDate] = useState<any>(null); // recruiter-set start date when worker has assignment
+  const [assignmentDecisionLoading, setAssignmentDecisionLoading] = useState(false); // prevent double-clicks on I Accept / Decline
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
@@ -935,11 +937,15 @@ const JobPostingDetail: React.FC = () => {
         : 'Are you sure you want to decline this job?';
     if (!window.confirm(confirmMessage)) return;
 
+    setAssignmentDecisionLoading(true);
     try {
       const params = new URLSearchParams(location.search);
       let assignmentId = params.get('assignmentId');
       if (!assignmentId && shiftId) {
         assignmentId = await findAssignmentIdForShift(shiftId);
+      }
+      if (!assignmentId && applicationData?.assignmentId) {
+        assignmentId = String(applicationData.assignmentId);
       }
 
       if (!assignmentId) {
@@ -958,6 +964,11 @@ const JobPostingDetail: React.FC = () => {
         if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'confirmed' }));
         setApplicationStatus('confirmed');
         setAcceptedAssignmentId(assignmentId);
+        if (user?.uid && assignmentId) {
+          logAssignmentUpdateActivity(user.uid, assignmentId, 'confirmed').catch((e) =>
+            console.warn('Failed to log assignment confirmed activity:', e)
+          );
+        }
         alert('Assignment accepted! We sent your first-day details.');
       } else {
         if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'withdrawn' }));
@@ -972,6 +983,8 @@ const JobPostingDetail: React.FC = () => {
     } catch (err) {
       console.error(`Failed to ${decision} assignment:`, err);
       alert(`We were unable to ${decision} this assignment. Please try again.`);
+    } finally {
+      setAssignmentDecisionLoading(false);
     }
   };
 
@@ -1033,7 +1046,7 @@ const JobPostingDetail: React.FC = () => {
   const isAssignmentResponseMode = Boolean(urlAssignmentId && intent === 'assignment_response');
   const assignmentDetailsId = acceptedAssignmentId || urlAssignmentId;
   const assignmentDetailsUrl = assignmentDetailsId
-    ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com'}/c1/assignments/${assignmentDetailsId}`
+    ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com'}/c1/workers/assignments/${assignmentDetailsId}`
     : null;
 
   // Generate Google Jobs structured data
@@ -1288,7 +1301,7 @@ const JobPostingDetail: React.FC = () => {
                   </Typography>
                   <Button
                     component={Link}
-                    to={`/c1/assignments/${assignmentDetailsId}`}
+                    to={`/c1/workers/assignments/${assignmentDetailsId}`}
                     variant="contained"
                     size={isMobile ? 'small' : 'medium'}
                     sx={{
@@ -1305,14 +1318,11 @@ const JobPostingDetail: React.FC = () => {
                 </Box>
               ) : null
             ) : statusButtonProps?.label === 'confirmed_special' ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                  Congratulations, you&apos;ve been confirmed to work.
-                </Typography>
-                {assignmentDetailsUrl && (
+              assignmentDetailsUrl ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
                   <Button
                     component={Link}
-                    to={`/c1/assignments/${assignmentDetailsId}`}
+                    to={`/c1/workers/assignments/${assignmentDetailsId}`}
                     variant="contained"
                     size={isMobile ? 'small' : 'medium'}
                     sx={{
@@ -1327,8 +1337,8 @@ const JobPostingDetail: React.FC = () => {
                   >
                     View Assignment Details
                   </Button>
-                )}
-              </Box>
+                </Box>
+              ) : null
             ) : statusButtonProps ? (
               statusButtonProps.label === 'Application Submitted' ? (
                 <Box
@@ -1622,9 +1632,11 @@ const JobPostingDetail: React.FC = () => {
             >
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                  {(statusButtonProps?.label === 'accepted_special' || statusButtonProps?.label === 'confirmed_special' || isAssignmentResponseMode)
-                    ? 'Accept this Position'
-                    : 'Apply for this Position'}
+                  {statusButtonProps?.label === 'confirmed_special'
+                    ? "You've Been Hired"
+                    : (statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode)
+                      ? 'Accept this Position'
+                      : 'Apply for this Position'}
                 </Typography>
 
                 <Divider sx={{ my: 2 }} />
@@ -1703,7 +1715,9 @@ const JobPostingDetail: React.FC = () => {
                       variant="contained"
                       size="large"
                       fullWidth
+                      disabled={assignmentDecisionLoading}
                       onClick={handleConfirmAssignment}
+                      startIcon={assignmentDecisionLoading ? <CircularProgress size={20} color="inherit" /> : null}
                       sx={{
                         py: 1.5,
                         fontSize: '1.1rem',
@@ -1714,13 +1728,14 @@ const JobPostingDetail: React.FC = () => {
                         },
                       }}
                     >
-                      I Accept
+                      {assignmentDecisionLoading ? 'Accepting…' : 'I Accept'}
                     </Button>
                     <Button
                       variant="contained"
                       size="large"
                       fullWidth
                       color="error"
+                      disabled={assignmentDecisionLoading}
                       onClick={handleDeclineAssignment}
                       sx={{ fontWeight: 'bold' }}
                     >
@@ -1728,14 +1743,11 @@ const JobPostingDetail: React.FC = () => {
                     </Button>
                   </Box>
                 ) : statusButtonProps?.label === 'confirmed_special' ? (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 3 }}>
-                    <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                      Congratulations, you&apos;ve been confirmed to work.
-                    </Typography>
-                    {assignmentDetailsUrl && (
+                  assignmentDetailsUrl ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 3 }}>
                       <Button
                         component={Link}
-                        to={`/c1/assignments/${assignmentDetailsId}`}
+                        to={`/c1/workers/assignments/${assignmentDetailsId}`}
                         variant="contained"
                         size="large"
                         fullWidth
@@ -1750,8 +1762,8 @@ const JobPostingDetail: React.FC = () => {
                       >
                         View Assignment Details
                       </Button>
-                    )}
-                  </Box>
+                    </Box>
+                  ) : null
                 ) : statusButtonProps ? (
                   showApplyAgain ? (
                     <Button

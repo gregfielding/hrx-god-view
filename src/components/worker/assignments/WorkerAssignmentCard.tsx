@@ -72,8 +72,7 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
   const chip = getStatusChip(assignment.status);
 
   const handleViewDetails = () => {
-    // Detail route exists: /c1/assignments/:assignmentId (do not change)
-    navigate(`/c1/assignments/${assignment.assignmentId}`);
+    navigate(`/c1/workers/assignments/${assignment.assignmentId}`);
   };
 
   return (

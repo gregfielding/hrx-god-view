@@ -382,6 +382,7 @@ function App() {
             <Route index element={<C1WorkersIndex />} />
             <Route path="dashboard" element={<WorkerDashboard />} />
             <Route path="assignments" element={<C1WorkerAssignments />} />
+            <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
             <Route path="applications" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
             <Route path="documents" element={<WorkerDocuments />} />
@@ -405,7 +406,7 @@ function App() {
       {/* Redirects and tenant-slug routes (same layout when logged in) */}
       <Route path="/jobs-board" element={<Navigate to="/c1/jobs-board" replace />} />
       <Route path="/applications" element={<Navigate to="/c1/workers/applications" replace />} />
-      <Route path="/assignments" element={<Navigate to="/c1/assignments" replace />} />
+      <Route path="/assignments" element={<Navigate to="/c1/workers/assignments" replace />} />
       <Route element={<ConditionalJobsBoardLayout />}>
         <Route path="/:tenantSlug/jobs-board/:postId" element={<JobPostingDetail />} />
         <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />

@@ -55,6 +55,7 @@ import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 
 interface PlacementsTabProps {
@@ -845,13 +846,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       });
 
       const data = response.data as any;
-      const createdCount = Array.isArray(data?.created) ? data.created.length : 0;
+      const created = Array.isArray(data?.created) ? data.created : [];
+      const createdCount = created.length;
       const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
 
       if (createdCount === 0 && skipped.length > 0) {
         setError(`No assignments created. ${skipped.map((s: any) => s.reason).join(', ')}`);
-        } else {
+      } else {
         setError(null);
+        created.forEach((entry: { userId: string; assignmentId: string }) => {
+          if (entry?.userId && entry?.assignmentId) {
+            logAssignmentUpdateActivity(entry.userId, entry.assignmentId, 'placed').catch((e) =>
+              console.warn('Failed to log assignment placed activity:', e)
+            );
+          }
+        });
       }
     } catch (err: any) {
       console.error('Error assigning workers to shift:', err);
