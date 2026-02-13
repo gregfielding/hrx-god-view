@@ -6,7 +6,7 @@ import StarIcon from '@mui/icons-material/Star';
 import { collection, getDocs, limit, orderBy, query } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
-import { formatOneDecimal, getRelativeAiScore } from '../../../utils/scoreSummary';
+import { formatOneDecimal } from '../../../utils/scoreSummary';
 import ReviewsTab from './ReviewsTab';
 
 type Props = {
@@ -126,10 +126,10 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
           <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
             {typeof aiScore === 'number' && !Number.isNaN(aiScore) ? (
               (() => {
-                const relative = getRelativeAiScore(aiScore, scoringDistribution);
-                const display = relative != null ? relative : Math.round(aiScore);
+                // Show stored AI score only so it matches header and users table
+                const display = Math.round(aiScore);
                 return (
-                  <Tooltip title={relative != null ? `Raw: ${Math.round(aiScore)} (relative to pool: ${display})` : `AI Score: ${Math.round(aiScore)}`}>
+                  <Tooltip title={`AI Score (stored): ${display}`}>
                     <Chip color="primary" variant="outlined" label={`AI Score: ${display}`} />
                   </Tooltip>
                 );

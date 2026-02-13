@@ -52,21 +52,31 @@ const ApplyWizardPage: React.FC = () => {
 
         try {
           // If the param looks like a Firestore ID (no dashes and length >= 20),
-          // use it AS-IS (case sensitive). Do not lowercase IDs.
+          // use it AS-IS. Proceed with this ID even if we can't read the tenant doc
+          // (e.g. unauthenticated users may not have read access to tenants collection).
           const looksLikeId = /^[A-Za-z0-9]{20,}$/.test(rawTenantSlug);
           if (looksLikeId) {
             setTenantId(rawTenantSlug);
-            const tenantRef = doc(db, 'tenants', rawTenantSlug);
-            const tenantSnap = await getDoc(tenantRef);
-            if (cancelled) return;
-            if (tenantSnap.exists()) {
-              const data = tenantSnap.data() as any;
-              setTenantName(data?.name || null);
-              setActualSlug(data?.slug || null);
+            try {
+              const tenantRef = doc(db, 'tenants', rawTenantSlug);
+              const tenantSnap = await getDoc(tenantRef);
+              if (cancelled) return;
+              if (tenantSnap.exists()) {
+                const data = tenantSnap.data() as any;
+                setTenantName(data?.name || null);
+                setActualSlug(data?.slug || null);
+              }
+            } catch (_) {
+              // Permission denied or network error: still proceed with tenantId from URL
+              if (!cancelled) {
+                setTenantName(null);
+                setActualSlug(null);
+              }
             }
             return;
           }
 
+          // Resolve by slug (requires read on tenants collection)
           const q = query(collection(db, 'tenants'), where('slug', '==', effectiveTenantSlug), limit(1));
           const snap = await getDocs(q);
           if (cancelled) return;

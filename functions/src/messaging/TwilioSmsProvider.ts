@@ -67,7 +67,8 @@ export class TwilioSmsProvider implements SmsProvider {
       };
 
       // Prefer Messaging Service when configured so Twilio Link Shortening (go.hrxone.com) is used
-      if (messagingServiceSid && messagingServiceSid.trim() !== '') {
+      const usedMessagingService = messagingServiceSid && messagingServiceSid.trim() !== '';
+      if (usedMessagingService) {
         messageParams.messagingServiceSid = messagingServiceSid;
         messageParams.shortenUrls = true; // Twilio Link Shortening (go.hrxone.com)
         logger.info(`Using A2P messaging service (link shortening): ${messagingServiceSid}`);
@@ -83,7 +84,25 @@ export class TwilioSmsProvider implements SmsProvider {
       }
 
       // Send SMS via Twilio
-      const message = await this.client.messages.create(messageParams);
+      let message;
+      try {
+        message = await this.client.messages.create(messageParams);
+      } catch (twilioErr: any) {
+        // When using Messaging Service, fall back to direct number on invalid SID (21705) or A2P (30034)
+        if ((twilioErr.code === 21705 || twilioErr.code === 30034) && usedMessagingService && fromNumber && fromNumber.trim() !== '') {
+          logger.warn(
+            `Messaging Service failed (${twilioErr.code}), falling back to direct number`,
+            { to: params.to, error: twilioErr.message }
+          );
+          message = await this.client.messages.create({
+            to: params.to,
+            body: params.body,
+            from: fromNumber,
+          });
+        } else {
+          throw twilioErr;
+        }
+      }
 
       logger.info(`SMS sent via Twilio: ${message.sid} to ${params.to}`);
 
@@ -92,7 +111,7 @@ export class TwilioSmsProvider implements SmsProvider {
         providerMessageId: message.sid,
       };
     } catch (err: any) {
-      // Handle A2P 10DLC registration errors
+      // Handle A2P 10DLC registration errors (when no fallback was possible)
       if (err.code === 30034) {
         logger.error(`A2P 10DLC registration required. SMS not sent to ${params.to}`);
         return {

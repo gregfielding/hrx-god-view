@@ -128,14 +128,17 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
   const education = value?.education || [];
   const certifications = value?.certifications || [];
 
-  // Get required education from job posting
+  // Get required education from job posting (supports array or single string)
   const requiredEducation = useMemo(() => {
     if (!jobPosting) return [];
-    const edu = jobPosting.educationLevels || 
-                jobPosting.educationRequired || 
+    const edu = jobPosting.educationLevels ||
+                jobPosting.educationRequired ||
                 (jobPosting.requirements && Array.isArray(jobPosting.requirements.education) ? jobPosting.requirements.education : []) ||
+                (jobPosting.jobOrder && jobPosting.jobOrder.educationRequired ? [jobPosting.jobOrder.educationRequired] : []) ||
                 [];
-    return Array.isArray(edu) ? edu.filter(Boolean).map((e: any) => typeof e === 'string' ? e : String(e)) : [];
+    if (Array.isArray(edu)) return edu.filter(Boolean).map((e: any) => typeof e === 'string' ? e : String(e));
+    if (edu && typeof edu === 'string') return [edu.trim()].filter(Boolean);
+    return [];
   }, [jobPosting]);
 
   // Get required certifications from job posting
@@ -371,6 +374,12 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
 
   return (
     <Box>
+      {/* Job requirement callout when this job has education requirements */}
+      {(showOnly === 'both' || showOnly === 'education') && requiredEducation.length > 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <strong>This job requires:</strong> {requiredEducation.join(', ')}.
+        </Alert>
+      )}
       {/* Required Education Section */}
       {(showOnly === 'both' || showOnly === 'education') && requiredEducation.length > 0 && (
         <Box sx={{ mb: 2.5 }}>

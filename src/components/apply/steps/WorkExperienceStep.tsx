@@ -20,7 +20,8 @@ import {
   AccordionDetails,
   IconButton,
   FormControlLabel,
-  Checkbox
+  Checkbox,
+  Alert
 } from '@mui/material';
 import { AddCircle, Delete as DeleteIcon, ExpandMore, Business, CalendarToday } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -87,30 +88,32 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
 
   const workExperience = value?.workExperience || value?.workHistory || [];
 
-  // Get required experience from job posting
+  // Get required experience from job posting (multiple possible fields)
   const requiredExperience = useMemo(() => {
-    if (!jobPosting) {
-      console.log('🔍 WorkExperienceStep: No jobPosting provided');
-      return null;
+    if (!jobPosting) return null;
+
+    // Prefer explicit years string (e.g. "1-2 years")
+    const yearsStr = jobPosting.yearsOfExperience || jobPosting.experienceYears;
+    if (yearsStr && typeof yearsStr === 'string' && yearsStr.trim()) {
+      let s = yearsStr.trim();
+      if (/\d/.test(s) && !s.toLowerCase().includes('year')) s = `${s} of experience`;
+      return s;
     }
-    
-    // Try multiple ways to get experience requirement
+
     let expLevels: string[] = [];
     if (Array.isArray(jobPosting.experienceLevels) && jobPosting.experienceLevels.length > 0) {
       expLevels = jobPosting.experienceLevels;
-      console.log('🔍 WorkExperienceStep: Found experienceLevels:', expLevels);
+    } else if (Array.isArray(jobPosting.requiredExperienceLevels) && jobPosting.requiredExperienceLevels.length > 0) {
+      expLevels = jobPosting.requiredExperienceLevels;
     } else if (jobPosting.experienceRequired) {
-      expLevels = Array.isArray(jobPosting.experienceRequired) 
-        ? jobPosting.experienceRequired 
+      expLevels = Array.isArray(jobPosting.experienceRequired)
+        ? jobPosting.experienceRequired
         : [jobPosting.experienceRequired];
-      console.log('🔍 WorkExperienceStep: Found experienceRequired:', expLevels);
-    } else {
-      console.log('🔍 WorkExperienceStep: No experience requirement found in jobPosting:', {
-        experienceLevels: jobPosting.experienceLevels,
-        experienceRequired: jobPosting.experienceRequired
-      });
+    } else if (jobPosting.jobOrder?.experienceRequired) {
+      const er = jobPosting.jobOrder.experienceRequired;
+      expLevels = Array.isArray(er) ? er : [er];
     }
-    
+
     if (expLevels.length === 0) return null;
     
     // Get the first experience level
@@ -164,13 +167,6 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
     }
     return null;
   }, [jobPosting]);
-
-  // Debug log
-  useEffect(() => {
-    if (requiredExperience) {
-      console.log('✅ WorkExperienceStep: Displaying required experience:', requiredExperience);
-    }
-  }, [requiredExperience]);
 
   // Suggest jobs based on what's already added
   const suggestedJobs = useMemo(() => {
@@ -262,16 +258,17 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
 
   return (
     <Box>
+      {/* Job requirement callout when this job has an experience requirement */}
+      {requiredExperience && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <strong>This job requires:</strong> {requiredExperience.toLowerCase().includes('experience') ? requiredExperience : `${requiredExperience} of relevant work experience`}.
+        </Alert>
+      )}
       {/* Work Experience Section */}
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           🧑‍🍳 Work Experience
         </Typography>
-        {requiredExperience && (
-          <Typography variant="body2" color="primary" sx={{ mb: 1, fontWeight: 500 }}>
-            We're looking for candidates with {requiredExperience} of relevant work experience.
-          </Typography>
-        )}
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
           The more experience you list, the more jobs & pay rates you'll qualify for.
         </Typography>

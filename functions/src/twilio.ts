@@ -443,8 +443,28 @@ export async function sendWorkerMessageInternal(
     try {
       messageResult = await client.messages.create(messageParams);
     } catch (twilioError: any) {
-      // Handle A2P 10DLC registration errors
-      if (twilioError.code === 30034) {
+      // When using Messaging Service, fall back to direct number on invalid SID (21705) or A2P (30034)
+      if ((twilioError.code === 21705 || twilioError.code === 30034) && messageParams.messagingServiceSid && messagingPhoneNumber && messagingPhoneNumber.trim() !== '') {
+        logger.warn(`Messaging Service failed (${twilioError.code}), falling back to direct number ${messagingPhoneNumber}. Error: ${twilioError.message}`);
+        try {
+          messageResult = await client.messages.create({
+            to: to,
+            body: messageContent,
+            from: messagingPhoneNumber,
+          });
+        } catch (fallbackError: any) {
+          logger.error(`Fallback to direct number also failed: ${fallbackError.message}`);
+          return {
+            success: false,
+            messageId: null,
+            status: 'failed',
+            error: twilioError.code === 30034
+              ? 'SMS delivery failed: A2P 10DLC registration required'
+              : `SMS delivery failed: ${fallbackError.message}`,
+            errorCode: String(twilioError.code ?? fallbackError.code),
+          };
+        }
+      } else if (twilioError.code === 30034) {
         logger.error(`A2P 10DLC registration required. SMS not sent to ${to}. Error: ${twilioError.message}`);
         return {
           success: false,
@@ -453,8 +473,9 @@ export async function sendWorkerMessageInternal(
           error: 'SMS delivery failed: A2P 10DLC registration required',
           errorCode: '30034'
         };
+      } else {
+        throw twilioError;
       }
-      throw twilioError;
     }
 
     // PHASE 1.1: Use unified logger instead of legacy /sms_messages collection

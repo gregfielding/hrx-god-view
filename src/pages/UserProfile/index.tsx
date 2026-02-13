@@ -1461,7 +1461,8 @@ const UserProfilePage = () => {
                             )}
 
                         {canViewAdminContent && (() => {
-                          const summary = scoreSummary?.qualityScore ?? scoreSummary?.aiScore ?? profileScore;
+                          // Same order as header and Score tab: stored aiScore first so all show the same number
+                          const summary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
                           if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
                           return (
                             <Chip

@@ -28,7 +28,7 @@ const navItems = [
   { label: 'Dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
   { label: 'Inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
   { label: 'My Assignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
-  { label: 'My Applications', path: '/c1/applications', icon: <ListAltIcon /> },
+  { label: 'My Applications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { label: 'Jobs Board', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { label: 'Job Readiness', path: '/c1/workers/profile', icon: <PersonIcon /> },
   { label: 'My Documents', path: '/c1/workers/documents', icon: <FolderIcon /> },

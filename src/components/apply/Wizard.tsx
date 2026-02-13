@@ -83,6 +83,25 @@ type DraftApplication = {
   data: any;
 };
 
+// Normalize dob from Firestore (Timestamp), Date, or string to YYYY-MM-DD for validation and storage.
+const toDobString = (val: unknown): string => {
+  if (val == null || val === '') return '';
+  if (typeof val === 'string') {
+    const t = val.trim();
+    if (t.length === 10 && t.includes('-')) return t;
+    if (t.length === 10 && t.includes('/')) {
+      const [month, day, year] = t.split('/');
+      if (month && day && year && year.length === 4) return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    }
+    return t;
+  }
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  if (typeof val === 'object' && val !== null && 'seconds' in val && typeof (val as { seconds: number }).seconds === 'number')
+    return new Date((val as { seconds: number }).seconds * 1000).toISOString().slice(0, 10);
+  if (typeof val === 'number') return new Date(val).toISOString().slice(0, 10);
+  return '';
+};
+
 // Firestore does not allow `undefined` anywhere in a document (including nested objects).
 // This helper removes undefined values deeply while preserving non-plain objects (Dates, Timestamps, FieldValue, etc).
 const deepStripUndefined = (value: any): any => {
@@ -462,7 +481,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       lastName: existingPersonal.lastName || userProfile.lastName || '',
       email: existingPersonal.email || userProfile.email || '',
       phone: existingPersonal.phone || userProfile.phone || userProfile.phoneE164 || '',
-      dob: existingPersonal.dob || userProfile.dob || userProfile.dateOfBirth || '',
+      dob: toDobString(existingPersonal.dob || userProfile.dob || userProfile.dateOfBirth) || '',
       preferredLanguage:
         existingPersonal.preferredLanguage ||
         (userProfile.preferredLanguage === 'es' ? 'es' : 'en'),
@@ -629,9 +648,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       };
 
       if (shouldPrefillPersonal) {
-        persistPayload.personal = !hasExistingPersonalData
+        const merged = !hasExistingPersonalData
           ? personal
           : { ...personal, ...currentFormData.personal };
+        merged.dob = toDobString(merged.dob) || '';
+        persistPayload.personal = merged;
       }
 
       persist(persistPayload);
@@ -2281,7 +2302,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return true;
   })();
 
-  // Personal Info validation (step 0) - no address required (coerce to string for Chromebook/persisted state)
+  // Personal Info validation (step 0) - no address required. Normalize dob from Firestore (Timestamp/Date) so pre-filled data passes.
   const personalValid = (() => {
     const p = formData?.personal;
     if (!p) return false;
@@ -2290,7 +2311,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const email = typeof p.email === 'string' ? p.email.trim() : '';
     const phone = String(p.phone ?? '').trim();
     const phoneDigits = phone.replace(/\D/g, '');
-    const dob = typeof p.dob === 'string' ? p.dob.trim() : String(p.dob ?? '').trim();
+    const dob = toDobString(p.dob);
     return !!(
       firstName &&
       lastName &&
@@ -2298,7 +2319,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       phone &&
       phoneDigits.length >= 10 &&
       dob &&
-      dob.length === 10
+      dob.length >= 10
     );
   })();
 
@@ -2398,7 +2419,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       sx={{
         px: 0,
         py: 0,
-        minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
       }}
@@ -2445,10 +2465,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         </Box>
       )}
 
-      {/* Main content area - framed on desktop, fullscreen on mobile */}
+      {/* Main content area - framed on desktop; no min height so buttons sit under form */}
       <Box
         sx={{
-          flex: 1,
           display: 'flex',
           flexDirection: 'column',
           maxWidth: { xs: '100%', md: '1200px' },
@@ -2461,7 +2480,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         <Paper
           elevation={isMobile ? 0 : 2}
           sx={{
-            flex: 1,
             display: 'flex',
             flexDirection: 'column',
             borderRadius: { xs: 0, md: 2 },
@@ -2498,11 +2516,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           <Box
             sx={{
               mt: 2,
-              mb: 4,
               mx: 0,
               px: { xs: 1, md: 3 },
               py: 0,
-              flex: 1,
               display: 'flex',
               flexDirection: 'column',
             }}
@@ -2510,11 +2526,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             {renderStep()}
           </Box>
 
-          {/* Bottom navigation bar - inside Paper, below content */}
+          {/* Back/Next bar directly under form */}
           <Box
             sx={{
               width: '100%',
-              mt: 'auto',
+              mt: 2,
+              mb: 2,
               bgcolor: 'background.paper',
               borderTop: 1,
               borderColor: 'divider',

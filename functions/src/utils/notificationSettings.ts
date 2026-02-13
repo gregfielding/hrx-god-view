@@ -65,25 +65,25 @@ export async function getUserNotificationSettings(
 
     const userData = userDoc.data();
     
-    // Get master SMS opt-in (legacy field)
-    const smsOptIn = userData?.smsOptIn !== false; // Default to true if not set
-    const phoneVerified = userData?.phoneVerified === true;
+    // Get master SMS opt-in (legacy field). Default to true if not set (e.g. users created before opt-in existed).
+    const smsOptIn = userData?.smsOptIn !== false;
     const hasPushTokens = Array.isArray(userData?.pushTokens) && userData.pushTokens.length > 0;
 
     // Get notification settings if they exist
     const settings = userData?.notificationSettings as Partial<NotificationSettings> | undefined;
 
-    // Build default settings
+    // SMS: only require that user has not opted out. Do not require phoneVerified so legacy users
+    // and new applicants get SMS unless they explicitly set smsOptIn: false.
     const defaultSettings: NotificationSettings = {
       sms: {
-        enabled: smsOptIn && phoneVerified,
-        applicationUpdates: smsOptIn && phoneVerified,
-        bulkMessages: smsOptIn && phoneVerified,
-        directMessages: smsOptIn && phoneVerified,
-        semiAutomated: smsOptIn && phoneVerified,
-        fullyAutomated: smsOptIn && phoneVerified,
-        assignmentUpdates: smsOptIn && phoneVerified,
-        shiftUpdates: smsOptIn && phoneVerified,
+        enabled: smsOptIn,
+        applicationUpdates: smsOptIn,
+        bulkMessages: smsOptIn,
+        directMessages: smsOptIn,
+        semiAutomated: smsOptIn,
+        fullyAutomated: smsOptIn,
+        assignmentUpdates: smsOptIn,
+        shiftUpdates: smsOptIn,
       },
       push: {
         enabled: hasPushTokens,

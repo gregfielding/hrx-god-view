@@ -14,7 +14,7 @@ import FolderIcon from '@mui/icons-material/Folder';
 const ACTIONS = [
   { label: 'Find Work', to: '/c1/jobs-board', icon: <WorkIcon /> },
   { label: 'My Assignments', to: '/c1/workers/assignments', icon: <AssignmentIcon /> },
-  { label: 'My Applications', to: '/c1/applications', icon: <ListAltIcon /> },
+  { label: 'My Applications', to: '/c1/workers/applications', icon: <ListAltIcon /> },
   { label: 'My Documents', to: '/c1/workers/documents', icon: <FolderIcon /> },
 ] as const;
 

@@ -216,7 +216,7 @@ export async function generateMenuItems(
       ...((effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel)) ? [
         {
           text: 'My Applications',
-          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/applications` : '/c1/applications',
+          to: effectiveTenantSlug ? `/${effectiveTenantSlug}/applications` : '/c1/workers/applications',
           icon: 'fact_check',
           requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
         },

@@ -374,39 +374,42 @@ function App() {
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/sms-privacy" element={<SMSPrivacy />} />
       
-      {/* Unified C1 worker layout — nav and top bar persist; only outlet content changes */}
-      <Route path="/c1" element={<ConditionalWorkerLayout />}>
-        <Route index element={<Navigate to="/c1/workers/dashboard" replace />} />
-        <Route path="workers" element={<Outlet />}>
-          <Route index element={<C1WorkersIndex />} />
-          <Route path="dashboard" element={<WorkerDashboard />} />
-          <Route path="assignments" element={<C1WorkerAssignments />} />
-          <Route path="profile" element={<WorkerProfile />} />
-          <Route path="documents" element={<WorkerDocuments />} />
-          <Route path="support" element={<WorkerSupport />} />
-          <Route path="settings" element={<PrivacySettings />} />
-          <Route path="notifications" element={<C1WorkerNotifications />} />
-          <Route path="inbox" element={<C1WorkerInbox />} />
-          <Route path="inbox/:threadId" element={<C1WorkerInbox />} />
+      {/* Single layout for /c1 and /apply so nav + top bar stay mounted on back/forward */}
+      <Route element={<ConditionalWorkerLayout />}>
+        <Route path="/c1" element={<Outlet />}>
+          <Route index element={<Navigate to="/c1/workers/dashboard" replace />} />
+          <Route path="workers" element={<Outlet />}>
+            <Route index element={<C1WorkersIndex />} />
+            <Route path="dashboard" element={<WorkerDashboard />} />
+            <Route path="assignments" element={<C1WorkerAssignments />} />
+            <Route path="applications" element={<UserApplications />} />
+            <Route path="profile" element={<WorkerProfile />} />
+            <Route path="documents" element={<WorkerDocuments />} />
+            <Route path="support" element={<WorkerSupport />} />
+            <Route path="settings" element={<PrivacySettings />} />
+            <Route path="notifications" element={<C1WorkerNotifications />} />
+            <Route path="inbox" element={<C1WorkerInbox />} />
+            <Route path="inbox/:threadId" element={<C1WorkerInbox />} />
+          </Route>
+          <Route path="jobs-board" element={<PublicJobsBoard />} />
+          <Route path="jobs-board/:postId" element={<JobPostingDetail />} />
+          <Route path="jobs/:postId" element={<JobPostingDetail />} />
+          <Route path="applications" element={<Navigate to="/c1/workers/applications" replace />} />
+          <Route path="assignments" element={<MyAssignments />} />
+          <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
+          <Route path="users/:uid" element={<UserProfile />} />
         </Route>
-        <Route path="jobs-board" element={<PublicJobsBoard />} />
-        <Route path="jobs-board/:postId" element={<JobPostingDetail />} />
-        <Route path="jobs/:postId" element={<JobPostingDetail />} />
-        <Route path="applications" element={<UserApplications />} />
-        <Route path="assignments" element={<MyAssignments />} />
-        <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
-        <Route path="users/:uid" element={<UserProfile />} />
+        <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>
 
-      {/* Redirects and non-/c1 routes that still use conditional layout (apply, tenantSlug) */}
+      {/* Redirects and tenant-slug routes (same layout when logged in) */}
       <Route path="/jobs-board" element={<Navigate to="/c1/jobs-board" replace />} />
-      <Route path="/applications" element={<Navigate to="/c1/applications" replace />} />
+      <Route path="/applications" element={<Navigate to="/c1/workers/applications" replace />} />
       <Route path="/assignments" element={<Navigate to="/c1/assignments" replace />} />
       <Route element={<ConditionalJobsBoardLayout />}>
         <Route path="/:tenantSlug/jobs-board/:postId" element={<JobPostingDetail />} />
         <Route path="/:tenantSlug/jobs/:postId" element={<JobPostingDetail />} />
         <Route path="/:tenantSlug/assignments/:assignmentId" element={<AssignmentDetails />} />
-        <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>
       
       <Route

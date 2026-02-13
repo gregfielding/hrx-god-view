@@ -328,6 +328,12 @@ const SkillsStep: React.FC<Props> = ({ value, onChange, context = 'application',
 
   return (
     <Box>
+      {/* Job requirement callout when this job has required skills */}
+      {requiredSkills.length > 0 && (
+        <Alert severity="info" sx={{ mb: 2 }}>
+          <strong>This job requires skills:</strong> {requiredSkills.join(', ')}.
+        </Alert>
+      )}
       {/* Required Skills Section */}
       {requiredSkills.length > 0 && (
         <Box sx={{ mb: 2.5 }}>

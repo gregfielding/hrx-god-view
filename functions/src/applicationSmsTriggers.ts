@@ -156,9 +156,8 @@ export const onApplicationCreated = onDocumentCreated(
         }
 
         if (message) {
-          // Check notification settings
+          // Check notification settings (SMS enabled unless user has opted out)
           const shouldSend = await shouldSendNotification(userId, 'applicationUpdates', 'sms');
-          
           if (!shouldSend) {
             logger.info(`SMS disabled for user ${userId} - skipping application created notification`);
             return { success: true };

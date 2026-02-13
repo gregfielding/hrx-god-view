@@ -1,7 +1,7 @@
 /**
  * Worker Dashboard — /c1/workers/dashboard
  * Work Hub landing page. Truthful metrics only; no fake data (Go-Live spec §3).
- * Fixed links (do not change): /c1/jobs-board, /c1/applications
+ * Fixed links (do not change): /c1/jobs-board, /c1/workers/applications
  */
 
 import React, { useState, useEffect } from 'react';

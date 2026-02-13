@@ -105,84 +105,52 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
     }
   };
 
+  // Normalize any dob value (string, Timestamp, { seconds }, Date) to YYYY-MM-DD for form/display
+  const normalizeDobToYyyyMmDd = (v: any): string => {
+    if (v == null || v === '') return '';
+    if (typeof v === 'string') {
+      const s = v.trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+        const [mm, dd, yyyy] = s.split('/');
+        return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+      }
+      const d = new Date(s);
+      return !isNaN(d.getTime()) ? d.toISOString().split('T')[0]! : '';
+    }
+    if (typeof v?.toDate === 'function') {
+      const d = v.toDate();
+      return d instanceof Date && !isNaN(d.getTime()) ? d.toISOString().split('T')[0]! : '';
+    }
+    if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().split('T')[0]!;
+    if (typeof v === 'number' && v > 0) {
+      const d = new Date(v);
+      return !isNaN(d.getTime()) ? d.toISOString().split('T')[0]! : '';
+    }
+    const sec = (v && (typeof (v as any).seconds === 'number' ? (v as any).seconds : (v as any)._seconds));
+    if (typeof sec === 'number') {
+      const d = new Date(sec * 1000);
+      return !isNaN(d.getTime()) ? d.toISOString().split('T')[0]! : '';
+    }
+    return '';
+  };
+
   const formatDateOnlyForDisplay = (v: any): string => {
-    if (!v) return '-';
+    const normalized = normalizeDobToYyyyMmDd(v);
+    if (!normalized) return '-';
     const monthNames = [
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December',
     ];
-
-    // YYYY-MM-DD (preferred storage)
-    if (typeof v === 'string') {
-      const s = v.trim();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
-        const [yyyy, mm, dd] = s.split('-');
-        const monthIdx = Math.max(1, Math.min(12, parseInt(mm, 10))) - 1;
-        const dayNum = parseInt(dd, 10);
-        return `${monthNames[monthIdx]} ${dayNum}, ${yyyy}`;
-      }
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
-        const [mm, dd, yyyy] = s.split('/');
-        const monthIdx = Math.max(1, Math.min(12, parseInt(mm, 10))) - 1;
-        const dayNum = parseInt(dd, 10);
-        return `${monthNames[monthIdx]} ${dayNum}, ${yyyy}`;
-      }
-      // fallback
-      const d = new Date(s);
-      if (!isNaN(d.getTime())) return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-      return s || '-';
-    }
-
-    // Firestore Timestamp / Date object: use UTC parts to avoid timezone day-shift
-    const d: Date | null =
-      typeof v?.toDate === 'function' ? v.toDate() :
-      v instanceof Date ? v :
-      null;
-    if (!d || isNaN(d.getTime())) return '-';
-    const yyyy = d.getUTCFullYear();
-    const monthIdx = d.getUTCMonth();
-    const dayNum = d.getUTCDate();
+    const [yyyy, mm, dd] = normalized.split('-');
+    const monthIdx = Math.max(0, Math.min(11, parseInt(mm, 10) - 1));
+    const dayNum = parseInt(dd, 10);
     return `${monthNames[monthIdx]} ${dayNum}, ${yyyy}`;
   };
 
-  // Helper function to check if a date value is valid and present
+  // Helper: valid DOB present (string, Timestamp, { seconds }, Date)
   const hasValidDateOfBirth = (dob: any): boolean => {
-    if (!dob) return false;
-    
-    // Handle Firestore Timestamp
-    if (dob?.toDate && typeof dob.toDate === 'function') {
-      const date = dob.toDate();
-      return date instanceof Date && !isNaN(date.getTime());
-    }
-    
-    // Handle Date object
-    if (dob instanceof Date) {
-      return !isNaN(dob.getTime());
-    }
-    
-    // Handle string
-    if (typeof dob === 'string' && dob.trim() !== '') {
-      // Accept common date-only formats without timezone conversion
-      const s = dob.trim();
-      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return true;
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return true;
-      const date = new Date(s);
-      return !isNaN(date.getTime());
-    }
-    
-    // Handle timestamp number
-    if (typeof dob === 'number' && dob > 0) {
-      const date = new Date(dob);
-      return !isNaN(date.getTime());
-    }
-    
-    // Handle objects with _seconds (Firestore Timestamp structure)
-    if (dob?._seconds && typeof dob._seconds === 'number') {
-      const date = new Date(dob._seconds * 1000);
-      return !isNaN(date.getTime());
-    }
-    
-    return false;
+    return normalizeDobToYyyyMmDd(dob) !== '';
   };
   const { tenantId: activeTenantId, user, securityLevel, activeTenant } = useAuth();
   const viewerSecurityLevel = parseInt(String(securityLevel || '0'), 10);
@@ -340,13 +308,9 @@ const transportOptions: Array<{
             // Fetch tenant-dependent fields from nested structure first, then fallback to direct fields
             const tenantData = effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
             
-            // Convert dates to ISO strings for form inputs
-            // Check both 'dob' and 'dateOfBirth' fields for backward compatibility
+            // Convert dates to ISO strings for form inputs (string, Timestamp, or plain { seconds })
             const dobValue = data.dob || data.dateOfBirth;
-            const dateOfBirth = dobValue ? 
-              (dobValue.toDate ? new Date(dobValue.toDate()).toISOString().split('T')[0] : 
-               typeof dobValue === 'string' ? dobValue : 
-               new Date(dobValue).toISOString().split('T')[0]) : '';
+            const dateOfBirth = normalizeDobToYyyyMmDd(dobValue);
             const startDate = data.startDate ? 
               (data.startDate.toDate ? new Date(data.startDate.toDate()).toISOString().split('T')[0] : 
                typeof data.startDate === 'string' ? data.startDate : 

@@ -62,7 +62,7 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
       label: 'Applications',
       metric: applicationsCount ?? 'Not available yet',
       subtext: 'View your applications',
-      to: '/c1/applications',
+      to: '/c1/workers/applications',
       icon: <ListAltIcon fontSize="small" />,
       metricHidden: applicationsCount == null,
     },

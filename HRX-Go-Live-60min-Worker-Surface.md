@@ -1,7 +1,7 @@
 # HRX Worker App — “Go Live in 60 Minutes” Cursor Instructions (v1)
 
 **Goal:** Make the worker-facing C1 experience *truthful, non-placeholder, and shippable* within ~1 hour.  
-**Scope:** Worker routes only (`/c1/workers/*`, `/c1/jobs-board`, `/c1/applications`, worker job posting detail).  
+**Scope:** Worker routes only (`/c1/workers/*`, `/c1/jobs-board`, worker job posting detail).  
 **Explicitly out-of-scope for this hour:** Everee integration, FCM notifications, worker inbox messaging backend.
 
 ---
@@ -23,7 +23,7 @@ Verify these routes exist and render:
 - My Assignments → `/c1/workers/assignments`
 - Notifications → `/c1/workers/notifications` (ok to be empty state)
 - Inbox → `/c1/workers/inbox` (ok to be empty state)
-- Applications → `/c1/applications`
+- Applications → `/c1/workers/applications`
 - Jobs Board → `/c1/jobs-board`
 - Job Readiness → `/c1/workers/profile` (label can remain “Job Readiness” in nav)
 - My Documents → `/c1/workers/documents`
@@ -40,7 +40,7 @@ Search for these strings and confirm they match actual router configuration:
 - `"/c1/workers/assignments"`
 - `"/c1/workers/notifications"`
 - `"/c1/workers/inbox"`
-- `"/c1/applications"`
+- `"/c1/workers/applications"`
 - `"/c1/jobs-board"`
 - `"/c1/workers/profile"`
 - `"/c1/workers/documents"`

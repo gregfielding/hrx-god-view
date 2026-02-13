@@ -164,6 +164,8 @@ interface Applicant {
   applicationStatus?: string;
   profileScore?: number;
   fitScore?: number | null;
+  /** Generic AI / Hiring score (user-level); from users/{uid}.scoreSummary.aiScore */
+  hiringScore?: number;
   scoreSummary?: any;
   /** Job Score (per job); from application.jobScoreSummary or computed (v1 or legacy) */
   jobScoreSummary?: JobScoreSummaryStored | null;
@@ -307,6 +309,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             applicationStatus: app.status || 'submitted',
             profileScore,
             fitScore,
+            hiringScore: typeof hiringScore === 'number' && Number.isFinite(hiringScore) ? hiringScore : undefined,
             scoreSummary: normalizeScoreSummary(userData.scoreSummary),
             jobScoreSummary: jobScoreSummary || null,
             ...((): { compliancePercent?: number; complianceStatus?: 'compliant' | 'expiring_soon' | 'non_compliant' | 'incomplete' } => {
@@ -1259,29 +1262,59 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     </Tooltip>
                   </TableCell>
                   <TableCell>
-                    {applicant.fitScore !== null && applicant.fitScore !== undefined ? (
-                      <Tooltip title="AI-powered job fit score based on skills, experience, and qualifications">
-                        <Chip 
-                          label={getScoreLabel(applicant.fitScore)}
-                          size="small"
-                          color={getScoreColor(applicant.fitScore)}
-                          sx={{ minWidth: 50, fontWeight: 600 }}
-                        />
-                      </Tooltip>
-                    ) : (
-                      <Tooltip title={
-                        (applicant.profileScore ?? 0) >= 40 
-                          ? "Fit score will be calculated automatically" 
-                          : "Complete profile to 40% to enable fit scoring"
-                      }>
-                        <Chip 
-                          label="..."
-                          size="small"
-                          variant="outlined"
-                          sx={{ minWidth: 50, opacity: 0.5 }}
-                        />
-                      </Tooltip>
-                    )}
+                    {(() => {
+                      const jobScore = applicant.jobScoreSummary != null
+                        ? (applicant.jobScoreSummary as any).jobScore
+                        : undefined;
+                      const hiring = applicant.hiringScore;
+                      const hasJob = typeof jobScore === 'number' && Number.isFinite(jobScore);
+                      const hasHiring = typeof hiring === 'number' && Number.isFinite(hiring);
+                      const legacyFit = applicant.fitScore !== null && applicant.fitScore !== undefined;
+                      const showPlaceholder = !hasJob && !hasHiring && !legacyFit;
+                      const tooltipParts: string[] = [];
+                      if (hasJob) tooltipParts.push(`Job fit (this role): ${getScoreLabel(jobScore)}`);
+                      if (hasHiring) tooltipParts.push(`Hiring score (overall): ${getScoreLabel(hiring)}`);
+                      if (showPlaceholder)
+                        tooltipParts.push((applicant.profileScore ?? 0) >= 40 ? 'Fit score will be calculated automatically' : 'Complete profile to 40% to enable fit scoring');
+                      const tooltip = tooltipParts.length ? tooltipParts.join(' · ') : 'Fit';
+                      return (
+                        <Tooltip title={tooltip}>
+                          <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" sx={{ minWidth: 50 }}>
+                            {showPlaceholder ? (
+                              <Chip label="..." size="small" variant="outlined" sx={{ minWidth: 50, opacity: 0.5 }} />
+                            ) : (
+                              <>
+                                {hasJob && (
+                                  <Chip
+                                    label={getScoreLabel(jobScore)}
+                                    size="small"
+                                    color={getScoreColor(jobScore)}
+                                    sx={{ minWidth: 44, fontWeight: 600 }}
+                                  />
+                                )}
+                                {hasHiring && (
+                                  <Chip
+                                    label={getScoreLabel(hiring)}
+                                    size="small"
+                                    variant={hasJob ? 'outlined' : 'filled'}
+                                    color={getScoreColor(hiring)}
+                                    sx={{ minWidth: 44, fontWeight: hasJob ? 500 : 600 }}
+                                  />
+                                )}
+                                {!hasJob && !hasHiring && legacyFit && (
+                                  <Chip
+                                    label={getScoreLabel(applicant.fitScore)}
+                                    size="small"
+                                    color={getScoreColor(applicant.fitScore)}
+                                    sx={{ minWidth: 50, fontWeight: 600 }}
+                                  />
+                                )}
+                              </>
+                            )}
+                          </Stack>
+                        </Tooltip>
+                      );
+                    })()}
                   </TableCell>
                   {jobOrder?.requirementPackId ? (
                     <>

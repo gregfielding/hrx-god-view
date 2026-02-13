@@ -42,7 +42,6 @@ import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
 import CompactActionGrid from './CompactActionGrid';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
-import { getRelativeAiScore } from '../../../utils/scoreSummary';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
@@ -797,13 +796,12 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                // Use AI score first so header matches the users table and Score tab
+                // Stored AI score only — same value as Score tab and users table (no relative scaling)
                 const rawSummary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
                 if (typeof rawSummary !== 'number' || Number.isNaN(rawSummary)) return null;
-                const relative = getRelativeAiScore(rawSummary, scoringDistribution);
-                const display = relative != null ? relative : Math.round(rawSummary);
+                const display = Math.round(rawSummary);
                 return (
-                  <Tooltip title={relative != null ? `Raw: ${Math.round(rawSummary)} (relative: ${display})` : `AI Score ${Math.round(rawSummary)}`}>
+                  <Tooltip title={`AI Score (stored): ${display}`}>
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
                       label={`AI Score ${display}`}
@@ -1346,13 +1344,12 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                // Use AI score first so header matches the users table and Score tab
+                // Stored AI score only — same value as Score tab and users table (no relative scaling)
                 const rawSummary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
                 if (typeof rawSummary !== 'number' || Number.isNaN(rawSummary)) return null;
-                const relative = getRelativeAiScore(rawSummary, scoringDistribution);
-                const display = relative != null ? relative : Math.round(rawSummary);
+                const display = Math.round(rawSummary);
                 return (
-                  <Tooltip title={relative != null ? `Raw: ${Math.round(rawSummary)} (relative: ${display})` : `AI Score ${Math.round(rawSummary)}`}>
+                  <Tooltip title={`AI Score (stored): ${display}`}>
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
                       label={`AI Score ${display}`}

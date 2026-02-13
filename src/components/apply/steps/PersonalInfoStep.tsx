@@ -22,8 +22,21 @@ const formatPhone = (raw: string) => {
   return `(${p1})${p2}-${p3}`;
 };
 
+// Normalize dob from Firestore (Timestamp), Date, or string to YYYY-MM-DD string
+const toDateString = (val: unknown): string => {
+  if (val == null || val === '') return '';
+  if (typeof val === 'string') return val;
+  if (val instanceof Date) return val.toISOString().slice(0, 10);
+  if (typeof val === 'object' && val !== null && 'seconds' in val && typeof (val as { seconds: number }).seconds === 'number') {
+    return new Date((val as { seconds: number }).seconds * 1000).toISOString().slice(0, 10);
+  }
+  if (typeof val === 'number') return new Date(val).toISOString().slice(0, 10);
+  return '';
+};
+
 // Format date for display (convert YYYY-MM-DD to MM/DD/YYYY)
-const formatDateForDisplay = (dateString: string) => {
+const formatDateForDisplay = (dateInput: unknown): string => {
+  const dateString = toDateString(dateInput);
   if (!dateString) return '';
   // If it's already in MM/DD/YYYY format, return as is
   if (dateString.includes('/')) return dateString;

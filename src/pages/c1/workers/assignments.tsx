@@ -40,7 +40,7 @@ const WorkerAssignments: React.FC = () => {
             <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
               Find Work
             </Button>
-            <Button variant="outlined" onClick={() => navigate('/c1/applications')}>
+            <Button variant="outlined" onClick={() => navigate('/c1/workers/applications')}>
               View Applications
             </Button>
           </Stack>

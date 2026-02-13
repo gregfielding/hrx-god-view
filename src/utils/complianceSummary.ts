@@ -28,6 +28,8 @@ export function computeComplianceSummary(checklist: OnboardingChecklist): Compli
 
   for (const key of keys) {
     const item = checklist[key];
+    if (item == null || typeof item !== 'object') continue;
+
     const expiresAt = parseExpiresAt(item.expiresAt ?? item.nextExpiringAt);
 
     if (item.status === 'missing' || item.status === 'submitted') {

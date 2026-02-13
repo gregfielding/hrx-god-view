@@ -106,13 +106,18 @@ const PrivacySettings: React.FC = () => {
       if (userSnap.exists()) {
         const userData = userSnap.data();
         
-        // Load notification settings
-        if (userData.notificationSettings) {
-          setNotificationSettings(prev => ({
-            ...prev,
-            ...userData.notificationSettings,
-          }));
-        }
+        // SMS toggle is driven by backend opt-in: smsOptIn and smsBlockedSystem (STOP keyword).
+        // So the toggle matches Twilio STOP/START and can be re-enabled here after STOP.
+        const smsEnabled =
+          userData.smsOptIn !== false &&
+          userData.smsBlockedSystem !== true;
+
+        // Load notification settings; override SMS from source of truth
+        setNotificationSettings(prev => ({
+          ...prev,
+          ...(userData.notificationSettings || {}),
+          smsNotifications: smsEnabled,
+        }));
         
         // Load privacy settings
         if (userData.privacySettings) {
@@ -139,12 +144,18 @@ const PrivacySettings: React.FC = () => {
     setLoading(true);
     try {
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
+      const updates: Record<string, unknown> = {
         notificationSettings,
         privacySettings,
         preferredLanguage,
         updatedAt: new Date(),
-      });
+      };
+      // Keep SMS opt-in in sync with backend (STOP/START and other checks use these)
+      updates.smsOptIn = notificationSettings.smsNotifications;
+      if (notificationSettings.smsNotifications) {
+        updates.smsBlockedSystem = false; // Re-enabling from UI clears STOP state
+      }
+      await updateDoc(userRef, updates);
       
       showSnackbar('Settings saved successfully!', 'success');
     } catch (error) {

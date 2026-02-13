@@ -277,12 +277,10 @@ async function shouldUseChannel(
   
   // SMS channel checks
   if (channel === 'sms') {
-    // PHASE 4: Check tenant-scoped SMS consent first, fallback to user doc
+    // PHASE 4: Prefer user doc (Privacy & Notifications UI) then tenant consent (STOP/START keyword)
     const tenantConsent = await getTenantSmsConsent(context.tenantId, context.userId);
-    
-    const smsBlockedSystem = tenantConsent?.smsBlockedSystem ?? userData.smsBlockedSystem ?? false;
-    // Align with notificationSettings: missing/undefined = opted in (smsOptIn !== false)
-    const smsOptIn = (tenantConsent?.smsOptIn ?? userData.smsOptIn) !== false;
+    const smsBlockedSystem = userData.smsBlockedSystem ?? tenantConsent?.smsBlockedSystem ?? false;
+    const smsOptIn = (userData.smsOptIn ?? tenantConsent?.smsOptIn) !== false;
     
     // Always block if user has blocked SMS (STOP keyword)
     if (smsBlockedSystem) {
