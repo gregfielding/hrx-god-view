@@ -42,10 +42,21 @@ const DEFAULT_QUIET_HOURS: QuietHoursConfig = {
     'system_security_alert_sms',
     'stop_confirmation',
     'help_response',
-    // Application status updates (waitlisted, rejected, etc.) — always deliver
+    // Application lifecycle — always deliver so user gets confirmation / status
+    'application_received',
+    'application_screened',
+    'application_advanced',
+    'application_hired',
     'application_waitlisted',
     'application_rejected',
     'application_status_change',
+    // Assignment lifecycle — always deliver
+    'assignment_created',
+    'assignment_status_change',
+    'assignment_confirmed',
+    'assignment_active',
+    'assignment_completed',
+    'assignment_cancelled',
   ],
 };
 

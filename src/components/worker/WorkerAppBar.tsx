@@ -29,7 +29,7 @@ import LanguageIcon from '@mui/icons-material/Language';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-import { useWorkerNotifications } from '../../hooks/useWorkerNotifications';
+import { useWorkerNotifications, getNotificationUrlAsync } from '../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../api/workerNotificationsApi';
 import type { WorkerNotification } from '../../types/unifiedWorkerNotifications';
 
@@ -93,11 +93,12 @@ const WorkerAppBar: React.FC = () => {
     }
   };
 
-  const handleNotificationClick = (n: WorkerNotification & { id: string }) => {
-    if (!n.readAt) handleMarkRead(n.id);
+  const handleNotificationClick = async (n: WorkerNotification & { id: string }) => {
+    if (!n.readAt) await handleMarkRead(n.id);
     handleClose();
+    const url = await getNotificationUrlAsync(n, uid);
     if (n.threadId) navigate(`/c1/workers/inbox/${n.threadId}`);
-    else if (n.ctaUrl) window.location.href = n.ctaUrl;
+    else if (url) window.location.href = url;
   };
 
   return (

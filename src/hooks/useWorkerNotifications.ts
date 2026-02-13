@@ -4,6 +4,7 @@
  */
 
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from 'firebase/firestore';
+import { p } from '../data/firestorePaths';
 import { useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { workerNotificationsPaths } from '../data/firestorePaths';
@@ -63,6 +64,53 @@ export function useWorkerNotifications(uid: string | undefined, options?: { max?
   }, [uid, options?.max]);
 
   return { notifications, unreadCount, loading };
+}
+
+/** Resolve notification link: prefer job board post when entity is job_post, else ctaUrl. */
+export function getNotificationUrl(n: WorkerNotification & { id: string }): string {
+  if (n.entity?.kind === 'job_post' && n.entity?.id) {
+    return `/c1/jobs-board/${n.entity.id}`;
+  }
+  return n.ctaUrl ?? (n.threadId ? `/c1/workers/inbox/${n.threadId}` : '') ?? '';
+}
+
+/**
+ * Resolve notification link with fallback for old "application" notifications that still
+ * have ctaUrl /c1/workers/applications: fetch user's latest application and use its jobId.
+ */
+export async function getNotificationUrlAsync(
+  n: WorkerNotification & { id: string },
+  uid: string | undefined
+): Promise<string> {
+  let url = getNotificationUrl(n);
+  const applicationsPath = '/c1/workers/applications';
+  const isOldApplicationLink =
+    n.type === 'application' &&
+    (url === applicationsPath || url?.endsWith(applicationsPath)) &&
+    n.tenantId &&
+    uid;
+
+  if (isOldApplicationLink) {
+    try {
+      const applicationsRef = collection(db, p.applications(n.tenantId));
+      const q = query(applicationsRef, where('userId', '==', uid), limit(15));
+      const snap = await getDocs(q);
+      type AppRow = { id: string; jobId?: string; postId?: string; createdAt?: unknown };
+      const byCreated = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as AppRow))
+        .filter((a) => a.jobId || a.postId)
+        .sort((a, b) => {
+          const at = (a.createdAt as { toMillis?: () => number })?.toMillis?.() ?? (a.createdAt as number) ?? 0;
+          const bt = (b.createdAt as { toMillis?: () => number })?.toMillis?.() ?? (b.createdAt as number) ?? 0;
+          return bt - at;
+        });
+      const jobId = byCreated[0]?.jobId ?? byCreated[0]?.postId;
+      if (jobId) url = `/c1/jobs-board/${jobId}`;
+    } catch {
+      // keep original url
+    }
+  }
+  return url;
 }
 
 export async function getWorkerUnreadNotificationCount(uid: string): Promise<number> {

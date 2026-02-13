@@ -43,6 +43,9 @@ export interface UserApplication {
   payRate?: number;
   startDate?: Date;
   jobType?: 'gig' | 'career';
+
+  /** True when jobScoreSummary indicates there are still missing required items (v1 buckets.missingRequired or legacy missingLabels). */
+  hasMissingRequirements?: boolean;
   
   // Shift details (for gig jobs)
   shiftDate?: string;
@@ -214,6 +217,13 @@ export class UserApplicationsService {
                   ? new Date(cachedData.startDate)
                   : undefined,
             jobType: appData.jobType || cachedData?.jobType,
+            hasMissingRequirements: (() => {
+              const js = appData.jobScoreSummary;
+              if (!js) return false;
+              const v1 = js.version === 'v1' && Array.isArray(js.buckets?.missingRequired) && js.buckets.missingRequired.length > 0;
+              const legacy = Array.isArray(js.missingLabels) && js.missingLabels.length > 0;
+              return v1 || legacy;
+            })(),
           };
 
           // For gig jobs with shifts, fetch shift details if shiftId is available

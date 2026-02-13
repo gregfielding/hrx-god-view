@@ -68,6 +68,7 @@ const JobPostingDetail: React.FC = () => {
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
+  const [assignmentStartDate, setAssignmentStartDate] = useState<any>(null); // recruiter-set start date when worker has assignment
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
@@ -481,6 +482,36 @@ const JobPostingDetail: React.FC = () => {
 
     void loadCareerSchedule();
   }, [posting]);
+
+  // When worker has an assignment (from URL, accepted state, or application doc), load assignment start date so we show recruiter-set date
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const urlAssignmentId = params.get('assignmentId');
+    const assignmentId =
+      acceptedAssignmentId ||
+      urlAssignmentId ||
+      (applicationData?.assignmentId ? String(applicationData.assignmentId) : null);
+    if (!assignmentId || !resolvedTenantId) {
+      setAssignmentStartDate(null);
+      return;
+    }
+    const loadAssignment = async () => {
+      try {
+        const assignmentRef = doc(db, 'tenants', resolvedTenantId, 'assignments', assignmentId);
+        const snap = await getDoc(assignmentRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          setAssignmentStartDate(data?.startDate ?? null);
+        } else {
+          setAssignmentStartDate(null);
+        }
+      } catch (err) {
+        console.warn('Error loading assignment for start date:', err);
+        setAssignmentStartDate(null);
+      }
+    };
+    loadAssignment();
+  }, [resolvedTenantId, acceptedAssignmentId, applicationData?.assignmentId, location.search]);
 
   const toggleShift = (shiftId: string) => {
     setSelectedShifts((prev) =>
@@ -1138,7 +1169,7 @@ const JobPostingDetail: React.FC = () => {
               >
                 {posting.postTitle}
               </Typography>
-              {/* Share Button */}
+              {/* Copy Link Button */}
               <Button
                 variant="outlined"
                 size={isMobile ? 'small' : 'small'}
@@ -1150,7 +1181,7 @@ const JobPostingDetail: React.FC = () => {
                 }}
                 sx={{ fontSize: isMobile ? '0.75rem' : undefined }}
               >
-                Share
+                Copy Link
               </Button>
             </Box>
 
@@ -1247,46 +1278,32 @@ const JobPostingDetail: React.FC = () => {
             </Box>
           </Box>
 
-          {/* Hide Apply button for gig jobs with shifts - use individual shift buttons instead */}
+          {/* When hired: show simple message and link to assignment details (accept/decline from that page) */}
           {!(posting.jobType === 'gig' && dynamicShifts.length > 0) &&
             ((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                  You&apos;ve been hired to work this job. Please click the button to Accept the position.
-                </Typography>
-                <Button
-                  variant="contained"
-                  size={isMobile ? 'small' : 'small'}
-                  onClick={handleConfirmAssignment}
-                  sx={{
-                    borderRadius: '999px',
-                    px: isMobile ? 1.5 : 2,
-                    fontSize: isMobile ? '0.75rem' : undefined,
-                    fontWeight: 600,
-                    backgroundColor: '#4CAF50',
-                    color: '#fff',
-                    '&:hover': {
-                      backgroundColor: '#45a049',
-                    },
-                  }}
-                >
-                  I Accept
-                </Button>
-                <Button
-                  variant="contained"
-                  size={isMobile ? 'small' : 'small'}
-                  color="error"
-                  onClick={handleDeclineAssignment}
-                  sx={{
-                    borderRadius: '999px',
-                    px: isMobile ? 1.5 : 2,
-                    fontSize: isMobile ? '0.75rem' : undefined,
-                    fontWeight: 600,
-                  }}
-                >
-                  Decline Job
-                </Button>
-              </Box>
+              assignmentDetailsUrl ? (
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
+                  <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
+                    You&apos;ve been hired to work this job.
+                  </Typography>
+                  <Button
+                    component={Link}
+                    to={`/c1/assignments/${assignmentDetailsId}`}
+                    variant="contained"
+                    size={isMobile ? 'small' : 'medium'}
+                    sx={{
+                      borderRadius: '999px',
+                      px: isMobile ? 1.5 : 2,
+                      fontWeight: 600,
+                      backgroundColor: '#4CAF50',
+                      color: '#fff',
+                      '&:hover': { backgroundColor: '#45a049' },
+                    }}
+                  >
+                    View Assignment Details
+                  </Button>
+                </Box>
+              ) : null
             ) : statusButtonProps?.label === 'confirmed_special' ? (
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
                 <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
@@ -1594,7 +1611,7 @@ const JobPostingDetail: React.FC = () => {
               boxSizing: 'border-box',
             }}
           >
-            {/* Quick Apply Card */}
+            {/* Quick Apply / Accept card - title changes when hired */}
             <Card
               sx={{
                 ...cardBaseSx,
@@ -1605,7 +1622,9 @@ const JobPostingDetail: React.FC = () => {
             >
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                  Apply for this Position
+                  {(statusButtonProps?.label === 'accepted_special' || statusButtonProps?.label === 'confirmed_special' || isAssignmentResponseMode)
+                    ? 'Accept this Position'
+                    : 'Apply for this Position'}
                 </Typography>
 
                 <Divider sx={{ my: 2 }} />
@@ -1644,13 +1663,17 @@ const JobPostingDetail: React.FC = () => {
                     </Box>
                   )}
 
-                  {posting.startDate && (
+                  {(assignmentStartDate || posting.startDate) && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
-                        {posting.jobType === 'career' ? 'Estimated Start Date' : 'Start Date'}
+                        {assignmentStartDate
+                          ? 'Start Date'
+                          : posting.jobType === 'career'
+                            ? 'Estimated Start Date'
+                            : 'Start Date'}
                       </Typography>
                       <Typography variant="body1" fontWeight="medium">
-                        {formatDate(posting.startDate)}
+                        {formatDate(assignmentStartDate ?? posting.startDate)}
                       </Typography>
                     </Box>
                   )}

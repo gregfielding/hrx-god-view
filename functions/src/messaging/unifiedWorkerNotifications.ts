@@ -2,7 +2,7 @@
  * Unified Worker Notifications + Inbox — Cloud Function stubs
  * Spec: HRX-Unified-Notifications-and-Inbox-Spec.md §5
  *
- * Firestore: users/{uid}/notifications, users/{uid}/deviceTokens, threads, threads/{id}/messages
+ * Firestore: users/{uid}/notifications, users/{uid}/pushTokens (canonical), threads, threads/{id}/messages
  */
 
 import * as admin from 'firebase-admin';
@@ -12,7 +12,8 @@ import { getPushProvider } from './pushProviderFactory';
 const db = admin.firestore();
 
 const NOTIFICATIONS = (uid: string) => `users/${uid}/notifications`;
-const DEVICE_TOKENS = (uid: string) => `users/${uid}/deviceTokens`;
+/** Canonical path per HRX-FCM-Messaging-Complete — do not use deviceTokens/devices */
+const PUSH_TOKENS = (uid: string) => `users/${uid}/pushTokens`;
 const THREADS = 'threads';
 const THREAD_MESSAGES = (threadId: string) => `threads/${threadId}/messages`;
 
@@ -55,8 +56,12 @@ export async function sendNotificationAndPush(payload: {
     entity: payload.entity,
   });
 
-  const tokensSnap = await db.collection(DEVICE_TOKENS(payload.uid)).where('isActive', '==', true).get();
-  const deviceTokens = tokensSnap.docs.flatMap((d) => (d.data().token ? [d.data().token as string] : []));
+  const tokensSnap = await db.collection(PUSH_TOKENS(payload.uid)).where('enabled', '==', true).get();
+  const deviceTokens = tokensSnap.docs.flatMap((d) => {
+    const token = d.data().token ?? d.id;
+    return token ? [token] : [];
+  });
+  const deepLink = payload.ctaUrl ?? (payload.threadId ? `/c1/workers/inbox/${payload.threadId}` : '') ?? '';
   if (deviceTokens.length > 0) {
     const push = getPushProvider();
     await push.sendPush({
@@ -65,7 +70,7 @@ export async function sendNotificationAndPush(payload: {
       targets: [{ userId: payload.uid, deviceTokens }],
       title: payload.title,
       body: payload.body,
-      data: { notificationId: id, threadId: payload.threadId ?? '', ctaUrl: payload.ctaUrl ?? '' },
+      data: { notificationId: id, threadId: payload.threadId ?? '', ctaUrl: payload.ctaUrl ?? '', deepLink },
     });
   }
   logger.info('Unified worker notification created', { notificationId: id, uid: payload.uid });
@@ -161,13 +166,15 @@ export const registerWorkerDeviceToken = onCall(async (request) => {
   const { token, platform } = request.data as { token: string; platform: 'ios' | 'android' | 'web' };
   if (!token || !platform) throw new HttpsError('invalid-argument', 'token and platform required');
   const now = admin.firestore.Timestamp.now();
-  const tokenId = token.slice(0, 32).replace(/\//g, '_');
-  await db.doc(`${DEVICE_TOKENS(uid)}/${tokenId}`).set({
+  // Canonical path: users/{uid}/pushTokens/{tokenId} — doc id sanitized (no "/"); token stored in field
+  const tokenId = token.replace(/\//g, '_').slice(0, 1500);
+  await db.doc(`${PUSH_TOKENS(uid)}/${tokenId}`).set({
     token,
     platform,
+    deviceId: `web-${platform}`,
+    enabled: true,
     createdAt: now,
-    lastSeenAt: now,
-    isActive: true,
-  });
+    updatedAt: now,
+  }, { merge: true });
   return {};
 });

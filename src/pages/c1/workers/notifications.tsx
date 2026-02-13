@@ -18,7 +18,7 @@ import {
 } from '@mui/material';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useWorkerNotifications } from '../../../hooks/useWorkerNotifications';
+import { useWorkerNotifications, getNotificationUrlAsync } from '../../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../../api/workerNotificationsApi';
 import type { NotificationType } from '../../../types/unifiedWorkerNotifications';
 
@@ -74,10 +74,11 @@ const C1WorkerNotifications: React.FC = () => {
     }
   };
 
-  const handleClick = (n: (typeof notifications)[0]) => {
-    if (!n.readAt) handleMarkRead(n.id);
+  const handleClick = async (n: (typeof notifications)[0]) => {
+    if (!n.readAt) await handleMarkRead(n.id);
+    const url = await getNotificationUrlAsync(n, uid);
     if (n.threadId) navigate(`/c1/workers/inbox/${n.threadId}`);
-    else if (n.ctaUrl) window.location.href = n.ctaUrl;
+    else if (url) window.location.href = url;
   };
 
   return (

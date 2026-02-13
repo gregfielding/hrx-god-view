@@ -1,7 +1,7 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { sendMessage } from './routingOrchestrator';
-import { MessageTemplate, renderTemplate } from './templateEngine';
+import { MessageTemplate, renderTemplate, renderStringWithVariables } from './templateEngine';
 import { resolveTemplateVariables, TemplateVariableContext } from '../utils/templateVariableResolver';
 import {
   getActiveRulesByTrigger,
@@ -95,12 +95,14 @@ async function buildVariables(
 
   const resolved = await resolveTemplateVariables(variableContext);
   const rendered = await renderTemplate(template, resolved, args.tenantId);
+  const rawSubject = template.subject || template.name || rule.name || '';
+  const _subject = rawSubject ? renderStringWithVariables(rawSubject, resolved) : '';
   return {
     ...resolved,
     ...ctx,
     _directMessage: true,
     _message: rendered,
-    _subject: template.subject || template.name || rule.name,
+    _subject,
   };
 }
 

@@ -9,7 +9,31 @@ import * as admin from 'firebase-admin';
 import { defineSecret } from 'firebase-functions/params';
 import { sendLegacyApplicationStatusMessage } from './messaging/legacyMessageHelpers';
 import { shouldSendNotification } from './utils/notificationSettings';
-import { resolveTemplateVariables, TemplateVariableContext } from './utils/templateVariableResolver';
+import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } from './utils/templateVariableResolver';
+
+/** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
+function cleanupMisSavedPlaceholders(
+  text: string,
+  variables: ResolvedVariables
+): string {
+  let out = text;
+  const pairs: (string | number)[][] = [
+    ['firstName', variables.firstName],
+    ['jobTitle', variables.jobTitle],
+    ['locationCity', variables.locationCity],
+  ];
+  for (const [key, value] of pairs) {
+    if (value == null || value === '') continue;
+    const s = String(value);
+    // Replace {Value} and {{Value}} so wrong template syntax still renders
+    out = out.replace(new RegExp(`\\{\\{\\s*${escapeRegExp(s)}\\s*\\}\\}`, 'gi'), s);
+    out = out.replace(new RegExp(`\\{\\s*${escapeRegExp(s)}\\s*\\}`, 'g'), s);
+  }
+  return out;
+}
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -46,6 +70,12 @@ export const onApplicationCreated = onDocumentCreated(
     if (!applicationData) {
       logger.error(`onApplicationCreated: Missing data for ${applicationId}`);
       return { success: false };
+    }
+
+    // Application created with status 'accepted' = created by assignment flow (e.g. placementsCreateAssignments), not worker submit. Skip "thank you for applying" — assignment_created trigger will send the correct message.
+    if ((applicationData.status || '').toLowerCase() === 'accepted') {
+      logger.info(`Application ${applicationId} created with status accepted (assignment-driven), skipping application_received notification`);
+      return { success: true };
     }
 
     try {
@@ -101,6 +131,17 @@ export const onApplicationCreated = onDocumentCreated(
         // Try to find matching template
         let message = '';
         let templateFound = false;
+        const appContext: TemplateVariableContext = {
+          userId: userId,
+          userData: userData,
+          applicationId: applicationId,
+          applicationData: applicationData,
+          jobOrderId: applicationData.jobOrderId,
+          jobPostId: applicationData.jobId || applicationData.postId,
+          tenantId: tenantId,
+          status: applicationData.status || 'submitted',
+        };
+        let variables: ResolvedVariables = await resolveTemplateVariables(appContext);
 
         try {
           // PHASE 2.1: Use new template engine with legacy fallback
@@ -117,23 +158,8 @@ export const onApplicationCreated = onDocumentCreated(
           );
 
           if (templateResult) {
-            // Build context for variable resolution
-            const context: TemplateVariableContext = {
-              userId: userId,
-              userData: userData,
-              applicationId: applicationId,
-              applicationData: applicationData,
-              jobOrderId: applicationData.jobOrderId,
-              jobPostId: applicationData.jobId || applicationData.postId,
-              tenantId: tenantId,
-              status: applicationData.status || 'submitted',
-            };
-
-            // Resolve all variables using standardized resolver
-            const variables = await resolveTemplateVariables(context);
-
-            // Render template (new engine handles STOP footer automatically)
             message = await renderTemplate(templateResult.template, variables, tenantId);
+            message = cleanupMisSavedPlaceholders(message, variables);
             templateFound = true;
             logger.info(`Using ${templateResult.source} template for application ${applicationId}`);
           }
@@ -142,24 +168,10 @@ export const onApplicationCreated = onDocumentCreated(
           // Fall back to default message
         }
 
-        // Fallback to default message if no template found
         if (!templateFound) {
-          // Use resolver for fallback too (for consistency)
-          const context: TemplateVariableContext = {
-            userId: userId,
-            userData: userData,
-            applicationId: applicationId,
-            applicationData: applicationData,
-            jobOrderId: applicationData.jobOrderId,
-            jobPostId: applicationData.jobId || applicationData.postId,
-            tenantId: tenantId,
-          };
-          const variables = await resolveTemplateVariables(context);
-          
           const firstName = variables.firstName;
           const jobTitle = variables.jobTitle;
           const locationCity = variables.locationCity;
-          
           message = `Hi ${firstName}. Thank you for applying to be a ${jobTitle}${locationCity ? ` in ${locationCity}` : ''}. We are currently reviewing applicants and will be in touch soon.`;
         }
 
@@ -171,12 +183,15 @@ export const onApplicationCreated = onDocumentCreated(
             return { success: true };
           }
 
+          const emailSubject = `${variables.firstName}, Your Application Was Received`;
+
           // PHASE 3: Route through orchestrator instead of direct Twilio call
           const result = await sendLegacyApplicationStatusMessage({
             tenantId,
             userId,
             phoneE164,
             message,
+            emailSubject,
             source: 'application_created',
             sourceId: applicationId,
             applicationId,

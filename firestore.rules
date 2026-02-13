@@ -254,6 +254,19 @@ service cloud.firestore {
           (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
         );
       }
+
+      // --- PUSH TOKENS (FCM web/mobile) — signed-in user stores their own tokens
+      match /pushTokens/{tokenId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
+
+      // --- NOTIFICATIONS (worker in-app + push) — server creates; user reads and marks read
+      match /notifications/{notificationId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow update: if request.auth != null && request.auth.uid == userId;
+        allow create: if false;
+        allow delete: if false;
+      }
     }
 
     // --- TENANTS (Unified Agencies and Customers) ---

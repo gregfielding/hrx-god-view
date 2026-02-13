@@ -254,6 +254,23 @@ export function renderTemplate(
 }
 
 /**
+ * Replace {{variableName}} and {variableName} in a string with values from context (sync, for subject/title).
+ */
+export function renderStringWithVariables(str: string, context: Record<string, any>): string {
+  if (!str || typeof str !== 'string') return str;
+  let out = str;
+  for (const [key, value] of Object.entries(context)) {
+    const stringValue = value != null ? String(value) : '';
+    const doublePlaceholder = `{{${key}}}`;
+    const doubleEscaped = doublePlaceholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(doubleEscaped, 'g'), stringValue);
+    const keyEscaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`\\{${keyEscaped}\\}`, 'g'), stringValue);
+  }
+  return out;
+}
+
+/**
  * Extract variables from template body
  */
 export function extractTemplateVariables(body: string): string[] {

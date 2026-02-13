@@ -8,6 +8,15 @@ import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { ThemeModeProvider } from './theme/theme';
 
+// FCM Web Push — register service worker for background notifications
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((err) => {
+      console.warn('[SW] firebase-messaging-sw registration failed', err);
+    });
+  });
+}
+
 // Console noise suppression for Firestore internal errors (runs before components mount)
 // These are SDK bugs that don't affect functionality - suppress in all environments
 {

@@ -25,6 +25,8 @@ export async function sendLegacyApplicationStatusMessage(args: {
   userId: string;
   phoneE164: string;
   message: string;
+  /** Email subject (e.g. "Gregory, Your Application Was Received"); used when sending email so subject is not derived from first line of body */
+  emailSubject?: string;
   source: 'application_created' | 'application_status_changed';
   sourceId?: string;
   applicationId?: string;
@@ -81,22 +83,23 @@ export async function sendLegacyApplicationStatusMessage(args: {
       else messageTypeId = 'application_status_change';
     }
     
+    const applicationCtaUrl = args.jobPostId ? `/c1/jobs-board/${args.jobPostId}` : '/c1/workers/applications';
     const result = await sendMessage({
       tenantId: args.tenantId,
       userId: args.userId,
       messageTypeId,
       variables: {
-        // Pre-built message from trigger (template missing or fallback); orchestrator uses this when _directMessage is true
         _message: args.message,
         _directMessage: true,
+        ...(args.emailSubject != null && args.emailSubject !== '' ? { _subject: args.emailSubject } : {}),
       },
       metadata: {
         applicationId: args.applicationId,
         status: args.status,
+        ctaUrl: applicationCtaUrl,
       },
       source: 'system',
       sourceId: args.sourceId,
-      // Use message type default channels (e.g. application_received: sms, email, push) so email is sent too
     });
     
     // Convert orchestrator result to legacy format
@@ -358,6 +361,7 @@ export async function sendLegacyAssignmentMessage(args: {
       },
       metadata: {
         assignmentId: args.assignmentId,
+        ctaUrl: '/c1/workers/assignments', // deepLink for push so tap opens Assignments
       },
       source: args.source || 'system',
       sourceId: args.sourceId,

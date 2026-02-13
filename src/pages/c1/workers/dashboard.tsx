@@ -17,6 +17,7 @@ import WorkerDashboardAlerts from '../../../components/worker/dashboard/WorkerDa
 import WorkerDashboardStatusCards from '../../../components/worker/dashboard/WorkerDashboardStatusCards';
 import WorkerDashboardQuickActions from '../../../components/worker/dashboard/WorkerDashboardQuickActions';
 import WorkerDashboardActivity from '../../../components/worker/dashboard/WorkerDashboardActivity';
+import WorkerDashboardCompleteApplicationCard from '../../../components/worker/dashboard/WorkerDashboardCompleteApplicationCard';
 
 const WorkerDashboard: React.FC = () => {
   const { user } = useAuth();
@@ -109,6 +110,8 @@ const WorkerDashboard: React.FC = () => {
         />
 
         <WorkerDashboardAlerts alerts={alerts} />
+
+        <WorkerDashboardCompleteApplicationCard userId={user?.uid} />
 
         <WorkerDashboardStatusCards
           readinessPercent={readinessPercent}

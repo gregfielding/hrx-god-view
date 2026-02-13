@@ -308,7 +308,7 @@ async function shouldUseChannel(
     // Application status messages: attempt SMS if user has phone (relax verification to reach applicants)
     const isApplicationMessage =
       context.messageTypeId?.startsWith('application_') ||
-      ['application_received', 'application_screened', 'application_advanced', 'application_hired', 'application_rejected', 'application_waitlisted', 'application_status_change'].includes(context.messageTypeId || '');
+      ['application_received', 'application_screened', 'application_advanced', 'application_hired', 'application_rejected', 'application_waitlisted', 'application_status_change', 'application_requirements_reminder'].includes(context.messageTypeId || '');
     if (isApplicationMessage) {
       const phone = userData.phoneE164 || userData.phone;
       if (!phone) {
@@ -1456,7 +1456,8 @@ async function deliverPush(
     
     await logRef.set(logDoc);
     
-    // 4. Send via PushProvider
+    // 4. Send via PushProvider — include deepLink for SW notificationclick (HRX-FCM-Messaging-Complete)
+    const deepLink = context.metadata?.ctaUrl ?? context.variables?.ctaUrl ?? '';
     const pushProvider = getPushProvider();
     const result = await pushProvider.sendPush({
       tenantId: context.tenantId,
@@ -1468,6 +1469,7 @@ async function deliverPush(
       body,
       data: {
         messageTypeId: context.messageTypeId,
+        deepLink,
         ...context.metadata,
       },
       messageTypeId: context.messageTypeId,
@@ -1504,52 +1506,25 @@ async function deliverPush(
 }
 
 /**
- * Get device tokens for a user
- * Helper function to fetch FCM/Expo tokens from user's device collection
+ * Get device tokens for a user — canonical path users/{uid}/pushTokens per HRX-FCM-Messaging-Complete
  */
 async function getDeviceTokensForUser(userId: string): Promise<string[]> {
   try {
-    // Try to find device tokens in user's devices subcollection
-    // Common patterns: /users/{userId}/devices or /devices where userId field matches
-    const devicesQuery = await db
+    const pushTokensSnap = await db
       .collection('users')
       .doc(userId)
-      .collection('devices')
-      .where('active', '==', true)
+      .collection('pushTokens')
+      .where('enabled', '==', true)
       .get();
-    
-    if (!devicesQuery.empty) {
-      const tokens: string[] = [];
-      for (const deviceDoc of devicesQuery.docs) {
-        const deviceData = deviceDoc.data();
-        if (deviceData.fcmToken || deviceData.pushToken || deviceData.token) {
-          tokens.push(deviceData.fcmToken || deviceData.pushToken || deviceData.token);
-        }
-      }
-      return tokens;
+
+    const tokens: string[] = [];
+    for (const docSnap of pushTokensSnap.docs) {
+      const token = docSnap.data().token ?? docSnap.id;
+      if (token) tokens.push(token);
     }
-    
-    // Fallback: check global devices collection
-    const globalDevicesQuery = await db
-      .collection('devices')
-      .where('userId', '==', userId)
-      .where('active', '==', true)
-      .get();
-    
-    if (!globalDevicesQuery.empty) {
-      const tokens: string[] = [];
-      for (const deviceDoc of globalDevicesQuery.docs) {
-        const deviceData = deviceDoc.data();
-        if (deviceData.fcmToken || deviceData.pushToken || deviceData.token) {
-          tokens.push(deviceData.fcmToken || deviceData.pushToken || deviceData.token);
-        }
-      }
-      return tokens;
-    }
-    
-    return [];
+    return tokens;
   } catch (error: any) {
-    logger.error(`Error fetching device tokens for user ${userId}:`, error);
+    logger.error(`Error fetching push tokens for user ${userId}:`, error);
     return [];
   }
 }

@@ -11308,6 +11308,10 @@ export {
 // Application SMS Triggers
 export { onApplicationCreated, onApplicationStatusChanged } from './applicationSmsTriggers';
 
+// FCM push on application created / assignment updated (test automated push delivery)
+export { onApplicationCreatedPush } from './triggers/onApplicationCreatedPush';
+export { onAssignmentUpdatedPush } from './triggers/onAssignmentUpdatedPush';
+
 // Mentions Functions
 export { mentionSearch } from './mentions/mentionSearch';
 
@@ -11533,6 +11537,9 @@ export {
 
 // Scheduled Orchestrator (Phase 3)
 export { scheduledOrchestrator };
+
+// Complete-requirements reminder (once per application when missing items, ~24h after submit)
+export { scheduledCompleteRequirementsReminder } from './completeRequirementsReminder';
 
 // Job Title Management
 export { addJobTitle };

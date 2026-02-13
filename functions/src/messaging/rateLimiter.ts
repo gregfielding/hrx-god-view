@@ -73,6 +73,7 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'application_screened',
   'application_advanced',
   'application_hired',
+  'application_requirements_reminder',
 ]);
 
 /**
