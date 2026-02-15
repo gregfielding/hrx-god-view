@@ -594,6 +594,19 @@ export const resendAssignmentOffer = onCall(
   const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
   const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
 
+  let emailSubject: string | undefined;
+  let emailBody: string | undefined;
+  try {
+    const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+    const emailResult = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+    if (emailResult) {
+      emailSubject = emailResult.subject;
+      emailBody = emailResult.html;
+    }
+  } catch (_) {
+    /* continue without email body */
+  }
+
   const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
   const result = await sendLegacyAssignmentMessage({
     tenantId,
@@ -604,6 +617,8 @@ export const resendAssignmentOffer = onCall(
     source: 'assignment_created',
     sourceId: assignmentId,
     assignmentId,
+    emailSubject,
+    emailBody,
   });
 
   return { success: result.success, error: result.error };

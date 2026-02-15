@@ -458,7 +458,13 @@ async function deliverSMS(
     
     // Handle direct message content (unified message - strip HTML for SMS)
     if (isDirectMessage && unifiedMessage) {
-      messageContent = stripHtml(unifiedMessage);
+      // When _rawMessage is set (e.g. assignment_created), use it for SMS so SMS gets short text and email gets full HTML
+      const rawMessage = context.variables?._rawMessage as string | undefined;
+      if (rawMessage && typeof rawMessage === 'string' && rawMessage.trim()) {
+        messageContent = rawMessage.trim();
+      } else {
+        messageContent = stripHtml(unifiedMessage);
+      }
       // Truncate to 1600 characters for SMS
       if (messageContent.length > 1600) {
         messageContent = messageContent.substring(0, 1597) + '...';

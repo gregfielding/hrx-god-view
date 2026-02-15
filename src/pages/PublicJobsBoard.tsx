@@ -169,6 +169,8 @@ const PublicJobsBoard: React.FC = () => {
   // Track user's application IDs for showing "Application Submitted"
   const [userApplicationIds, setUserApplicationIds] = useState<string[]>([]);
   const [userApplicationStatuses, setUserApplicationStatuses] = useState<Record<string, string>>({}); // Map of applicationId -> status
+  /** Map jobOrderId -> assignmentId for jobs where user has an assignment (proposed/confirmed/active) */
+  const [userAssignmentIdByJobOrderId, setUserAssignmentIdByJobOrderId] = useState<Record<string, string>>({});
   const [userGroupIds, setUserGroupIds] = useState<string[]>([]);
   const [userCertifications, setUserCertifications] = useState<Array<{ name?: string }>>([]);
   
@@ -268,12 +270,41 @@ const PublicJobsBoard: React.FC = () => {
           
           setUserApplicationStatuses(statusMap);
         }
+
+        // Load user's assignments for this tenant (for "View Assignment" on jobs board)
+        if (specificTenantId) {
+          try {
+            const assignmentsRef = collection(db, 'tenants', specificTenantId, 'assignments');
+            const assignmentsQuery = query(
+              assignmentsRef,
+              where('userId', '==', user.uid),
+              where('status', 'in', ['proposed', 'confirmed', 'active'])
+            );
+            const assignmentsSnap = await getDocs(assignmentsQuery);
+            const map: Record<string, string> = {};
+            assignmentsSnap.forEach((docSnap) => {
+              const data = docSnap.data();
+              const jobOrderId = data.jobOrderId;
+              if (jobOrderId && !map[jobOrderId]) {
+                map[jobOrderId] = docSnap.id;
+              }
+            });
+            setUserAssignmentIdByJobOrderId(map);
+          } catch (err: any) {
+            if (err?.code !== 'permission-denied') {
+              console.error('Error loading user assignments:', err);
+            }
+            setUserAssignmentIdByJobOrderId({});
+          }
+        } else {
+          setUserAssignmentIdByJobOrderId({});
+        }
       } catch (error) {
         console.error('Error loading user data:', error);
       }
     };
     loadUserData();
-  }, [user?.uid]);
+  }, [user?.uid, specificTenantId]);
 
   // Request user's location permission and get coordinates
   // Only call this in response to a user gesture (e.g., selecting "Closest to Me")
@@ -1013,7 +1044,13 @@ const PublicJobsBoard: React.FC = () => {
       navigate(`/apply/${job.tenantId}/${job.id}?returnTo=/c1/jobs-board/${job.id}${jobOrderIdParam ? `&${jobOrderIdParam}` : ''}`);
       return;
     }
-    
+
+    // Gig jobs: require at least one shift selected (apply-to-shift model; see docs/career-vs-gig-placements-assignments.md)
+    if ((job as any).jobType === 'gig' && (!selectedJobShifts || selectedJobShifts.length === 0)) {
+      alert('Please select at least one shift to apply to.');
+      return;
+    }
+
     try {
       // Check if user has existing application data
       const { hasExistingApplicationData, getMissingRequiredCertifications, submitQuickApplication } = await import('../utils/quickApplicationSubmit');
@@ -1733,6 +1770,32 @@ const PublicJobsBoard: React.FC = () => {
                               }}
                             >
                               Apply Now
+                            </Button>
+                          );
+                        }
+
+                        // If user has an assignment for this job, show green "View Assignment" button
+                        const jobOrderId = (job as PublicJobPosting).jobOrderId;
+                        const assignmentId = jobOrderId ? userAssignmentIdByJobOrderId[jobOrderId] : undefined;
+                        if (assignmentId) {
+                          return (
+                            <Button 
+                              variant="contained" 
+                              sx={{ 
+                                width: '50%',
+                                ml: 'auto',
+                                backgroundColor: '#2e7d32',
+                                color: '#fff',
+                                '&:hover': {
+                                  backgroundColor: '#1b5e20',
+                                },
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigate(`/c1/workers/assignments/${assignmentId}`);
+                              }}
+                            >
+                              View Assignment
                             </Button>
                           );
                         }

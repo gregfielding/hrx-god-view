@@ -8450,82 +8450,82 @@ export const logAssignmentCreated = onDocumentCreated(
   try {
     logger.info(`Assignment created: ${assignmentId} for worker ${assignment.userId || assignment.candidateId}`);
     
-    // Send worker notification if assignment was newly proposed/confirmed
+    // Send worker notification if assignment was newly proposed/confirmed (SMS + email with full assignment details)
     if (assignment.userId && (assignment.status === 'proposed' || assignment.status === 'confirmed')) {
       try {
-        // Fetch user phone number
         const userDoc = await admin.firestore().doc(`users/${assignment.userId}`).get();
         const userData = userDoc.data();
         const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
-        if (phoneE164) {
-          // Fetch job order and details for message
-          let jobTitle = assignment.jobTitle || 'a position';
-          let checkInInstructions = '';
-          
-          if (assignment.jobOrderId) {
-            try {
-              const jobOrderDoc = await admin.firestore()
-                .doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`)
-                .get();
-              const jobOrderData = jobOrderDoc.data();
-              if (jobOrderData?.jobTitle) {
-                jobTitle = jobOrderData.jobTitle;
-              }
-              if (jobOrderData?.checkInInstructions) {
-                checkInInstructions = String(jobOrderData.checkInInstructions);
-              }
-            } catch (err) {
-              logger.warn(`Failed to fetch job order ${assignment.jobOrderId}:`, err);
-            }
+
+        let jobTitle = assignment.jobTitle || 'a position';
+        let checkInInstructions = '';
+        if (assignment.jobOrderId) {
+          try {
+            const jobOrderDoc = await admin.firestore()
+              .doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`)
+              .get();
+            const jobOrderData = jobOrderDoc.data();
+            if (jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
+            if (jobOrderData?.checkInInstructions) checkInInstructions = String(jobOrderData.checkInInstructions);
+          } catch (err) {
+            logger.warn(`Failed to fetch job order ${assignment.jobOrderId}:`, err);
           }
-          
-          // Format date and time
-          let dateTimeInfo = '';
-          if (assignment.startDate) {
-            const startDate = assignment.startDate.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
-            dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
-            
-            if (assignment.startTime && assignment.endTime) {
-              dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
-            }
-          }
-          
-          // Create message (carrier-friendly: avoid "congratulations", "click", ALL CAPS to reduce 30007 filtering)
-          const firstName = assignment.firstName || userData.firstName || 'there';
-          const worksiteName = assignment.locationNickname || assignment.worksiteName || '';
-          const locationText = worksiteName ? ` at ${worksiteName}` : '';
-          
-          const postingPath = assignment.jobPostId
-            ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
-            : '/c1/jobs-board';
-          const jobUrl = `https://hrxone.com${postingPath}`;
-          const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
-          const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
-          
-          // PHASE 3: Route through orchestrator instead of direct Twilio call
-          const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
-          const result = await sendLegacyAssignmentMessage({
-            tenantId,
-            userId: assignment.userId,
-            phoneE164,
-            message,
-            messageTypeId: 'assignment_created',
-            source: 'assignment_created',
-            sourceId: assignmentId,
-            assignmentId,
-          });
-          
-          if (result.success) {
-            logger.info(`SMS sent for assignment ${assignmentId} to ${phoneE164}`);
-          } else {
-            logger.warn(`SMS failed for assignment ${assignmentId} to ${phoneE164}: ${result.error}`);
-          }
-        } else {
-          logger.info(`Skipping SMS for assignment ${assignmentId} - user ${assignment.userId} has no phone number`);
         }
-      } catch (smsError: any) {
-        // Don't fail assignment creation if SMS fails
-        logger.error(`Failed to send SMS for assignment ${assignmentId}:`, smsError);
+
+        let dateTimeInfo = '';
+        if (assignment.startDate) {
+          const startDate = assignment.startDate.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
+          dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
+          if (assignment.startTime && assignment.endTime) {
+            dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
+          }
+        }
+
+        const firstName = assignment.firstName || userData?.firstName || 'there';
+        const worksiteName = assignment.locationNickname || assignment.worksiteName || '';
+        const locationText = worksiteName ? ` at ${worksiteName}` : '';
+        const postingPath = assignment.jobPostId
+          ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
+          : '/c1/jobs-board';
+        const jobUrl = `https://hrxone.com${postingPath}`;
+        const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
+        const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
+
+        // Build full assignment details email (subject: "Job Title - Assignment Details")
+        let emailSubject: string | undefined;
+        let emailBody: string | undefined;
+        try {
+          const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+          const emailResult = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+          if (emailResult) {
+            emailSubject = emailResult.subject;
+            emailBody = emailResult.html;
+          }
+        } catch (emailBuildErr: any) {
+          logger.warn(`Failed to build assignment details email for ${assignmentId}:`, emailBuildErr?.message);
+        }
+
+        const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+        const result = await sendLegacyAssignmentMessage({
+          tenantId,
+          userId: assignment.userId,
+          phoneE164: phoneE164 || '',
+          message,
+          messageTypeId: 'assignment_created',
+          source: 'assignment_created',
+          sourceId: assignmentId,
+          assignmentId,
+          emailSubject,
+          emailBody,
+        });
+
+        if (result.success) {
+          logger.info(`Assignment notification sent for ${assignmentId}`);
+        } else {
+          logger.warn(`Assignment notification failed for ${assignmentId}: ${result.error}`);
+        }
+      } catch (notifyError: any) {
+        logger.error(`Failed to send notification for assignment ${assignmentId}:`, notifyError);
       }
     }
     

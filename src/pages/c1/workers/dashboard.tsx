@@ -35,20 +35,37 @@ function toStartAt(data: Record<string, unknown>): number {
   return new Date(iso).getTime();
 }
 
+/** True if string looks like a Firestore doc ID — don't show as display name */
+function looksLikeDocId(s: unknown): boolean {
+  if (typeof s !== 'string' || !s) return false;
+  const t = s.trim();
+  return t.length >= 15 && t.length <= 30 && /^[a-zA-Z0-9_-]+$/.test(t);
+}
+
 function assignmentToUpcomingShift(
   docId: string,
-  data: Record<string, unknown>
+  data: Record<string, unknown>,
+  resolvedLocationName?: string | null
 ): UpcomingShift {
   const startAt = toStartAt(data);
   const start = new Date(startAt);
   const jobTitle = (data.jobTitle as string) || 'Assignment';
-  const siteName = (data.locationNickname as string) || (data.worksiteName as string);
-  const clientName = data.companyName as string | undefined;
-  const worksiteAddress = data.worksiteAddress as { city?: string; state?: string } | undefined;
-  const locationCity =
+  const rawSite = (data.locationNickname as string) || (data.worksiteName as string);
+  const siteName =
+    resolvedLocationName ||
+    (rawSite && !looksLikeDocId(rawSite) ? rawSite : undefined);
+  const rawCompany = data.companyName as string | undefined;
+  const clientName =
+    rawCompany && !looksLikeDocId(rawCompany) ? rawCompany : undefined;
+  const worksiteAddress = data.worksiteAddress as { city?: string; state?: string; street?: string } | undefined;
+  const cityState =
     worksiteAddress?.city && worksiteAddress?.state
       ? `${worksiteAddress.city}, ${worksiteAddress.state}`
-      : (data.worksiteName as string) || (data.locationNickname as string) || undefined;
+      : undefined;
+  const rawLocation = (data.worksiteName as string) || (data.locationNickname as string);
+  const addressShort =
+    cityState ||
+    (rawLocation && !looksLikeDocId(rawLocation) ? rawLocation : undefined);
   return {
     jobTitle,
     siteName,
@@ -56,20 +73,25 @@ function assignmentToUpcomingShift(
     day: start.toLocaleDateString('en-US', { weekday: 'short' }),
     date: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
     time: start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
-    addressShort: locationCity,
-    locationCity,
+    addressShort: addressShort || undefined,
+    locationCity: addressShort || undefined,
     assignmentId: docId,
   };
 }
 
 const WorkerDashboard: React.FC = () => {
   const { user, activeTenant } = useAuth();
-  const firstName = user?.displayName?.split(' ')[0] ?? 'there';
-
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
   const [nextShift, setNextShift] = useState<UpcomingShift | null>(null);
   const { checklist, summary: complianceSummary, hasOnboarding } = useOnboarding(user?.uid);
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
+
+  const firstName =
+    (userDoc?.firstName as string) ||
+    user?.displayName?.split(' ')[0] ||
+    'there';
+  const displayFirstName =
+    firstName === 'there' ? firstName : firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -105,7 +127,26 @@ const WorkerDashboard: React.FC = () => {
         upcoming.sort((a, b) => a.startAt - b.startAt);
         const first = upcoming[0];
         if (first) {
-          setNextShift(assignmentToUpcomingShift(first.id, first.data));
+          let resolvedLocationName: string | null = null;
+          const locationId = first.data.locationId as string | undefined;
+          const rawSite = (first.data.locationNickname as string) || (first.data.worksiteName as string);
+          if (
+            locationId &&
+            typeof locationId === 'string' &&
+            (looksLikeDocId(rawSite) || !rawSite)
+          ) {
+            try {
+              const locSnap = await getDoc(doc(db, 'tenants', tenantId, 'locations', locationId));
+              if (locSnap.exists()) {
+                const loc = locSnap.data() as Record<string, unknown>;
+                const name = (loc.nickname || loc.title || loc.name || loc.locationName) as string | undefined;
+                if (name && !looksLikeDocId(name)) resolvedLocationName = name;
+              }
+            } catch (_) {
+              // ignore
+            }
+          }
+          setNextShift(assignmentToUpcomingShift(first.id, first.data, resolvedLocationName));
         } else {
           setNextShift(null);
         }
@@ -185,7 +226,7 @@ const WorkerDashboard: React.FC = () => {
   return (
     <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
       <Stack spacing={4} sx={{ py: 2 }}>
-        <WorkerDashboardHero firstName={firstName} nextShift={nextShift} />
+        <WorkerDashboardHero firstName={displayFirstName} nextShift={nextShift} />
 
         <WorkerDashboardSmsToggle
           smsEnabled={smsEnabled}

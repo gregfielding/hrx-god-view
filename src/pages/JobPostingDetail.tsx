@@ -740,14 +740,13 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleApply = async () => {
-    // Validation for Gig jobs with dynamic shifts
+    // Gig jobs: require at least one shift selected (apply-to-shift model; see docs/career-vs-gig-placements-assignments.md)
     if (
       posting?.jobType === 'gig' &&
-      posting?.usesDynamicShifts &&
       dynamicShifts.length > 0 &&
       selectedShifts.length === 0
     ) {
-      alert('Please select at least one shift before applying.');
+      alert('Please select at least one shift to apply to.');
       return;
     }
 

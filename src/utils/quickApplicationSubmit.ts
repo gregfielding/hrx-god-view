@@ -104,6 +104,12 @@ export async function submitQuickApplication(
   returnTo?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
+    // Gig jobs: applicant must apply to at least one specific shift (see docs/career-vs-gig-placements-assignments.md)
+    const isGig = String(jobPosting?.jobType || '').toLowerCase() === 'gig';
+    if (isGig && (!selectedShifts || selectedShifts.length === 0)) {
+      return { success: false, error: 'Please select at least one shift to apply to.' };
+    }
+
     // Load user data
     const userRef = doc(db, 'users', userId);
     const userSnap = await getDoc(userRef);

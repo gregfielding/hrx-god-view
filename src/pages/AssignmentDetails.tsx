@@ -6,12 +6,15 @@ import {
   Button,
   Card,
   CardContent,
+  CardHeader,
   Chip,
   Divider,
   CircularProgress,
   Alert,
   Stack,
   Paper,
+  Grid,
+  Link,
 } from '@mui/material';
 import {
   LocationOn as LocationIcon,
@@ -23,6 +26,10 @@ import {
   CheckCircle as CheckCircleIcon,
   Cancel as CancelIcon,
   Pending as PendingIcon,
+  Map as MapIcon,
+  OpenInNew as OpenInNewIcon,
+  Checkroom as CheckroomIcon,
+  Engineering as EngineeringIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -52,6 +59,11 @@ interface AssignmentDetails {
   payRate?: number;
   startDate?: Date;
   endDate?: Date;
+  /** HH:mm - from assignment or shift */
+  startTime?: string;
+  endTime?: string;
+  /** gig = fixed end date possible; career = often ongoing */
+  jobOrderType?: 'gig' | 'career';
   status: string;
   hoursWorked?: number;
   totalEarnings?: number;
@@ -67,7 +79,12 @@ interface AssignmentDetails {
     [key: string]: { text?: string; files?: any[] } | undefined;
   };
   checkInInstructions?: string;
+  /** Job order "Uniform Requirements" (pack selection e.g. Business Casual); string or array joined for display */
   uniformRequirements?: string;
+  /** Job order "Custom Uniform Requirements" (free text); used on Assignment Info card only */
+  customUniformRequirements?: string;
+  /** Required PPE (from job order); string or array joined */
+  ppeRequirements?: string;
 }
 
 const AssignmentDetails: React.FC = () => {
@@ -77,11 +94,207 @@ const AssignmentDetails: React.FC = () => {
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [recruiters, setRecruiters] = useState<Array<{ id: string; displayName: string; email?: string; phone?: string }>>([]);
+  const [scheduleShift, setScheduleShift] = useState<{
+    shiftMode?: 'single' | 'multi';
+    shiftDate?: string;
+    endDate?: string;
+    weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    defaultStartTime?: string;
+    defaultEndTime?: string;
+    shiftDescription?: string;
+    emailIntro?: string;
+  } | null>(null);
+
+  /** Looked-up company name, worksite name, and worksite address when assignment has IDs */
+  const [resolvedCompanyName, setResolvedCompanyName] = useState<string | null>(null);
+  const [resolvedWorksiteName, setResolvedWorksiteName] = useState<string | null>(null);
+  const [resolvedWorksiteAddress, setResolvedWorksiteAddress] = useState<string | null>(null);
 
   useEffect(() => {
     if (!assignmentId || !user?.uid) return;
     loadAssignment();
   }, [assignmentId, user?.uid]);
+
+  useEffect(() => {
+    if (!assignment?.tenantId || !assignment?.jobOrderId || !assignment?.shiftId) {
+      setScheduleShift(null);
+      return;
+    }
+    let cancelled = false;
+    const loadShift = async () => {
+      try {
+        const shiftRef = doc(db, 'tenants', assignment.tenantId, 'job_orders', assignment.jobOrderId, 'shifts', assignment.shiftId);
+        const shiftSnap = await getDoc(shiftRef);
+        if (cancelled) return;
+        if (shiftSnap.exists()) {
+          const d = shiftSnap.data() as Record<string, unknown>;
+          setScheduleShift({
+            shiftMode: d.shiftMode as 'single' | 'multi' | undefined,
+            shiftDate: typeof d.shiftDate === 'string' ? d.shiftDate : undefined,
+            endDate: typeof d.endDate === 'string' ? d.endDate : undefined,
+            weeklySchedule: d.weeklySchedule as Record<string, { enabled: boolean; startTime: string; endTime: string }> | undefined,
+            defaultStartTime: typeof d.defaultStartTime === 'string' ? d.defaultStartTime : undefined,
+            defaultEndTime: typeof d.defaultEndTime === 'string' ? d.defaultEndTime : undefined,
+            shiftDescription: typeof d.shiftDescription === 'string' ? d.shiftDescription : undefined,
+            emailIntro: typeof d.emailIntro === 'string' ? d.emailIntro : undefined,
+          });
+        } else {
+          setScheduleShift(null);
+        }
+      } catch (_) {
+        if (!cancelled) setScheduleShift(null);
+      }
+    };
+    loadShift();
+    return () => { cancelled = true; };
+  }, [assignment?.tenantId, assignment?.jobOrderId, assignment?.shiftId]);
+
+  useEffect(() => {
+    if (!assignment?.tenantId || !assignment?.jobOrderId) {
+      setRecruiters([]);
+      return;
+    }
+    let cancelled = false;
+    const loadRecruiters = async () => {
+      try {
+        const jobOrderRef = doc(db, 'tenants', assignment.tenantId, 'job_orders', assignment.jobOrderId);
+        const jobOrderSnap = await getDoc(jobOrderRef);
+        if (cancelled) return;
+        const ids: string[] = [];
+        if (jobOrderSnap.exists()) {
+          const data = jobOrderSnap.data() as Record<string, unknown>;
+          const assigned = data.assignedRecruiters as string[] | undefined;
+          const legacyId = data.recruiterId as string | undefined;
+          if (Array.isArray(assigned) && assigned.length > 0) {
+            ids.push(...assigned);
+          } else if (legacyId) {
+            ids.push(legacyId);
+          }
+        }
+        const uniq = Array.from(new Set(ids));
+        const list: Array<{ id: string; displayName: string; email?: string; phone?: string }> = [];
+        for (const uid of uniq) {
+          try {
+            const userSnap = await getDoc(doc(db, 'users', uid));
+            if (cancelled) return;
+            if (userSnap.exists()) {
+              const d = userSnap.data() as Record<string, unknown>;
+              const firstName = (d.firstName as string) || '';
+              const lastName = (d.lastName as string) || '';
+              const displayName = `${firstName} ${lastName}`.trim() || (d.displayName as string) || (d.email as string) || 'Recruiter';
+              const phone = (d.phone as string) || (d.phoneNumber as string) || (d.phoneE164 as string) || undefined;
+              list.push({
+                id: uid,
+                displayName,
+                email: d.email as string | undefined,
+                phone: phone && String(phone).trim() ? String(phone).trim() : undefined,
+              });
+            } else {
+              list.push({ id: uid, displayName: 'Recruiter' });
+            }
+          } catch (_) {
+            list.push({ id: uid, displayName: 'Your recruiter' });
+          }
+        }
+        if (!cancelled) setRecruiters(list);
+      } catch (_) {
+        if (!cancelled) setRecruiters([]);
+      }
+    };
+    loadRecruiters();
+    return () => { cancelled = true; };
+  }, [assignment?.tenantId, assignment?.jobOrderId]);
+
+  useEffect(() => {
+    if (!assignment?.tenantId) {
+      setResolvedCompanyName(null);
+      setResolvedWorksiteName(null);
+      setResolvedWorksiteAddress(null);
+      return;
+    }
+    let cancelled = false;
+    const tid = assignment.tenantId;
+    const companyId = assignment.companyId;
+    const worksiteId = assignment.worksiteId;
+
+    const looksLikeDocId = (s: unknown): boolean => {
+      if (typeof s !== 'string' || !s) return false;
+      const t = s.trim();
+      return t.length >= 15 && t.length <= 30 && /^[a-zA-Z0-9_-]+$/.test(t);
+    };
+
+    const load = async () => {
+      try {
+        if (!companyId) setResolvedCompanyName(null);
+        if (!worksiteId) {
+          setResolvedWorksiteName(null);
+          setResolvedWorksiteAddress(null);
+        }
+        if (companyId && (!assignment.companyName || looksLikeDocId(assignment.companyName))) {
+          const companyRef = doc(db, 'tenants', tid, 'crm_companies', companyId);
+          const companySnap = await getDoc(companyRef);
+          if (cancelled) return;
+          if (companySnap.exists()) {
+            const d = companySnap.data() as Record<string, unknown>;
+            const name = (d.name || d.companyName) as string | undefined;
+            if (name && !looksLikeDocId(name)) setResolvedCompanyName(name);
+          }
+        } else {
+          setResolvedCompanyName(null);
+        }
+
+        if (worksiteId) {
+          const needLookup = !assignment.worksiteName && !assignment.location ||
+            looksLikeDocId(assignment.worksiteName) || looksLikeDocId(assignment.location);
+          const needAddress = !assignment.worksiteAddress || (
+            !assignment.worksiteAddress.street && !assignment.worksiteAddress.city &&
+            !assignment.worksiteAddress.state && !assignment.worksiteAddress.zipCode
+          );
+          if (needLookup || needAddress) {
+            let locSnap = null;
+            if (companyId) {
+              locSnap = await getDoc(doc(db, 'tenants', tid, 'crm_companies', companyId, 'locations', worksiteId));
+            }
+            if (!locSnap?.exists()) {
+              locSnap = await getDoc(doc(db, 'tenants', tid, 'locations', worksiteId));
+            }
+            if (cancelled) return;
+            if (locSnap?.exists()) {
+              const loc = locSnap.data() as Record<string, unknown>;
+              if (needLookup) {
+                const name = (loc.nickname || loc.title || loc.name || loc.locationName) as string | undefined;
+                if (name && !looksLikeDocId(name)) setResolvedWorksiteName(name);
+              }
+              if (needAddress) {
+                const street = (loc.address || loc.street) as string | undefined;
+                const zip = (loc.zipCode ?? loc.zipcode) as string | undefined;
+                const parts = [street, loc.city, loc.state, zip].filter(Boolean) as string[];
+                if (parts.length) setResolvedWorksiteAddress(parts.join(', '));
+              }
+            } else {
+              if (needLookup) setResolvedWorksiteName(null);
+              if (needAddress) setResolvedWorksiteAddress(null);
+            }
+          } else {
+            setResolvedWorksiteName(null);
+            setResolvedWorksiteAddress(null);
+          }
+        } else {
+          setResolvedWorksiteName(null);
+          setResolvedWorksiteAddress(null);
+        }
+      } catch (_) {
+        if (!cancelled) {
+          setResolvedCompanyName(null);
+          setResolvedWorksiteName(null);
+          setResolvedWorksiteAddress(null);
+        }
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [assignment?.tenantId, assignment?.companyId, assignment?.worksiteId, assignment?.companyName, assignment?.worksiteName, assignment?.location, assignment?.worksiteAddress]);
 
   useEffect(() => {
     if (assignment && typeof console !== 'undefined' && console.log) {
@@ -146,26 +359,30 @@ const AssignmentDetails: React.FC = () => {
         return;
       }
 
+      const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
+
       // Try legacy structure first (root assignments collection)
       const assignmentRef = doc(db, 'assignments', assignmentId);
       let assignmentSnap = await getDoc(assignmentRef);
 
-      // If not in legacy collection, try tenant-scoped: tenants/{tenantId}/assignments/{assignmentId}
+      // If not in legacy collection, try tenant-scoped. Try C1 first so worker "View details" only needs assignment rule to allow read.
       if (!assignmentSnap.exists()) {
-        const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
-        const userRef = doc(db, 'users', user.uid);
-        const userSnap = await getDoc(userRef);
-        const tenantIds: string[] = [C1_TENANT_ID];
-        if (userSnap.exists()) {
-          const userData = userSnap.data();
-          if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
-            const keys = Object.keys(userData.tenantIds);
-            tenantIds.length = 0;
-            tenantIds.push(...keys);
-            if (!keys.includes(C1_TENANT_ID)) tenantIds.push(C1_TENANT_ID);
+        const tenantIdsToTry: string[] = [C1_TENANT_ID];
+        try {
+          const userRef = doc(db, 'users', user.uid);
+          const userSnap = await getDoc(userRef);
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
+              const keys = Object.keys(userData.tenantIds);
+              const rest = keys.filter((k) => k !== C1_TENANT_ID);
+              tenantIdsToTry.push(...rest);
+            }
           }
+        } catch (_) {
+          // Proceed with C1 only if user doc read fails (e.g. permissions)
         }
-        for (const tid of tenantIds) {
+        for (const tid of tenantIdsToTry) {
           const tenantAssignmentRef = doc(db, 'tenants', tid, 'assignments', assignmentId);
           const snap = await getDoc(tenantAssignmentRef);
           if (snap.exists()) {
@@ -256,12 +473,23 @@ const AssignmentDetails: React.FC = () => {
         payRate: data.payRate,
         startDate,
         endDate,
+        startTime: data.startTime,
+        endTime: data.endTime,
+        jobOrderType: data.jobOrderType === 'career' || data.jobOrderType === 'gig' ? data.jobOrderType : undefined,
         status: (data.status || 'pending').toLowerCase(),
         hoursWorked: data.hoursWorked,
         totalEarnings: data.totalEarnings,
         notes: data.notes,
         createdAt,
         updatedAt,
+        staffInstructions: data.staffInstructions,
+        uniformRequirements: typeof data.uniformRequirements === 'string' ? data.uniformRequirements : (Array.isArray(data.uniformRequirements) ? data.uniformRequirements.filter(Boolean).join(', ') : undefined),
+        customUniformRequirements: data.customUniformRequirements,
+        ppeRequirements: Array.isArray(data.ppeRequirements)
+          ? data.ppeRequirements.filter(Boolean).join(', ')
+          : typeof data.ppeRequirements === 'string'
+            ? data.ppeRequirements
+            : undefined,
       });
     } catch (err: any) {
       console.error('Error loading assignment:', err);
@@ -289,16 +517,24 @@ const AssignmentDetails: React.FC = () => {
 
       const jobOrderData = jobOrderSnap.data();
       
-      // Parse dates
+      // Parse dates: prefer assignment (shift) start/end when present
       let startDate: Date | undefined;
       let endDate: Date | undefined;
       let createdAt: Date | undefined;
       let updatedAt: Date | undefined;
 
-      if (jobOrderData.startDate) {
+      if (sourceData.startDate) {
+        const raw = sourceData.startDate;
+        startDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+      }
+      if (!startDate && jobOrderData.startDate) {
         startDate = jobOrderData.startDate.toDate ? jobOrderData.startDate.toDate() : new Date(jobOrderData.startDate);
       }
-      if (jobOrderData.endDate) {
+      if (sourceData.endDate) {
+        const raw = sourceData.endDate;
+        endDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+      }
+      if (!endDate && jobOrderData.endDate) {
         endDate = jobOrderData.endDate.toDate ? jobOrderData.endDate.toDate() : new Date(jobOrderData.endDate);
       }
       if (sourceData.createdAt) {
@@ -308,19 +544,17 @@ const AssignmentDetails: React.FC = () => {
         updatedAt = sourceData.updatedAt.toDate ? sourceData.updatedAt.toDate() : new Date(sourceData.updatedAt);
       }
 
-      // Get location from worksite
-      let location = '';
-      let worksiteName = '';
-      const worksiteAddress = jobOrderData.worksiteAddress;
-
-      if (jobOrderData.worksiteName) {
-        location = jobOrderData.worksiteName;
+      // Get location from worksite: prefer assignment denormalized, else job order
+      const worksiteAddress = sourceData.worksiteAddress || sourceData.address || jobOrderData.worksiteAddress;
+      let location = sourceData.location || sourceData.worksiteName || sourceData.locationNickname || '';
+      let worksiteName = sourceData.worksiteName || sourceData.locationNickname || '';
+      if (!worksiteName && jobOrderData.worksiteName) {
         worksiteName = jobOrderData.worksiteName;
-      } else if (jobOrderData.worksiteAddress) {
+        if (!location) location = jobOrderData.worksiteName;
+      }
+      if (!location && jobOrderData.worksiteAddress) {
         const addr = jobOrderData.worksiteAddress;
-        if (addr.city && addr.state) {
-          location = `${addr.city}, ${addr.state}`;
-        }
+        if (addr.city && addr.state) location = `${addr.city}, ${addr.state}`;
       }
 
       setAssignment({
@@ -330,14 +564,17 @@ const AssignmentDetails: React.FC = () => {
         companyId: sourceData.companyId ?? jobOrderData.companyId,
         worksiteId: sourceData.locationId ?? jobOrderData.worksiteId ?? jobOrderData.locationId,
         shiftId: sourceData.shiftId,
-        jobTitle: jobOrderData.jobOrderName || jobOrderData.jobTitle || '',
-        companyName: jobOrderData.companyName || '',
+        jobTitle: sourceData.jobTitle || jobOrderData.jobOrderName || jobOrderData.jobTitle || '',
+        companyName: sourceData.companyName || jobOrderData.companyName || '',
         location,
         worksiteName,
         worksiteAddress,
-        payRate: jobOrderData.payRate,
+        payRate: sourceData.payRate ?? jobOrderData.payRate,
         startDate,
         endDate,
+        startTime: sourceData.startTime,
+        endTime: sourceData.endTime,
+        jobOrderType: sourceData.jobOrderType === 'career' || sourceData.jobOrderType === 'gig' ? sourceData.jobOrderType : (jobOrderData.jobType === 'career' || jobOrderData.jobType === 'gig' ? jobOrderData.jobType : undefined),
         status: sourceData.status || 'confirmed',
         hoursWorked: sourceData.hoursWorked,
         totalEarnings: sourceData.totalEarnings,
@@ -347,7 +584,13 @@ const AssignmentDetails: React.FC = () => {
         // Load staff instructions
         staffInstructions: jobOrderData.staffInstructions || {},
         checkInInstructions: jobOrderData.checkInInstructions,
-        uniformRequirements: jobOrderData.uniformRequirements,
+        uniformRequirements: Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined),
+        customUniformRequirements: typeof jobOrderData.customUniformRequirements === 'string' ? jobOrderData.customUniformRequirements : undefined,
+        ppeRequirements: Array.isArray(jobOrderData.ppeRequirements)
+          ? jobOrderData.ppeRequirements.filter(Boolean).join(', ')
+          : typeof jobOrderData.ppeRequirements === 'string'
+            ? jobOrderData.ppeRequirements
+            : undefined,
       });
     } catch (err: any) {
       console.error('Error loading job order:', err);
@@ -397,6 +640,20 @@ const AssignmentDetails: React.FC = () => {
     return format(date, 'MMMM dd, yyyy, h:mm a');
   };
 
+  /** Format HH:mm to "9:00 AM" */
+  const formatTime = (t: string | undefined): string => {
+    if (!t || typeof t !== 'string') return '';
+    const [h, m] = t.trim().split(':');
+    const hh = Math.max(0, Math.min(23, parseInt(h, 10) || 0));
+    const mm = Math.max(0, Math.min(59, parseInt(m, 10) || 0));
+    const d = new Date(2000, 0, 1, hh, mm);
+    return format(d, 'h:mm a');
+  };
+
+  /** Day-of-week order for display: Mon .. Sun (1..6, 0) */
+  const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const DOW_LABELS: Record<number, string> = { 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' };
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -439,13 +696,6 @@ const AssignmentDetails: React.FC = () => {
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
       {/* Header */}
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }}>
-        <Button
-          startIcon={<ArrowBackIcon />}
-          onClick={() => navigate(-1)}
-          variant="outlined"
-        >
-          Back
-        </Button>
         <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>
           Assignment Details
         </Typography>
@@ -455,288 +705,316 @@ const AssignmentDetails: React.FC = () => {
           color={getStatusColor(assignment.status)}
           size="medium"
         />
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate(-1)}
+          variant="outlined"
+        >
+          Back
+        </Button>
       </Stack>
 
-      {/* Main Content */}
-      <Stack spacing={3}>
-        {/* Job Information Card */}
+      {/* Main Content: two columns with gap */}
+      <Grid container spacing={3}>
+        {/* Left column: assignment cards */}
+        <Grid item xs={12} md={9}>
+          <Stack spacing={3}>
+        {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
         <Card elevation={0} sx={{ borderRadius: 0 }}>
           <CardContent>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-              Job Information
+              Assignment Info
+            </Typography>
+            <Grid container spacing={3}>
+              <Grid item xs={12} sm={6}>
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <WorkIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Job Title</Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {assignment.jobTitle || '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Start Date</Typography>
+                      <Typography variant="body1">
+                        {assignment.startDate ? formatDate(assignment.startDate) : '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <MoneyIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Pay Rate</Typography>
+                      <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                        {assignment.payRate != null ? `$${assignment.payRate}/hr` : '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <BusinessIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Company Name</Typography>
+                      <Typography variant="body1">
+                        {resolvedCompanyName ?? assignment.companyName ?? '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </Stack>
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <Stack spacing={2}>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <LocationIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Worksite name</Typography>
+                      <Typography variant="body1">
+                        {resolvedWorksiteName ?? assignment.worksiteName ?? assignment.location ?? '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
+                    <MapIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="body2" color="text.secondary">Worksite address</Typography>
+                      {(() => {
+                        const wa = assignment.worksiteAddress as { street?: string; address?: string; city?: string; state?: string; zipCode?: string } | undefined;
+                        const fromAssignment = wa
+                          ? [(wa.street || wa.address), wa.city, wa.state, wa.zipCode].filter(Boolean).join(', ')
+                          : '';
+                        const addressStr = resolvedWorksiteAddress || fromAssignment;
+                        return addressStr ? (
+                          <Button
+                            size="small"
+                            startIcon={<OpenInNewIcon />}
+                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressStr)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ textTransform: 'none', p: 0, minHeight: 'auto' }}
+                          >
+                            {addressStr}
+                          </Button>
+                        ) : (
+                          <Typography variant="body1">—</Typography>
+                        );
+                      })()}
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="flex-start">
+                    <CheckroomIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Required uniform</Typography>
+                      <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                        {(assignment.uniformRequirements || assignment.customUniformRequirements)
+                          ? [assignment.uniformRequirements, assignment.customUniformRequirements].filter(Boolean).join('\n\n')
+                          : '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="flex-start">
+                    <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Required PPE</Typography>
+                      <Typography variant="body1">
+                        {assignment.ppeRequirements || '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                </Stack>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
+
+        {/* Schedule */}
+        <Card elevation={0} sx={{ borderRadius: 0 }}>
+          <CardContent>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+              My Schedule
             </Typography>
             <Stack spacing={2}>
-              <Stack direction="row" spacing={2} alignItems="center">
-                <WorkIcon color="action" />
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Job Title
-                  </Typography>
-                  <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                    {assignment.jobTitle || 'N/A'}
-                  </Typography>
-                </Box>
-              </Stack>
-
-              {assignment.companyName && (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <BusinessIcon color="action" />
+              {scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
+                <>
                   <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Company
-                    </Typography>
-                    <Typography variant="body1">
-                      {assignment.companyName}
-                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>Weekly schedule</Typography>
+                    <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
+                      {DOW_ORDER.map((dow) => {
+                        const entry = scheduleShift.weeklySchedule![String(dow)];
+                        if (!entry?.enabled) return null;
+                        const start = formatTime(entry.startTime);
+                        const end = formatTime(entry.endTime);
+                        return (
+                          <Typography key={dow} component="li" variant="body2">
+                            {DOW_LABELS[dow]}: {start} – {end}
+                          </Typography>
+                        );
+                      })}
+                    </Stack>
                   </Box>
-                </Stack>
-              )}
-
-              {assignment.location && (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <LocationIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Location
-                    </Typography>
-                    <Typography variant="body1">
-                      {assignment.location}
-                    </Typography>
-                    {assignment.worksiteAddress && (
-                      <Typography variant="caption" color="text.secondary">
+                  {assignment.startDate && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Start date</Typography>
+                      <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
+                    </Box>
+                  )}
+                  {assignment.jobOrderType === 'gig' && (assignment.endDate || scheduleShift.endDate) && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">End date</Typography>
+                      <Typography variant="body1">
+                        {assignment.endDate ? formatDate(assignment.endDate) : (scheduleShift.endDate ? new Date(scheduleShift.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
+                      </Typography>
+                    </Box>
+                  )}
+                  {assignment.jobOrderType === 'career' && !assignment.endDate && !scheduleShift.endDate && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Duration</Typography>
+                      <Typography variant="body1">Ongoing</Typography>
+                    </Box>
+                  )}
+                </>
+              ) : (
+                <>
+                  {assignment.startDate && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Date</Typography>
+                      <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
+                    </Box>
+                  )}
+                  {(assignment.startTime || assignment.endTime || scheduleShift?.defaultStartTime || scheduleShift?.defaultEndTime) && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Time</Typography>
+                      <Typography variant="body1">
                         {[
-                          assignment.worksiteAddress.street,
-                          assignment.worksiteAddress.city,
-                          assignment.worksiteAddress.state,
-                          assignment.worksiteAddress.zipCode,
+                          formatTime(assignment.startTime || scheduleShift?.defaultStartTime),
+                          formatTime(assignment.endTime || scheduleShift?.defaultEndTime),
                         ]
                           .filter(Boolean)
-                          .join(', ')}
+                          .join(' – ')}
                       </Typography>
-                    )}
-                  </Box>
-                </Stack>
+                    </Box>
+                  )}
+                  {assignment.endDate && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">End date</Typography>
+                      <Typography variant="body1">{formatDate(assignment.endDate)}</Typography>
+                    </Box>
+                  )}
+                  {!assignment.startDate && !assignment.startTime && !assignment.endTime && !scheduleShift?.defaultStartTime && (
+                    <Typography variant="body2" color="text.secondary">No schedule details available.</Typography>
+                  )}
+                </>
+              )}
+
+              {scheduleShift?.shiftDescription?.trim() && (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Shift-Specific Details or Job Description</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{scheduleShift.shiftDescription}</Typography>
+                </Box>
+              )}
+
+              {scheduleShift?.emailIntro?.trim() && (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Shift Info to Email Staff</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{scheduleShift.emailIntro}</Typography>
+                </Box>
               )}
             </Stack>
           </CardContent>
         </Card>
 
-        {/* Assignment Details Card */}
-        <Card elevation={0} sx={{ borderRadius: 0 }}>
-          <CardContent>
-            <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-              Assignment Details
-            </Typography>
-            <Stack spacing={2}>
-              {assignment.payRate && (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <MoneyIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Pay Rate
+        {/* Staff Instructions: one card per section, only when section has content or attachments */}
+        {(() => {
+          const sections: Array<{ key: string; title: string; getText: () => string; getFiles: () => any[] }> = [
+            {
+              key: 'firstDay',
+              title: 'First Day Instructions',
+              getText: () => assignment.staffInstructions?.firstDay?.text ?? '',
+              getFiles: () => assignment.staffInstructions?.firstDay?.files ?? [],
+            },
+            {
+              key: 'parking',
+              title: 'Parking Instructions',
+              getText: () => assignment.staffInstructions?.parking?.text ?? '',
+              getFiles: () => assignment.staffInstructions?.parking?.files ?? [],
+            },
+            {
+              key: 'checkIn',
+              title: 'Check-In Instructions',
+              getText: () => assignment.staffInstructions?.checkIn?.text || assignment.checkInInstructions || '',
+              getFiles: () => assignment.staffInstructions?.checkIn?.files ?? [],
+            },
+            {
+              key: 'uniform',
+              title: 'Uniform Instructions',
+              getText: () => assignment.staffInstructions?.uniform?.text ?? '',
+              getFiles: () => assignment.staffInstructions?.uniform?.files ?? [],
+            },
+            {
+              key: 'credentials',
+              title: 'Credential Instructions',
+              getText: () => assignment.staffInstructions?.credentials?.text ?? '',
+              getFiles: () => assignment.staffInstructions?.credentials?.files ?? [],
+            },
+            {
+              key: 'other',
+              title: 'Other Instructions',
+              getText: () => assignment.staffInstructions?.other?.text ?? '',
+              getFiles: () => assignment.staffInstructions?.other?.files ?? [],
+            },
+            {
+              key: 'attachments',
+              title: 'Other Attachments',
+              getText: () => '',
+              getFiles: () => assignment.staffInstructions?.attachments?.files ?? [],
+            },
+          ];
+          return sections
+            .filter((s) => {
+              const text = s.getText();
+              const files = s.getFiles();
+              return (typeof text === 'string' && text.trim() !== '') || (Array.isArray(files) && files.length > 0);
+            })
+            .map((s) => {
+              const text = s.getText();
+              const files = s.getFiles();
+              return (
+                <Card key={s.key} elevation={0} sx={{ borderRadius: 0 }}>
+                  <CardContent>
+                    <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                      {s.title}
                     </Typography>
-                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                      ${assignment.payRate}/hr
-                    </Typography>
-                  </Box>
-                </Stack>
-              )}
-
-              {assignment.startDate && (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <ScheduleIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Start Date
-                    </Typography>
-                    <Typography variant="body1">
-                      {formatDate(assignment.startDate)}
-                    </Typography>
-                  </Box>
-                </Stack>
-              )}
-
-              {assignment.endDate ? (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <ScheduleIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      End Date
-                    </Typography>
-                    <Typography variant="body1">
-                      {formatDate(assignment.endDate)}
-                    </Typography>
-                  </Box>
-                </Stack>
-              ) : (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <ScheduleIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Duration
-                    </Typography>
-                    <Typography variant="body1">Ongoing</Typography>
-                  </Box>
-                </Stack>
-              )}
-
-              {assignment.hoursWorked !== undefined && (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <ScheduleIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Hours Worked
-                    </Typography>
-                    <Typography variant="body1">
-                      {assignment.hoursWorked.toFixed(1)} hours
-                    </Typography>
-                  </Box>
-                </Stack>
-              )}
-
-              {assignment.totalEarnings !== undefined && (
-                <Stack direction="row" spacing={2} alignItems="center">
-                  <MoneyIcon color="action" />
-                  <Box>
-                    <Typography variant="body2" color="text.secondary">
-                      Total Earnings
-                    </Typography>
-                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                      ${assignment.totalEarnings.toFixed(2)}
-                    </Typography>
-                  </Box>
-                </Stack>
-              )}
-            </Stack>
-          </CardContent>
-        </Card>
-
-        {/* Staff Instructions */}
-        {(assignment.staffInstructions || assignment.checkInInstructions || assignment.uniformRequirements) && (
-          <Card elevation={0} sx={{ borderRadius: 0 }}>
-            <CardContent>
-              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                Work Instructions
-              </Typography>
-              <Stack spacing={3}>
-                {/* Uniform Requirements */}
-                {(assignment.uniformRequirements || assignment.staffInstructions?.uniform?.text) && (
-                  <Box>
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-                      Uniform Requirements
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
-                      {assignment.staffInstructions?.uniform?.text || assignment.uniformRequirements}
-                    </Typography>
-                    {assignment.staffInstructions?.uniform?.files && assignment.staffInstructions.uniform.files.length > 0 && (
-                      <Stack spacing={1} sx={{ mt: 1 }}>
-                        {assignment.staffInstructions.uniform.files.map((file: any, index: number) => (
-                          <Button
-                            key={index}
-                            variant="outlined"
-                            size="small"
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {file.label || file.name || 'View File'}
-                          </Button>
-                        ))}
-                      </Stack>
-                    )}
-                  </Box>
-                )}
-
-                {/* Check-In Instructions */}
-                {(assignment.checkInInstructions || assignment.staffInstructions?.checkIn?.text) && (
-                  <Box>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-                      Check-In Instructions
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
-                      {assignment.staffInstructions?.checkIn?.text || assignment.checkInInstructions}
-                    </Typography>
-                    {assignment.staffInstructions?.checkIn?.files && assignment.staffInstructions.checkIn.files.length > 0 && (
-                      <Stack spacing={1} sx={{ mt: 1 }}>
-                        {assignment.staffInstructions.checkIn.files.map((file: any, index: number) => (
-                          <Button
-                            key={index}
-                            variant="outlined"
-                            size="small"
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {file.label || file.name || 'View File'}
-                          </Button>
-                        ))}
-                      </Stack>
-                    )}
-                  </Box>
-                )}
-
-                {/* First Day Instructions */}
-                {assignment.staffInstructions?.firstDay?.text && (
-                  <Box>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-                      First Day Instructions
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
-                      {assignment.staffInstructions.firstDay.text}
-                    </Typography>
-                    {assignment.staffInstructions.firstDay.files && assignment.staffInstructions.firstDay.files.length > 0 && (
-                      <Stack spacing={1} sx={{ mt: 1 }}>
-                        {assignment.staffInstructions.firstDay.files.map((file: any, index: number) => (
-                          <Button
-                            key={index}
-                            variant="outlined"
-                            size="small"
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {file.label || file.name || 'View File'}
-                          </Button>
-                        ))}
-                      </Stack>
-                    )}
-                  </Box>
-                )}
-
-                {/* Parking Instructions */}
-                {assignment.staffInstructions?.parking?.text && (
-                  <Box>
-                    <Divider sx={{ my: 2 }} />
-                    <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-                      Parking Information
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
-                      {assignment.staffInstructions.parking.text}
-                    </Typography>
-                    {assignment.staffInstructions.parking.files && assignment.staffInstructions.parking.files.length > 0 && (
-                      <Stack spacing={1} sx={{ mt: 1 }}>
-                        {assignment.staffInstructions.parking.files.map((file: any, index: number) => (
-                          <Button
-                            key={index}
-                            variant="outlined"
-                            size="small"
-                            href={file.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
-                            {file.label || file.name || 'View File'}
-                          </Button>
-                        ))}
-                      </Stack>
-                    )}
-                  </Box>
-                )}
-              </Stack>
-            </CardContent>
-          </Card>
-        )}
+                    <Stack spacing={1.5}>
+                      {text.trim() !== '' && (
+                        <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {text}
+                        </Typography>
+                      )}
+                      {Array.isArray(files) && files.length > 0 && (
+                        <Stack spacing={1} direction="row" flexWrap="wrap" useFlexGap>
+                          {files.map((file: any, index: number) => (
+                            <Button
+                              key={index}
+                              variant="outlined"
+                              size="small"
+                              href={file.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {file.label || file.name || 'View File'}
+                            </Button>
+                          ))}
+                        </Stack>
+                      )}
+                    </Stack>
+                  </CardContent>
+                </Card>
+              );
+            });
+        })()}
 
         {/* Notes */}
         {assignment.notes && (
@@ -769,7 +1047,60 @@ const AssignmentDetails: React.FC = () => {
             </Stack>
           </Paper>
         )}
-      </Stack>
+          </Stack>
+        </Grid>
+
+        {/* Right column: cards */}
+        <Grid item xs={12} md={3}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            <Card>
+              <CardHeader
+                title="My Recruiter"
+                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+              />
+              <CardContent sx={{ pt: 0 }}>
+                {recruiters.length > 0 ? (
+                  <Stack spacing={2}>
+                    {recruiters.map((r) => (
+                      <Stack key={r.id} spacing={0.75} component="div">
+                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                          {r.displayName}
+                        </Typography>
+                        {r.phone && (
+                          <Typography variant="body2">
+                            <Link
+                              component="a"
+                              href={`sms:${r.phone.replace(/[^\d+]/g, '')}`}
+                              sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                            >
+                              {r.phone}
+                            </Link>
+                          </Typography>
+                        )}
+                        {r.email && (
+                          <Typography variant="body2">
+                            <Link
+                              component="a"
+                              href={`mailto:${r.email}`}
+                              sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                            >
+                              {r.email}
+                            </Link>
+                          </Typography>
+                        )}
+                      </Stack>
+                    ))}
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No recruiter assigned to this job order. Reach out via Inbox if you need support.
+                  </Typography>
+                )}
+              </CardContent>
+            </Card>
+          </Box>
+        </Grid>
+      </Grid>
     </Box>
   );
 };

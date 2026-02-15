@@ -29,7 +29,9 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
   const navigate = useNavigate();
 
   const primaryLine = nextShift
-    ? `${nextShift.jobTitle} — ${nextShift.siteName || nextShift.clientName || 'Shift'}`
+    ? nextShift.siteName || nextShift.clientName
+      ? `${nextShift.jobTitle} — ${nextShift.siteName || nextShift.clientName}`
+      : nextShift.jobTitle
     : null;
   const secondaryLine = nextShift ? `${nextShift.day}, ${nextShift.date} at ${nextShift.time}` : null;
   const tertiaryLine = nextShift ? (nextShift.addressShort || nextShift.locationCity || '') : null;

@@ -307,6 +307,9 @@ export async function sendLegacyAssignmentMessage(args: {
   source?: string;
   sourceId?: string;
   assignmentId?: string;
+  /** When set, email is sent with this subject and HTML body (assignment details); SMS uses args.message */
+  emailSubject?: string;
+  emailBody?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
     const statusForTrigger =
@@ -357,7 +360,8 @@ export async function sendLegacyAssignmentMessage(args: {
       variables: {
         _rawMessage: args.message,
         _directMessage: true,
-        _message: args.message,
+        _message: (args.emailBody && args.emailSubject) ? args.emailBody : args.message,
+        ...(args.emailSubject ? { _subject: args.emailSubject } : {}),
       },
       metadata: {
         assignmentId: args.assignmentId,
