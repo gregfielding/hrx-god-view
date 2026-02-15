@@ -37,6 +37,7 @@ import {
   Check as CheckIcon,
   Error as ErrorIcon,
   Edit as EditIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -108,6 +109,10 @@ interface Worker {
   /** Assignment start date (YYYY-MM-DD); when set, shown on tile instead of city/state */
   assignmentStartDate?: string;
   assignmentEndDate?: string;
+  /** When the offer (or last reminder) was sent; ms since epoch for display */
+  assignmentOfferSentAt?: number;
+  /** When status is confirmed, ms when the worker confirmed (accepted) the assignment */
+  assignmentConfirmedAt?: number;
 }
 
 const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
@@ -154,11 +159,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
   const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
   const [assignmentStartDateByUserId, setAssignmentStartDateByUserId] = useState<Map<string, string>>(new Map());
+  const [assignmentOfferSentAtByUserId, setAssignmentOfferSentAtByUserId] = useState<Map<string, number>>(new Map());
+  const [assignmentConfirmedAtByUserId, setAssignmentConfirmedAtByUserId] = useState<Map<string, number>>(new Map());
   const [placementUserIds, setPlacementUserIds] = useState<Set<string>>(new Set());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resendLoadingAssignmentId, setResendLoadingAssignmentId] = useState<string | null>(null);
+  const [resendCooldownUntilByAssignmentId, setResendCooldownUntilByAssignmentId] = useState<Record<string, number>>({});
+  const [confirmingPlacementUserId, setConfirmingPlacementUserId] = useState<string | null>(null);
+  const [cancelAssignmentWorker, setCancelAssignmentWorker] = useState<Worker | null>(null);
 
   // Helper function to extract full profile data from user document
   const extractWorkerData = (userData: any, userId: string): Worker => {
@@ -611,8 +622,19 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setAssignmentStatusByUserId(new Map());
       setAssignmentIdByUserId(new Map());
       setAssignmentStartDateByUserId(new Map());
+      setAssignmentOfferSentAtByUserId(new Map());
+      setAssignmentConfirmedAtByUserId(new Map());
       return;
     }
+
+    const toMs = (v: unknown): number | undefined => {
+      if (v == null) return undefined;
+      if (typeof v === 'number') return v;
+      if (typeof v === 'object' && typeof (v as { toMillis?: () => number }).toMillis === 'function') return (v as { toMillis: () => number }).toMillis();
+      if (typeof v === 'object' && typeof (v as { toDate?: () => Date }).toDate === 'function') return (v as { toDate: () => Date }).toDate().getTime();
+      if (typeof v === 'string') { const n = Date.parse(v); return Number.isNaN(n) ? undefined : n; }
+      return undefined;
+    };
 
     const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
     const assignmentsQuery = query(assignmentsRef, where('shiftId', '==', selectedShiftId));
@@ -623,6 +645,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         const nextStatus = new Map<string, string>();
         const nextIds = new Map<string, string>();
         const nextStartDates = new Map<string, string>();
+        const nextOfferSentAt = new Map<string, number>();
+        const nextConfirmedAt = new Map<string, number>();
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as any;
           const userId = String(data?.userId || data?.candidateId || '');
@@ -633,10 +657,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const startDate = data?.startDate;
           if (typeof startDate === 'string' && startDate) nextStartDates.set(userId, startDate.split('T')[0]);
           else if (startDate?.toDate) nextStartDates.set(userId, startDate.toDate().toISOString().split('T')[0]);
+          const reminderMs = toMs(data?.lastReminderSentAt);
+          const assignedMs = toMs(data?.assignedAt);
+          const offerSentMs = reminderMs ?? assignedMs;
+          if (offerSentMs != null) nextOfferSentAt.set(userId, offerSentMs);
+          const confirmedMs = toMs(data?.confirmedAt);
+          if (confirmedMs != null) nextConfirmedAt.set(userId, confirmedMs);
         });
         setAssignmentStatusByUserId(nextStatus);
         setAssignmentIdByUserId(nextIds);
         setAssignmentStartDateByUserId(nextStartDates);
+        setAssignmentOfferSentAtByUserId(nextOfferSentAt);
+        setAssignmentConfirmedAtByUserId(nextConfirmedAt);
       },
       (err) => {
         console.warn('Assignments onSnapshot error:', err);
@@ -736,6 +768,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           assignmentId: assignmentIdByUserId.get(userId),
           confirmationStatus,
           assignmentStartDate: assignmentStartDateByUserId.get(userId),
+          assignmentOfferSentAt: assignmentOfferSentAtByUserId.get(userId),
+          assignmentConfirmedAt: assignmentConfirmedAtByUserId.get(userId),
         };
       });
       const list = await Promise.all(userPromises);
@@ -756,7 +790,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [selectedShiftId, assignedUserIds, placementUserIds, assignmentStatusByUserId, assignmentIdByUserId, assignmentStartDateByUserId, pendingAssignmentCancels]);
+  }, [selectedShiftId, assignedUserIds, placementUserIds, assignmentStatusByUserId, assignmentIdByUserId, assignmentStartDateByUserId, assignmentOfferSentAtByUserId, assignmentConfirmedAtByUserId, pendingAssignmentCancels]);
 
   const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
@@ -877,6 +911,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // Handle offering position: create Assignment (sends accept/decline message) and remove placement.
   const handleConfirmPlacement = async (worker: Worker) => {
     if (!worker.isPlacementOnly || !selectedShift) return;
+    if (confirmingPlacementUserId) return;
+    setConfirmingPlacementUserId(worker.id);
     try {
       setError(null);
       await assignWorkersToShift([worker.id]);
@@ -884,15 +920,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     } catch (err: any) {
       console.error('Error offering position:', err);
       setError(err?.message || 'Failed to offer position');
+    } finally {
+      setConfirmingPlacementUserId(null);
     }
   };
 
-  // Cancel assignment and revert to Placed state (for testing).
+  // Cancel assignment and revert to Placed state. Worker is notified (SMS/email/push).
   const handleCancelAssignment = async (worker: Worker) => {
     if (worker.isPlacementOnly || !worker.assignmentId || !selectedShiftId || !jobOrderId) return;
+    setCancelAssignmentWorker(null);
     try {
       setError(null);
-      // Optimistic update: show as Placed immediately
       setPendingAssignmentCancels((prev) => new Set([...prev, worker.id]));
       const cancelFn = httpsCallable(functions, 'placementsCancelAssignment');
       await cancelFn({
@@ -901,7 +939,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         shiftId: selectedShiftId,
         userId: worker.id,
       });
-      // Keep optimistic state until placements onSnapshot confirms
     } catch (err: any) {
       console.error('Error cancelling assignment:', err);
       setError(err?.message || 'Failed to cancel assignment');
@@ -910,6 +947,27 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         next.delete(worker.id);
         return next;
       });
+    }
+  };
+
+  const RESEND_COOLDOWN_MS = 15000;
+  const handleResendOffer = async (worker: Worker) => {
+    if (!worker.assignmentId || !tenantId) return;
+    const aid = worker.assignmentId;
+    if (resendLoadingAssignmentId === aid) return;
+    const cooldownUntil = resendCooldownUntilByAssignmentId[aid] ?? 0;
+    if (Date.now() < cooldownUntil) return;
+    try {
+      setResendLoadingAssignmentId(aid);
+      setError(null);
+      const resendFn = httpsCallable(functions, 'resendAssignmentOffer');
+      await resendFn({ tenantId, assignmentId: aid });
+      setResendCooldownUntilByAssignmentId((prev) => ({ ...prev, [aid]: Date.now() + RESEND_COOLDOWN_MS }));
+    } catch (err: any) {
+      console.error('Error resending offer:', err);
+      setError(err?.message || 'Failed to resend offer');
+    } finally {
+      setResendLoadingAssignmentId(null);
     }
   };
 
@@ -1155,9 +1213,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         {showContent && (
           <Grid container spacing={3}>
             {/* Left: Shift Details */}
-            <Grid item xs={12} lg={3}>
+            <Grid item xs={12} lg={2}>
               <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                     Shift Details
           </Typography>
@@ -1365,9 +1423,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Grid>
 
             {/* Center: Assignments */}
-            <Grid item xs={12} lg={4}>
+            <Grid item xs={12} lg={5}>
               <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                       Assignments ({assignedWorkers.length})
@@ -1412,8 +1470,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         const isCancelled = worker.assignmentStatus === 'cancelled' || worker.assignmentStatus === 'canceled';
                         // Placed = placement only (no offer sent). Assigned = offer sent, awaiting response. Confirmed = worker accepted. Declined/Cancelled = worker or system cancelled.
                         const isConfirmed = worker.assignmentStatus && ['confirmed', 'active'].includes(worker.assignmentStatus);
-                        const statusLabel = isPlacementOnly ? 'Placed' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isConfirmed ? 'Confirmed' : 'Assigned';
-                        const canDragBackToPool = isPlacementOnly; // Only placement-only (no Assignment) can be dragged back
+                        const offeringThis = isPlacementOnly && confirmingPlacementUserId === worker.id;
+                        const statusLabel = offeringThis ? 'Offering…' : isPlacementOnly ? 'Placed' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isConfirmed ? 'Confirmed' : 'Assigned';
+                        const canDragBackToPool = isPlacementOnly && !offeringThis; // Only placement-only (no Assignment) can be dragged back
                         return (
                           <Paper
                             key={worker.id}
@@ -1451,61 +1510,116 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                 )}
                               </Box>
                             </Box>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              {!isPlacementOnly && !isDeclined && !isCancelled && (
-                                <Tooltip title="Cancel assignment (revert to Placed)">
-                                  <IconButton
+                            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                {!isPlacementOnly && !isDeclined && !isCancelled && (
+                                  <Tooltip title="Remove assignment (revert to Placed, worker will be notified)">
+                                    <IconButton
+                                      size="small"
+                                      onClick={() => setCancelAssignmentWorker(worker)}
+                                      sx={{ color: 'error.main' }}
+                                      aria-label="Cancel assignment"
+                                    >
+                                      <CloseIcon fontSize="small" />
+                                    </IconButton>
+                                  </Tooltip>
+                                )}
+                                <Tooltip title={offeringThis ? 'Sending offer…' : isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : isDeclined ? 'Worker declined this assignment' : isCancelled ? 'Assignment was cancelled' : undefined}>
+                                  <Chip
                                     size="small"
-                                    onClick={() => handleCancelAssignment(worker)}
-                                    sx={{ color: 'error.main' }}
-                                    aria-label="Cancel assignment"
-                                  >
-                                    <CloseIcon fontSize="small" />
-                                  </IconButton>
+                                    label={statusLabel}
+                                    color={isPlacementOnly ? 'info' : isDeclined || isCancelled ? 'error' : undefined}
+                                    icon={
+                                      offeringThis ? (
+                                        <CircularProgress size={14} color="inherit" sx={{ color: 'white' }} />
+                                      ) : isPlacementOnly ? (
+                                        <UnlockedIcon fontSize="small" />
+                                      ) : isDeclined || isCancelled ? (
+                                        <ErrorIcon fontSize="small" />
+                                      ) : isConfirmed ? (
+                                        <CheckIcon fontSize="small" />
+                                      ) : (
+                                        <LockedIcon fontSize="small" />
+                                      )
+                                    }
+                                    onClick={isPlacementOnly && !offeringThis ? () => handleConfirmPlacement(worker) : undefined}
+                                    disabled={offeringThis}
+                                    sx={{
+                                      ...(isPlacementOnly && !offeringThis && {
+                                        cursor: 'pointer',
+                                        zIndex: 50,
+                                        position: 'relative',
+                                        '&:hover': { opacity: 0.9 },
+                                      }),
+                                      ...(offeringThis && {
+                                        cursor: 'wait',
+                                        opacity: 0.95,
+                                        '& .MuiChip-icon': { color: 'white' },
+                                      }),
+                                      ...((isDeclined || isCancelled) && {
+                                        bgcolor: 'error.main',
+                                        color: 'white',
+                                        '& .MuiChip-icon': { color: 'white' },
+                                      }),
+                                      ...(isConfirmed && {
+                                        bgcolor: 'success.main',
+                                        color: 'white',
+                                        '& .MuiChip-icon': { color: 'white' },
+                                      }),
+                                      ...(!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && {
+                                        bgcolor: '#e8f5e9', // Light green (Material green 50)
+                                        color: 'success.main',
+                                        '& .MuiChip-icon': { color: 'success.main' },
+                                      }),
+                                    }}
+                                  />
                                 </Tooltip>
+                              </Box>
+                              {!isPlacementOnly && !isDeclined && !isCancelled && (worker.assignmentConfirmedAt != null || worker.assignmentOfferSentAt != null) && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {isConfirmed
+                                      ? worker.assignmentConfirmedAt != null
+                                        ? `Confirmed ${new Date(worker.assignmentConfirmedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                                        : worker.assignmentOfferSentAt != null
+                                          ? `Confirmed (offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })})`
+                                          : 'Confirmed'
+                                      : worker.assignmentOfferSentAt != null
+                                        ? `Offer sent ${new Date(worker.assignmentOfferSentAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`
+                                        : null}
+                                  </Typography>
+                                  {!isConfirmed && worker.assignmentOfferSentAt != null && (() => {
+                                    const aid = worker.assignmentId ?? '';
+                                    const loading = resendLoadingAssignmentId === aid;
+                                    const cooldownUntil = resendCooldownUntilByAssignmentId[aid] ?? 0;
+                                    const inCooldown = Date.now() < cooldownUntil;
+                                    const disabled = loading || inCooldown;
+                                    return (
+                                      <Tooltip title={inCooldown ? 'Please wait before resending' : 'Resend offer (SMS + push + email)'}>
+                                        <span>
+                                          <IconButton
+                                            size="small"
+                                            sx={{ p: 0, color: 'text.secondary' }}
+                                            onClick={() => handleResendOffer(worker)}
+                                            disabled={disabled}
+                                            aria-label="Resend offer"
+                                          >
+                                            <RefreshIcon
+                                              sx={{
+                                                fontSize: 14,
+                                                ...(loading && {
+                                                  animation: 'spin 0.8s linear infinite',
+                                                  '@keyframes spin': { from: { transform: 'rotate(0deg)' }, to: { transform: 'rotate(360deg)' } },
+                                                }),
+                                              }}
+                                            />
+                                          </IconButton>
+                                        </span>
+                                      </Tooltip>
+                                    );
+                                  })()}
+                                </Box>
                               )}
-                              <Tooltip title={isPlacementOnly ? 'Click to offer position (sends accept/decline message)' : isDeclined ? 'Worker declined this assignment' : isCancelled ? 'Assignment was cancelled' : undefined}>
-                                <Chip
-                                  size="small"
-                                  label={statusLabel}
-                                  color={isPlacementOnly ? 'info' : isDeclined || isCancelled ? 'error' : undefined}
-                                  icon={
-                                    isPlacementOnly ? (
-                                      <UnlockedIcon fontSize="small" />
-                                    ) : isDeclined || isCancelled ? (
-                                      <ErrorIcon fontSize="small" />
-                                    ) : isConfirmed ? (
-                                      <CheckIcon fontSize="small" />
-                                    ) : (
-                                      <LockedIcon fontSize="small" />
-                                    )
-                                  }
-                                  onClick={isPlacementOnly ? () => handleConfirmPlacement(worker) : undefined}
-                                  sx={{
-                                    ...(isPlacementOnly && {
-                                      cursor: 'pointer',
-                                      zIndex: 50,
-                                      position: 'relative',
-                                      '&:hover': { opacity: 0.9 },
-                                    }),
-                                    ...((isDeclined || isCancelled) && {
-                                      bgcolor: 'error.main',
-                                      color: 'white',
-                                      '& .MuiChip-icon': { color: 'white' },
-                                    }),
-                                    ...(isConfirmed && {
-                                      bgcolor: 'success.main',
-                                      color: 'white',
-                                      '& .MuiChip-icon': { color: 'white' },
-                                    }),
-                                    ...(!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && {
-                                      bgcolor: '#e8f5e9', // Light green (Material green 50)
-                                      color: 'success.main',
-                                      '& .MuiChip-icon': { color: 'success.main' },
-                                    }),
-                                  }}
-                                />
-                              </Tooltip>
                             </Box>
                           </Paper>
                         );
@@ -1522,10 +1636,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Card>
             </Grid>
 
-            {/* Right: Worker Pool */}
+            {/* Right: Worker Pool (same width as Assignments) */}
             <Grid item xs={12} lg={5}>
               <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: 1, '&:last-child': { pb: 1 } }}>
+                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
                     Worker Pool ({availableWorkers.length})
                   </Typography>
@@ -1959,6 +2073,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </DialogContent>
           <DialogActions>
             <Button onClick={() => setLicenseModalOpen(false)}>Close</Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Confirm remove assignment */}
+        <Dialog open={!!cancelAssignmentWorker} onClose={() => setCancelAssignmentWorker(null)} maxWidth="xs" fullWidth>
+          <DialogTitle>Remove assignment?</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2">
+              This will revert {cancelAssignmentWorker?.displayName ?? 'this worker'} to <strong>Placed</strong>. The worker will be notified that the assignment was cancelled (SMS / email / push).
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCancelAssignmentWorker(null)}>Cancel</Button>
+            <Button variant="contained" color="error" onClick={() => cancelAssignmentWorker && handleCancelAssignment(cancelAssignmentWorker)}>
+              Remove assignment
+            </Button>
           </DialogActions>
         </Dialog>
 

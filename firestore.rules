@@ -80,15 +80,13 @@ service cloud.firestore {
       
       // Assignments subcollection - BULLETPROOF RULES
       match /assignments/{assignmentId} {
-        // READ Rules: Worker can read own assignments, tenant members can read all tenant assignments
+        // READ Rules: Worker can read own assignments, tenant members can read all tenant assignments.
+        // Worker/candidate checks first so isHRX/hasTenantRole (which may touch user doc) are not required for own assignment.
         allow read: if request.auth != null && (
-          // Worker can read their own assignments
           resource.data.userId == request.auth.uid ||
           resource.data.candidateId == request.auth.uid ||
-          // HRX can read all assignments
           isHRX() ||
-          // Users with role in this tenant can read assignments
-          hasTenantRole(tenantId, request.auth.token.roles)
+          (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles))
         );
         
         // CREATE Rules: Only recruiters/managers/admins can create assignments
@@ -1738,39 +1736,44 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
-    // Legacy isHRX function - now uses claims
+    // Legacy isHRX function - now uses claims. Safe when user doc is missing (getUser() == null).
     function isHRX() {
-      return isAuthenticated() && (request.auth.token.hrx == true || getUser().role == "HRX");
+      return isAuthenticated() && (
+        request.auth.token.hrx == true ||
+        (getUser() != null && getUser().role == "HRX")
+      );
     }
 
     function isAssignedToTenant(tenantId) {
-      return isAuthenticated() && (
-        getUser().tenantIds != null && (
-          (getUser().tenantIds is list && getUser().tenantIds.hasAny([tenantId])) ||
-          (getUser().tenantIds is map && tenantId in getUser().tenantIds)
+      let u = getUser();
+      return isAuthenticated() && u != null && (
+        u.tenantIds != null && (
+          (u.tenantIds is list && u.tenantIds.hasAny([tenantId])) ||
+          (u.tenantIds is map && tenantId in u.tenantIds)
         ) ||
-        getUser().tenantId == tenantId ||
-        getUser().activeTenantId == tenantId
+        u.tenantId == tenantId ||
+        u.activeTenantId == tenantId
       );
     }
     
     function isTenantAdmin(tenantId) {
+      let u = getUser();
       // Check claims first (new system)
       return (request.auth.token.hrx == true) ||
              (request.auth.token.roles != null && 
               tenantId in request.auth.token.roles && 
               request.auth.token.roles[tenantId].role == 'Admin') ||
-             // Fallback to legacy system
-             (isAssignedToTenant(tenantId) && (
-               getUser().role == "HRX" ||
-               getUser().securityLevel == "Admin" ||
-               getUser().securityLevel == "6" ||
-               getUser().securityLevel == "7" ||
-               (getUser().tenantIds != null && 
-                tenantId in getUser().tenantIds && 
-                (getUser().tenantIds[tenantId].securityLevel == "Admin" || 
-                 getUser().tenantIds[tenantId].securityLevel == "6" ||
-                 getUser().tenantIds[tenantId].securityLevel == "7"))
+             // Fallback to legacy system (safe when user doc missing)
+             (u != null && isAssignedToTenant(tenantId) && (
+               u.role == "HRX" ||
+               u.securityLevel == "Admin" ||
+               u.securityLevel == "6" ||
+               u.securityLevel == "7" ||
+               (u.tenantIds != null && 
+                tenantId in u.tenantIds && 
+                (u.tenantIds[tenantId].securityLevel == "Admin" || 
+                 u.tenantIds[tenantId].securityLevel == "6" ||
+                 u.tenantIds[tenantId].securityLevel == "7"))
              ));
     }
     

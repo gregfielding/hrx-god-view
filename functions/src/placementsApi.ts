@@ -485,6 +485,17 @@ export const placementsCancelAssignment = onCall(async (request) => {
   const placementId = `${shiftId}__${userId}`;
   const placementRef = db.doc(`tenants/${tenantId}/placements/${placementId}`);
 
+  // Update assignment to cancelled first so Firestore onUpdate trigger sends cancellation message (SMS/email/push)
+  await assignmentRef.set(
+    {
+      status: 'cancelled',
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      canceledBy: request.auth!.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
   await db.runTransaction(async (tx) => {
     tx.delete(assignmentRef);
     tx.set(placementRef, {
@@ -498,4 +509,102 @@ export const placementsCancelAssignment = onCall(async (request) => {
   });
 
   return { success: true };
+});
+
+/**
+ * Resend accept/decline offer (SMS, push, email) for an assignment.
+ * Updates lastReminderSentAt on the assignment and sends the same notification as assignment_created.
+ */
+export const resendAssignmentOffer = onCall(
+  {
+    cors: [
+      'http://localhost:3000',
+      'https://hrx1-d3beb.web.app',
+      'https://hrx1-d3beb.firebaseapp.com',
+      'https://hrxone.com',
+      'https://www.hrxone.com',
+    ],
+  },
+  async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const { tenantId, assignmentId } = (request.data || {}) as { tenantId?: string; assignmentId?: string };
+  if (!tenantId || !assignmentId) {
+    throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+  }
+  if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+    throw new HttpsError('permission-denied', 'Insufficient permissions to resend assignment offer');
+  }
+
+  const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+  const assignmentSnap = await assignmentRef.get();
+  if (!assignmentSnap.exists) {
+    throw new HttpsError('not-found', 'Assignment not found');
+  }
+  const assignment = assignmentSnap.data() || {};
+  const userId = assignment.userId || assignment.candidateId;
+  if (!userId) {
+    throw new HttpsError('invalid-argument', 'Assignment has no userId');
+  }
+
+  await assignmentRef.set(
+    {
+      lastReminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+
+  const userDoc = await db.doc(`users/${userId}`).get();
+  const userData = userDoc.data() || {};
+  const phoneE164 = (userData.phoneE164 || userData.phone || '').trim();
+  let jobTitle = assignment.jobTitle || 'a position';
+  let checkInInstructions = '';
+
+  if (assignment.jobOrderId) {
+    try {
+      const jobOrderDoc = await db.doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`).get();
+      const jobOrderData = jobOrderDoc.data();
+      if (jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
+      if (jobOrderData?.checkInInstructions) checkInInstructions = String(jobOrderData.checkInInstructions);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  let dateTimeInfo = '';
+  if (assignment.startDate) {
+    const startDate =
+      assignment.startDate?.toDate ? assignment.startDate.toDate() : new Date(assignment.startDate);
+    dateTimeInfo = ` on ${startDate.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}`;
+    if (assignment.startTime && assignment.endTime) {
+      dateTimeInfo += ` from ${assignment.startTime} - ${assignment.endTime}`;
+    }
+  }
+
+  const firstName = assignment.firstName || userData.firstName || 'there';
+  const worksiteName = assignment.locationNickname || assignment.worksiteName || '';
+  const locationText = worksiteName ? ` at ${worksiteName}` : '';
+  const postingPath = assignment.jobPostId
+    ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
+    : '/c1/jobs-board';
+  const jobUrl = `https://hrxone.com${postingPath}`;
+  const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
+  const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
+
+  const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+  const result = await sendLegacyAssignmentMessage({
+    tenantId,
+    userId,
+    phoneE164: phoneE164 || '+0000000000',
+    message,
+    messageTypeId: 'assignment_created',
+    source: 'assignment_created',
+    sourceId: assignmentId,
+    assignmentId,
+  });
+
+  return { success: result.success, error: result.error };
 });

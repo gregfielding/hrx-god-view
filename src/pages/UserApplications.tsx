@@ -31,10 +31,17 @@ interface Application {
   submittedAt: Date;
 }
 
+/** Set of "tenantId_jobPostId" for which the user has a proposed (offer sent) assignment */
+type PendingOfferSet = Set<string>;
+/** Set of "tenantId_jobPostId" for which the user has accepted (confirmed/hired) assignment */
+type HiredOfferSet = Set<string>;
+
 const UserApplications: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [applications, setApplications] = useState<Application[]>([]);
+  const [pendingOfferKeys, setPendingOfferKeys] = useState<PendingOfferSet>(new Set());
+  const [hiredOfferKeys, setHiredOfferKeys] = useState<HiredOfferSet>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -164,6 +171,42 @@ const UserApplications: React.FC = () => {
       loadedApplications.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
 
       setApplications(loadedApplications);
+
+      // Load proposed assignments (offer sent) → "Accept offer"; confirmed/active (accepted) → "You've been hired"
+      const tenantIds = [...new Set(loadedApplications.map((a) => a.tenantId))];
+      const pendingKeys = new Set<string>();
+      const hiredKeys = new Set<string>();
+      for (const tenantId of tenantIds) {
+        try {
+          const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+          const proposedQ = query(
+            assignmentsRef,
+            where('userId', '==', user.uid),
+            where('status', '==', 'proposed')
+          );
+          const proposedSnap = await getDocs(proposedQ);
+          proposedSnap.docs.forEach((d) => {
+            const data = d.data();
+            const jobPostId = data.jobPostId || data.jobId;
+            if (jobPostId) pendingKeys.add(`${tenantId}_${jobPostId}`);
+          });
+          const confirmedQ = query(
+            assignmentsRef,
+            where('userId', '==', user.uid),
+            where('status', 'in', ['confirmed', 'active'])
+          );
+          const confirmedSnap = await getDocs(confirmedQ);
+          confirmedSnap.docs.forEach((d) => {
+            const data = d.data();
+            const jobPostId = data.jobPostId || data.jobId;
+            if (jobPostId) hiredKeys.add(`${tenantId}_${jobPostId}`);
+          });
+        } catch (_) {
+          // ignore
+        }
+      }
+      setPendingOfferKeys(pendingKeys);
+      setHiredOfferKeys(hiredKeys);
     } catch (err: any) {
       console.error('Error loading applications:', err);
       setError(err.message || 'Failed to load applications');
@@ -172,14 +215,25 @@ const UserApplications: React.FC = () => {
     }
   };
 
-  const getStatusColor = (status: string): 'default' | 'primary' | 'success' | 'error' | 'warning' => {
-    switch (status.toLowerCase()) {
+  const getStatusLabel = (app: Application): string => {
+    const key = `${app.tenantId}_${app.jobId}`;
+    if (hiredOfferKeys.has(key)) return "You've been hired";
+    if (app.status.toLowerCase() === 'submitted' && pendingOfferKeys.has(key)) return 'Accept offer';
+    return app.status.charAt(0).toUpperCase() + app.status.slice(1);
+  };
+
+  const getStatusColor = (app: Application): 'default' | 'primary' | 'success' | 'error' | 'warning' => {
+    const key = `${app.tenantId}_${app.jobId}`;
+    if (hiredOfferKeys.has(key)) return 'success';
+    if (app.status.toLowerCase() === 'submitted' && pendingOfferKeys.has(key)) return 'warning';
+    switch (app.status.toLowerCase()) {
       case 'submitted':
         return 'primary';
       case 'reviewed':
         return 'default';
       case 'accepted':
       case 'hired':
+      case 'confirmed':
         return 'success';
       case 'rejected':
         return 'error';
@@ -283,14 +337,16 @@ const UserApplications: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Chip 
-                      label={app.status.charAt(0).toUpperCase() + app.status.slice(1)} 
-                      color={app.status.toLowerCase() === 'submitted' ? undefined : getStatusColor(app.status)}
+                      label={getStatusLabel(app)} 
+                      color={getStatusColor(app)}
                       size="small"
-                      sx={app.status.toLowerCase() === 'submitted' ? {
-                        backgroundColor: '#FFC700',
-                        color: '#000',
-                        fontWeight: 600
-                      } : undefined}
+                      sx={
+                        getStatusLabel(app) === "You've been hired"
+                          ? { fontWeight: 600 }
+                          : getStatusLabel(app) === 'Accept offer' || app.status.toLowerCase() === 'submitted'
+                            ? { backgroundColor: '#FFC700', color: '#000', fontWeight: 600 }
+                            : undefined
+                      }
                     />
                   </TableCell>
                 </TableRow>

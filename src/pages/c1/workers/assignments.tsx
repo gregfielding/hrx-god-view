@@ -7,7 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Stack, Typography, Button, CircularProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, doc, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import WorkerAssignmentsTabs from '../../../components/worker/assignments/WorkerAssignmentsTabs';
@@ -45,21 +45,80 @@ function toEndAt(data: Record<string, any>): number | undefined {
   return new Date(iso).getTime();
 }
 
-function docToItem(docId: string, data: Record<string, any>, tenantId: string): WorkerAssignmentItem {
+/** Location doc shape for address enrichment */
+type LocationInfo = {
+  street?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  nickname?: string;
+  title?: string;
+  name?: string;
+  locationName?: string;
+};
+
+function formatAddress(loc: LocationInfo | null | undefined): string | undefined {
+  if (!loc) return undefined;
+  const parts = [
+    loc.street,
+    [loc.city, loc.state].filter(Boolean).join(', '),
+    loc.zip,
+  ].filter(Boolean);
+  return parts.length ? parts.join(', ') : undefined;
+}
+
+function formatLocationShort(loc: LocationInfo | null | undefined): string | undefined {
+  if (!loc) return undefined;
+  const cityState = [loc.city, loc.state].filter(Boolean).join(', ');
+  return cityState || undefined;
+}
+
+/** True if string looks like a Firestore doc ID (e.g. nFVWtAknhsCxihFfER8Y) — don't show as display name */
+function looksLikeDocId(s: unknown): boolean {
+  if (typeof s !== 'string' || !s) return false;
+  const t = s.trim();
+  return t.length >= 15 && t.length <= 30 && /^[a-zA-Z0-9_-]+$/.test(t);
+}
+
+function locationDisplayName(loc: LocationInfo | null | undefined): string | undefined {
+  if (!loc) return undefined;
+  const name =
+    loc.nickname || loc.title || loc.name || loc.locationName;
+  if (!name || looksLikeDocId(name)) return undefined;
+  return name;
+}
+
+function docToItem(
+  docId: string,
+  data: Record<string, any>,
+  _tenantId: string,
+  locationMap?: Record<string, LocationInfo>,
+): WorkerAssignmentItem {
   const startAt = toStartAt(data);
   const endAt = toEndAt(data);
   const status = mapAssignmentStatus(data.status);
+  const locationId = data.locationId || '';
+  const location = locationId && locationMap ? locationMap[locationId] : undefined;
+  const address = formatAddress(location) ?? (data.worksiteAddress?.city && data.worksiteAddress?.state
+    ? `${data.worksiteAddress.city}, ${data.worksiteAddress.state}`
+    : undefined);
+  const fromLocation = locationDisplayName(location);
+  const rawWorksite = data.worksiteName ?? data.locationNickname;
+  const siteName = fromLocation || (rawWorksite && !looksLikeDocId(rawWorksite) ? rawWorksite : undefined);
+  const rawLocationShort = formatLocationShort(location) ?? (rawWorksite && !looksLikeDocId(rawWorksite) ? rawWorksite : undefined);
+  const locationShort = rawLocationShort || (fromLocation && !address ? fromLocation : undefined);
+  const rawCompany = data.companyName;
+  const clientName = rawCompany && !looksLikeDocId(rawCompany) ? rawCompany : undefined;
   return {
     assignmentId: docId,
     jobTitle: data.jobTitle || 'Assignment',
-    siteName: data.locationNickname || data.worksiteName,
-    clientName: data.companyName,
+    siteName,
+    clientName,
     startAt,
     endAt,
-    locationShort: data.worksiteName || data.locationNickname,
-    address: data.worksiteAddress?.city && data.worksiteAddress?.state
-      ? `${data.worksiteAddress.city}, ${data.worksiteAddress.state}`
-      : undefined,
+    locationShort: (locationShort || (address ? undefined : formatLocationShort(location))) ?? undefined,
+    address,
+    payRate: typeof data.payRate === 'number' ? data.payRate : undefined,
     status,
   };
 }
@@ -95,6 +154,33 @@ const WorkerAssignments: React.FC = () => {
         const snap = await getDocs(q);
         if (cancelled) return;
 
+        const locationIds = new Set<string>();
+        snap.docs.forEach((d) => {
+          const lid = d.data().locationId;
+          if (typeof lid === 'string' && lid) locationIds.add(lid);
+        });
+
+        const locationMap: Record<string, LocationInfo> = {};
+        await Promise.all(
+          Array.from(locationIds).map(async (lid) => {
+            const locSnap = await getDoc(doc(db, 'tenants', tenantId, 'locations', lid));
+            if (locSnap.exists() && locSnap.data()) {
+              const loc = locSnap.data() as Record<string, unknown>;
+              locationMap[lid] = {
+                street: loc.street as string | undefined,
+                city: loc.city as string | undefined,
+                state: loc.state as string | undefined,
+                zip: loc.zip as string | undefined,
+                nickname: (loc.nickname || loc.title || loc.name || loc.locationName) as string | undefined,
+                title: loc.title as string | undefined,
+                name: loc.name as string | undefined,
+                locationName: loc.locationName as string | undefined,
+              };
+            }
+          }),
+        );
+        if (cancelled) return;
+
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
         const todayMs = todayStart.getTime();
@@ -104,7 +190,7 @@ const WorkerAssignments: React.FC = () => {
 
         snap.docs.forEach((d) => {
           const data = d.data();
-          const item = docToItem(d.id, data, tenantId);
+          const item = docToItem(d.id, data, tenantId, locationMap);
           const status = (data.status || '').toLowerCase();
           const isPastStatus = ['cancelled', 'canceled', 'declined', 'completed'].includes(status);
           const startMs = typeof item.startAt === 'number' ? item.startAt : new Date(item.startAt).getTime();
@@ -116,6 +202,19 @@ const WorkerAssignments: React.FC = () => {
             up.push(item);
           }
         });
+
+        // Debug: log raw assignment doc + location so you can see readily available fields for the card
+        if (snap.docs.length > 0 && typeof console !== 'undefined' && console.log) {
+          const first = snap.docs[0];
+          const rawData = first.data();
+          const lid = rawData.locationId;
+          const loc = lid && locationMap[lid] ? locationMap[lid] : null;
+          console.log('[My Assignments] raw assignment doc (first)', {
+            docId: first.id,
+            ...rawData,
+            _locationEnriched: loc,
+          });
+        }
 
         up.sort((a, b) => {
           const at = typeof a.startAt === 'number' ? a.startAt : new Date(a.startAt).getTime();

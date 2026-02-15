@@ -33,6 +33,12 @@ interface AssignmentDetails {
   id: string;
   tenantId: string;
   jobOrderId?: string;
+  /** Company (e.g. CRM company) id for easy data access */
+  companyId?: string;
+  /** Worksite / company location id for easy data access */
+  worksiteId?: string;
+  /** Shift id for hours, days, and other shift details */
+  shiftId?: string;
   jobTitle?: string;
   companyName?: string;
   location?: string;
@@ -76,6 +82,12 @@ const AssignmentDetails: React.FC = () => {
     if (!assignmentId || !user?.uid) return;
     loadAssignment();
   }, [assignmentId, user?.uid]);
+
+  useEffect(() => {
+    if (assignment && typeof console !== 'undefined' && console.log) {
+      console.log('[Assignment Details] assignment (resolved for UI)', assignment);
+    }
+  }, [assignment]);
 
   const loadAssignment = async () => {
     if (!assignmentId || !user?.uid) return;
@@ -175,6 +187,14 @@ const AssignmentDetails: React.FC = () => {
       const data = assignmentSnap.data();
       const resolvedTenantId = data.tenantId || (assignmentSnap.ref.parent?.parent?.id);
 
+      if (typeof console !== 'undefined' && console.log) {
+        console.log('[Assignment Details] assignment by id (raw doc)', {
+          assignmentId: assignmentSnap.id,
+          tenantId: resolvedTenantId,
+          ...data,
+        });
+      }
+
       // Verify this assignment belongs to the current user
       if ((data.userId || data.candidateId) !== user.uid) {
         setError('You do not have permission to view this assignment');
@@ -225,6 +245,9 @@ const AssignmentDetails: React.FC = () => {
         id: assignmentSnap.id,
         tenantId: resolvedTenantId || '',
         jobOrderId: data.jobOrderId,
+        companyId: data.companyId,
+        worksiteId: data.locationId,
+        shiftId: data.shiftId,
         jobTitle,
         companyName,
         location,
@@ -304,6 +327,9 @@ const AssignmentDetails: React.FC = () => {
         id: assignmentId || `jobOrder_${jobOrderId}`,
         tenantId: tenantId,
         jobOrderId: jobOrderId,
+        companyId: sourceData.companyId ?? jobOrderData.companyId,
+        worksiteId: sourceData.locationId ?? jobOrderData.worksiteId ?? jobOrderData.locationId,
+        shiftId: sourceData.shiftId,
         jobTitle: jobOrderData.jobOrderName || jobOrderData.jobTitle || '',
         companyName: jobOrderData.companyName || '',
         location,

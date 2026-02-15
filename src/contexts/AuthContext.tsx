@@ -502,23 +502,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               });
               recordLoginPing(user.uid);
               hasReportedLoginRef.current = true;
+              // Log login activity only when we actually reported a login (throttled), so page refreshes don't spam the activity log
+              try {
+                const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
+                const deviceType = /Mobile|Android|iPhone/i.test(userAgent) ? 'mobile' : 'desktop';
+                await logLoginActivity(user.uid, { userAgent, deviceType });
+              } catch (logError) {
+                console.warn('Failed to log login activity:', logError);
+              }
             } catch (err) {
               hasReportedLoginRef.current = true;
               console.warn('Failed to update user login info:', err);
             }
-          }
-          
-          // Always log login activity (even if login info update was skipped)
-          try {
-            const userAgent = typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown';
-            const deviceType = /Mobile|Android|iPhone/i.test(userAgent) ? 'mobile' : 'desktop';
-            await logLoginActivity(user.uid, {
-              userAgent,
-              deviceType,
-            });
-          } catch (logError) {
-            console.warn('Failed to log login activity:', logError);
-            // Don't block login if activity logging fails
           }
         }
 

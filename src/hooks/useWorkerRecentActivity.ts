@@ -89,24 +89,28 @@ export function useWorkerRecentActivity(userId: string | undefined): { items: Wo
       setLoading(true);
       try {
         const activitiesRef = collection(db, 'users', userId, 'activityLogs');
-        const q = query(activitiesRef, orderBy('timestamp', 'desc'), limit(10));
+        // Fetch extra so after filtering out logins we still have enough items
+        const q = query(activitiesRef, orderBy('timestamp', 'desc'), limit(30));
         const snap = await getDocs(q);
         if (cancelled) return;
 
-        const list: WorkerActivityItem[] = snap.docs.map((d) => {
+        const list: WorkerActivityItem[] = [];
+        for (const d of snap.docs) {
           const data = d.data();
-          const ts = toMillis(data.timestamp ?? data.createdAt);
           const action = data.action ?? '';
           const actionType = data.actionType ?? 'other';
+          if (action === 'User Login' || action === 'User Logout') continue;
+          const ts = toMillis(data.timestamp ?? data.createdAt);
           const metadata = data.metadata;
-          return {
+          list.push({
             id: d.id,
             primary: activityPrimaryLabel(action, actionType, metadata),
             secondary: timeAgo(ts),
             ts,
             to: activityToLink(actionType, metadata),
-          };
-        });
+          });
+          if (list.length >= 10) break;
+        }
 
         setItems(list);
       } catch (err) {
