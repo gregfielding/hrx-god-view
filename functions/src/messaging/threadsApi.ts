@@ -23,6 +23,134 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+/** Express-like request/response for auth helpers */
+type Req = { headers: { authorization?: string; Authorization?: string }; body?: any; query?: any };
+type Res = { status: (code: number) => { json: (body: any) => void }; set?: (name: string, value: string) => void };
+
+/**
+ * Require Bearer token and return uid. Sends 401 and returns null on failure.
+ */
+async function requireAuthUid(req: Req, res: Res): Promise<string | null> {
+  const header =
+    (req.headers?.authorization as string | undefined) ||
+    (req.headers?.Authorization as string | undefined);
+
+  if (!header || typeof header !== 'string' || !header.startsWith('Bearer ')) {
+    res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHENTICATED', message: 'Missing or invalid Authorization header' },
+    });
+    return null;
+  }
+
+  const token = header.slice('Bearer '.length).trim();
+  if (!token) {
+    res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHENTICATED', message: 'Missing bearer token' },
+    });
+    return null;
+  }
+
+  try {
+    const decoded = await admin.auth().verifyIdToken(token);
+    return decoded.uid;
+  } catch {
+    res.status(401).json({
+      success: false,
+      error: { code: 'UNAUTHENTICATED', message: 'Invalid or expired token' },
+    });
+    return null;
+  }
+}
+
+type InternalCheckResult = { tenantId: string };
+
+function isInternalForTenant(user: admin.firestore.DocumentData | undefined, tenantId: string): boolean {
+  if (!user) return false;
+  const u = user as Record<string, unknown>;
+  if (u.role === 'HRX') return true;
+  const sl = String(u.securityLevel ?? '');
+  if (['5', '6', '7', 'Admin'].includes(sl)) return true;
+  const tenantIds = u.tenantIds;
+  if (tenantIds && typeof tenantIds === 'object' && tenantId in tenantIds) {
+    const t = (tenantIds as Record<string, { securityLevel?: string }>)[tenantId];
+    if (t && ['5', '6', '7', 'Admin'].includes(String(t.securityLevel ?? ''))) return true;
+  }
+  return false;
+}
+
+function isAssignedToTenant(user: admin.firestore.DocumentData | undefined, tenantId: string): boolean {
+  if (!user) return false;
+  const u = user as Record<string, unknown>;
+  if (u.tenantId === tenantId || u.activeTenantId === tenantId) return true;
+  const tenantIds = u.tenantIds;
+  if (Array.isArray(tenantIds) && tenantIds.includes(tenantId)) return true;
+  if (tenantIds && typeof tenantIds === 'object' && tenantId in tenantIds) return true;
+  return false;
+}
+
+/**
+ * Load thread by threadId (existing lookup), derive tenantId, verify sender is internal and assigned.
+ * Returns { tenantId } or null (and sends 404/403/500).
+ */
+async function requireInternalForThread(
+  senderUid: string,
+  threadId: string,
+  res: Res
+): Promise<InternalCheckResult | null> {
+  try {
+    const { thread } = await getThreadWithMessages(threadId, { limit: 1 });
+    const tenantId = thread.tenantId;
+    if (!tenantId) {
+      res.status(500).json({
+        success: false,
+        error: { code: 'INVALID_STATE', message: 'Thread missing tenantId' },
+      });
+      return null;
+    }
+    const userSnap = await db.collection('users').doc(senderUid).get();
+    const user = userSnap.exists ? userSnap.data() : undefined;
+    if (!isInternalForTenant(user, tenantId) || !isAssignedToTenant(user, tenantId)) {
+      res.status(403).json({
+        success: false,
+        error: { code: 'PERMISSION_DENIED', message: 'Not authorized for this tenant' },
+      });
+      return null;
+    }
+    return { tenantId };
+  } catch (err: any) {
+    if (err?.message?.includes('not found') || err?.message?.includes('Thread')) {
+      res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Thread not found' },
+      });
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Verify sender is internal and assigned to tenantId. Sends 403 and returns null on failure.
+ */
+async function requireInternalForTenant(
+  senderUid: string,
+  tenantId: string,
+  res: Res
+): Promise<boolean> {
+  const userSnap = await db.collection('users').doc(senderUid).get();
+  const user = userSnap.exists ? userSnap.data() : undefined;
+  if (!isInternalForTenant(user, tenantId) || !isAssignedToTenant(user, tenantId)) {
+    res.status(403).json({
+      success: false,
+      error: { code: 'PERMISSION_DENIED', message: 'Not authorized for this tenant' },
+    });
+    return false;
+  }
+  return true;
+}
+
 /**
  * GET /api/messaging/threads
  * 
@@ -53,9 +181,9 @@ export const listThreadsApi = onRequest(
       // Set CORS headers
       response.set('Access-Control-Allow-Origin', '*');
 
-      // TODO: Add authentication
-      // const recruiterId = request.auth?.uid;
-      const recruiterId = request.query.recruiterId as string | undefined;
+      const senderUid = await requireAuthUid(request, response);
+      if (!senderUid) return;
+
       const candidateId = request.query.candidateId as string | undefined;
 
       const {
@@ -75,6 +203,11 @@ export const listThreadsApi = onRequest(
         });
         return;
       }
+
+      const allowed = await requireInternalForTenant(senderUid, tenantId as string, response);
+      if (!allowed) return;
+
+      const recruiterId = senderUid;
 
       let threads: SmsThread[] = [];
 
@@ -103,8 +236,8 @@ export const listThreadsApi = onRequest(
         if (status) {
           threads = threads.filter(t => t.status === status);
         }
-      } else if (recruiterId) {
-        // Query threads for a recruiter (original behavior)
+      } else {
+        // Query threads for the authenticated recruiter
         threads = await getRecruiterThreads(
           recruiterId,
           tenantId as string,
@@ -118,12 +251,6 @@ export const listThreadsApi = onRequest(
         if (assignedToMeOnly === 'true') {
           threads = threads.filter(t => t.primaryRecruiterUserId === recruiterId);
         }
-      } else {
-        response.status(400).json({
-          success: false,
-          error: { code: 'INVALID_ARGUMENT', message: 'Either recruiterId or candidateId is required' },
-        });
-        return;
       }
 
       let filteredThreads = threads;
@@ -227,7 +354,8 @@ export const getThreadApi = onRequest(
         return;
       }
 
-      // TODO: Add authentication
+      const senderUid = await requireAuthUid(request, response);
+      if (!senderUid) return;
 
       const { threadId, limit = 50, before } = request.query;
 
@@ -238,6 +366,9 @@ export const getThreadApi = onRequest(
         });
         return;
       }
+
+      const check = await requireInternalForThread(senderUid, threadId as string, response);
+      if (!check) return;
 
       const { thread, messages } = await getThreadWithMessages(threadId as string, {
         limit: Number(limit),
@@ -308,25 +439,32 @@ export const sendThreadMessageApi = onRequest(
         return;
       }
 
-      // TODO: Add authentication
-      // const recruiterId = request.auth?.uid;
-      const recruiterId = request.body.recruiterId || request.query.recruiterId as string; // Placeholder
+      const senderUid = await requireAuthUid(request, response);
+      if (!senderUid) return;
 
-      const { threadId } = request.query;
-      const { body, fromUserId } = request.body;
-
-      if (!threadId || !body) {
+      const threadId = String(request.query.threadId || request.body?.threadId || '');
+      if (!threadId) {
         response.status(400).json({
           success: false,
-          error: { code: 'INVALID_ARGUMENT', message: 'threadId and body are required' },
+          error: { code: 'INVALID_ARGUMENT', message: 'threadId is required' },
         });
         return;
       }
 
-      const actualFromUserId = fromUserId || recruiterId;
+      const bodyText = String(request.body?.body ?? request.body?.text ?? '').trim();
+      if (!bodyText) {
+        response.status(400).json({
+          success: false,
+          error: { code: 'INVALID_ARGUMENT', message: 'Missing message body' },
+        });
+        return;
+      }
+
+      const check = await requireInternalForThread(senderUid, threadId, response);
+      if (!check) return;
 
       try {
-        const result = await sendOutboundMessage(threadId as string, actualFromUserId, body);
+        const result = await sendOutboundMessage(threadId, senderUid, bodyText);
 
         if (!result.success) {
           response.status(200).json({
@@ -383,9 +521,8 @@ export const createThreadApi = onRequest(
         return;
       }
 
-      // TODO: Add authentication
-      // const recruiterId = request.auth?.uid;
-      const recruiterId = request.body.recruiterId as string; // Placeholder
+      const senderUid = await requireAuthUid(request, response);
+      if (!senderUid) return;
 
       const {
         candidateId,
@@ -405,9 +542,12 @@ export const createThreadApi = onRequest(
         return;
       }
 
+      const allowed = await requireInternalForTenant(senderUid, tenantId, response);
+      if (!allowed) return;
+
       // Create or find thread
       const thread = await findOrCreateThread(candidateId, candidatePhone, twilioNumber, tenantId, {
-        primaryRecruiterId: recruiterId,
+        primaryRecruiterId: senderUid,
         jobOrderId,
         applicationId,
       });
@@ -417,7 +557,7 @@ export const createThreadApi = onRequest(
       // Send initial message if provided
       if (initialMessageBody && thread.id) {
         try {
-          const result = await sendOutboundMessage(thread.id, recruiterId, initialMessageBody);
+          const result = await sendOutboundMessage(thread.id, senderUid, initialMessageBody);
           if (result.success) {
             // With queueing, message is created asynchronously
             // For now, we'll skip fetching the message immediately

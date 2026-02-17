@@ -390,7 +390,7 @@ function App() {
             <Route path="settings" element={<PrivacySettings />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />
             <Route path="inbox" element={<C1WorkerInbox />} />
-            <Route path="inbox/:threadId" element={<C1WorkerInbox />} />
+            <Route path="inbox/:conversationId" element={<C1WorkerInbox />} />
           </Route>
           <Route path="jobs-board" element={<PublicJobsBoard />} />
           <Route path="jobs-board/:postId" element={<JobPostingDetail />} />

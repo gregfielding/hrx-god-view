@@ -1,6 +1,8 @@
 /**
  * Worker inbox threads from global threads collection.
  * Spec: HRX-Unified-Notifications-and-Inbox-Spec.md
+ *
+ * @deprecated Prefer tenant-scoped conversations: useConversationsForUser + useConversationMessages from useConversationsForUser.ts and useConversationMessages.ts.
  */
 
 import { collection, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';

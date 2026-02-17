@@ -39,7 +39,7 @@ import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
-import { useT, setLanguage } from '../i18n';
+import { useT, setLanguage, useLanguage } from '../i18n';
 import { formatDistanceToNow } from 'date-fns';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
@@ -86,6 +86,8 @@ const JobPostingDetail: React.FC = () => {
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const t = useT();
+  // Single source of truth for content language: i18n (updated by layout selector when logged in, or by guest selector → setLanguage(guestLanguage))
+  const displayLanguage = useLanguage();
 
   useEffect(() => {
     setLanguage(guestLanguage);
@@ -1283,7 +1285,7 @@ const JobPostingDetail: React.FC = () => {
                 component="h1"
                 sx={{ fontWeight: 'bold', fontSize: isMobile ? '1.25rem' : undefined }}
               >
-                {getJobPostingDisplayText(posting, 'postTitle', guestLanguage) || posting.postTitle}
+                {getJobPostingDisplayText(posting, 'postTitle', displayLanguage) || posting.postTitle}
               </Typography>
               {/* Copy Link Button */}
               <Button
@@ -1596,10 +1598,10 @@ const JobPostingDetail: React.FC = () => {
           <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
             <CardContent sx={{ p: 0 }}>
               <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                Job Description
+                {t('jobs.jobDescription')}
               </Typography>
               <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                {getJobPostingDisplayText(posting, 'jobDescription', guestLanguage) || posting.jobDescription || 'No description provided'}
+                {getJobPostingDisplayText(posting, 'jobDescription', displayLanguage) || posting.jobDescription || 'No description provided'}
               </Typography>
             </CardContent>
           </Card>
@@ -1622,7 +1624,7 @@ const JobPostingDetail: React.FC = () => {
                     onDeclineShift={handleDeclineAssignmentForShift}
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
-                    language={guestLanguage}
+                    language={displayLanguage}
                   />
                 ) : posting.jobOrderId ? (
                   <Alert severity="info">
@@ -1650,7 +1652,7 @@ const JobPostingDetail: React.FC = () => {
             <Card sx={{ ...cardBaseSx }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                  Requirements
+                  {t('jobs.requirements')}
                 </Typography>
                 {user?.uid && applicationDocId && (
                   <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>

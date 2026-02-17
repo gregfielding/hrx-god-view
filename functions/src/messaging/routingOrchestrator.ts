@@ -13,7 +13,7 @@ import { getMessageTypeConfig, Channel, MessageTypeConfig } from './messageTypes
 import { getUserNotificationSettings, NotificationSettings } from '../utils/notificationSettings';
 import { logMessage, MessageLog, MessageDirection, MessageFromIdentity, MessageStatus, MessageLanguage } from './messageLogging';
 import type { TemplateVariableContext } from '../utils/templateVariableResolver';
-import { getTemplate, renderTemplate, MessageTemplate } from './templateEngine';
+import { getTemplate, renderTemplate, renderTemplateHtmlBody, renderStringWithVariables, MessageTemplate } from './templateEngine';
 import { getEmailProvider, isSendGridConfigured } from './emailProviderFactory';
 import { getSmsProvider } from './smsProviderFactory';
 import { getPushProvider } from './pushProviderFactory';
@@ -1003,14 +1003,21 @@ async function deliverEmail(
     // Resolve variables
     const variables = await resolveTemplateVariables(templateContext);
     
-    // 3. Render template
+    // 3. Render template (use HTML body for email when present so variables and links render correctly)
     const renderedBody = await renderTemplate(template, variables, context.tenantId);
-    
-    // 4. Get subject from template or context
-    const subject = context.variables?.subject || 
-                   template.subject || 
-                   template.name || 
+    const renderedHtmlBody = template.htmlBody
+      ? renderTemplateHtmlBody(template, variables)
+      : renderedBody;
+
+    // 4. Get subject (pre-rendered from dispatcher, or from template); render placeholders when from template
+    let subject = context.variables?._subject ??
+                   context.variables?.subject ??
+                   template.subject ??
+                   template.name ??
                    `Notification: ${messageTypeConfig.label}`;
+    if (typeof subject === 'string' && (context.variables?._subject == null && context.variables?.subject == null)) {
+      subject = renderStringWithVariables(subject, variables);
+    }
     
     // PHASE 5.1: Check rate limits before sending
     const rateLimitCheck = await checkRateLimits({
@@ -1040,7 +1047,7 @@ async function deliverEmail(
         fromIdentity: context.source === 'recruiter' ? 'recruiter' : 'system',
         fromUserId: context.source === 'recruiter' ? context.sourceId : undefined,
         contentOriginal: renderedBody,
-        contentSent: renderedBody,
+        contentSent: renderedHtmlBody,
         language: preferredLanguage,
         status: 'suppressed_rate_limit',
         failureReason: JSON.stringify(rateLimitCheck.details),
@@ -1085,7 +1092,7 @@ async function deliverEmail(
         fromIdentity: context.source === 'recruiter' ? 'recruiter' : 'system',
         fromUserId: context.source === 'recruiter' ? context.sourceId : undefined,
         contentOriginal: renderedBody,
-        contentSent: renderedBody,
+        contentSent: renderedHtmlBody,
         language: preferredLanguage,
         status: 'suppressed_quiet_hours',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1122,7 +1129,7 @@ async function deliverEmail(
       fromIdentity: context.source === 'recruiter' ? 'recruiter' : 'system',
       fromUserId: context.source === 'recruiter' ? context.sourceId : undefined,
       contentOriginal: renderedBody,
-      contentSent: renderedBody,
+      contentSent: renderedHtmlBody,
       language: preferredLanguage,
       status: 'queued',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1149,7 +1156,7 @@ async function deliverEmail(
       tenantId: context.tenantId,
       to: { email: toEmail, name: toName },
       subject,
-      htmlBody: renderedBody,
+      htmlBody: renderedHtmlBody,
       textBody: context.variables?.textBody || stripHtml(renderedBody),
       messageTypeId: context.messageTypeId,
       userId: signatureUserId, // Use sender's ID for signature lookup
@@ -1178,7 +1185,7 @@ async function deliverEmail(
             fromUserId: context.source === 'recruiter' ? context.sourceId : undefined,
             to: [toEmail.toLowerCase()],
             subject,
-            bodyHtml: renderedBody,
+            bodyHtml: renderedHtmlBody,
             bodyPlain: context.variables?.textBody || stripHtml(renderedBody),
             bodySnippet: (context.variables?.textBody || stripHtml(renderedBody)).substring(0, 200),
             status: 'sent',

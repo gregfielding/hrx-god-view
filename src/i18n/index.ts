@@ -115,3 +115,19 @@ export function useT(): (key: string, params?: Record<string, string | number>) 
   }, []);
   return t;
 }
+
+/**
+ * Current UI language; re-renders when language changes (selector / guest / profile).
+ * Use this for content that must follow the language selector (e.g. job posting body, section headers).
+ */
+export function useLanguage(): UiLanguage {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const handler = () => setTick((n) => n + 1);
+    listeners.add(handler);
+    return () => {
+      listeners.delete(handler);
+    };
+  }, []);
+  return currentLanguage;
+}

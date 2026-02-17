@@ -34,7 +34,7 @@ export function getEmailProvider(): EmailProvider {
     const config: SendGridConfig = {
       apiKey,
       defaultFromEmail: fromEmail,
-      defaultFromName: fromName || 'HRX One',
+      defaultFromName: fromName || 'C1 Staffing',
     };
 
     emailProvider = new SendGridEmailProvider(config);

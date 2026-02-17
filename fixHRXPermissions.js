@@ -90,7 +90,7 @@ const fixHRXPermissions = async () => {
     // Check if user has HRX access
     const hasHRXAccess = userData.tenantIds && 
                         (userData.tenantIds['TgDJ4sIaC7x2n5cPs3rW'] || 
-                         userData.tenantIds['BCiP2bQ9CgV0CTfV6MhD']);
+                         userData.tenantIds['BCiP2bQ9CgVOCTfV6MhD']);
     
     if (!hasHRXAccess) {
       console.error('❌ User does not have HRX access');
@@ -105,7 +105,7 @@ const fixHRXPermissions = async () => {
         role: 'HRX',
         securityLevel: '7'
       },
-      'BCiP2bQ9CgV0CTfV6MhD': {
+      'BCiP2bQ9CgVOCTfV6MhD': {
         role: 'HRX', 
         securityLevel: '7'
       }

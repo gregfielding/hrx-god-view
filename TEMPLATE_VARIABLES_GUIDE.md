@@ -1,5 +1,11 @@
 # Template Variables Standardization Guide
 
+## Important: Use variable names, not example values
+
+Templates must use **variable names** like `{firstName}` and `{jobTitle}` so the system can substitute real values. If you use example text like `{Gregory}` or `{Janitor}`, those will appear literally in the email/SMS because there is no variable named "Gregory" or "Janitor". Use the names in the "Available Template Variables" section below (e.g. `{firstName}`, `{jobTitle}`). For clickable links in email, use HTML: `<a href="{{assignmentUrl}}">View here</a>`.
+
+---
+
 ## Problem Solved
 
 **Before:** Variables were hardcoded in each trigger, data sources were inconsistent, field names varied, and lookups weren't handled.

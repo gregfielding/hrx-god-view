@@ -14,6 +14,11 @@ import { processInboundSms } from './stopHelpHandler';
 import { logMessage } from './messageLogging';
 import { findOrCreateThread, createInboundMessage } from './twoWayMessaging';
 import { createAIDraft, classifyInboundMessage } from './aiAssist';
+import {
+  findOrCreateConversationForSms,
+  appendConversationMessage,
+  updateConversationRollups,
+} from './conversations/conversationsModel';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
 
 if (!admin.apps.length) {
@@ -219,6 +224,49 @@ async function handleRegularInboundMessage(
     } catch (aiError: any) {
       // Don't fail the inbound message if AI assist fails
       logger.error('Error creating AI draft for inbound message:', aiError);
+    }
+
+    // Canonical conversations bridge: write to tenants/{tenantId}/conversations for Worker Inbox
+    try {
+      const toE164 = toNumber.startsWith('+') ? toNumber : `+${toNumber}`;
+      const { conversationId } = await findOrCreateConversationForSms({
+        tenantId,
+        workerUid: candidateId,
+        workerPhoneE164: fromPhoneE164,
+        twilioNumberE164: toE164,
+        topic: { type: 'support', label: 'Support' },
+      });
+
+      const canonicalMessageId = `tw_${messageSid}`;
+      const appended = await appendConversationMessage({
+        tenantId,
+        conversationId,
+        messageId: canonicalMessageId,
+        channel: 'sms',
+        visibility: 'participants',
+        sender: { role: 'worker', uid: candidateId },
+        body: { text: messageBody },
+        provider: { name: 'twilio', messageId: messageSid },
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      if (typeof appended === 'object' && appended.created) {
+        await updateConversationRollups({
+          tenantId,
+          conversationId,
+          lastMessageText: messageBody,
+          senderUid: candidateId,
+          lastMessageDirection: 'inbound',
+          lastMessageChannel: 'sms',
+        });
+      }
+    } catch (bridgeErr: any) {
+      logger.error('[InboundSMS->ConversationsBridge] failed', {
+        tenantId,
+        workerUid: candidateId,
+        messageSid,
+        err: String(bridgeErr?.message ?? bridgeErr),
+      });
     }
 
     // TODO: Notify recruiter(s) with access to thread

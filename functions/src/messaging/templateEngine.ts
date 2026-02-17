@@ -254,6 +254,24 @@ export function renderTemplate(
 }
 
 /**
+ * Render template HTML body (or plain body) with variable substitution.
+ * Use for email so that template.htmlBody gets the same {{var}} / {var} replacement as body.
+ */
+export function renderTemplateHtmlBody(
+  template: MessageTemplate,
+  context: Record<string, any>
+): string {
+  const mergedContext = { ...context };
+  for (const varName of template.variables || []) {
+    if (!(varName in mergedContext) || mergedContext[varName] == null) {
+      mergedContext[varName] = '';
+    }
+  }
+  const source = template.htmlBody || template.body;
+  return renderStringWithVariables(source, mergedContext);
+}
+
+/**
  * Replace {{variableName}} and {variableName} in a string with values from context (sync, for subject/title).
  */
 export function renderStringWithVariables(str: string, context: Record<string, any>): string {

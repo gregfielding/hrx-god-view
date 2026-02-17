@@ -11,6 +11,7 @@
     "deploy:hardening-phase1": "gcloud functions deploy firestoreLogTaskUpdated --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry && gcloud functions deploy updateActiveSalespeopleOnDeal --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry && gcloud functions deploy scheduledGmailMonitoring --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry && gcloud functions deploy executePendingCampaigns --gen2 --region=us-central1 --max-instances=1 --concurrency=1 --timeout=60s --memory=256Mi --no-retry",
     "logs": "firebase functions:log",
     "test": "mocha -r ts-node/register -r src/__tests__/setup.ts src/__tests__/**/*.test.ts",
+    "test:bridge": "FIRESTORE_EMULATOR_HOST=127.0.0.1:8085 mocha -r ts-node/register -r src/__tests__/setup.ts src/__tests__/**/inboundSmsConversationsBridge.test.ts",
     "test:triggers": "npx ts-node src/testTriggersCLI.ts",
     "test:triggers:coverage": "npx ts-node src/testTriggersCLI.ts --coverage",
     "test:triggers:deployed": "firebase functions:call runTriggerTests",

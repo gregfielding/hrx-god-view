@@ -657,29 +657,36 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             // Set activeTenant object for context
             const tenantIdToUse = userData.activeTenantId || primaryTenantId;
-            if (tenantIdToUse && userTenantIds.includes(tenantIdToUse)) {
+            // Normalize C1 tenant ID typo (0 vs O): some user docs have BCiP2bQ9CgV0CTfV6MhD, canonical is BCiP2bQ9CgVOCTfV6MhD
+            const C1_TENANT_ID_TYPO = 'BCiP2bQ9CgV0CTfV6MhD';
+            const C1_TENANT_ID_CANONICAL = 'BCiP2bQ9CgVOCTfV6MhD';
+            const resolvedTenantId = tenantIdToUse === C1_TENANT_ID_TYPO ? C1_TENANT_ID_CANONICAL : tenantIdToUse;
+            const isInTenantIds = tenantIdToUse && (userTenantIds.includes(tenantIdToUse) || userTenantIds.includes(resolvedTenantId));
+            if (tenantIdToUse && isInTenantIds) {
               try {
-                const tenantRef = doc(db, 'tenants', tenantIdToUse);
+                const tenantRef = doc(db, 'tenants', resolvedTenantId);
                 const tenantSnap = await getDoc(tenantRef);
                 if (tenantSnap.exists()) {
                   setActiveTenant({ id: tenantSnap.id, ...tenantSnap.data() });
                 } else {
-                  setActiveTenant({ id: tenantIdToUse });
+                  setActiveTenant({ id: resolvedTenantId });
                 }
               } catch (err) {
-                setActiveTenant({ id: tenantIdToUse });
+                setActiveTenant({ id: resolvedTenantId });
               }
             } else if (userTenantIds.length > 0) {
+              const firstId = userTenantIds[0];
+              const resolvedFirst = firstId === C1_TENANT_ID_TYPO ? C1_TENANT_ID_CANONICAL : firstId;
               try {
-                const tenantRef = doc(db, 'tenants', userTenantIds[0]);
+                const tenantRef = doc(db, 'tenants', resolvedFirst);
                 const tenantSnap = await getDoc(tenantRef);
                 if (tenantSnap.exists()) {
                   setActiveTenant({ id: tenantSnap.id, ...tenantSnap.data() });
                 } else {
-                  setActiveTenant({ id: userTenantIds[0] });
+                  setActiveTenant({ id: resolvedFirst });
                 }
               } catch (err) {
-                setActiveTenant({ id: userTenantIds[0] });
+                setActiveTenant({ id: resolvedFirst });
               }
             } else {
               setActiveTenant(null);

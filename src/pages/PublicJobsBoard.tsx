@@ -62,7 +62,8 @@ import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoard
 import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { useFavorites, useFavoritesFilter } from '../hooks/useFavorites';
-import { useT, setLanguage } from '../i18n';
+import { useT, setLanguage, useLanguage } from '../i18n';
+import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
 import Layout from '../components/Layout';
@@ -170,6 +171,7 @@ const PublicJobsBoard: React.FC = () => {
   const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const t = useT();
+  const displayLanguage = useLanguage();
 
   useEffect(() => {
     setLanguage(guestLanguage);
@@ -2071,8 +2073,8 @@ const PublicJobsBoard: React.FC = () => {
             {/* Tabs */}
             <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 3 }}>
                 <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
-                  <Tab label="Job Description" />
-                  <Tab label="Requirements" />
+                  <Tab label={t('jobs.jobDescription')} />
+                  <Tab label={t('jobs.requirements')} />
                 </Tabs>
             </Box>
 
@@ -2084,7 +2086,7 @@ const PublicJobsBoard: React.FC = () => {
                   {/* Job Description */}
                   <Box>
                     <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                      {selectedJob.jobDescription}
+                      {getJobPostingDisplayText(selectedJob as any, 'jobDescription', displayLanguage) || selectedJob.jobDescription}
                     </Typography>
                   </Box>
 

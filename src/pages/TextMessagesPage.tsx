@@ -32,6 +32,7 @@ import SmsIcon from '@mui/icons-material/Sms';
 import ReplyIcon from '@mui/icons-material/Reply';
 import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
+import { getAuth } from 'firebase/auth';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { collection, doc, getDoc, onSnapshot, query, orderBy, QuerySnapshot, DocumentData } from 'firebase/firestore';
@@ -223,6 +224,16 @@ const TextMessagesPage: React.FC = () => {
     return () => unsubscribe();
   }, [user?.uid, effectiveTenantId]);
 
+  /** Fetch with Firebase ID token for authenticated API calls */
+  const authedFetch = async (url: string, init?: RequestInit) => {
+    const token = await getAuth().currentUser?.getIdToken();
+    if (!token) throw new Error('Please sign in again.');
+    const headers = new Headers(init?.headers || {});
+    headers.set('Authorization', `Bearer ${token}`);
+    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    return fetch(url, { ...init, headers });
+  };
+
   const handleSendReply = async () => {
     if (!replyMessage.trim() || !selectedThreadId || !user?.uid) return;
 
@@ -238,18 +249,11 @@ const TextMessagesPage: React.FC = () => {
       const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL || 
         'https://us-central1-hrx1-d3beb.cloudfunctions.net';
       
-      const response = await fetch(
+      const response = await authedFetch(
         `${API_BASE_URL}/sendThreadMessageApi?threadId=${encodeURIComponent(selectedThreadId)}`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            body: replyMessage,
-            recruiterId: user.uid,
-            fromUserId: user.uid,
-          }),
+          body: JSON.stringify({ body: replyMessage }),
         }
       );
 

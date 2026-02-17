@@ -134,6 +134,20 @@ export const workerNotificationsPaths = {
 };
 
 /**
+ * Canonical tenant-scoped conversations (inbox).
+ * tenants/{tenantId}/conversations/{conversationId}/messages/{messageId}
+ */
+export const conversationPaths = {
+  conversations: (tenantId: string) => `tenants/${tenantId}/conversations`,
+  conversation: (tenantId: string, conversationId: string) =>
+    `tenants/${tenantId}/conversations/${conversationId}`,
+  messages: (tenantId: string, conversationId: string) =>
+    `tenants/${tenantId}/conversations/${conversationId}/messages`,
+  message: (tenantId: string, conversationId: string, messageId: string) =>
+    `tenants/${tenantId}/conversations/${conversationId}/messages/${messageId}`,
+};
+
+/**
  * Legacy path detection helpers
  * Use these to identify and warn about legacy path usage
  */

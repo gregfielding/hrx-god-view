@@ -11421,6 +11421,11 @@ export {
   registerWorkerDeviceToken
 } from './messaging/unifiedWorkerNotifications';
 
+export {
+  sendConversationMessage,
+  markConversationRead,
+} from './messaging/conversations/conversationsApi';
+
 // Unified Messaging Framework - Webhooks
 export {
   twilioInboundSmsWebhook,
