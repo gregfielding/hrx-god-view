@@ -173,9 +173,10 @@ const PublicJobsBoard: React.FC = () => {
   const t = useT();
   const displayLanguage = useLanguage();
 
+  // Only sync guest language → i18n when user is NOT logged in. Logged-in language is driven by C1WorkerLayout + WorkerAppBar; never overwrite with localStorage.
   useEffect(() => {
-    setLanguage(guestLanguage);
-  }, [guestLanguage]);
+    if (!user) setLanguage(guestLanguage);
+  }, [user, guestLanguage]);
 
   // Favorites system
   const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');

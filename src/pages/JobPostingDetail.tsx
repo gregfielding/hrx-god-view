@@ -86,12 +86,13 @@ const JobPostingDetail: React.FC = () => {
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const t = useT();
-  // Single source of truth for content language: i18n (updated by layout selector when logged in, or by guest selector → setLanguage(guestLanguage))
+  // Single source of truth for content language: i18n (layout + app bar when logged in; guest selector when guest)
   const displayLanguage = useLanguage();
 
+  // Only sync guest language → i18n when user is NOT logged in. Logged-in language is driven by C1WorkerLayout + WorkerAppBar (Firestore preferredLanguage); never overwrite with localStorage.
   useEffect(() => {
-    setLanguage(guestLanguage);
-  }, [guestLanguage]);
+    if (!user) setLanguage(guestLanguage);
+  }, [user, guestLanguage]);
 
   useEffect(() => {
     if (!resolvedTenantId || !postId) {

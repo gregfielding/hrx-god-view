@@ -380,6 +380,7 @@
       "title": "Filtros"
     },
     "backToJobsBoard": "Volver a la bolsa de trabajo",
+    "jobDescription": "Descripción del puesto",
     "applicantsCount": "{count} solicitantes",
     "signInOrCreateAccount": "Iniciar sesión o crear cuenta",
     "copyLink": "Copiar enlace",

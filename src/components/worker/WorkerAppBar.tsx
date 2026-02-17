@@ -35,6 +35,7 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkerNotifications, getNotificationUrlAsync } from '../../hooks/useWorkerNotifications';
 import { setLanguage, t } from '../../i18n';
+import { useGuestLanguage } from '../../hooks/useGuestLanguage';
 import { markNotificationReadCallable } from '../../api/workerNotificationsApi';
 import type { WorkerNotification } from '../../types/unifiedWorkerNotifications';
 
@@ -63,6 +64,7 @@ const WorkerAppBar: React.FC = () => {
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
   const [preferredLanguageLoaded, setPreferredLanguageLoaded] = useState(false);
   const [showFirstLoginLanguageModal, setShowFirstLoginLanguageModal] = useState(false);
+  const [, setGuestLanguage] = useGuestLanguage();
   const { notifications, unreadCount, loading } = useWorkerNotifications(uid, { max: 50 });
   const [markingId, setMarkingId] = useState<string | null>(null);
 
@@ -119,6 +121,7 @@ const WorkerAppBar: React.FC = () => {
   const savePreferredLanguage = async (lang: 'en' | 'es') => {
     setPreferredLanguage(lang);
     setLanguage(lang);
+    setGuestLanguage(lang); // Keep localStorage in sync so guest/other tabs see same choice
     setShowFirstLoginLanguageModal(false);
     if (user?.uid) {
       try {

@@ -380,6 +380,7 @@
       "title": "Filters"
     },
     "backToJobsBoard": "Back to Jobs Board",
+    "jobDescription": "Job Description",
     "applicantsCount": "{count} applicants",
     "signInOrCreateAccount": "Sign In or Create Account",
     "copyLink": "Copy Link",
