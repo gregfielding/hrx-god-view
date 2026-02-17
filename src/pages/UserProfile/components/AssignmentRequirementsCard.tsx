@@ -34,6 +34,18 @@ interface Assignment {
   status: string;
   startDate?: string;
   endDate?: string;
+  onboardingInstanceId?: string | null;
+  onboardingStatus?: string;
+  onboardingPercent?: number;
+}
+
+interface OnboardingInstance {
+  status: string;
+  percentComplete: number;
+  resolvedDocuments: Array<{ key: string; title?: string; required?: boolean; blocking?: boolean; mode?: string }>;
+  resolvedSteps: Array<{ key: string; title?: string; required?: boolean; blocking?: boolean }>;
+  resolvedChecks: Array<{ key: string; title?: string; required?: boolean; blocking?: boolean }>;
+  blockedReason?: string | null;
 }
 
 interface JobOrder {
@@ -59,6 +71,7 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
   const [loading, setLoading] = useState(true);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [jobOrders, setJobOrders] = useState<Map<string, JobOrder>>(new Map());
+  const [onboardingByAssignment, setOnboardingByAssignment] = useState<Map<string, OnboardingInstance>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -69,47 +82,81 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
     setLoading(true);
     setError(null);
     try {
-      // Fetch active assignments for this user
+      // Fetch active assignments for this user (tenant-scoped)
       const assignmentsQuery = query(
-        collection(db, 'assignments'),
+        collection(db, 'tenants', tenantId, 'assignments'),
         where('userId', '==', userId)
       );
       const assignmentsSnapshot = await getDocs(assignmentsQuery);
 
       const fetchedAssignments: Assignment[] = [];
       const jobOrderIds = new Set<string>();
+      const onboardingInstanceIds: string[] = [];
 
-      assignmentsSnapshot.forEach((doc) => {
-        const data = doc.data();
+      assignmentsSnapshot.forEach((snap) => {
+        const data = snap.data();
         const assignment: Assignment = {
-          id: doc.id,
+          id: snap.id,
           jobOrderId: data.jobOrderId,
           status: data.status || 'active',
           startDate: data.startDate,
           endDate: data.endDate,
+          onboardingInstanceId: data.onboardingInstanceId ?? null,
+          onboardingStatus: data.onboardingStatus,
+          onboardingPercent: data.onboardingPercent ?? 0,
         };
         fetchedAssignments.push(assignment);
         if (assignment.jobOrderId) {
           jobOrderIds.add(assignment.jobOrderId);
         }
+        if (assignment.onboardingInstanceId) {
+          onboardingInstanceIds.push(assignment.onboardingInstanceId);
+        }
       });
 
       setAssignments(fetchedAssignments);
 
-      // Fetch job orders for these assignments
+      // Fetch onboarding instances for assignments that have onboardingInstanceId
+      const onboardingMap = new Map<string, OnboardingInstance>();
+      await Promise.all(
+        onboardingInstanceIds.map(async (instanceId) => {
+          try {
+            const instRef = doc(db, 'tenants', tenantId, 'onboarding_instances', instanceId);
+            const instSnap = await getDoc(instRef);
+            if (instSnap.exists()) {
+              const d = instSnap.data();
+              onboardingMap.set(instanceId, {
+                status: d.status || 'unknown',
+                percentComplete: d.percentComplete ?? 0,
+                resolvedDocuments: Array.isArray(d.resolvedDocuments) ? d.resolvedDocuments : [],
+                resolvedSteps: Array.isArray(d.resolvedSteps) ? d.resolvedSteps : [],
+                resolvedChecks: Array.isArray(d.resolvedChecks) ? d.resolvedChecks : [],
+                blockedReason: d.blockedReason ?? null,
+              });
+            }
+          } catch {
+            /* ignore */
+          }
+        })
+      );
+      setOnboardingByAssignment(onboardingMap);
+
+      // Fetch job orders for these assignments (try job_orders first, then recruiter_jobOrders)
       const jobOrdersMap = new Map<string, JobOrder>();
       await Promise.all(
         Array.from(jobOrderIds).map(async (jobOrderId) => {
           try {
-            // Try the recruiter_jobOrders collection first
-            const jobOrderRef = doc(db, 'tenants', tenantId, 'recruiter_jobOrders', jobOrderId);
-            const jobOrderSnap = await getDoc(jobOrderRef);
-            
+            let jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+            let jobOrderSnap = await getDoc(jobOrderRef);
+            if (!jobOrderSnap.exists()) {
+              jobOrderRef = doc(db, 'tenants', tenantId, 'recruiter_jobOrders', jobOrderId);
+              jobOrderSnap = await getDoc(jobOrderRef);
+            }
             if (jobOrderSnap.exists()) {
               const data = jobOrderSnap.data();
               jobOrdersMap.set(jobOrderId, {
                 id: jobOrderId,
-                jobOrderName: data.jobOrderName || data.title,
+                jobOrderName: data.jobOrderName || data.title || data.jobTitle,
                 jobTitle: data.jobTitle,
                 companyName: data.companyName,
                 worksiteName: data.worksiteName,
@@ -194,6 +241,11 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
       <CardContent>
         {Array.from(assignmentsByJobOrder.entries()).map(([jobOrderId, jobAssignments]) => {
           const jobOrder = jobOrders.get(jobOrderId);
+          const assignmentWithOnboarding = jobAssignments.find((a) => a.onboardingInstanceId);
+          const onboardingInstance = assignmentWithOnboarding?.onboardingInstanceId
+            ? onboardingByAssignment.get(assignmentWithOnboarding.onboardingInstanceId)
+            : null;
+
           if (!jobOrder) {
             return (
               <Alert severity="warning" key={jobOrderId} sx={{ mb: 2 }}>
@@ -240,11 +292,83 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
                 </Box>
               </Stack>
 
-              {!hasAnyRequirements ? (
+              {/* Onboarding instance (Phase 1A) — resolved documents, steps, checks */}
+              {onboardingInstance && (
+                <Box sx={{ mb: 2 }}>
+                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      Onboarding
+                    </Typography>
+                    <Chip
+                      label={onboardingInstance.status}
+                      size="small"
+                      color={
+                        onboardingInstance.status === 'completed'
+                          ? 'success'
+                          : onboardingInstance.status === 'blocked'
+                            ? 'warning'
+                            : 'default'
+                      }
+                    />
+                    <Chip label={`${onboardingInstance.percentComplete}%`} size="small" variant="outlined" />
+                  </Stack>
+                  {onboardingInstance.blockedReason && (
+                    <Alert severity="warning" sx={{ mb: 1 }}>
+                      {onboardingInstance.blockedReason}
+                    </Alert>
+                  )}
+                  {onboardingInstance.resolvedDocuments.length > 0 && (
+                    <Box sx={{ mb: 1 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                        Documents
+                      </Typography>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        {onboardingInstance.resolvedDocuments.map((d, i) => (
+                          <Chip key={d.key || i} label={d.title || d.key} size="small" variant="outlined" />
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+                  {onboardingInstance.resolvedSteps.length > 0 && (
+                    <Box sx={{ mb: 1 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                        Steps
+                      </Typography>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        {onboardingInstance.resolvedSteps.map((s, i) => (
+                          <Chip key={s.key || i} label={s.title || s.key} size="small" variant="outlined" />
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+                  {onboardingInstance.resolvedChecks.length > 0 && (
+                    <Box sx={{ mb: 2 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+                        Checks
+                      </Typography>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        {onboardingInstance.resolvedChecks.map((c, i) => (
+                          <Chip key={c.key || i} label={c.title || c.key} size="small" variant="outlined" />
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+                  {onboardingInstance.resolvedDocuments.length === 0 &&
+                    onboardingInstance.resolvedSteps.length === 0 &&
+                    onboardingInstance.resolvedChecks.length === 0 &&
+                    !onboardingInstance.blockedReason && (
+                      <Typography variant="body2" color="text.secondary">
+                        No documents, steps, or checks configured yet.
+                      </Typography>
+                    )}
+                </Box>
+              )}
+
+              {!hasAnyRequirements && !onboardingInstance ? (
                 <Alert severity="info" sx={{ mt: 1 }}>
                   No specific requirements listed for this assignment.
                 </Alert>
-              ) : (
+              ) : hasAnyRequirements ? (
                 <Box>
                   {/* Screening Requirements */}
                   {(jobOrder.backgroundCheckRequired || jobOrder.drugScreenRequired) && (
@@ -343,7 +467,7 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
                     </Box>
                   )}
                 </Box>
-              )}
+              ) : null}
 
               {Array.from(assignmentsByJobOrder.entries()).length > 1 &&
                 jobOrderId !== Array.from(assignmentsByJobOrder.keys())[assignmentsByJobOrder.size - 1] && (

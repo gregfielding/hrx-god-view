@@ -62,6 +62,146 @@ async function canManageAssignments(auth: any, tenantId: string, uid: string): P
   return false;
 }
 
+// --- Onboarding (Phase 1A) ---
+type OnboardingConfig = {
+  entityId: string | null;
+  requirementPackageId: string | null;
+  packageData: any | null;
+  blockedReason?: string;
+};
+
+async function resolveOnboardingConfigForJobOrder(params: {
+  tenantId: string;
+  jobOrderId: string;
+  jobOrder: any;
+}): Promise<OnboardingConfig> {
+  const { tenantId, jobOrder } = params;
+
+  const entityId = jobOrder?.entityId || null;
+  if (!entityId) {
+    return {
+      entityId: null,
+      requirementPackageId: null,
+      packageData: null,
+      blockedReason: 'Job order missing entityId',
+    };
+  }
+
+  const entitySnap = await db.doc(`tenants/${tenantId}/entities/${entityId}`).get();
+  if (!entitySnap.exists) {
+    return {
+      entityId,
+      requirementPackageId: null,
+      packageData: null,
+      blockedReason: `Entity not found: ${entityId}`,
+    };
+  }
+
+  const entity = entitySnap.data() || {};
+  const requirementPackageId =
+    jobOrder?.requirementPackageId ||
+    entity?.defaultRequirementPackageId ||
+    null;
+
+  if (!requirementPackageId) {
+    return {
+      entityId,
+      requirementPackageId: null,
+      packageData: null,
+      blockedReason: 'No requirementPackageId on job order and no defaultRequirementPackageId on entity',
+    };
+  }
+
+  const pkgSnap = await db
+    .doc(`tenants/${tenantId}/requirement_packages/${requirementPackageId}`)
+    .get();
+
+  if (!pkgSnap.exists) {
+    return {
+      entityId,
+      requirementPackageId,
+      packageData: null,
+      blockedReason: `Requirement package not found: ${requirementPackageId}`,
+    };
+  }
+
+  return {
+    entityId,
+    requirementPackageId,
+    packageData: pkgSnap.data() || {},
+  };
+}
+
+async function ensureOnboardingInstance(params: {
+  tenantId: string;
+  assignmentId: string;
+  userId: string;
+  jobOrderId: string;
+  shiftId: string;
+  entityId: string | null;
+  requirementPackageId: string | null;
+  packageData: any | null;
+  createdBy: any;
+  blockedReason?: string;
+}) {
+  const {
+    tenantId,
+    assignmentId,
+    userId,
+    jobOrderId,
+    shiftId,
+    entityId,
+    requirementPackageId,
+    packageData,
+    createdBy,
+    blockedReason,
+  } = params;
+
+  const instRef = db.doc(`tenants/${tenantId}/onboarding_instances/${assignmentId}`);
+  const instSnap = await instRef.get();
+  if (instSnap.exists) return; // idempotent
+
+  const resolvedSteps = Array.isArray(packageData?.steps) ? packageData.steps : [];
+  const resolvedDocuments = Array.isArray(packageData?.documents) ? packageData.documents : [];
+  const resolvedChecks = Array.isArray(packageData?.checks) ? packageData.checks : [];
+
+  const status =
+    entityId && requirementPackageId && packageData
+      ? 'not_started'
+      : 'blocked';
+
+  await instRef.set(
+    {
+      tenantId,
+      assignmentId,
+      userId,
+      jobOrderId,
+      shiftId,
+      entityId,
+      requirementPackageId,
+
+      status,
+      percentComplete: 0,
+
+      resolvedSteps,
+      resolvedDocuments,
+      resolvedChecks,
+
+      blockedReason:
+        status === 'blocked'
+          ? blockedReason || 'Missing onboarding configuration'
+          : null,
+
+      createdBy: createdBy ? { userId: createdBy } : null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: false },
+  );
+}
+
+// --- End Onboarding ---
+
 async function resolveApplicationForAssignment(args: {
   tenantId: string;
   jobOrderId: string;
@@ -171,6 +311,11 @@ export const placementsCreateAssignments = onCall(async (request) => {
 
   const jobOrder = jobOrderSnap.data() || {};
   const shift = shiftSnap.data() || {};
+  const onboardingConfig = await resolveOnboardingConfigForJobOrder({
+    tenantId,
+    jobOrderId,
+    jobOrder,
+  });
   const shiftDate = toDateOnly(shift.shiftDate);
   const shiftEndDate = toDateOnly(shift.endDate) || shiftDate;
   const shiftStartMin = parseMinutes(shift.startTime || shift.defaultStartTime);
@@ -275,11 +420,22 @@ export const placementsCreateAssignments = onCall(async (request) => {
       const isReactivating = assignmentDoc.exists && ['canceled', 'cancelled', 'declined'].includes(existingStatus);
 
       if (isReactivating) {
+        const onboardingStatus =
+          onboardingConfig.entityId &&
+          onboardingConfig.requirementPackageId &&
+          onboardingConfig.packageData
+            ? 'not_started'
+            : 'blocked';
         await assignmentRef.set(
           {
             status: 'proposed',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+            entityId: onboardingConfig.entityId,
+            requirementPackageId: onboardingConfig.requirementPackageId,
+            onboardingInstanceId: assignmentRef.id,
+            onboardingStatus,
+            onboardingPercent: 0,
             // Clear cancellation fields
             canceledAt: admin.firestore.FieldValue.delete(),
             cancellationReason: admin.firestore.FieldValue.delete(),
@@ -288,6 +444,18 @@ export const placementsCreateAssignments = onCall(async (request) => {
           },
           { merge: true },
         );
+        await ensureOnboardingInstance({
+          tenantId,
+          assignmentId: assignmentRef.id,
+          userId,
+          jobOrderId,
+          shiftId,
+          entityId: onboardingConfig.entityId,
+          requirementPackageId: onboardingConfig.requirementPackageId,
+          packageData: onboardingConfig.packageData,
+          createdBy,
+          blockedReason: onboardingConfig.blockedReason,
+        });
       } else {
         const assignmentData: any = {
           tenantId,
@@ -327,9 +495,31 @@ export const placementsCreateAssignments = onCall(async (request) => {
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+          entityId: onboardingConfig.entityId,
+          requirementPackageId: onboardingConfig.requirementPackageId,
+          onboardingInstanceId: assignmentRef.id,
+          onboardingStatus:
+            onboardingConfig.entityId &&
+            onboardingConfig.requirementPackageId &&
+            onboardingConfig.packageData
+              ? 'not_started'
+              : 'blocked',
+          onboardingPercent: 0,
         };
 
         await assignmentRef.set(assignmentData, { merge: false });
+        await ensureOnboardingInstance({
+          tenantId,
+          assignmentId: assignmentRef.id,
+          userId,
+          jobOrderId,
+          shiftId,
+          entityId: onboardingConfig.entityId,
+          requirementPackageId: onboardingConfig.requirementPackageId,
+          packageData: onboardingConfig.packageData,
+          createdBy,
+          blockedReason: onboardingConfig.blockedReason,
+        });
         const applicationId = await resolveApplicationForAssignment({
           tenantId,
           jobOrderId,

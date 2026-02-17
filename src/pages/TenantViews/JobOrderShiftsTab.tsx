@@ -37,10 +37,11 @@ import {
   query,
   where,
 } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { useNavigate } from 'react-router-dom';
 
-import { db } from '../../firebase';
+import { db, functions } from '../../firebase';
 
 const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
   tenantId,
@@ -251,7 +252,6 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
     setLoading(true);
     setError('');
     try {
-      // Prevent duplicate assignment
       const alreadyAssigned = (assignmentsMap[shiftId] || []).some(
         (a: any) => a.userId === worker.id,
       );
@@ -259,106 +259,31 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
         setLoading(false);
         return;
       }
-      
-      // Fetch shift details
-      const shiftRef = doc(db, 'shifts', shiftId);
-      const shiftSnap = await getDoc(shiftRef);
-      if (!shiftSnap.exists()) {
-        throw new Error('Shift not found');
-      }
-      const shiftData = shiftSnap.data();
-      
-      // Fetch job order to get company info and job order type
-      const jobOrderRef = doc(db, 'tenants', tenantId, 'recruiter_jobOrders', jobOrderId);
-      const jobOrderSnap = await getDoc(jobOrderRef);
-      if (!jobOrderSnap.exists()) {
-        throw new Error('Job order not found');
-      }
-      const jobOrderData = jobOrderSnap.data();
-      
-      // Fetch location/worksite details
-      const worksiteId = shiftData.worksiteId || shiftData.locationId;
-      if (!worksiteId) {
-        throw new Error('Shift missing worksite/location ID');
-      }
-      
-      const worksiteSnap = await getDoc(
-        doc(db, 'tenants', tenantId, 'locations', worksiteId)
-      );
-      const worksiteData = worksiteSnap.exists() ? worksiteSnap.data() : {};
-      const worksiteName = worksiteData.nickname || worksiteData.title || worksiteId;
-      const latitude = worksiteData.latitude || worksiteData.lat || null;
-      const longitude = worksiteData.longitude || worksiteData.lng || null;
-      
-      // Validate required location coords
-      if (!latitude || !longitude) {
-        console.warn('Location missing coordinates:', worksiteId);
-      }
-      
-      // Create assignment with ALL required denormalized fields
-      await addDoc(collection(db, 'tenants', tenantId, 'assignments'), {
-        // Core references
+
+      const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
+      const response = await assignFn({
         tenantId,
         jobOrderId,
         shiftId,
-        candidateId: worker.id,
-        userId: worker.id,
-        
-        // Status and dates
-        status: 'proposed', // Use proper status instead of 'Unconfirmed'
-        startDate: shiftData.startDate || '',
-        endDate: shiftData.endDate || '',
-        
-        // Rates
-        payRate: shiftData.payRate || jobOrderData.payRate || 0,
-        billRate: shiftData.billRate || jobOrderData.billRate || 0,
-        
-        // Timesheet mode
-        timesheetMode: jobOrderData.timesheetMode || 'mobile',
-        
-        // Worker information (denormalized - required)
-        firstName: worker.firstName || '',
-        lastName: worker.lastName || '',
-        email: worker.email || '',
-        phone: worker.phone || '',
-        
-        // Company information (denormalized - required)
-        companyId: jobOrderData.companyId || '',
-        companyName: jobOrderData.companyName || '',
-        companyTitle: jobOrderData.companyName || '', // Can be different if needed
-        
-        // Location information (denormalized - required)
-        locationId: worksiteId,
-        locationIds: shiftData.locationIds || [worksiteId],
-        locationNickname: worksiteName,
-        worksiteName: worksiteName,
-        latitude: latitude,
-        longitude: longitude,
-        
-        // Job information (denormalized - required)
-        jobOrderType: jobOrderData.jobType || 'career',
-        jobTitle: shiftData.jobTitle || jobOrderData.jobTitle || '',
-        shiftTitle: shiftData.title || '',
-        
-        // Audit fields
-        createdBy: worker.id, // TODO: Get actual current user ID
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        assignedAt: serverTimestamp(),
-        
-        // Legacy/optional fields
-        role: worker.role,
-        securityLevel: worker.securityLevel,
-        departmentId: worker.departmentId,
+        userIds: [worker.id],
+        sourceType: 'manual',
+        sourceId: null,
       });
-      
-      console.log(`✅ Assignment created for worker ${worker.id} on shift ${shiftId}`);
-      setSuccess(true);
-      fetchShifts();
-      setSelectedWorker(null);
+
+      const data = response.data as any;
+      const created = Array.isArray(data?.created) ? data.created : [];
+      const skipped = Array.isArray(data?.skipped) ? data.skipped : [];
+
+      if (created.length === 0 && skipped.length > 0) {
+        setError(`No assignment created: ${skipped.map((s: any) => s.reason).join(', ')}`);
+      } else {
+        setSuccess(true);
+        fetchShifts();
+        setSelectedWorker(null);
+      }
     } catch (err: any) {
       console.error('Error adding assignment:', err);
-      setError(err.message || 'Failed to add assignment');
+      setError(err?.message || 'Failed to add assignment');
     } finally {
       setLoading(false);
     }
@@ -380,7 +305,7 @@ const JobOrderShiftsTab: React.FC<{ tenantId: string; jobOrderId: string }> = ({
       );
       const snapshot = await getDocs(q);
       if (!snapshot.empty) {
-        await deleteDoc(doc(db, 'assignments', snapshot.docs[0].id));
+        await deleteDoc(doc(db, 'tenants', tenantId, 'assignments', snapshot.docs[0].id));
       }
       setSuccess(true);
       fetchShifts();

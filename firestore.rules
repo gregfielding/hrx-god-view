@@ -155,6 +155,24 @@ service cloud.firestore {
            request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
         );
       }
+
+      // Onboarding (Phase 1A): entities, requirement_packages, onboarding_instances
+      match /entities/{entityId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /requirement_packages/{packageId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /onboarding_instances/{instanceId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
     }
 
     // ============================================================================

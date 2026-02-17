@@ -74,6 +74,16 @@ export const p = {
   assignment: (tid: string, id: string) => `tenants/${tid}/assignments/${id}`,
 
   /**
+   * Onboarding (Phase 1A)
+   */
+  entities: (tid: string) => `tenants/${tid}/entities`,
+  entity: (tid: string, id: string) => `tenants/${tid}/entities/${id}`,
+  requirementPackages: (tid: string) => `tenants/${tid}/requirement_packages`,
+  requirementPackage: (tid: string, id: string) => `tenants/${tid}/requirement_packages/${id}`,
+  onboardingInstances: (tid: string) => `tenants/${tid}/onboarding_instances`,
+  onboardingInstance: (tid: string, id: string) => `tenants/${tid}/onboarding_instances/${id}`,
+
+  /**
    * User Groups (manual candidate grouping)
    */
   userGroups: (tid: string) => `tenants/${tid}/userGroups`,
