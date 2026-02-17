@@ -22,6 +22,10 @@ import {
   Tooltip,
   Avatar,
   Divider,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
@@ -30,6 +34,7 @@ import LogoutIcon from '@mui/icons-material/Logout';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useWorkerNotifications, getNotificationUrlAsync } from '../../hooks/useWorkerNotifications';
+import { setLanguage, t } from '../../i18n';
 import { markNotificationReadCallable } from '../../api/workerNotificationsApi';
 import type { WorkerNotification } from '../../types/unifiedWorkerNotifications';
 
@@ -56,6 +61,8 @@ const WorkerAppBar: React.FC = () => {
   const [firstName, setFirstName] = useState<string | null>(null);
   const [lastName, setLastName] = useState<string | null>(null);
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>('en');
+  const [preferredLanguageLoaded, setPreferredLanguageLoaded] = useState(false);
+  const [showFirstLoginLanguageModal, setShowFirstLoginLanguageModal] = useState(false);
   const { notifications, unreadCount, loading } = useWorkerNotifications(uid, { max: 50 });
   const [markingId, setMarkingId] = useState<string | null>(null);
 
@@ -68,8 +75,16 @@ const WorkerAppBar: React.FC = () => {
         const data = snap.data();
         setFirstName(data.firstName ?? null);
         setLastName(data.lastName ?? null);
-        setPreferredLanguage(data.preferredLanguage === 'es' ? 'es' : 'en');
+        const lang = data.preferredLanguage;
+        if (lang === 'es' || lang === 'en') {
+          setPreferredLanguage(lang);
+          setShowFirstLoginLanguageModal(false);
+        } else {
+          setPreferredLanguage('en');
+          setShowFirstLoginLanguageModal(true);
+        }
       }
+      setPreferredLanguageLoaded(true);
     };
     load();
   }, [user?.uid]);
@@ -101,6 +116,22 @@ const WorkerAppBar: React.FC = () => {
     else if (url) window.location.href = url;
   };
 
+  const savePreferredLanguage = async (lang: 'en' | 'es') => {
+    setPreferredLanguage(lang);
+    setLanguage(lang);
+    setShowFirstLoginLanguageModal(false);
+    if (user?.uid) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), { preferredLanguage: lang, updatedAt: new Date() });
+      } catch (err) {
+        console.error('Failed to save preferred language:', err);
+      }
+    }
+  };
+
+  const languageLabel = t('nav.language');
+  const languageBadge = preferredLanguage === 'es' ? 'ES' : 'EN';
+
   return (
     <>
       <AppBar
@@ -114,7 +145,7 @@ const WorkerAppBar: React.FC = () => {
         }}
       >
         <Toolbar variant="dense" sx={{ justifyContent: 'flex-end', gap: 0, minHeight: { xs: 40, sm: 48 } }}>
-          <Tooltip title={unreadCount > 0 ? `${unreadCount} unread` : 'Notifications'}>
+          <Tooltip title={unreadCount > 0 ? `${unreadCount} ${t('nav.unread')}` : t('nav.notifications')}>
             <IconButton
               color="inherit"
               onClick={handleOpen}
@@ -131,18 +162,37 @@ const WorkerAppBar: React.FC = () => {
             </IconButton>
           </Tooltip>
           {user && (
-            <Tooltip title={preferredLanguage === 'es' ? 'Message language: Español' : 'Message language: English'}>
-              <IconButton
+            <Tooltip title={preferredLanguage === 'es' ? t('nav.messageLanguageEs') : t('nav.messageLanguageEn')}>
+              <Box
+                component="button"
                 onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
-                aria-label="Preferred message language"
-                sx={{ color: 'text.secondary' }}
+                aria-label={`${languageLabel}: ${languageBadge}`}
+                sx={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  border: 'none',
+                  background: 'none',
+                  cursor: 'pointer',
+                  color: 'text.secondary',
+                  px: 0.75,
+                  py: 0.5,
+                  borderRadius: 1,
+                  '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+                }}
               >
                 <LanguageIcon sx={{ fontSize: 22 }} />
-              </IconButton>
+                <Typography variant="caption" sx={{ fontWeight: 600, lineHeight: 1 }}>
+                  {languageBadge}
+                </Typography>
+                <Typography variant="caption" sx={{ display: { xs: 'none', sm: 'block' }, color: 'text.secondary' }}>
+                  {languageLabel}
+                </Typography>
+              </Box>
             </Tooltip>
           )}
           {user && (
-            <Tooltip title="Account menu">
+            <Tooltip title={t('nav.accountMenu')}>
               <IconButton
                 onClick={(e) => setAvatarMenuAnchorEl(e.currentTarget)}
                 sx={{ color: 'text.secondary', p: 0.5 }}
@@ -171,10 +221,10 @@ const WorkerAppBar: React.FC = () => {
       >
         <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
           <Typography variant="subtitle2" fontWeight={600}>
-            Notifications
+            {t('nav.notifications')}
             {unreadCount > 0 && (
               <Typography component="span" variant="caption" color="primary" sx={{ ml: 1 }}>
-                ({unreadCount} unread)
+                ({unreadCount} {t('nav.unread')})
               </Typography>
             )}
           </Typography>
@@ -186,7 +236,7 @@ const WorkerAppBar: React.FC = () => {
             </Box>
           ) : preview.length === 0 ? (
             <Typography variant="body2" color="text.secondary" sx={{ px: 2, py: 3 }}>
-              No notifications.
+              {t('nav.noNotifications')}
             </Typography>
           ) : (
             preview.map((n) => (
@@ -230,7 +280,7 @@ const WorkerAppBar: React.FC = () => {
               navigate('/c1/workers/notifications');
             }}
           >
-            View all notifications
+            {t('nav.viewAllNotifications')}
           </Button>
         </Box>
       </Menu>
@@ -255,7 +305,7 @@ const WorkerAppBar: React.FC = () => {
             navigate(profilePath);
           }}
         >
-          My Profile
+          {t('nav.myProfile')}
         </MenuItem>
         <Divider />
         <MenuItem
@@ -264,7 +314,7 @@ const WorkerAppBar: React.FC = () => {
             navigate('/c1/workers/settings');
           }}
         >
-          Settings
+          {t('nav.settings')}
         </MenuItem>
         <Divider />
         <MenuItem
@@ -276,7 +326,7 @@ const WorkerAppBar: React.FC = () => {
           <ListItemIcon>
             <LogoutIcon sx={{ fontSize: 20 }} />
           </ListItemIcon>
-          Log Out
+          {t('nav.logOut')}
         </MenuItem>
       </Menu>
 
@@ -294,6 +344,7 @@ const WorkerAppBar: React.FC = () => {
             setLanguageMenuAnchorEl(null);
             if (preferredLanguage === 'en') return;
             setPreferredLanguage('en');
+            setLanguage('en');
             if (user?.uid) {
               try {
                 await updateDoc(doc(db, 'users', user.uid), { preferredLanguage: 'en', updatedAt: new Date() });
@@ -304,7 +355,7 @@ const WorkerAppBar: React.FC = () => {
             }
           }}
         >
-          English
+          {t('nav.englishEn')}
         </MenuItem>
         <MenuItem
           selected={preferredLanguage === 'es'}
@@ -312,6 +363,7 @@ const WorkerAppBar: React.FC = () => {
             setLanguageMenuAnchorEl(null);
             if (preferredLanguage === 'es') return;
             setPreferredLanguage('es');
+            setLanguage('es');
             if (user?.uid) {
               try {
                 await updateDoc(doc(db, 'users', user.uid), { preferredLanguage: 'es', updatedAt: new Date() });
@@ -322,9 +374,44 @@ const WorkerAppBar: React.FC = () => {
             }
           }}
         >
-          Español
+          {t('nav.espanolEs')}
         </MenuItem>
       </Menu>
+
+      {/* First-login language selection modal */}
+      <Dialog
+        open={Boolean(user?.uid && preferredLanguageLoaded && showFirstLoginLanguageModal)}
+        onClose={() => {}}
+        maxWidth="xs"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: 2 } }}
+      >
+        <DialogTitle sx={{ textAlign: 'center', pb: 0 }}>
+          {t('nav.selectYourLanguage')}
+        </DialogTitle>
+        <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', pt: 0.5, px: 3 }}>
+          {t('nav.selectYourLanguageSubtitle')}
+        </Typography>
+        <DialogContent sx={{ pt: 2, display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+          <Button
+            variant={preferredLanguage === 'en' ? 'contained' : 'outlined'}
+            size="large"
+            onClick={() => savePreferredLanguage('en')}
+            sx={{ py: 1.5 }}
+          >
+            {t('nav.english')}
+          </Button>
+          <Button
+            variant={preferredLanguage === 'es' ? 'contained' : 'outlined'}
+            size="large"
+            onClick={() => savePreferredLanguage('es')}
+            sx={{ py: 1.5 }}
+          >
+            {t('nav.espanol')}
+          </Button>
+        </DialogContent>
+        <DialogActions sx={{ justifyContent: 'center', pb: 2 }} />
+      </Dialog>
     </>
   );
 };

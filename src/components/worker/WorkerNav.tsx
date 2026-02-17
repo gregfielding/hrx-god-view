@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import { useAuth } from '../../contexts/AuthContext';
+import { useT } from '../../i18n';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
@@ -24,14 +25,14 @@ import InboxIcon from '@mui/icons-material/Inbox';
 
 const drawerWidth = 240;
 
-const navItems = [
-  { label: 'Dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
-  { label: 'Inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
-  { label: 'My Assignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
-  { label: 'My Applications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
-  { label: 'Jobs Board', path: '/c1/jobs-board', icon: <WorkIcon /> },
-  { label: 'Job Readiness', path: '/c1/workers/profile', icon: <PersonIcon /> },
-  { label: 'My Documents', path: '/c1/workers/documents', icon: <FolderIcon /> },
+const navConfig = [
+  { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
+  { key: 'nav.inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
+  { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
+  { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
+  { key: 'nav.jobsBoard', path: '/c1/jobs-board', icon: <WorkIcon /> },
+  { key: 'nav.jobReadiness', path: '/c1/workers/profile', icon: <PersonIcon /> },
+  { key: 'nav.myDocuments', path: '/c1/workers/documents', icon: <FolderIcon /> },
 ];
 
 const drawerPaperSx = {
@@ -47,11 +48,13 @@ function DrawerContent({
   location,
   tenantDisplayName,
   onNavClick,
+  t,
 }: {
   navigate: (path: string) => void;
   location: { pathname: string };
   tenantDisplayName: string;
   onNavClick?: () => void;
+  t: (key: string) => string;
 }) {
   const handleNav = (path: string) => {
     navigate(path);
@@ -130,14 +133,14 @@ function DrawerContent({
         </Typography>
       </Box>
       <List sx={{ pt: 2 }}>
-        {navItems.map(({ label, path, icon }) => (
+        {navConfig.map(({ key, path, icon }) => (
           <ListItemButton
             key={path}
             selected={location.pathname === path || location.pathname.startsWith(path + '/')}
             onClick={() => handleNav(path)}
           >
             <ListItemIcon>{icon}</ListItemIcon>
-            <ListItemText primary={label} />
+            <ListItemText primary={t(key)} />
           </ListItemButton>
         ))}
       </List>
@@ -151,6 +154,7 @@ const WorkerNav: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const t = useT();
 
   const { activeTenant } = useAuth();
   const tenantDisplayName = activeTenant?.name || 'HRX Platform';
@@ -162,7 +166,7 @@ const WorkerNav: React.FC = () => {
     return (
       <>
         <IconButton
-          aria-label="Open menu"
+          aria-label={t('nav.openMenu')}
           onClick={() => setMobileOpen(true)}
           sx={{
             position: 'fixed',
@@ -195,6 +199,7 @@ const WorkerNav: React.FC = () => {
             location={location}
             tenantDisplayName={tenantDisplayName}
             onNavClick={closeMobileDrawer}
+            t={t}
           />
         </Drawer>
       </>
@@ -215,6 +220,7 @@ const WorkerNav: React.FC = () => {
         navigate={navigate}
         location={location}
         tenantDisplayName={tenantDisplayName}
+        t={t}
       />
     </Drawer>
   );

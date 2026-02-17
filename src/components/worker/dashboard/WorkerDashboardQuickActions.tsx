@@ -10,20 +10,22 @@ import WorkIcon from '@mui/icons-material/Work';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import FolderIcon from '@mui/icons-material/Folder';
+import { useT } from '../../../i18n';
 
 const ACTIONS = [
-  { label: 'Find Work', to: '/c1/jobs-board', icon: <WorkIcon fontSize="small" /> },
-  { label: 'My Assignments', to: '/c1/workers/assignments', icon: <AssignmentIcon fontSize="small" /> },
-  { label: 'My Applications', to: '/c1/workers/applications', icon: <ListAltIcon fontSize="small" /> },
-  { label: 'My Documents', to: '/c1/workers/documents', icon: <FolderIcon fontSize="small" /> },
+  { key: 'nav.findWork', to: '/c1/jobs-board', icon: <WorkIcon fontSize="small" /> },
+  { key: 'nav.myAssignments', to: '/c1/workers/assignments', icon: <AssignmentIcon fontSize="small" /> },
+  { key: 'nav.myApplications', to: '/c1/workers/applications', icon: <ListAltIcon fontSize="small" /> },
+  { key: 'nav.myDocuments', to: '/c1/workers/documents', icon: <FolderIcon fontSize="small" /> },
 ] as const;
 
 const WorkerDashboardQuickActions: React.FC = () => {
+  const t = useT();
   return (
     <Stack direction="row" flexWrap="wrap" gap={2} useFlexGap>
       {ACTIONS.map((a) => (
         <Link
-          key={a.label}
+          key={a.key}
           component={RouterLink}
           to={a.to}
           underline="hover"
@@ -38,7 +40,7 @@ const WorkerDashboardQuickActions: React.FC = () => {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', color: 'inherit' }}>{a.icon}</Box>
-          {a.label}
+          {t(a.key)}
         </Link>
       ))}
     </Stack>

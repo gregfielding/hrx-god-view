@@ -19,6 +19,7 @@ import WorkerDashboardStatusCards from '../../../components/worker/dashboard/Wor
 import WorkerDashboardQuickActions from '../../../components/worker/dashboard/WorkerDashboardQuickActions';
 import WorkerDashboardActivity from '../../../components/worker/dashboard/WorkerDashboardActivity';
 import WorkerDashboardCompleteApplicationCard from '../../../components/worker/dashboard/WorkerDashboardCompleteApplicationCard';
+import { useT, getLanguage } from '../../../i18n';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -42,10 +43,13 @@ function looksLikeDocId(s: unknown): boolean {
   return t.length >= 15 && t.length <= 30 && /^[a-zA-Z0-9_-]+$/.test(t);
 }
 
+const localeForLanguage = (lang: string) => (lang === 'es' ? 'es' : 'en-US');
+
 function assignmentToUpcomingShift(
   docId: string,
   data: Record<string, unknown>,
-  resolvedLocationName?: string | null
+  resolvedLocationName?: string | null,
+  locale = 'en-US'
 ): UpcomingShift {
   const startAt = toStartAt(data);
   const start = new Date(startAt);
@@ -70,9 +74,9 @@ function assignmentToUpcomingShift(
     jobTitle,
     siteName,
     clientName,
-    day: start.toLocaleDateString('en-US', { weekday: 'short' }),
-    date: start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
-    time: start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+    day: start.toLocaleDateString(locale, { weekday: 'short' }),
+    date: start.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' }),
+    time: start.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true }),
     addressShort: addressShort || undefined,
     locationCity: addressShort || undefined,
     assignmentId: docId,
@@ -81,6 +85,8 @@ function assignmentToUpcomingShift(
 
 const WorkerDashboard: React.FC = () => {
   const { user, activeTenant } = useAuth();
+  const t = useT();
+  const locale = localeForLanguage(getLanguage());
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
   const [nextShift, setNextShift] = useState<UpcomingShift | null>(null);
   const { checklist, summary: complianceSummary, hasOnboarding } = useOnboarding(user?.uid);
@@ -146,7 +152,7 @@ const WorkerDashboard: React.FC = () => {
               // ignore
             }
           }
-          setNextShift(assignmentToUpcomingShift(first.id, first.data, resolvedLocationName));
+          setNextShift(assignmentToUpcomingShift(first.id, first.data, resolvedLocationName, locale));
         } else {
           setNextShift(null);
         }
@@ -159,7 +165,7 @@ const WorkerDashboard: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [user?.uid, tenantId]);
+  }, [user?.uid, tenantId, locale]);
 
   const score = userDoc ? getUserScore(userDoc) : undefined;
   const applicationIds = Array.isArray(userDoc?.applicationIds) ? (userDoc.applicationIds as string[]) : [];
@@ -170,17 +176,13 @@ const WorkerDashboard: React.FC = () => {
       ? String(Math.round(score))
       : null;
   const hasChecklist = hasOnboarding && Object.keys(checklist).length > 0;
-  const documentsStatus = !hasChecklist
-    ? 'Not started'
+  const documentsStatusKey = !hasChecklist
+    ? 'NotStarted'
     : complianceSummary.compliancePercent === 100
-      ? 'All set'
+      ? 'AllSet'
       : 'Incomplete';
-  const documentsSubtext =
-    documentsStatus === 'All set'
-      ? 'Compliance complete'
-      : documentsStatus === 'Not started'
-        ? 'Your recruiter will request anything needed'
-        : 'Complete required items';
+  const documentsStatus = t(`dashboard.documents${documentsStatusKey}`);
+  const documentsSubtext = t(`dashboard.documentsSubtext${documentsStatusKey}`);
 
   const smsEnabled =
     userDoc != null &&
@@ -217,8 +219,8 @@ const WorkerDashboard: React.FC = () => {
   const alerts = [
     {
       severity: 'info' as const,
-      message: 'Finish your profile to unlock more roles.',
-      ctaLabel: 'Job Readiness',
+      message: t('dashboard.finishProfileAlert'),
+      ctaLabel: t('dashboard.jobReadiness'),
       ctaTo: '/c1/workers/profile',
     },
   ];
@@ -244,7 +246,7 @@ const WorkerDashboard: React.FC = () => {
           documentsSubtext={documentsSubtext}
           applicationsCount={applicationsCount}
           supportCardOnly
-          supportSubtext="Contact support"
+          supportSubtext={t('dashboard.contactSupport')}
           showSupportCard={false}
         />
 

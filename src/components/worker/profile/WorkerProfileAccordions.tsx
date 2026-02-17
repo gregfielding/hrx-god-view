@@ -16,6 +16,7 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebase';
+import { useT } from '../../../i18n';
 
 import JobPreferencesStep from '../../apply/steps/JobPreferencesStep';
 import WorkExperienceStep from '../../apply/steps/WorkExperienceStep';
@@ -56,6 +57,7 @@ const WorkerProfileAccordions: React.FC<Props> = ({
   expandedSection = false,
   onAccordionChange,
 }) => {
+  const t = useT();
   const [qualificationsData, setQualificationsData] = useState<any>({});
   const [bioData, setBioData] = useState<any>({});
   const [educationData, setEducationData] = useState<any>({});
@@ -127,11 +129,11 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>Availability &amp; Preferences</Typography>
+          <Typography fontWeight={600}>{t('profile.availabilityPreferences')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            More availability means more job offers.
+            {t('profile.availabilitySubtext')}
           </Typography>
           <JobPreferencesStep value={preferencesData} onChange={handlePreferencesChange} />
           <Box sx={{ mt: 2 }}>
@@ -149,11 +151,11 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>Work Experience</Typography>
+          <Typography fontWeight={600}>{t('profile.workExperience')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Add roles to show employers your experience.
+            {t('profile.workExperienceSubtext')}
           </Typography>
           <WorkExperienceStep
             value={workExperienceData}
@@ -172,11 +174,11 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>Certifications</Typography>
+          <Typography fontWeight={600}>{t('profile.certifications')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Add a certification to qualify for higher-paying shifts.
+            {t('profile.certificationsSubtext')}
           </Typography>
           <EducationStep
             value={educationData}
@@ -195,11 +197,11 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>Skills &amp; Languages</Typography>
+          <Typography fontWeight={600}>{t('profile.skillsLanguages')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Skills and languages help match you to the right roles.
+            {t('profile.skillsLanguagesSubtext')}
           </Typography>
           <QualificationsStep
             value={qualificationsData}
@@ -219,11 +221,11 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>Bio</Typography>
+          <Typography fontWeight={600}>{t('profile.bio')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            A short bio helps recruiters understand your goals and experience.
+            {t('profile.bioSubtext')}
           </Typography>
           <BioStep value={bioData} onChange={handleBioChange} />
         </AccordionDetails>
@@ -237,11 +239,11 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>Education</Typography>
+          <Typography fontWeight={600}>{t('profile.education')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Add your education to qualify for more roles.
+            {t('profile.educationSubtext')}
           </Typography>
           <EducationStep
             value={educationData}

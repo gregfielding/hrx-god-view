@@ -64,6 +64,7 @@ import { computeJobScoreSummary } from '../../utils/jobScore';
 import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
 import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
+import { useT } from '../../i18n';
 
 type WizardProps = {
   tenantId: string;
@@ -124,19 +125,19 @@ const deepStripUndefined = (value: any): any => {
   return value;
 };
 
-const steps = [
-  'Personal Info',
-  'Address',
-  'Work Eligibility',
-  'Profile Picture',
-  'Resume',
-  'Skills',
-  'Education',
-  'Licenses and Certifications',
-  'Work Experience',
-  'Bio',
-  'Preferences',
-  'Requirements',
+const stepKeys = [
+  'apply.stepPersonalInfo',
+  'apply.stepAddress',
+  'apply.stepWorkEligibility',
+  'apply.stepProfilePicture',
+  'apply.stepResume',
+  'apply.stepSkills',
+  'apply.stepEducation',
+  'apply.stepLicensesCertifications',
+  'apply.stepWorkExperience',
+  'apply.stepBio',
+  'apply.stepPreferences',
+  'apply.stepRequirements',
 ];
 const detectDefaultLanguage = (): 'en' | 'es' => {
   if (typeof navigator === 'undefined') return 'en';
@@ -146,6 +147,8 @@ const detectDefaultLanguage = (): 'en' | 'es' => {
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const t = useT();
+  const steps = stepKeys.map((k) => t(k));
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnTo = useMemo(() => {
@@ -196,7 +199,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       const stepParam = searchParams.get('step');
       if (stepParam) {
         const stepNum = parseInt(stepParam, 10);
-        if (!isNaN(stepNum) && stepNum >= 0 && stepNum < steps.length) {
+        if (!isNaN(stepNum) && stepNum >= 0 && stepNum < stepKeys.length) {
           return stepNum;
         }
       }
@@ -868,17 +871,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (activeStep === 0 && !auth.currentUser) {
         const email = String(formData?.personal?.email || '').trim();
         if (!email) {
-          alert('Please enter your email address.');
+          alert(t('apply.enterEmail'));
           setSaving(false);
           return;
         }
         if (!password || password.length < 6) {
-          alert('Please create a password (minimum 6 characters) to continue.');
+          alert(t('apply.createPassword'));
           setSaving(false);
           return;
         }
         if (password !== confirmPassword) {
-          alert('Passwords do not match. Please try again.');
+          alert(t('apply.passwordsDontMatch'));
           setSaving(false);
           return;
         }
@@ -951,9 +954,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         } catch (e: any) {
           const errorMessage = e?.message || 'unknown error';
           if (errorMessage.includes('email-already-in-use')) {
-            alert('This email is already registered. Please sign in instead.');
+            alert(t('apply.emailAlreadyRegistered'));
           } else {
-            alert(`We could not create your account: ${errorMessage}`);
+            alert(t('apply.couldNotCreateAccount', { message: errorMessage }));
           }
           setSaving(false);
           return;
@@ -1152,16 +1155,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 }));
               } catch (geoErr) {
                 console.error('❌ Failed to geocode address:', geoErr);
-                alert(
-                  'Could not validate your address. Please select an address from the dropdown suggestions to continue.',
-                );
+                alert(t('apply.validateAddress'));
                 setSaving(false);
                 return;
               }
             } else {
-              alert(
-                'Please enter a complete address and select from the dropdown suggestions to continue.',
-              );
+              alert(t('apply.completeAddress'));
               setSaving(false);
               return;
             }
@@ -1363,7 +1362,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       // Account should already be created after Personal Info step
       const effectiveUid: string | null = auth.currentUser?.uid || uid || null;
       if (!effectiveUid) {
-        alert('Please complete the Personal Info step to create your account before submitting.');
+        alert(t('apply.completePersonalInfo'));
         setSaving(false);
         return;
       }
@@ -1373,9 +1372,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (m.drug || m.background || m.everify || (m.additional && m.additional.length > 0)) {
         setSaving(false);
         try {
-          alert(
-            'Please complete all required items (Drug, Background, E‑Verify, and Additional screenings) before submitting.',
-          );
+          alert(t('apply.completeRequiredItems'));
         } catch {}
         return;
       }
@@ -1448,15 +1445,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             : 'this date';
 
           setSubmitOpen(true);
-          // Store error message in state for display
-          const errorMsg =
-            `You already have an active application for a shift on ${conflictDate}. ` +
-            `You can only apply to one shift per day. ` +
-            `Please withdraw your existing application or wait for it to be processed.`;
-
-          // Use setTimeout to show error after state updates
+          const errorMsg = t('apply.shiftConflict', { date: conflictDate });
           setTimeout(() => {
-            alert(errorMsg); // Fallback to alert for now, can be improved with proper error state
+            alert(errorMsg);
           }, 100);
           return;
         }
@@ -1548,7 +1539,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         personal.homeLat === undefined ||
         personal.homeLng === undefined
       ) {
-        alert('Please provide and validate your complete home address before submitting.');
+        alert(t('apply.completeAddressBeforeSubmit'));
         setSaving(false);
         setActiveStep(1);
         return;
@@ -2130,9 +2121,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       console.error('Submit error:', err);
       try {
         alert(
-          `We couldn't submit your application. Please try again in a moment. ${
-            err?.message ? '\n\nDetails: ' + err.message : ''
-          }`,
+          t('apply.couldNotSubmitApplication') +
+            (err?.message ? '\n\n' + t('apply.details') + ': ' + err.message : ''),
         );
       } catch {}
     } finally {
@@ -2274,19 +2264,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const pctComplete = Math.round(((activeStep + 1) / steps.length) * 100);
 
-  const conversationalTitles = [
-    'Tell us a bit about you',
-    'Work authorization',
-    'Add a profile picture',
-    'Upload your resume (optional)',
-    'Qualifications & skills',
-    'Education',
-    'Licenses and Certifications',
-    'Work experience',
-    'Tell us about yourself',
-    'Job preferences',
-    'Requirements',
+  const conversationalTitleKeys = [
+    'apply.titleTellUsAboutYou',
+    'apply.titleWorkAuthorization',
+    'apply.titleAddProfilePicture',
+    'apply.titleUploadResume',
+    'apply.titleQualificationsSkills',
+    'apply.titleEducation',
+    'apply.titleLicensesCertifications',
+    'apply.titleWorkExperience',
+    'apply.titleTellUsAboutYourself',
+    'apply.titleJobPreferences',
+    'apply.titleRequirements',
   ];
+  const conversationalTitles = conversationalTitleKeys.map((k) => t(k));
 
   // Require Twilio re-verification if phone differs from profile
   const phoneNeedsVerification = (() => {
@@ -2447,7 +2438,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }}
           >
             <Typography variant={isMobile ? 'h6' : 'h5'} sx={{ fontWeight: 600, mb: 0.5 }}>
-              {posting.jobTitle || posting.postTitle || 'Job Application'}
+              {posting.jobTitle || posting.postTitle || t('apply.jobApplication')}
             </Typography>
             <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
               <Typography variant="body2" color="text.secondary">
@@ -2546,7 +2537,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           >
             <Stack direction="row" justifyContent="space-between" alignItems="center">
               <Button onClick={handleBack} disabled={activeStep === 0}>
-                Back
+                {t('apply.back')}
               </Button>
               <Button
                 variant="contained"
@@ -2568,12 +2559,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 }
               >
                 {activeStep === 11
-                  ? 'Submit Application'
+                  ? t('apply.submitApplication')
                   : activeStep === 4
-                  ? 'Skip'
+                  ? t('apply.skip')
                   : activeStep === 7 && hasMissingRequiredCerts
-                  ? 'Skip for Now'
-                  : 'Next'}
+                  ? t('apply.skipForNow')
+                  : t('apply.next')}
               </Button>
             </Stack>
           </Box>
@@ -2600,20 +2591,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }}
       >
         <Stack direction="row" justifyContent="space-between" alignItems="center">
-          <Button onClick={handleBack} disabled={activeStep === 0} aria-label="Back">
-            Back
+          <Button onClick={handleBack} disabled={activeStep === 0} aria-label={t('apply.back')}>
+            {t('apply.back')}
           </Button>
           <Button
             variant="contained"
             onClick={activeStep === 11 ? handleSubmit : handleNext}
             aria-label={
               activeStep === 11
-                ? 'Submit Application'
+                ? t('apply.submitApplication')
                 : activeStep === 4
-                ? 'Skip'
+                ? t('apply.skip')
                 : activeStep === 7 && hasMissingRequiredCerts
-                ? 'Skip for Now'
-                : 'Next'
+                ? t('apply.skipForNow')
+                : t('apply.next')
             }
             disabled={
               (activeStep === 11 &&
@@ -2625,12 +2616,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             }
           >
             {activeStep === 11
-              ? 'Submit Application'
+              ? t('apply.submitApplication')
               : activeStep === 4
-              ? 'Skip'
+              ? t('apply.skip')
               : activeStep === 7 && hasMissingRequiredCerts
-              ? 'Skip for Now'
-              : 'Next'}
+              ? t('apply.skipForNow')
+              : t('apply.next')}
           </Button>
         </Stack>
       </Box>
@@ -2641,7 +2632,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
         <Alert onClose={() => setSubmitOpen(false)} severity="success" sx={{ width: '100%' }}>
-          Thanks — your application has been submitted!
+          {t('apply.thanksSubmitted')}
         </Alert>
       </Snackbar>
       <Backdrop
@@ -2656,7 +2647,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       >
         <CircularProgress color="inherit" />
         <Typography variant="body2" sx={{ fontWeight: 500 }}>
-          Submitting your application…
+          {t('apply.submittingApplication')}
         </Typography>
       </Backdrop>
     </Box>

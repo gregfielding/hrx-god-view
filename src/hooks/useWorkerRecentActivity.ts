@@ -9,8 +9,12 @@ import { db } from '../firebase';
 
 export interface WorkerActivityItem {
   id: string;
-  primary: string;
-  secondary: string;
+  /** i18n key for primary label (e.g. dashboard.activity.applicationSubmitted) */
+  primaryKey: string;
+  /** i18n key for relative time (e.g. dashboard.timeAgo.daysAgo) */
+  secondaryKey: string;
+  /** Params for secondary (e.g. { count: 3 }) */
+  secondaryParams?: Record<string, string | number>;
   /** ISO or ms for sorting */
   ts: number;
   /** Optional link (e.g. assignment or applications) */
@@ -33,31 +37,33 @@ function toMillis(v: unknown): number {
   return 0;
 }
 
-function timeAgo(ms: number): string {
+/** Returns i18n key and params for relative time (dashboard.timeAgo.*) */
+function timeAgoKeyAndParams(ms: number): { key: string; params?: Record<string, number> } {
   const sec = Math.floor((Date.now() - ms) / 1000);
-  if (sec < 60) return 'Just now';
-  if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
-  if (sec < 604800) return `${Math.floor(sec / 86400)} days ago`;
-  if (sec < 2592000) return `${Math.floor(sec / 604800)} week(s) ago`;
-  if (sec < 31536000) return `${Math.floor(sec / 2592000)} month(s) ago`;
-  return `${Math.floor(sec / 31536000)} year(s) ago`;
+  if (sec < 60) return { key: 'dashboard.timeAgo.justNow' };
+  if (sec < 3600) return { key: 'dashboard.timeAgo.minutesAgo', params: { count: Math.floor(sec / 60) } };
+  if (sec < 86400) return { key: 'dashboard.timeAgo.hoursAgo', params: { count: Math.floor(sec / 3600) } };
+  const days = Math.floor(sec / 86400);
+  if (sec < 604800) return { key: days === 1 ? 'dashboard.timeAgo.dayAgo' : 'dashboard.timeAgo.daysAgo', params: { count: days } };
+  if (sec < 2592000) return { key: 'dashboard.timeAgo.weeksAgo', params: { count: Math.floor(sec / 604800) } };
+  if (sec < 31536000) return { key: 'dashboard.timeAgo.monthsAgo', params: { count: Math.floor(sec / 2592000) } };
+  return { key: 'dashboard.timeAgo.yearsAgo', params: { count: Math.floor(sec / 31536000) } };
 }
 
-/** Map central activity log action to worker-friendly label */
-function activityPrimaryLabel(action: string, actionType: string, metadata?: { assignmentAction?: string }): string {
-  if (actionType === 'job_application') return 'Application submitted';
+/** Map central activity log action to i18n key (dashboard.activity.*) */
+function activityPrimaryKey(action: string, actionType: string, metadata?: { assignmentAction?: string }): string {
+  if (actionType === 'job_application') return 'dashboard.activity.applicationSubmitted';
   if (actionType === 'assignment_update') {
     const a = metadata?.assignmentAction?.toLowerCase();
-    if (a === 'confirmed' || a === 'confirmed by worker') return 'Assignment confirmed';
-    if (a === 'placed') return 'Assignment placed';
-    return action || 'Assignment updated';
+    if (a === 'confirmed' || a === 'confirmed by worker') return 'dashboard.activity.assignmentConfirmed';
+    if (a === 'placed') return 'dashboard.activity.assignmentPlaced';
+    return 'dashboard.activity.assignmentUpdated';
   }
-  if (actionType === 'document_upload') return 'Certificate uploaded';
-  if (actionType === 'profile_update') return 'Profile updated';
-  if (action === 'User Login') return 'User login';
-  if (action === 'User Logout') return 'User logout';
-  return action || 'Activity';
+  if (actionType === 'document_upload') return 'dashboard.activity.certificateUploaded';
+  if (actionType === 'profile_update') return 'dashboard.activity.profileUpdated';
+  if (action === 'User Login') return 'dashboard.activity.userLogin';
+  if (action === 'User Logout') return 'dashboard.activity.userLogout';
+  return 'dashboard.activity.activity';
 }
 
 /** Build link for worker view from activity metadata */
@@ -102,10 +108,12 @@ export function useWorkerRecentActivity(userId: string | undefined): { items: Wo
           if (action === 'User Login' || action === 'User Logout') continue;
           const ts = toMillis(data.timestamp ?? data.createdAt);
           const metadata = data.metadata;
+          const { key: secondaryKey, params: secondaryParams } = timeAgoKeyAndParams(ts);
           list.push({
             id: d.id,
-            primary: activityPrimaryLabel(action, actionType, metadata),
-            secondary: timeAgo(ts),
+            primaryKey: activityPrimaryKey(action, actionType, metadata),
+            secondaryKey,
+            secondaryParams,
             ts,
             to: activityToLink(actionType, metadata),
           });

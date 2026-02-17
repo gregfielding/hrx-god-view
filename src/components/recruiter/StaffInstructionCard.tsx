@@ -48,32 +48,53 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
   const inputId = `${fieldKey}-file-label`;
   const [localText, setLocalText] = useState(instructionData?.text || '');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSavedRef = useRef<string>(instructionData?.text || '');
 
-  // Update local text when job order data changes
+  // Update local text when job order data changes (e.g. after refresh)
   useEffect(() => {
-    setLocalText(instructionData?.text || '');
+    const text = instructionData?.text || '';
+    setLocalText(text);
+    lastSavedRef.current = text;
   }, [instructionData?.text]);
 
-  const handleTextChange = (newText: string) => {
-    // Update local state immediately for responsive typing
-    setLocalText(newText);
+  useEffect(() => {
+    return () => flushPendingSave();
+  }, []);
 
-    // Clear existing timeout
+  const flushPendingSave = () => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
     }
+  };
 
-    // Debounce save to Firestore (wait 1 second after user stops typing)
-    saveTimeoutRef.current = setTimeout(async () => {
-      try {
-        await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
-          [`staffInstructions.${fieldKey}.text`]: newText,
-          updatedAt: new Date()
-        });
-      } catch (error) {
-        console.error(`Error saving ${fieldKey} instructions:`, error);
-      }
+  const saveTextToFirestore = async (text: string) => {
+    if (text === lastSavedRef.current) return;
+    try {
+      await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+        [`staffInstructions.${fieldKey}.text`]: text,
+        updatedAt: new Date()
+      });
+      lastSavedRef.current = text;
+      // Don't call onRefresh() here: it triggers a full fetch + setLoading(true) and
+      // causes the page to flash/reload. Local state is already correct; Firestore is updated.
+    } catch (error) {
+      console.error(`Error saving ${fieldKey} instructions:`, error);
+    }
+  };
+
+  const handleTextChange = (newText: string) => {
+    setLocalText(newText);
+    flushPendingSave();
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
+      saveTextToFirestore(newText);
     }, 1000);
+  };
+
+  const handleBlur = () => {
+    flushPendingSave();
+    saveTextToFirestore(localText);
   };
 
   return (
@@ -94,6 +115,7 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
               placeholder={placeholder}
               value={localText}
               onChange={(e) => handleTextChange(e.target.value)}
+              onBlur={handleBlur}
             />
           )}
 

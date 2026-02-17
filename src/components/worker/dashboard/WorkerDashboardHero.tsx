@@ -6,6 +6,7 @@
 import React from 'react';
 import { Card, CardContent, Typography, Stack, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useT } from '../../../i18n';
 
 export interface UpcomingShift {
   jobTitle: string;
@@ -27,6 +28,7 @@ export interface WorkerDashboardHeroProps {
 
 const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, nextShift }) => {
   const navigate = useNavigate();
+  const t = useT();
 
   const primaryLine = nextShift
     ? nextShift.siteName || nextShift.clientName
@@ -41,12 +43,12 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
       <CardContent sx={{ py: 2.5, px: 2.5 }}>
         <Stack spacing={1.5}>
           <Typography variant="h5" sx={{ fontWeight: 600 }}>
-            Welcome back, {firstName}
+            {t('dashboard.welcomeBack', { firstName })}
           </Typography>
           {nextShift ? (
             <>
               <Typography variant="subtitle2" color="text.secondary">
-                Next shift
+                {t('dashboard.nextShift')}
               </Typography>
               <Typography variant="body1" sx={{ fontWeight: 500 }}>
                 {primaryLine}
@@ -68,27 +70,27 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
                       : navigate('/c1/workers/assignments')
                   }
                 >
-                  View details
+                  {t('dashboard.viewDetails')}
                 </Button>
                 <Button variant="text" onClick={() => navigate('/c1/jobs-board')}>
-                  Find more work
+                  {t('jobs.findMoreWork')}
                 </Button>
               </Stack>
             </>
           ) : (
             <>
               <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                No shifts scheduled.
+                {t('empty.noShiftsScheduled')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Check the jobs board for available work.
+                {t('empty.checkJobsBoard')}
               </Typography>
               <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
                 <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
-                  Find work
+                  {t('nav.findWork')}
                 </Button>
                 <Button variant="text" onClick={() => navigate('/c1/workers/profile')}>
-                  Complete profile
+                  {t('dashboard.completeProfile')}
                 </Button>
               </Stack>
             </>

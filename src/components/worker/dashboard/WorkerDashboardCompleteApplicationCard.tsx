@@ -7,6 +7,8 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, Typography, List, ListItemButton, ListItemText, CircularProgress, Box } from '@mui/material';
 import AssignmentIcon from '@mui/icons-material/Assignment';
+
+import { useT } from '../../../i18n';
 import { UserApplicationsService } from '../../../services/userApplicationsService';
 import type { UserApplication } from '../../../services/userApplicationsService';
 
@@ -17,6 +19,7 @@ export interface WorkerDashboardCompleteApplicationCardProps {
 }
 
 const WorkerDashboardCompleteApplicationCard: React.FC<WorkerDashboardCompleteApplicationCardProps> = ({ userId }) => {
+  const t = useT();
   const [items, setItems] = useState<UserApplication[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -56,7 +59,7 @@ const WorkerDashboardCompleteApplicationCard: React.FC<WorkerDashboardCompleteAp
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
             <AssignmentIcon color="action" />
             <Typography variant="subtitle1" fontWeight={600}>
-              Complete your application
+              {t('dashboard.completeYourApplication')}
             </Typography>
           </Box>
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
@@ -77,11 +80,11 @@ const WorkerDashboardCompleteApplicationCard: React.FC<WorkerDashboardCompleteAp
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <AssignmentIcon color="primary" />
           <Typography variant="subtitle1" fontWeight={600}>
-            Complete your application
+            {t('dashboard.completeYourApplication')}
           </Typography>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          You have a few requirements left for these jobs. Finish them to improve your chances.
+          {t('dashboard.completeApplicationHelper')}
         </Typography>
         <List dense disablePadding>
           {items.map((app) => {

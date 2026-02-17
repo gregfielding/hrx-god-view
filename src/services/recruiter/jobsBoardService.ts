@@ -28,6 +28,12 @@ const removeUndefinedValues = (obj: any): any => {
   return cleaned;
 };
 
+/** Optional i18n for worker-facing shift fields (EN/ES) */
+export interface ShiftFieldI18n {
+  en?: string;
+  es?: string;
+}
+
 // Shift representation for job board (for Gig jobs)
 export interface JobBoardShift {
   shiftId: string; // Reference to shifts/{shiftId} in Firestore
@@ -50,6 +56,10 @@ export interface JobBoardShift {
   shiftDescription?: string; // Optional shift-specific details
   defaultJobTitle?: string; // Job title for this shift
   payRate?: number; // Pay rate for this shift's job title (from gigPositions)
+  /** When present, UI should use shiftTitle_i18n[lang] ?? shiftTitle for display */
+  shiftTitle_i18n?: ShiftFieldI18n;
+  shiftDescription_i18n?: ShiftFieldI18n;
+  defaultJobTitle_i18n?: ShiftFieldI18n;
 }
 
 const normalizeAutoAddGroups = (value?: string | string[] | null): string[] => {
@@ -364,6 +374,9 @@ export class JobsBoardService {
           shiftDescription: data.shiftDescription,
           defaultJobTitle: defaultJobTitle,
           payRate: payRate,
+          shiftTitle_i18n: data.shiftTitle_i18n,
+          shiftDescription_i18n: data.shiftDescription_i18n,
+          defaultJobTitle_i18n: data.defaultJobTitle_i18n,
         });
       });
 
@@ -461,6 +474,9 @@ export class JobsBoardService {
           shiftDescription: data.shiftDescription,
           defaultJobTitle: defaultJobTitle,
           payRate: payRate,
+          shiftTitle_i18n: data.shiftTitle_i18n,
+          shiftDescription_i18n: data.shiftDescription_i18n,
+          defaultJobTitle_i18n: data.defaultJobTitle_i18n,
         });
       });
 

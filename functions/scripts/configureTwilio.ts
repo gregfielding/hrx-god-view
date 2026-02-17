@@ -5,6 +5,10 @@
  * Helps set up Firebase Functions config for Twilio integration
  */
 
+import 'dotenv/config';
+import { loadEnvForScripts } from '../src/scripts/loadEnv';
+loadEnvForScripts();
+
 import * as admin from 'firebase-admin';
 import twilio from 'twilio';
 import * as readline from 'readline';

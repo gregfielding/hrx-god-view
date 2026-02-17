@@ -18,6 +18,7 @@ import {
 import { format } from 'date-fns';
 import { JobBoardShift } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
+import { getShiftDisplayText } from '../utils/shiftI18n';
 
 interface ShiftSelectorProps {
   shifts: JobBoardShift[];
@@ -31,6 +32,8 @@ interface ShiftSelectorProps {
   disabled?: boolean;
   jobPostId?: string; // For building application URLs
   tenantId?: string; // For building application URLs
+  /** When set, shift title/description use _i18n[language] for display (e.g. guest or worker language) */
+  language?: 'en' | 'es';
 }
 
 const ShiftSelector: React.FC<ShiftSelectorProps> = ({
@@ -45,6 +48,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   disabled = false,
   jobPostId,
   tenantId,
+  language = 'en',
 }) => {
   const formatTime = (time: string) => {
     if (!time) return '';
@@ -143,7 +147,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   <Box sx={{ flex: 1 }}>
                     {/* Shift Title */}
                     <Typography variant="subtitle1" fontWeight={600} gutterBottom>
-                      {shift.shiftTitle}
+                      {getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftTitle', language) || shift.shiftTitle}
                     </Typography>
 
                     {/* Shift Details */}
@@ -191,7 +195,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                     </Stack>
 
                     {/* Shift Description (if available) */}
-                    {shift.shiftDescription && (
+                    {(getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftDescription', language) || shift.shiftDescription) && (
                       <Typography 
                         variant="body2" 
                         color="text.secondary" 
@@ -201,7 +205,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                           lineHeight: 1.5
                         }}
                       >
-                        {shift.shiftDescription}
+                        {getShiftDisplayText(shift as unknown as Record<string, unknown>, 'shiftDescription', language) || shift.shiftDescription}
                       </Typography>
                     )}
                   </Box>

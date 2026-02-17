@@ -34,6 +34,9 @@ import {
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
+import { useT } from '../i18n';
+import { getShiftDisplayText } from '../utils/shiftI18n';
 import { format } from 'date-fns';
 
 interface AssignmentDetails {
@@ -78,6 +81,8 @@ interface AssignmentDetails {
     parking?: { text?: string; files?: any[] };
     [key: string]: { text?: string; files?: any[] } | undefined;
   };
+  /** Bilingual staff instruction text (worker-facing): section -> { en, es }. Fallback to staffInstructions.*.text */
+  staffInstructions_i18n?: Record<string, { en?: string; es?: string }>;
   checkInInstructions?: string;
   /** Job order "Uniform Requirements" (pack selection e.g. Business Casual); string or array joined for display */
   uniformRequirements?: string;
@@ -91,6 +96,8 @@ const AssignmentDetails: React.FC = () => {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const preferredLanguage = useWorkerPreferredLanguage();
+  const t = useT();
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -104,6 +111,8 @@ const AssignmentDetails: React.FC = () => {
     defaultEndTime?: string;
     shiftDescription?: string;
     emailIntro?: string;
+    shiftDescription_i18n?: { en?: string; es?: string };
+    emailIntro_i18n?: { en?: string; es?: string };
   } | null>(null);
 
   /** Looked-up company name, worksite name, and worksite address when assignment has IDs */
@@ -138,6 +147,8 @@ const AssignmentDetails: React.FC = () => {
             defaultEndTime: typeof d.defaultEndTime === 'string' ? d.defaultEndTime : undefined,
             shiftDescription: typeof d.shiftDescription === 'string' ? d.shiftDescription : undefined,
             emailIntro: typeof d.emailIntro === 'string' ? d.emailIntro : undefined,
+            shiftDescription_i18n: d.shiftDescription_i18n as { en?: string; es?: string } | undefined,
+            emailIntro_i18n: d.emailIntro_i18n as { en?: string; es?: string } | undefined,
           });
         } else {
           setScheduleShift(null);
@@ -581,8 +592,9 @@ const AssignmentDetails: React.FC = () => {
         notes: sourceData.notes || jobOrderData.jobOrderDescription,
         createdAt,
         updatedAt,
-        // Load staff instructions
+        // Load staff instructions (legacy + i18n for worker portal language)
         staffInstructions: jobOrderData.staffInstructions || {},
+        staffInstructions_i18n: jobOrderData.staffInstructions_i18n || undefined,
         checkInInstructions: jobOrderData.checkInInstructions,
         uniformRequirements: Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined),
         customUniformRequirements: typeof jobOrderData.customUniformRequirements === 'string' ? jobOrderData.customUniformRequirements : undefined,
@@ -723,7 +735,7 @@ const AssignmentDetails: React.FC = () => {
         <Card elevation={0} sx={{ borderRadius: 0 }}>
           <CardContent>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-              Assignment Info
+              {t('assignment.assignmentInfo')}
             </Typography>
             <Grid container spacing={3}>
               <Grid item xs={12} sm={6}>
@@ -731,7 +743,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <WorkIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Job Title</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.jobTitle')}</Typography>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
                         {assignment.jobTitle || '—'}
                       </Typography>
@@ -740,7 +752,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Start Date</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
                       <Typography variant="body1">
                         {assignment.startDate ? formatDate(assignment.startDate) : '—'}
                       </Typography>
@@ -749,7 +761,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <MoneyIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Pay Rate</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
                         {assignment.payRate != null ? `$${assignment.payRate}/hr` : '—'}
                       </Typography>
@@ -758,7 +770,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <BusinessIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Company Name</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.companyName')}</Typography>
                       <Typography variant="body1">
                         {resolvedCompanyName ?? assignment.companyName ?? '—'}
                       </Typography>
@@ -771,7 +783,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <LocationIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Worksite name</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.worksiteName')}</Typography>
                       <Typography variant="body1">
                         {resolvedWorksiteName ?? assignment.worksiteName ?? assignment.location ?? '—'}
                       </Typography>
@@ -780,7 +792,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <MapIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="body2" color="text.secondary">Worksite address</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.worksiteAddress')}</Typography>
                       {(() => {
                         const wa = assignment.worksiteAddress as { street?: string; address?: string; city?: string; state?: string; zipCode?: string } | undefined;
                         const fromAssignment = wa
@@ -807,7 +819,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="flex-start">
                     <CheckroomIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Required uniform</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.requiredUniform')}</Typography>
                       <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                         {(assignment.uniformRequirements || assignment.customUniformRequirements)
                           ? [assignment.uniformRequirements, assignment.customUniformRequirements].filter(Boolean).join('\n\n')
@@ -818,7 +830,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="flex-start">
                     <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Required PPE</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.requiredPpe')}</Typography>
                       <Typography variant="body1">
                         {assignment.ppeRequirements || '—'}
                       </Typography>
@@ -834,13 +846,13 @@ const AssignmentDetails: React.FC = () => {
         <Card elevation={0} sx={{ borderRadius: 0 }}>
           <CardContent>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-              My Schedule
+              {t('assignment.mySchedule')}
             </Typography>
             <Stack spacing={2}>
               {scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
                 <>
                   <Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>Weekly schedule</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
                     <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
                       {DOW_ORDER.map((dow) => {
                         const entry = scheduleShift.weeklySchedule![String(dow)];
@@ -909,65 +921,71 @@ const AssignmentDetails: React.FC = () => {
                 </>
               )}
 
-              {scheduleShift?.shiftDescription?.trim() && (
+              {getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage).trim() && (
                 <Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Shift-Specific Details or Job Description</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{scheduleShift.shiftDescription}</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage)}</Typography>
                 </Box>
               )}
 
-              {scheduleShift?.emailIntro?.trim() && (
+              {getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage).trim() && (
                 <Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Shift Info to Email Staff</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{scheduleShift.emailIntro}</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage)}</Typography>
                 </Box>
               )}
             </Stack>
           </CardContent>
         </Card>
 
-        {/* Staff Instructions: one card per section, only when section has content or attachments */}
+        {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
         {(() => {
+          const getStaffText = (sectionKey: string): string => {
+            const i18n = assignment.staffInstructions_i18n?.[sectionKey];
+            const legacy = assignment.staffInstructions?.[sectionKey]?.text;
+            const text = (i18n?.[preferredLanguage] ?? legacy ?? (sectionKey === 'checkIn' ? assignment.checkInInstructions ?? '' : '')).trim();
+            return text || '';
+          };
           const sections: Array<{ key: string; title: string; getText: () => string; getFiles: () => any[] }> = [
             {
               key: 'firstDay',
-              title: 'First Day Instructions',
-              getText: () => assignment.staffInstructions?.firstDay?.text ?? '',
+              title: t('assignment.firstDayInstructions'),
+              getText: () => getStaffText('firstDay'),
               getFiles: () => assignment.staffInstructions?.firstDay?.files ?? [],
             },
             {
               key: 'parking',
-              title: 'Parking Instructions',
-              getText: () => assignment.staffInstructions?.parking?.text ?? '',
+              title: t('assignment.parkingInstructions'),
+              getText: () => getStaffText('parking'),
               getFiles: () => assignment.staffInstructions?.parking?.files ?? [],
             },
             {
               key: 'checkIn',
-              title: 'Check-In Instructions',
-              getText: () => assignment.staffInstructions?.checkIn?.text || assignment.checkInInstructions || '',
+              title: t('assignment.checkInInstructions'),
+              getText: () => getStaffText('checkIn'),
               getFiles: () => assignment.staffInstructions?.checkIn?.files ?? [],
             },
             {
               key: 'uniform',
-              title: 'Uniform Instructions',
-              getText: () => assignment.staffInstructions?.uniform?.text ?? '',
+              title: t('assignment.uniformInstructions'),
+              getText: () => getStaffText('uniform'),
               getFiles: () => assignment.staffInstructions?.uniform?.files ?? [],
             },
             {
               key: 'credentials',
-              title: 'Credential Instructions',
-              getText: () => assignment.staffInstructions?.credentials?.text ?? '',
+              title: t('assignment.credentialInstructions'),
+              getText: () => getStaffText('credentials'),
               getFiles: () => assignment.staffInstructions?.credentials?.files ?? [],
             },
             {
               key: 'other',
-              title: 'Other Instructions',
-              getText: () => assignment.staffInstructions?.other?.text ?? '',
+              title: t('assignment.otherInstructions'),
+              getText: () => getStaffText('other'),
               getFiles: () => assignment.staffInstructions?.other?.files ?? [],
             },
             {
               key: 'attachments',
-              title: 'Other Attachments',
+              title: t('assignment.otherAttachments'),
               getText: () => '',
               getFiles: () => assignment.staffInstructions?.attachments?.files ?? [],
             },
@@ -1004,7 +1022,7 @@ const AssignmentDetails: React.FC = () => {
                               target="_blank"
                               rel="noopener noreferrer"
                             >
-                              {file.label || file.name || 'View File'}
+                              {file.label || file.name || t('common.viewFile')}
                             </Button>
                           ))}
                         </Stack>
@@ -1093,7 +1111,7 @@ const AssignmentDetails: React.FC = () => {
                   </Stack>
                 ) : (
                   <Typography variant="body2" color="text.secondary">
-                    No recruiter assigned to this job order. Reach out via Inbox if you need support.
+                    {t('assignment.noRecruiterAssigned')}
                   </Typography>
                 )}
               </CardContent>

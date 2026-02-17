@@ -273,11 +273,19 @@ export {
 export { updateTaskOptimized, batchUpdateTasksOptimized } from './updateTaskOptimized';
 
 // Export Google Jobs Indexing API functions
-export { 
-  notifyGoogleJobsIndexing, 
-  requestJobIndexing, 
-  batchSubmitJobsToGoogle 
+export {
+  notifyGoogleJobsIndexing,
+  requestJobIndexing,
+  batchSubmitJobsToGoogle
 } from './notifyGoogleJobsIndexing';
+
+// Translation Phase 1: job_postings EN→ES
+export { onJobPostingWrite } from './triggers/onJobPostingWrite';
+export { onJobOrderWrite } from './triggers/onJobOrderWrite';
+export { onShiftWrite } from './triggers/onShiftWrite';
+export { onCrmCompanyWrite } from './triggers/onCrmCompanyWrite';
+export { onCrmLocationWrite } from './triggers/onCrmLocationWrite';
+export { processTranslationJob } from './http/processTranslationJob';
 
 // Export deal association functions
 export {
@@ -11533,7 +11541,7 @@ export {
   logTaskUpdate,
   logUserUpdate,
   updateActiveSalespeople
-};
+} from './httpWorkers';
 
 // Scheduled Orchestrator (Phase 3)
 export { scheduledOrchestrator };

@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom';
 import { collection, doc, query, where, getDocs, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useT } from '../../../i18n';
 import WorkerAssignmentsTabs from '../../../components/worker/assignments/WorkerAssignmentsTabs';
 import type { WorkerAssignmentItem } from '../../../components/worker/assignments/WorkerAssignmentCard';
 import type { AssignmentStatus } from '../../../components/worker/assignments/WorkerAssignmentCard';
@@ -125,6 +126,7 @@ function docToItem(
 
 const WorkerAssignments: React.FC = () => {
   const navigate = useNavigate();
+  const t = useT();
   const { user, activeTenant } = useAuth();
   const [tabIndex, setTabIndex] = useState(0);
   const [upcoming, setUpcoming] = useState<WorkerAssignmentItem[]>([]);
@@ -255,19 +257,19 @@ const WorkerAssignments: React.FC = () => {
           gap={2}
         >
           <Box>
-            <Typography variant="h4" sx={{ fontWeight: 600 }}>
-              My Assignments
+            <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+              {t('assignments.title')}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Your upcoming and past shifts.
+              {t('assignments.subtitle')}
             </Typography>
           </Box>
           <Stack direction="row" spacing={1} flexWrap="wrap">
             <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
-              Find Work
+              {t('nav.findWork')}
             </Button>
             <Button variant="outlined" onClick={() => navigate('/c1/workers/applications')}>
-              View Applications
+              {t('nav.viewApplications')}
             </Button>
           </Stack>
         </Stack>

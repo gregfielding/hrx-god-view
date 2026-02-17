@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Box, Container } from '@mui/material';
 import WorkerNav from '../components/worker/WorkerNav';
 import WorkerAppBar from '../components/worker/WorkerAppBar';
 import { useAuth } from '../contexts/AuthContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
+import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
+import { setLanguage, preloadLocales } from '../i18n';
 
 /**
  * Layout for worker routes: top bar, side WorkerNav, main content.
@@ -13,7 +15,16 @@ import { usePushNotifications } from '../hooks/usePushNotifications';
  */
 const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
+  const preferredLanguage = useWorkerPreferredLanguage();
   usePushNotifications(user?.uid);
+
+  useEffect(() => {
+    setLanguage(preferredLanguage);
+  }, [preferredLanguage]);
+
+  useEffect(() => {
+    if (user?.uid) preloadLocales();
+  }, [user?.uid]);
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>

@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState, useEffect } from 'react';
 import { Box, Stack, Typography, Button, TextField, MenuItem, useTheme, useMediaQuery, Chip, Select, FormControl, InputLabel } from '@mui/material';
 import { queueProfileUpdate } from '../../../utils/userProfileBatching';
+import { useT } from '../../../i18n';
 import { DirectionsCar, DirectionsTransit, DirectionsBike, DirectionsWalk, MoreHoriz } from '@mui/icons-material';
 import { storage, db } from '../../../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -25,13 +26,15 @@ type Props = {
   preferences?: any;
 };
 
-// Reusable Yes/No/Maybe button group component
+// Reusable Yes/No/Maybe button group component (option values stay en for storage)
 const YesNoMaybeButtons: React.FC<{
   value: string;
   onChange: (value: string) => void;
   label?: string;
 }> = ({ value, onChange, label }) => {
-  const options = ['Yes', 'No', 'Maybe'];
+  const t = useT();
+  const options = ['Yes', 'No', 'Maybe'] as const;
+  const labels: Record<string, string> = { Yes: t('apply.yes'), No: t('apply.no'), Maybe: t('apply.maybe') };
   
   const getColor = (option: string, selected: boolean) => {
     if (!selected) return 'default';
@@ -48,7 +51,7 @@ const YesNoMaybeButtons: React.FC<{
         return (
           <Chip
             key={option}
-            label={option}
+            label={labels[option]}
             onClick={() => onChange(isSelected ? '' : option)}
             color={getColor(option, isSelected) as any}
             variant={isSelected ? 'filled' : 'outlined'}
@@ -72,6 +75,7 @@ const YesNoMaybeButtons: React.FC<{
 };
 
 const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profile, uid, value, onChange, jobPosting, preferences }) => {
+  const t = useT();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const setUploaded = (name: string) => onChange({ ...value, uploaded: { ...(value?.uploaded || {}), [name]: true } });
@@ -298,11 +302,11 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         {showEVerify && (
           <Box>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
-              <Typography variant="h6" sx={{ fontWeight: 700 }}>E-Verify</Typography>
-              <Box component="img" src="/img/everify.png" alt="E-Verify" sx={{ height: 28, width: 'auto' }} />
+              <Typography variant="h6" sx={{ fontWeight: 700 }}>{t('apply.eVerify')}</Typography>
+              <Box component="img" src="/img/everify.png" alt={t('apply.eVerify')} sx={{ height: 28, width: 'auto' }} />
             </Stack>
             <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-              This position requires that employees be E-Verified. This process involves matching your social security number with tax records and other government documents to confirm your identity. Are you comfortable with us running you through E-Verify?
+              {t('apply.eVerifyDescription')}
             </Typography>
             <YesNoMaybeButtons
               value={value?.eVerifyComfort || ''}
@@ -317,10 +321,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         {showDrugScreening && (
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-              Drug Screening
+              {t('apply.drugScreening')}
             </Typography>
             <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-              This position requires a drug screening. Are you comfortable that you would pass a drug screening?
+              {t('apply.drugScreeningDescription')}
             </Typography>
             <YesNoMaybeButtons
               value={value?.drugScreeningComfort || ''}
@@ -334,7 +338,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                 fullWidth
                 multiline
                 minRows={3}
-                label="Please explain why you might not pass a drug test"
+                label={t('apply.explainDrugTest')}
                 value={value?.drugExplanation || ''}
                 onChange={(e) => { onChange({ ...value, drugExplanation: e.target.value }); debouncedWriteUser({ passDrugExplanation: e.target.value }); }}
                 onBlur={(e) => debouncedWriteUser({ passDrugExplanation: (e.target as HTMLInputElement).value })}
@@ -348,14 +352,14 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         {showAdditionalScreenings && Array.isArray(jobPosting?.additionalScreenings) && jobPosting.additionalScreenings.length > 0 && (
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-              Additional Screenings
+              {t('apply.additionalScreenings')}
             </Typography>
             <Stack spacing={3}>
               {jobPosting.additionalScreenings.map((screenName: string) => (
                 <Box key={`add-screen-${screenName}`}>
                   <Typography sx={{ fontWeight: 700, mb: 1 }}>{screenName}</Typography>
                   <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-                    Are you comfortable taking a {screenName}?
+                    {t('apply.comfortableWithScreening', { name: screenName })}
                   </Typography>
                   <YesNoMaybeButtons
                     value={(value?.additionalScreenings || {})[screenName] || ''}
@@ -375,10 +379,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         {showBackgroundScreening && (
           <Box>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-              Background Screening
+              {t('apply.backgroundScreening')}
             </Typography>
             <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-              This position requires a background screening. Are you comfortable that you would pass a background screening?
+              {t('apply.backgroundScreeningDescription')}
             </Typography>
             <YesNoMaybeButtons
               value={value?.backgroundScreeningComfort || ''}
@@ -392,7 +396,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
                 fullWidth
                 multiline
                 minRows={3}
-                label="Please explain why you might not pass a background screening"
+                label={t('apply.explainBackgroundScreening')}
                 value={value?.backgroundExplanation || ''}
                 onChange={(e) => { onChange({ ...value, backgroundExplanation: e.target.value }); debouncedWriteUser({ passBackgroundExplanation: e.target.value }); }}
                 onBlur={(e) => debouncedWriteUser({ passBackgroundExplanation: (e.target as HTMLInputElement).value })}
@@ -407,10 +411,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {showLanguages && requiredLanguages.length > 0 && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            Language Requirements
+            {t('apply.languageRequirements')}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-            Are you comfortable speaking {languagesText}?
+            {t('apply.comfortableSpeaking', { languages: languagesText })}
           </Typography>
           <YesNoMaybeButtons
             value={value?.languagesComfort || ''}
@@ -426,10 +430,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {showPhysicalRequirements && requiredPhysical.length > 0 && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            Physical Requirements
+            {t('apply.physicalRequirements')}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-            Are you comfortable with {physicalText}?
+            {t('apply.comfortableWithPhysical', { requirements: physicalText })}
           </Typography>
           <YesNoMaybeButtons
             value={value?.physicalRequirementsComfort || ''}
@@ -445,10 +449,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {showUniformRequirements && requiredUniform.length > 0 && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            Uniform Requirements
+            {t('apply.uniformRequirements')}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-            Are you comfortable wearing {uniformText}?
+            {t('apply.comfortableWearing', { requirements: uniformText })}
           </Typography>
           <YesNoMaybeButtons
             value={value?.uniformRequirementsComfort || ''}
@@ -464,10 +468,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {showCustomUniformRequirements && customUniformText && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            Custom Uniform Requirements
+            {t('apply.customUniformRequirements')}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-            Are you comfortable wearing {customUniformText}?
+            {t('apply.comfortableWearing', { requirements: customUniformText })}
           </Typography>
           <YesNoMaybeButtons
             value={value?.customUniformRequirementsComfort || ''}
@@ -483,10 +487,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {showRequiredPpe && requiredPpe.length > 0 && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            Required PPE
+            {t('apply.requiredPpe')}
           </Typography>
           <Typography color="text.secondary" sx={{ mb: 1.5 }}>
-            Are you comfortable wearing {ppeText}?
+            {t('apply.comfortableWearingPpe', { requirements: ppeText })}
           </Typography>
           <YesNoMaybeButtons
             value={value?.requiredPpeComfort || ''}
@@ -501,15 +505,15 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {/* Transport Method */}
       <Box sx={{ mt: 3 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-          How will you get to work?
+          {t('apply.howWillYouGetToWork')}
         </Typography>
         <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
           {[
-            { value: 'Car', label: 'Car', icon: DirectionsCar },
-            { value: 'Public Transit', label: 'Public Transit', icon: DirectionsTransit },
-            { value: 'Bike', label: 'Bike', icon: DirectionsBike },
-            { value: 'Walk', label: 'Walk', icon: DirectionsWalk },
-            { value: 'Other', label: 'Other', icon: MoreHoriz },
+            { value: 'Car', labelKey: 'apply.transportCar' as const, icon: DirectionsCar },
+            { value: 'Public Transit', labelKey: 'apply.transportPublicTransit' as const, icon: DirectionsTransit },
+            { value: 'Bike', labelKey: 'apply.transportBike' as const, icon: DirectionsBike },
+            { value: 'Walk', labelKey: 'apply.transportWalk' as const, icon: DirectionsWalk },
+            { value: 'Other', labelKey: 'apply.transportOther' as const, icon: MoreHoriz },
           ].map((option) => {
             const isSelected = value?.transportMethod === option.value;
             const Icon = option.icon;
@@ -517,7 +521,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
               <Chip
                 key={option.value}
                 icon={<Icon />}
-                label={option.label}
+                label={t(option.labelKey)}
                 onClick={() => {
                   const newValue = isSelected ? '' : option.value;
                   onChange({ ...value, transportMethod: newValue });
@@ -546,7 +550,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       {jobPosting?.jobType !== 'gig' && (
         <Box sx={{ mt: 3 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
-            When can you start?
+            {t('apply.whenCanYouStart')}
           </Typography>
           <AvailabilitySection 
             value={preferences || {}} 
@@ -577,6 +581,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
 
 // When can you start? component
 const AvailabilitySection: React.FC<{ value: any; onChange: (v: any) => void }> = ({ value, onChange }) => {
+  const t = useT();
   const [availableToStartDate, setAvailableToStartDate] = React.useState<string>(value?.availableToStartDate || '');
   
   // Sync with external value changes
@@ -604,7 +609,7 @@ const AvailabilitySection: React.FC<{ value: any; onChange: (v: any) => void }> 
 
   return (
     <TextField
-      label="Start date"
+      label={t('apply.startDate')}
       type="date"
       value={availableToStartDate || ''}
       onChange={(e) => {

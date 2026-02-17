@@ -26,6 +26,7 @@ import {
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useT } from '../../../i18n';
 import { userProfileBatcher, flushProfileUpdates } from '../../../utils/userProfileBatching';
 import { getUserScore } from '../../../utils/scoreSummary';
 import WorkerProfileAccordions, { type ReadinessAccordionSection } from '../../../components/worker/profile/WorkerProfileAccordions';
@@ -39,6 +40,7 @@ import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibi
 
 const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, setAvatarUrl } = useAuth();
+  const t = useT();
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<any>(null);
   const [expandedSection, setExpandedSection] = useState<ReadinessAccordionSection | false>('availability');
@@ -137,11 +139,11 @@ const WorkerProfile: React.FC = () => {
       <Stack spacing={4}>
         {/* Page title */}
         <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600 }}>
-            Job Readiness
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+            {t('profile.pageTitle')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            Complete your profile to unlock more shifts and higher-paying roles.
+            {t('profile.pageSubtitle')}
           </Typography>
         </Box>
 
@@ -169,10 +171,10 @@ const WorkerProfile: React.FC = () => {
             >
               <Box>
                 <Typography variant="h5" sx={{ fontWeight: 600 }}>
-                  ⭐ Job Readiness
+                  ⭐ {t('profile.readinessTitle')}
                 </Typography>
                 <Typography variant="overline" color="text.secondary" display="block">
-                  Hiring Score
+                  {t('profile.hiringScore')}
                 </Typography>
                 <Typography
                   variant="h5"
@@ -182,7 +184,7 @@ const WorkerProfile: React.FC = () => {
                     mt: 0.5,
                   }}
                 >
-                  {hasScore ? `${Math.round(score)}%` : 'Score pending'}
+                  {hasScore ? `${Math.round(score)}%` : t('profile.scorePending')}
                 </Typography>
               </Box>
               <Box sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}>
@@ -199,17 +201,17 @@ const WorkerProfile: React.FC = () => {
             </Box>
             {hasScore ? (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                You&apos;re eligible for 14 roles. Add more to your profile to unlock additional shifts.
+                {t('profile.eligibleRoles')}
               </Typography>
             ) : (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                Score will update after your profile syncs.
+                {t('profile.scoreSync')}
               </Typography>
             )}
             {topImprovements.length > 0 && (
               <Box sx={{ mt: 2 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
-                  Top ways to improve your score
+                  {t('profile.topWaysToImprove')}
                 </Typography>
                 <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
                   {topImprovements.map((a: { label?: string }, i: number) => (
@@ -238,7 +240,7 @@ const WorkerProfile: React.FC = () => {
                     size="small"
                     onClick={() => handleFixNow(p.id)}
                   >
-                    Fix now
+                    {t('profile.fixNow')}
                   </Button>
                 }
                 sx={{ py: 1.25 }}
@@ -247,7 +249,7 @@ const WorkerProfile: React.FC = () => {
                   <Box component="span" sx={{ mr: 1 }}>
                     {p.icon}
                   </Box>
-                  {p.text}
+                  {t(p.textKey)}
                 </Typography>
               </Alert>
             ))}
@@ -258,10 +260,10 @@ const WorkerProfile: React.FC = () => {
         <Card id="work-eligibility" variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none', scrollMarginTop: 24 }}>
           <CardContent>
             <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
-              Work Eligibility
+              {t('profile.workEligibility')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Attestation from your application. Update your answers here if needed.
+              {t('profile.workEligibilityIntro')}
             </Typography>
             {uid ? (
               <WorkEligibilityStep
@@ -281,7 +283,7 @@ const WorkerProfile: React.FC = () => {
           />
         ) : (
           <Typography variant="body2" color="text.secondary">
-            Sign in to complete your profile.
+            {t('profile.signInToComplete')}
           </Typography>
         )}
       </Stack>

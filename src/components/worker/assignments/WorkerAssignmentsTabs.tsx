@@ -5,6 +5,7 @@
 
 import React from 'react';
 import { Tabs, Tab, Box, Stack } from '@mui/material';
+import { useT } from '../../../i18n';
 import type { WorkerAssignmentItem } from './WorkerAssignmentCard';
 import WorkerAssignmentCard from './WorkerAssignmentCard';
 import WorkerAssignmentsEmptyState from './WorkerAssignmentsEmptyState';
@@ -23,6 +24,7 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
   tabIndex,
   onTabChange,
 }) => {
+  const t = useT();
   return (
     <Box>
       <Tabs
@@ -30,8 +32,8 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
         onChange={(_, v: number) => onTabChange(v)}
         sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
       >
-        <Tab label="Upcoming" id="assignments-tab-upcoming" aria-controls="assignments-panel-upcoming" />
-        <Tab label="Past" id="assignments-tab-past" aria-controls="assignments-panel-past" />
+        <Tab label={t('assignments.tabUpcoming')} id="assignments-tab-upcoming" aria-controls="assignments-panel-upcoming" />
+        <Tab label={t('assignments.tabPast')} id="assignments-tab-past" aria-controls="assignments-panel-past" />
       </Tabs>
 
       <div

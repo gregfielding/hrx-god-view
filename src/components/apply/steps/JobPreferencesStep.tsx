@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Chip, Typography, Alert, Stack, useTheme, useMediaQuery } from '@mui/material';
 import { queueProfileUpdate } from '../../../utils/userProfileBatching';
+import { useT } from '../../../i18n';
 
 type Props = {
   value: any;
@@ -12,10 +13,20 @@ const baseShiftOptions = [
   'Full Time','Part Time','First Shift','Second Shift','Third Shift','Days','Nights','Swing','Some Weekends','Overtime','On Call','Flexible'
 ];
 
+const shiftOptionKeys: Record<string, string> = {
+  'Full Time': 'profile.shiftFullTime', 'Part Time': 'profile.shiftPartTime',
+  'First Shift': 'profile.shiftFirst', 'Second Shift': 'profile.shiftSecond', 'Third Shift': 'profile.shiftThird',
+  'Days': 'profile.shiftDays', 'Nights': 'profile.shiftNights', 'Swing': 'profile.shiftSwing',
+  'Some Weekends': 'profile.shiftSomeWeekends', 'Overtime': 'profile.shiftOvertime',
+  'On Call': 'profile.shiftOnCall', 'Flexible': 'profile.shiftFlexible',
+};
+
 
 const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const t = useT();
+  const shiftLabel = (name: string) => t(shiftOptionKeys[name] || name);
   const handle = (field: string, v: any) => onChange({ ...value, [field]: v });
 
   // Use batched updates instead of immediate writes (imported at top)
@@ -76,17 +87,17 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
       {jobPosting?.jobType !== 'gig' && (
         <Box sx={{ mb: 2.5 }}>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-            ⏰ Shift Preferences
+            ⏰ {t('profile.shiftPreferences')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            Select your preferred work schedules
+            {t('profile.shiftPreferencesSubtext')}
           </Typography>
 
           {/* Required Shifts Section */}
           {requiredShifts.length > 0 && (
             <Box sx={{ mb: 2.5 }}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                Must confirm before continuing
+                {t('profile.mustConfirmBeforeContinuing')}
               </Typography>
               
               <Box 
@@ -110,7 +121,7 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
                       }
                     }}
                   >
-                    🎉 Great — you've met the shift requirements. Add more preferences below.
+                    🎉 {t('profile.greatMetRequirements')}
                   </Alert>
                 )}
                 
@@ -120,7 +131,7 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
                     return (
                       <Chip
                         key={shift}
-                        label={hasShift ? `✔ ${shift}` : shift}
+                        label={hasShift ? `✔ ${shiftLabel(shift)}` : shiftLabel(shift)}
                         onClick={() => !hasShift && toggleShift(shift)}
                         color={hasShift ? 'success' : 'default'}
                         variant={hasShift ? 'filled' : 'outlined'}
@@ -154,10 +165,10 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
           {/* Your Shift Preferences Section */}
           <Box sx={{ mb: 2 }}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-              ➕ Your Shift Preferences
+              ➕ {t('profile.yourShiftPreferences')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add additional shift preferences to qualify for more roles
+              {t('profile.addShiftPreferencesSubtext')}
             </Typography>
 
             {/* Show added optional shifts */}
@@ -167,7 +178,7 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
                   {optionalShifts.map((shift: string) => (
                     <Chip
                       key={shift}
-                      label={shift}
+                      label={shiftLabel(shift)}
                       onDelete={() => toggleShift(shift)}
                       color="default"
                       sx={{
@@ -187,16 +198,16 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
             {optionalShifts.length === 0 && (
               <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                  ⏰ You haven't added any additional shift preferences yet
+                  ⏰ {t('profile.noShiftPreferencesYet')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Add shift preferences to qualify for more roles.
+                  {t('profile.addShiftToQualify')}
                 </Typography>
               </Box>
             )}
 
             <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, fontSize: '0.85rem' }}>
-              Available shifts (tap to add):
+              {t('profile.availableShiftsTap')}
             </Typography>
             <Stack direction="row" flexWrap="wrap" gap={1}>
               {allShiftOptions
@@ -204,7 +215,7 @@ const JobPreferencesStep: React.FC<Props> = ({ value, onChange, jobPosting }) =>
                 .map((name) => (
                   <Chip
                     key={name}
-                    label={name}
+                    label={shiftLabel(name)}
                     onClick={() => toggleShift(name)}
                     variant="outlined"
                     sx={{

@@ -3,6 +3,7 @@ import { Box, Button, Typography, Avatar, IconButton, CircularProgress, Alert, P
 import { CameraAlt, PhotoCamera, Upload, Delete } from '@mui/icons-material';
 import { uploadBytes, ref as storageRef, getDownloadURL } from 'firebase/storage';
 import { storage } from '../../../firebase';
+import { useT } from '../../../i18n';
 
 interface Props {
   value: {
@@ -12,6 +13,7 @@ interface Props {
 }
 
 const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
+  const t = useT();
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -22,15 +24,13 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
   const handleFileSelect = (file: File) => {
     if (!file) return;
 
-    // Validate file type
     if (!file.type.startsWith('image/')) {
-      setError('Please select an image file');
+      setError(t('apply.pleaseSelectImage'));
       return;
     }
 
-    // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      setError('Image must be smaller than 5MB');
+      setError(t('apply.imageTooLarge'));
       return;
     }
 
@@ -57,7 +57,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
       onChange({ profilePicture: downloadURL });
     } catch (err) {
       console.error('Error uploading image:', err);
-      setError('Failed to upload image. Please try again.');
+      setError(t('apply.failedToUploadImage'));
     } finally {
       setUploading(false);
     }
@@ -97,14 +97,14 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
         gutterBottom
         sx={{ fontSize: isMobile ? '1rem' : undefined, fontWeight: isMobile ? 500 : undefined }}
       >
-        Profile Picture
+        {t('apply.profilePictureTitle')}
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: isMobile ? 2 : 3 }}>
-        Add a professional profile picture to help recruiters recognize you.
+        {t('apply.profilePictureSubtext')}
       </Typography>
       {!value.profilePicture && (
         <Alert severity="info" sx={{ mb: 2 }}>
-          A photo is required to continue. If you already have an avatar on your profile, it will appear here automatically.
+          {t('apply.photoRequired')}
         </Alert>
       )}
 
@@ -122,7 +122,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
           }}
         >
           <Typography variant="subtitle2" gutterBottom>
-            Current Profile Picture
+            {t('apply.currentProfilePicture')}
           </Typography>
           <Box sx={{ display: 'flex', justifyContent: 'center', mb: 2 }}>
             <Avatar
@@ -137,7 +137,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
             onClick={handleRemovePicture}
             size="small"
           >
-            Remove Picture
+            {t('apply.removePicture')}
           </Button>
         </Paper>
       )}
@@ -153,7 +153,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
         }}
       >
         <Typography variant="subtitle2" gutterBottom>
-          {value.profilePicture ? 'Update Profile Picture' : 'Add Profile Picture'}
+          {value.profilePicture ? t('apply.updateProfilePicture') : t('apply.addProfilePicture')}
         </Typography>
         
         <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
@@ -165,7 +165,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
             disabled={uploading}
             sx={{ minWidth: 150 }}
           >
-            Take Photo
+            {t('apply.takePhoto')}
           </Button>
 
           {/* Upload Photo Button */}
@@ -176,7 +176,7 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
             disabled={uploading}
             sx={{ minWidth: 150 }}
           >
-            Upload Photo
+            {t('apply.uploadPhoto')}
           </Button>
         </Box>
 

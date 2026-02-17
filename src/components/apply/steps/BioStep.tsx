@@ -10,6 +10,7 @@ import {
   Alert
 } from '@mui/material';
 import { queueProfileUpdate } from '../../../utils/userProfileBatching';
+import { useT } from '../../../i18n';
 
 type Props = {
   value: any;
@@ -26,7 +27,7 @@ const sampleBios = [
 const BioStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  
+  const t = useT();
   const [bio, setBio] = useState<string>(value?.professionalBio || value?.bio || '');
 
   // queueProfileUpdate is imported at top
@@ -62,10 +63,10 @@ const BioStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
     <Box>
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          ✍️ Tell Us About Yourself
+          ✍️ {t('profile.tellUsAboutYourself')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Optional — helps managers get to know you
+          {t('profile.bioOptional')}
         </Typography>
 
         <Alert 

@@ -27,6 +27,7 @@ import {
   Lock as LockIcon,
   Visibility,
   VisibilityOff,
+  Language as LanguageIcon,
 } from '@mui/icons-material';
 import { 
   createUserWithEmailAndPassword, 
@@ -45,6 +46,8 @@ interface AuthDialogProps {
   open: boolean;
   onClose: () => void;
   onAuthSuccess: () => void;
+  /** When provided (e.g. from Jobs Board guest language), dialog opens with this language. */
+  initialPreferredLanguage?: 'en' | 'es';
 }
 
 const detectDefaultLanguage = (): 'en' | 'es' => {
@@ -52,7 +55,124 @@ const detectDefaultLanguage = (): 'en' | 'es' => {
   return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
 };
 
-const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess }) => {
+const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
+  en: {
+    titleCreate: 'Create Your Account',
+    titleSignIn: 'Welcome Back',
+    subtitleCreate: 'Start applying in seconds. Save jobs and track your progress.',
+    subtitleSignIn: 'Sign in to apply for jobs, save listings, and track your applications.',
+    tabCreate: 'Create Account',
+    tabSignIn: 'Sign In',
+    firstName: 'First Name',
+    lastName: 'Last Name',
+    email: 'Email',
+    password: 'Password',
+    passwordHint: 'At least 8 characters, including uppercase, lowercase, and a number.',
+    confirmPassword: 'Confirm Password',
+    preferredLanguage: 'Preferred Message Language',
+    preferredLanguageHelp: 'Message templates can send in this language.',
+    phone: 'Phone Number',
+    phonePlaceholder: '(555) 123-4567',
+    phoneHelp: "We'll use this to send you job updates and verification codes.",
+    smsConsent: 'By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent.',
+    termsAgree: 'I agree to the Terms of Use.',
+    termsAgreePrefix: 'I agree to the ',
+    termsAgreeLink: 'Terms of Use',
+    privacyAck: 'By creating an account, you acknowledge that you have read our Privacy Policy.',
+    privacyAckPrefix: 'By creating an account, you acknowledge that you have read our ',
+    privacyAckLink: 'Privacy Policy',
+    forgotPassword: 'Forgot your password?',
+    cancel: 'Cancel',
+    createAccount: 'Create Account',
+    signIn: 'Sign In',
+    verifying: 'Verifying...',
+    pleaseWait: 'Please wait...',
+    consentNotRequired: 'Consent to receive text messages is not a condition of employment.',
+    alreadyHaveAccount: 'Already have an account?',
+    signInLink: 'Sign in',
+    dontHaveAccount: "Don't have an account yet?",
+    createOneHere: 'Create one here',
+    languageLabel: 'Language',
+    errorAllFields: 'All fields are required',
+    errorPhone: 'Please enter a valid 10-digit phone number',
+    errorEmail: 'Please enter a valid email address',
+    errorEmailShort: 'Please enter a valid email address.',
+    errorPassword: 'Password must be at least 8 characters with uppercase, lowercase, and number',
+    errorPasswordMatch: 'Passwords do not match',
+    successCreated: '✅ Account created! Redirecting you to available jobs…',
+    errorEmailExists: 'An account with this email already exists. Try signing in instead.',
+    errorPasswordWeak: 'Password is too weak. Please choose a stronger password.',
+    errorCreateFailed: 'Failed to create account. Please try again.',
+    errorEmailPasswordRequired: 'Email and password are required',
+    successWelcome: 'Welcome back!',
+    errorNoAccount: 'No account found with this email. Please create an account first.',
+    errorWrongPassword: 'Incorrect password. Please try again.',
+    errorTooManyAttempts: 'Too many failed attempts. Please try again later.',
+    errorSignInFailed: 'Failed to sign in. Please try again.',
+    errorEmailFirst: 'Please enter your email address first',
+    successResetSent: 'Password reset email sent! Check your inbox.',
+    errorResetFailed: 'Failed to send reset email. Please try again.',
+  },
+  es: {
+    titleCreate: 'Crea tu cuenta',
+    titleSignIn: 'Bienvenido de nuevo',
+    subtitleCreate: 'Empieza a aplicar en segundos. Guarda trabajos y sigue tu progreso.',
+    subtitleSignIn: 'Inicia sesión para aplicar a trabajos, guardar ofertas y ver tus solicitudes.',
+    tabCreate: 'Crear cuenta',
+    tabSignIn: 'Iniciar sesión',
+    firstName: 'Nombre',
+    lastName: 'Apellido',
+    email: 'Correo electrónico',
+    password: 'Contraseña',
+    passwordHint: 'Al menos 8 caracteres, con mayúscula, minúscula y un número.',
+    confirmPassword: 'Confirmar contraseña',
+    preferredLanguage: 'Idioma preferido para mensajes',
+    preferredLanguageHelp: 'Las plantillas de mensajes se pueden enviar en este idioma.',
+    phone: 'Número de teléfono',
+    phonePlaceholder: '(555) 123-4567',
+    phoneHelp: 'Lo usaremos para enviarte actualizaciones de trabajos y códigos de verificación.',
+    smsConsent: 'Al marcar esta casilla, acepto recibir mensajes de texto relacionados con el empleo de C1 Staffing / HRX One, incluyendo actualizaciones de solicitudes, citas para entrevistas, recordatorios de incorporación, avisos de turnos, alertas de nómina y mensajes de seguridad de la cuenta. Pueden aplicar tarifas de mensajes y datos. La frecuencia varía. Responde STOP para cancelar o HELP para ayuda. El consentimiento no es condición de empleo. Consulta nuestra Política de privacidad, Términos de uso y Consentimiento SMS.',
+    termsAgree: 'Acepto los Términos de uso.',
+    termsAgreePrefix: 'Acepto los ',
+    termsAgreeLink: 'Términos de uso',
+    privacyAck: 'Al crear una cuenta, confirmas que has leído nuestra Política de privacidad.',
+    privacyAckPrefix: 'Al crear una cuenta, confirmas que has leído nuestra ',
+    privacyAckLink: 'Política de privacidad',
+    forgotPassword: '¿Olvidaste tu contraseña?',
+    cancel: 'Cancelar',
+    createAccount: 'Crear cuenta',
+    signIn: 'Iniciar sesión',
+    verifying: 'Verificando...',
+    pleaseWait: 'Espera un momento...',
+    consentNotRequired: 'El consentimiento para recibir mensajes de texto no es condición de empleo.',
+    alreadyHaveAccount: '¿Ya tienes una cuenta?',
+    signInLink: 'Iniciar sesión',
+    dontHaveAccount: '¿Aún no tienes cuenta?',
+    createOneHere: 'Crea una aquí',
+    languageLabel: 'Idioma',
+    errorAllFields: 'Todos los campos son obligatorios',
+    errorPhone: 'Por favor ingresa un número de teléfono válido de 10 dígitos',
+    errorEmail: 'Por favor ingresa un correo electrónico válido',
+    errorEmailShort: 'Por favor ingresa un correo electrónico válido.',
+    errorPassword: 'La contraseña debe tener al menos 8 caracteres con mayúscula, minúscula y número',
+    errorPasswordMatch: 'Las contraseñas no coinciden',
+    successCreated: '✅ ¡Cuenta creada! Redirigiendo a trabajos disponibles…',
+    errorEmailExists: 'Ya existe una cuenta con este correo. Intenta iniciar sesión.',
+    errorPasswordWeak: 'La contraseña es muy débil. Elige una más segura.',
+    errorCreateFailed: 'Error al crear la cuenta. Intenta de nuevo.',
+    errorEmailPasswordRequired: 'Correo y contraseña son obligatorios',
+    successWelcome: '¡Bienvenido de nuevo!',
+    errorNoAccount: 'No hay cuenta con este correo. Crea una cuenta primero.',
+    errorWrongPassword: 'Contraseña incorrecta. Intenta de nuevo.',
+    errorTooManyAttempts: 'Demasiados intentos fallidos. Intenta más tarde.',
+    errorSignInFailed: 'Error al iniciar sesión. Intenta de nuevo.',
+    errorEmailFirst: 'Ingresa tu correo electrónico primero',
+    successResetSent: '¡Correo de restablecimiento enviado! Revisa tu bandeja.',
+    errorResetFailed: 'Error al enviar el correo de restablecimiento. Intenta de nuevo.',
+  },
+};
+
+const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, initialPreferredLanguage }) => {
   const { setCreatingUserProfile } = useAuth();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -74,6 +194,15 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
   const [phone, setPhone] = useState('');
   const [smsConsent, setSmsConsent] = useState(false);
   const [preferredLanguage, setPreferredLanguage] = useState<'en' | 'es'>(detectDefaultLanguage());
+
+  const t = AUTH_COPY[preferredLanguage];
+
+  // When dialog opens with a guest language (e.g. from Jobs Board), use it
+  useEffect(() => {
+    if (open && initialPreferredLanguage !== undefined) {
+      setPreferredLanguage(initialPreferredLanguage);
+    }
+  }, [open, initialPreferredLanguage]);
   
   // Refs for focus management
   const emailRef = useRef<HTMLInputElement>(null);
@@ -173,29 +302,29 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
     // Validation
     if (!email || !password || !firstName || !lastName || !phone) {
-      setError('All fields are required');
+      setError(t.errorAllFields);
       return;
     }
 
     // Validate phone number (should be 10 digits)
     const phoneDigits = phone.replace(/\D/g, '');
     if (phoneDigits.length !== 10) {
-      setError('Please enter a valid 10-digit phone number');
+      setError(t.errorPhone);
       return;
     }
 
     if (!validateEmail(email)) {
-      setError('Please enter a valid email address');
+      setError(t.errorEmail);
       return;
     }
 
     if (!validatePassword(password)) {
-      setError('Password must be at least 8 characters with uppercase, lowercase, and number');
+      setError(t.errorPassword);
       return;
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError(t.errorPasswordMatch);
       return;
     }
 
@@ -343,7 +472,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
       await setDoc(doc(db, 'users', user.uid), userProfile);
 
-      setSuccess('✅ Account created! Redirecting you to available jobs…');
+      setSuccess(t.successCreated);
       
       // Close dialog and refresh page state after a brief delay
       setTimeout(() => {
@@ -369,16 +498,16 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       // Handle specific Firebase errors
       switch (error.code) {
         case 'auth/email-already-in-use':
-          setError('An account with this email already exists. Try signing in instead.');
+          setError(t.errorEmailExists);
           break;
         case 'auth/weak-password':
-          setError('Password is too weak. Please choose a stronger password.');
+          setError(t.errorPasswordWeak);
           break;
         case 'auth/invalid-email':
-          setError('Please enter a valid email address.');
+          setError(t.errorEmailShort);
           break;
         default:
-          setError('Failed to create account. Please try again.');
+          setError(t.errorCreateFailed);
       }
     } finally {
       setLoading(false);
@@ -390,12 +519,12 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
     setSuccess(null);
 
     if (!email || !password) {
-      setError('Email and password are required');
+      setError(t.errorEmailPasswordRequired);
       return;
     }
 
     if (!validateEmail(email)) {
-      setError('Please enter a valid email address');
+      setError(t.errorEmail);
       return;
     }
 
@@ -406,7 +535,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       await executeRecaptchaVerification('LOGIN');
       
       await signInWithEmailAndPassword(auth, email, password);
-      setSuccess('Welcome back!');
+      setSuccess(t.successWelcome);
       
       // Close dialog and refresh page state after a brief delay
       setTimeout(() => {
@@ -424,19 +553,19 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       // Handle specific Firebase errors
       switch (error.code) {
         case 'auth/user-not-found':
-          setError('No account found with this email. Please create an account first.');
+          setError(t.errorNoAccount);
           break;
         case 'auth/wrong-password':
-          setError('Incorrect password. Please try again.');
+          setError(t.errorWrongPassword);
           break;
         case 'auth/invalid-email':
-          setError('Please enter a valid email address.');
+          setError(t.errorEmailShort);
           break;
         case 'auth/too-many-requests':
-          setError('Too many failed attempts. Please try again later.');
+          setError(t.errorTooManyAttempts);
           break;
         default:
-          setError('Failed to sign in. Please try again.');
+          setError(t.errorSignInFailed);
       }
     } finally {
       setLoading(false);
@@ -445,12 +574,12 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
   const handleForgotPassword = async () => {
     if (!email) {
-      setError('Please enter your email address first');
+      setError(t.errorEmailFirst);
       return;
     }
 
     if (!validateEmail(email)) {
-      setError('Please enter a valid email address');
+      setError(t.errorEmail);
       return;
     }
 
@@ -459,10 +588,10 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
     try {
       await sendPasswordResetEmail(auth, email);
-      setSuccess('Password reset email sent! Check your inbox.');
+      setSuccess(t.successResetSent);
     } catch (error: any) {
       console.error('Password reset error:', error);
-      setError('Failed to send reset email. Please try again.');
+      setError(t.errorResetFailed);
     } finally {
       setLoading(false);
     }
@@ -516,7 +645,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             sx={{ fontWeight: 600, fontSize: isMobile ? '1.25rem' : undefined }} 
             id="auth-dialog-title"
           >
-            {activeTab === 0 ? 'Create Your Account' : 'Welcome Back'}
+            {activeTab === 0 ? t.titleCreate : t.titleSignIn}
           </Typography>
           <IconButton 
             onClick={handleClose} 
@@ -530,6 +659,29 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
       </DialogTitle>
 
       <DialogContent sx={{ px: isMobile ? 2 : 3 }}>
+        {/* Language selector — above subtitle */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+          <LanguageIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+          <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+            {t.languageLabel}:
+          </Typography>
+          <Button
+            size="small"
+            variant={preferredLanguage === 'en' ? 'contained' : 'outlined'}
+            onClick={() => setPreferredLanguage('en')}
+            sx={{ minWidth: 56, textTransform: 'none' }}
+          >
+            EN
+          </Button>
+          <Button
+            size="small"
+            variant={preferredLanguage === 'es' ? 'contained' : 'outlined'}
+            onClick={() => setPreferredLanguage('es')}
+            sx={{ minWidth: 56, textTransform: 'none' }}
+          >
+            ES
+          </Button>
+        </Box>
         {/* Subheader */}
         <Typography 
           variant="body2" 
@@ -540,10 +692,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
           }}
           id="auth-dialog-description"
         >
-          {activeTab === 0 
-            ? 'Start applying in seconds. Save jobs and track your progress.'
-            : 'Sign in to apply for jobs, save listings, and track your applications.'
-          }
+          {activeTab === 0 ? t.subtitleCreate : t.subtitleSignIn}
         </Typography>
 
         <Box sx={{ mb: isMobile ? 2 : 3 }}>
@@ -570,8 +719,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               }
             }}
           >
-            <Tab label="Create Account" />
-            <Tab label="Sign In" />
+            <Tab label={t.tabCreate} />
+            <Tab label={t.tabSignIn} />
           </Tabs>
         </Box>
 
@@ -599,7 +748,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   <TextField
                     ref={firstNameRef}
                     fullWidth
-                    label="First Name"
+                    label={t.firstName}
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     disabled={loading}
@@ -609,7 +758,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   />
                   <TextField
                     fullWidth
-                    label="Last Name"
+                    label={t.lastName}
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     disabled={loading}
@@ -624,7 +773,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
             <TextField
               ref={emailRef}
               fullWidth
-              label="Email"
+              label={t.email}
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -639,7 +788,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
 
             <TextField
               fullWidth
-              label="Password"
+              label={t.password}
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -663,13 +812,13 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   </InputAdornment>
                 )
               }}
-              helperText={activeTab === 0 ? "At least 8 characters, including uppercase, lowercase, and a number." : ""}
+              helperText={activeTab === 0 ? t.passwordHint : ''}
             />
 
             {activeTab === 0 && (
               <TextField
                 fullWidth
-                label="Confirm Password"
+                label={t.confirmPassword}
                 type={showConfirmPassword ? 'text' : 'password'}
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
@@ -700,22 +849,22 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               <TextField
                 fullWidth
                 select
-                label="Preferred Message Language"
+                label={t.preferredLanguage}
                 value={preferredLanguage}
                 onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
                 disabled={loading}
-                helperText="Message templates can send in this language."
+                helperText={t.preferredLanguageHelp}
                 size={isMobile ? 'medium' : 'medium'}
               >
                 <MenuItem value="en">English</MenuItem>
-                <MenuItem value="es">Spanish</MenuItem>
+                <MenuItem value="es">Español</MenuItem>
               </TextField>
             )}
 
             {activeTab === 0 && (
               <TextField
                 fullWidth
-                label="Phone Number"
+                label={t.phone}
                 type="tel"
                 value={phone}
                 onChange={(e) => {
@@ -731,8 +880,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 required
                 onKeyPress={handleKeyPress}
                 size={isMobile ? 'medium' : 'medium'}
-                placeholder="(555) 123-4567"
-                helperText="We'll use this to send you job updates and verification codes."
+                placeholder={t.phonePlaceholder}
+                helperText={t.phoneHelp}
               />
             )}
 
@@ -749,7 +898,11 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 }
                 label={
                   <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
-                    By checking this box, I agree to receive employment-related text messages from C1 Staffing / HRX One, including application updates, interview scheduling, onboarding reminders, shift notifications, payroll alerts, and account security messages. Message & data rates may apply. Message frequency varies. Reply STOP to opt out, or HELP for help. Consent is not a condition of employment. See our Privacy Policy, Terms of Use, and SMS Consent. View our <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link> and <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+                    {t.smsConsent}{' '}
+                    {preferredLanguage === 'en' ? 'View our ' : 'Ver nuestros '}
+                    <Link href="/terms" target="_blank" rel="noopener">{t.termsAgreeLink}</Link>
+                    {preferredLanguage === 'en' ? ' and ' : ' y '}
+                    <Link href="/privacy" target="_blank" rel="noopener">{t.privacyAckLink}</Link>.
                   </Typography>
                 }
               />
@@ -769,7 +922,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 }
                 label={
                   <Typography variant={isMobile ? 'body2' : 'body2'} sx={{ fontSize: isMobile ? '0.8rem' : undefined }}>
-                    I agree to the <Link href="/terms" target="_blank" rel="noopener">Terms of Use</Link>.
+                    {t.termsAgreePrefix}
+                    <Link href="/terms" target="_blank" rel="noopener">{t.termsAgreeLink}</Link>.
                   </Typography>
                 }
               />
@@ -778,7 +932,8 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                 color="text.secondary" 
                 sx={{ mt: 1, ml: isMobile ? 5 : 4, fontSize: isMobile ? '0.75rem' : undefined }}
               >
-                By creating an account, you acknowledge that you have read our <Link href="/privacy" target="_blank" rel="noopener">Privacy Policy</Link>.
+                {t.privacyAckPrefix}
+                <Link href="/privacy" target="_blank" rel="noopener">{t.privacyAckLink}</Link>.
               </Typography>
             </Box>
           )}
@@ -796,7 +951,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                   opacity: loading || !email ? 0.6 : 1
                 }}
               >
-                Forgot your password?
+                {t.forgotPassword}
               </Link>
             </Box>
           )}
@@ -828,7 +983,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               py: isMobile ? 1.5 : undefined
             }}
           >
-            Cancel
+            {t.cancel}
           </Button>
           <Button
             onClick={activeTab === 0 ? handleSignUp : handleSignIn}
@@ -845,7 +1000,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
               py: isMobile ? 1.5 : undefined
             }}
           >
-            {recaptchaLoading ? 'Verifying...' : loading ? 'Please wait...' : (activeTab === 0 ? 'Create Account' : 'Sign In')}
+            {recaptchaLoading ? t.verifying : loading ? t.pleaseWait : (activeTab === 0 ? t.createAccount : t.signIn)}
           </Button>
         </Box>
 
@@ -853,7 +1008,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
         {activeTab === 0 && (
           <Box sx={{ textAlign: 'center', width: '100%', pt: 1 }}>
             <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.75rem' : '0.8rem' }}>
-              Consent to receive text messages is not a condition of employment.
+              {t.consentNotRequired}
             </Typography>
           </Box>
         )}
@@ -863,7 +1018,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
           <Typography variant="body2" sx={{ color: 'text.secondary', fontSize: isMobile ? '0.875rem' : undefined }}>
             {activeTab === 0 ? (
               <>
-                Already have an account?{' '}
+                {t.alreadyHaveAccount}{' '}
                 <Link
                   component="button"
                   onClick={switchToSignIn}
@@ -874,12 +1029,12 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                     fontSize: isMobile ? '0.875rem' : undefined
                   }}
                 >
-                  Sign in
+                  {t.signInLink}
                 </Link>
               </>
             ) : (
               <>
-                Don't have an account yet?{' '}
+                {t.dontHaveAccount}{' '}
                 <Link
                   component="button"
                   onClick={switchToSignUp}
@@ -890,7 +1045,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess })
                     fontSize: isMobile ? '0.875rem' : undefined
                   }}
                 >
-                  Create one here
+                  {t.createOneHere}
                 </Link>
               </>
             )}

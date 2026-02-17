@@ -12,6 +12,10 @@
  * Requires GOOGLE_APPLICATION_CREDENTIALS or default gcloud application credentials.
  */
 
+import 'dotenv/config';
+import { loadEnvForScripts } from './loadEnv';
+loadEnvForScripts();
+
 import * as admin from 'firebase-admin';
 
 // Initialize Admin first so scoringDistribution's db is valid when loaded

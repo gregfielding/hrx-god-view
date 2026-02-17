@@ -50,6 +50,12 @@ export const p = {
   jobOrder: (tid: string, id: string) => `tenants/${tid}/job_orders/${id}`,
 
   /**
+   * Shifts (subcollection of job order) — C1 Recruiter Shift Setup reads/writes here
+   */
+  shifts: (tid: string, jobOrderId: string) => `tenants/${tid}/job_orders/${jobOrderId}/shifts`,
+  shift: (tid: string, jobOrderId: string, shiftId: string) => `tenants/${tid}/job_orders/${jobOrderId}/shifts/${shiftId}`,
+
+  /**
    * Job Board Posts
    */
   jobBoardPosts: (tid: string) => `tenants/${tid}/jobBoardPosts`,

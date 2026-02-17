@@ -17,6 +17,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { useT, getLanguage } from '../i18n';
 
 interface Application {
   id: string;
@@ -39,6 +40,7 @@ type HiredOfferSet = Set<string>;
 const UserApplications: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const t = useT();
   const [applications, setApplications] = useState<Application[]>([]);
   const [pendingOfferKeys, setPendingOfferKeys] = useState<PendingOfferSet>(new Set());
   const [hiredOfferKeys, setHiredOfferKeys] = useState<HiredOfferSet>(new Set());
@@ -217,8 +219,8 @@ const UserApplications: React.FC = () => {
 
   const getStatusLabel = (app: Application): string => {
     const key = `${app.tenantId}_${app.jobId}`;
-    if (hiredOfferKeys.has(key)) return "You've been hired";
-    if (app.status.toLowerCase() === 'submitted' && pendingOfferKeys.has(key)) return 'Accept offer';
+    if (hiredOfferKeys.has(key)) return t('applications.statusHired');
+    if (app.status.toLowerCase() === 'submitted' && pendingOfferKeys.has(key)) return t('applications.acceptOffer');
     return app.status.charAt(0).toUpperCase() + app.status.slice(1);
   };
 
@@ -244,8 +246,9 @@ const UserApplications: React.FC = () => {
     }
   };
 
+  const locale = getLanguage() === 'es' ? 'es' : 'en-US';
   const formatDate = (date: Date): string => {
-    return new Intl.DateTimeFormat('en-US', {
+    return new Intl.DateTimeFormat(locale, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -272,10 +275,13 @@ const UserApplications: React.FC = () => {
 
   return (
     <Box>
+      <Typography variant="h4" component="h1" sx={{ fontWeight: 600, mb: 2 }}>
+        {t('applications.title')}
+      </Typography>
       {applications.length === 0 ? (
         <Box sx={{ p: 3 }}>
           <Alert severity="info">
-            You haven't applied to any jobs yet. Visit the Jobs Board to find opportunities!
+            {t('empty.noApplications')}
           </Alert>
         </Box>
       ) : (
@@ -287,11 +293,11 @@ const UserApplications: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow sx={{ backgroundColor: 'grey.100' }}>
-                <TableCell sx={{ fontWeight: 600 }}>Job Title</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Location</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Pay Rate</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Date Applied</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.jobTitle')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.location')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.payRate')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.dateApplied')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.status')}</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -312,7 +318,7 @@ const UserApplications: React.FC = () => {
                 >
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {app.postTitle || app.jobTitle || 'Untitled Job'}
+                      {app.postTitle || app.jobTitle || t('applications.untitledJob')}
                     </Typography>
                     {app.companyName && (
                       <Typography variant="caption" color="text.secondary" display="block">
@@ -322,12 +328,12 @@ const UserApplications: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {app.location || 'N/A'}
+                      {app.location || t('applications.na')}
                     </Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {app.payRate ? `$${app.payRate}/hr` : 'N/A'}
+                      {app.payRate ? `$${app.payRate}/hr` : t('applications.na')}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -341,9 +347,9 @@ const UserApplications: React.FC = () => {
                       color={getStatusColor(app)}
                       size="small"
                       sx={
-                        getStatusLabel(app) === "You've been hired"
+                        getStatusLabel(app) === t('applications.statusHired')
                           ? { fontWeight: 600 }
-                          : getStatusLabel(app) === 'Accept offer' || app.status.toLowerCase() === 'submitted'
+                          : getStatusLabel(app) === t('applications.acceptOffer') || app.status.toLowerCase() === 'submitted'
                             ? { backgroundColor: '#FFC700', color: '#000', fontWeight: 600 }
                             : undefined
                       }

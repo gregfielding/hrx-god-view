@@ -4,6 +4,7 @@ import { Autocomplete } from '@react-google-maps/api';
 import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { auth } from '../../../firebase';
+import { useT } from '../../../i18n';
 
 type Props = {
   value: any;
@@ -103,6 +104,7 @@ const formatDateForStorage = (dateString: string) => {
 };
 
 const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, showAddressFields = false }) => {
+  const t = useT();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const isAuthenticated = auth.currentUser !== null;
@@ -162,7 +164,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             <TextField
               fullWidth
               required
-              label="Street Address"
+              label={t('apply.streetAddress')}
               value={value.street || ''}
               onChange={(e) => {
                 handle('street', e.target.value);
@@ -188,7 +190,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                     });
                   } catch (error) {
                     console.error('Geocoding error:', error);
-                    setAddressError('Could not validate address. Please select from the dropdown suggestions.');
+                    setAddressError(t('apply.addressErrorSelectDropdown'));
                   } finally {
                     setGeocodingAddress(false);
                   }
@@ -200,7 +202,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
               autoCorrect="off"
               autoCapitalize="off"
               spellCheck="false"
-              helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Please select an address from the dropdown suggestions')}
+              helperText={addressError || (geocodingAddress ? t('apply.validatingAddress') : t('apply.selectAddressFromDropdown'))}
               error={!!addressError}
               inputProps={{
                 autoComplete: 'off',
@@ -214,7 +216,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           <TextField
             fullWidth
             required
-            label="Street Address"
+            label={t('apply.streetAddress')}
             value={value.street || ''}
             onChange={(e) => {
               handle('street', e.target.value);
@@ -240,7 +242,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   });
                 } catch (error) {
                   console.error('Geocoding error:', error);
-                  setAddressError('Could not validate address. Please enter a valid address.');
+                  setAddressError(t('apply.addressErrorEnterValid'));
                 } finally {
                   setGeocodingAddress(false);
                 }
@@ -252,7 +254,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck="false"
-            helperText={addressError || (geocodingAddress ? 'Validating address...' : 'Enter a valid street address')}
+            helperText={addressError || (geocodingAddress ? t('apply.validatingAddress') : t('apply.enterValidAddress'))}
             error={!!addressError}
             inputProps={{
               autoComplete: 'off',
@@ -265,24 +267,24 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
       </Grid>
       <Grid item xs={12} md={6}>
         <ResumeSuggestionField isFromResume={isFieldFromResume('unit')} confidence={getFieldConfidence('unit')}>
-          <TextField fullWidth label="Unit / Apt" value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
+          <TextField fullWidth label={t('apply.unitApt')} value={value.unit || ''} onChange={(e) => handle('unit', e.target.value)} />
         </ResumeSuggestionField>
       </Grid>
       {value.homeLat !== undefined && value.homeLng !== undefined && (
         <>
           <Grid item xs={12} md={6}>
             <ResumeSuggestionField isFromResume={isFieldFromResume('city')} confidence={getFieldConfidence('city')}>
-              <TextField fullWidth required label="City" value={value.city || ''} disabled />
+              <TextField fullWidth required label={t('apply.city')} value={value.city || ''} disabled />
             </ResumeSuggestionField>
           </Grid>
           <Grid item xs={12} md={6}>
             <ResumeSuggestionField isFromResume={isFieldFromResume('state')} confidence={getFieldConfidence('state')}>
-              <TextField fullWidth required label="State" value={value.state || ''} disabled />
+              <TextField fullWidth required label={t('apply.state')} value={value.state || ''} disabled />
             </ResumeSuggestionField>
           </Grid>
           <Grid item xs={12} md={6}>
             <ResumeSuggestionField isFromResume={isFieldFromResume('zip')} confidence={getFieldConfidence('zip')}>
-              <TextField fullWidth required label="Zip Code" value={value.zip || ''} disabled />
+              <TextField fullWidth required label={t('apply.zipCode')} value={value.zip || ''} disabled />
             </ResumeSuggestionField>
           </Grid>
         </>
@@ -352,20 +354,20 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
       // Validate place object
       if (!place) {
         console.warn('⚠️ No place object returned from autocomplete');
-        setAddressError('Please select a valid address from the suggestions.');
+        setAddressError(t('apply.addressErrorSelectValid'));
         return;
       }
       
       if (!place.address_components || !Array.isArray(place.address_components) || place.address_components.length === 0) {
         console.warn('⚠️ Place missing address_components:', place);
-        setAddressError('Selected address is missing required information. Please try another selection.');
+        setAddressError(t('apply.addressErrorMissingInfo'));
         return;
       }
       
       // Validate geometry/coordinates (required for map display)
       if (!place.geometry || !place.geometry.location) {
         console.warn('⚠️ Place missing geometry/location:', place);
-        setAddressError('Selected address is missing location data. Please try another selection.');
+        setAddressError(t('apply.addressErrorMissingLocation'));
         return;
       }
       
@@ -400,7 +402,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           isNaN(homeLat) || isNaN(homeLng) ||
           homeLat < -90 || homeLat > 90 || homeLng < -180 || homeLng > 180) {
         console.error('❌ Invalid coordinates:', { homeLat, homeLng });
-        setAddressError('Selected address has invalid coordinates. Please try another selection.');
+        setAddressError(t('apply.addressErrorInvalidCoords'));
         return;
       }
 
@@ -427,7 +429,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
         if (!state) missing.push('state');
         if (!zip) missing.push('zip');
         console.warn('⚠️ Missing address components:', missing);
-        setAddressError(`Selected address is missing: ${missing.join(', ')}. Please try another selection.`);
+        setAddressError(t('apply.addressErrorMissingFields', { fields: missing.join(', ') }));
         return;
       }
 
@@ -460,7 +462,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
       onChange(updatedData);
     } catch (error: any) {
       console.error('❌ Error processing place selection:', error);
-      setAddressError('An error occurred processing the selected address. Please try again.');
+      setAddressError(t('apply.addressErrorProcessing'));
     }
   }, [value, onChange]);
 
@@ -481,7 +483,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             isFromResume={isFieldFromResume('firstName')} 
             confidence={getFieldConfidence('firstName')}
           >
-            <TextField fullWidth required label="First name" value={value.firstName || ''} onChange={(e) => handle('firstName', e.target.value)} />
+            <TextField fullWidth required label={t('profile.firstName')} value={value.firstName || ''} onChange={(e) => handle('firstName', e.target.value)} />
           </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
@@ -489,7 +491,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             isFromResume={isFieldFromResume('lastName')} 
             confidence={getFieldConfidence('lastName')}
           >
-            <TextField fullWidth required label="Last name" value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
+            <TextField fullWidth required label={t('profile.lastName')} value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
           </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
@@ -497,7 +499,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             isFromResume={isFieldFromResume('email')} 
             confidence={getFieldConfidence('email')}
           >
-            <TextField fullWidth required type="email" label="Email" value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+            <TextField fullWidth required type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
           </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
@@ -508,7 +510,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
             <TextField 
               fullWidth 
               required 
-              label="Phone" 
+              label={t('profile.phone')} 
               inputMode="numeric" 
               value={formatPhone(value.phone || '')} 
               onChange={(e) => {
@@ -521,15 +523,15 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
         </Grid>
         <Grid item xs={12} md={6}>
           <FormControl fullWidth>
-            <InputLabel id="apply-preferred-language-mobile-label">Preferred Message Language</InputLabel>
+            <InputLabel id="apply-preferred-language-mobile-label">{t('apply.preferredMessageLanguage')}</InputLabel>
             <Select
               labelId="apply-preferred-language-mobile-label"
-              label="Preferred Message Language"
+              label={t('apply.preferredMessageLanguage')}
               value={selectedPreferredLanguage}
               onChange={(e) => handle('preferredLanguage', e.target.value as string)}
             >
-              <MenuItem value="en">English</MenuItem>
-              <MenuItem value="es">Spanish</MenuItem>
+              <MenuItem value="en">{t('apply.english')}</MenuItem>
+              <MenuItem value="es">{t('apply.spanish')}</MenuItem>
             </Select>
           </FormControl>
         </Grid>
@@ -537,7 +539,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           <TextField 
             fullWidth 
             required
-            label="Date of Birth (MM/DD/YYYY)" 
+            label={t('profile.dateOfBirth')}
             inputMode="numeric" 
             placeholder="MM/DD/YYYY"
             value={dobDisplayValue} 
@@ -580,7 +582,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
       ) : (
         <Card variant="outlined" sx={{ mb: 3 }}>
           <CardHeader 
-            title={<Typography variant="h6">Tell us a bit about you</Typography>} 
+            title={<Typography variant="h6">{t('apply.titleTellUsAboutYou')}</Typography>} 
             sx={{ px: 2, py: 1.5 }}
           />
           <CardContent sx={{ px: 2, py: 2 }}>
@@ -590,7 +592,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   isFromResume={isFieldFromResume('firstName')} 
                   confidence={getFieldConfidence('firstName')}
                 >
-                  <TextField fullWidth required label="First name" value={value.firstName || ''} onChange={(e) => handle('firstName', e.target.value)} />
+                  <TextField fullWidth required label={t('profile.firstName')} value={value.firstName || ''} onChange={(e) => handle('firstName', e.target.value)} />
                 </ResumeSuggestionField>
               </Grid>
               <Grid item xs={12} md={6}>
@@ -598,7 +600,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   isFromResume={isFieldFromResume('lastName')} 
                   confidence={getFieldConfidence('lastName')}
                 >
-                  <TextField fullWidth required label="Last name" value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
+                  <TextField fullWidth required label={t('profile.lastName')} value={value.lastName || ''} onChange={(e) => handle('lastName', e.target.value)} />
                 </ResumeSuggestionField>
               </Grid>
               <Grid item xs={12} md={6}>
@@ -606,7 +608,7 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   isFromResume={isFieldFromResume('email')} 
                   confidence={getFieldConfidence('email')}
                 >
-                  <TextField fullWidth required type="email" label="Email" value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
+                  <TextField fullWidth required type="email" label={t('profile.email')} value={value.email || ''} onChange={(e) => handle('email', e.target.value)} />
                 </ResumeSuggestionField>
               </Grid>
               <Grid item xs={12} md={6}>
@@ -617,8 +619,8 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                   <TextField 
                     fullWidth 
                     required 
-                    label="Phone" 
-                    inputMode="numeric" 
+label={t('profile.phone')}
+              inputMode="numeric"
                     value={formatPhone(value.phone || '')} 
                     onChange={(e) => {
                       // Store only digits, remove formatting
@@ -630,15 +632,15 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
               </Grid>
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>
-                  <InputLabel id="apply-preferred-language-desktop-label">Preferred Message Language</InputLabel>
+                  <InputLabel id="apply-preferred-language-desktop-label">{t('apply.preferredMessageLanguage')}</InputLabel>
                   <Select
                     labelId="apply-preferred-language-desktop-label"
-                    label="Preferred Message Language"
+                    label={t('apply.preferredMessageLanguage')}
                     value={selectedPreferredLanguage}
                     onChange={(e) => handle('preferredLanguage', e.target.value as string)}
                   >
-                    <MenuItem value="en">English</MenuItem>
-                    <MenuItem value="es">Spanish</MenuItem>
+                    <MenuItem value="en">{t('apply.english')}</MenuItem>
+                    <MenuItem value="es">{t('apply.spanish')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -646,9 +648,9 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
                 <TextField 
                   fullWidth 
                   required
-                  label="Date of Birth (MM/DD/YYYY)" 
-                  inputMode="numeric" 
-                  placeholder="MM/DD/YYYY"
+label={t('profile.dateOfBirth')}
+            inputMode="numeric"
+            placeholder="MM/DD/YYYY"
                   value={dobDisplayValue} 
                   onChange={(e) => {
                     const formatted = formatDobInput(e.target.value);
@@ -695,26 +697,26 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           {isMobile ? (
             <>
               <Typography variant="h6" sx={{ mb: 1.5, fontSize: '1rem', fontWeight: 500 }}>
-                Create Your Account
+                {t('apply.createYourAccount')}
               </Typography>
               <Stack spacing={1.5}>
                 <TextField
                   fullWidth
                   type="password"
-                  label="Password"
+                  label={t('apply.password')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  helperText="At least 6 characters"
+                  helperText={t('apply.atLeast6Chars')}
                   required
                 />
                 <TextField
                   fullWidth
                   type="password"
-                  label="Confirm Password"
+                  label={t('apply.confirmPassword')}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   error={confirmPassword.length > 0 && password !== confirmPassword}
-                  helperText={confirmPassword.length > 0 && password !== confirmPassword ? "Passwords don't match" : ' '}
+                  helperText={confirmPassword.length > 0 && password !== confirmPassword ? t('apply.passwordsDontMatchHelper') : ' '}
                   required
                 />
               </Stack>
@@ -722,31 +724,31 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           ) : (
               <Card variant="outlined">
               <CardHeader 
-                title={<Typography variant="h6">Create Your Account</Typography>}
+                title={<Typography variant="h6">{t('apply.createYourAccount')}</Typography>}
                 sx={{ px: 2, py: 1.5 }}
               />
               <CardContent sx={{ px: 2, py: 2 }}>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Create a password to save your progress and submit your application.
+                  {t('apply.createPasswordSubtext')}
                 </Typography>
                 <Stack spacing={1.5}>
                   <TextField
                     fullWidth
                     type="password"
-                    label="Password"
+                    label={t('apply.password')}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    helperText="At least 6 characters"
+                    helperText={t('apply.atLeast6Chars')}
                     required
                   />
                   <TextField
                     fullWidth
                     type="password"
-                    label="Confirm Password"
+                    label={t('apply.confirmPassword')}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     error={confirmPassword.length > 0 && password !== confirmPassword}
-                    helperText={confirmPassword.length > 0 && password !== confirmPassword ? "Passwords don't match" : ' '}
+                    helperText={confirmPassword.length > 0 && password !== confirmPassword ? t('apply.passwordsDontMatchHelper') : ' '}
                     required
                   />
                 </Stack>

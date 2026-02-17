@@ -3,18 +3,36 @@ import { Box, Chip, Typography, Stack, Card, CardContent } from '@mui/material';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { queueProfileUpdate } from '../../../utils/userProfileBatching';
+import { useT } from '../../../i18n';
 
 type Props = {
   uid: string;
 };
 
 const baseShiftOptions = [
-  'Full Time', 'Part Time', 'First Shift', 'Second Shift', 'Third Shift', 
+  'Full Time', 'Part Time', 'First Shift', 'Second Shift', 'Third Shift',
   'Days', 'Nights', 'Swing', 'Some Weekends', 'Overtime', 'On Call', 'Flexible'
 ];
 
+const shiftOptionKeys: Record<string, string> = {
+  'Full Time': 'profile.shiftFullTime',
+  'Part Time': 'profile.shiftPartTime',
+  'First Shift': 'profile.shiftFirst',
+  'Second Shift': 'profile.shiftSecond',
+  'Third Shift': 'profile.shiftThird',
+  'Days': 'profile.shiftDays',
+  'Nights': 'profile.shiftNights',
+  'Swing': 'profile.shiftSwing',
+  'Some Weekends': 'profile.shiftSomeWeekends',
+  'Overtime': 'profile.shiftOvertime',
+  'On Call': 'profile.shiftOnCall',
+  'Flexible': 'profile.shiftFlexible',
+};
+
 const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
+  const t = useT();
   const [selectedShifts, setSelectedShifts] = useState<string[]>([]);
+  const shiftLabel = (name: string) => t(shiftOptionKeys[name] || name);
 
   useEffect(() => {
     if (!uid) return;
@@ -55,19 +73,19 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
       <CardContent sx={{ p: { xs: 2, md: 3 } }}>
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-            ⏰ Shift Preferences
+            ⏰ {t('profile.shiftPreferences')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            Select your preferred work schedules
+            {t('profile.shiftPreferencesSubtext')}
           </Typography>
 
           {/* Your Shift Preferences Section */}
           <Box sx={{ mb: 2 }}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-              ➕ Your Shift Preferences
+              ➕ {t('profile.yourShiftPreferences')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Add additional shift preferences to qualify for more roles
+              {t('profile.addShiftPreferencesSubtext')}
             </Typography>
 
             {/* Show added optional shifts */}
@@ -77,7 +95,7 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
                   {optionalShifts.map((shift: string) => (
                     <Chip
                       key={shift}
-                      label={shift}
+                      label={shiftLabel(shift)}
                       onDelete={() => toggleShift(shift)}
                       color="default"
                       sx={{
@@ -97,16 +115,16 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
             {optionalShifts.length === 0 && (
               <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                  ⏰ You haven't added any additional shift preferences yet
+                  ⏰ {t('profile.noShiftPreferencesYet')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Add shift preferences to qualify for more roles.
+                  {t('profile.addShiftToQualify')}
                 </Typography>
               </Box>
             )}
 
             <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, fontSize: '0.85rem' }}>
-              Available shifts (tap to add):
+              {t('profile.availableShiftsTap')}
             </Typography>
             <Stack direction="row" flexWrap="wrap" gap={1}>
               {allShiftOptions
@@ -114,7 +132,7 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
                 .map((name) => (
                   <Chip
                     key={name}
-                    label={name}
+                    label={shiftLabel(name)}
                     onClick={() => toggleShift(name)}
                     variant="outlined"
                     sx={{

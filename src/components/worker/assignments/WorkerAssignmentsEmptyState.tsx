@@ -6,6 +6,7 @@
 import React from 'react';
 import { Card, CardContent, Typography, Button, Stack } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useT } from '../../../i18n';
 
 export type EmptyStateVariant = 'upcoming' | 'past';
 
@@ -15,6 +16,7 @@ export interface WorkerAssignmentsEmptyStateProps {
 
 const WorkerAssignmentsEmptyState: React.FC<WorkerAssignmentsEmptyStateProps> = ({ variant }) => {
   const navigate = useNavigate();
+  const t = useT();
 
   if (variant === 'upcoming') {
     return (
@@ -29,16 +31,16 @@ const WorkerAssignmentsEmptyState: React.FC<WorkerAssignmentsEmptyStateProps> = 
         <CardContent sx={{ py: 4, px: 2 }}>
           <Stack spacing={2} alignItems="center" textAlign="center">
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
-              No upcoming shifts
+              {t('assignments.emptyNoUpcomingTitle')}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Check the jobs board for available work.
+              {t('empty.checkJobsBoard')}
             </Typography>
             <Button
               variant="contained"
               onClick={() => navigate('/c1/jobs-board')}
             >
-              Find Work
+              {t('nav.findWork')}
             </Button>
           </Stack>
         </CardContent>
@@ -58,10 +60,10 @@ const WorkerAssignmentsEmptyState: React.FC<WorkerAssignmentsEmptyStateProps> = 
       <CardContent sx={{ py: 4, px: 2 }}>
         <Stack spacing={1} alignItems="center" textAlign="center">
           <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            No past assignments yet
+            {t('assignments.emptyNoPastTitle')}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Completed and past shifts will appear here.
+            {t('assignments.emptyNoPastSubtext')}
           </Typography>
         </Stack>
       </CardContent>

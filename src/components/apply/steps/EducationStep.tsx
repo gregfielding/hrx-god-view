@@ -24,6 +24,7 @@ import { AddCircle, Delete as DeleteIcon, ExpandMore, School, CalendarToday, Ver
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { auth, db, storage } from '../../../firebase';
+import { useT } from '../../../i18n';
 import credentialsSeed from '../../../data/credentialsSeed.json';
 
 type Props = {
@@ -86,7 +87,7 @@ const yearOptions = Array.from({ length: 57 }, (_, i) => 2026 - i);
 const EducationStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting, showOnly = 'both', onRequiredCertsStatusChange }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  
+  const t = useT();
   const [educationDialogOpen, setEducationDialogOpen] = useState(false);
   const [certificationDialogOpen, setCertificationDialogOpen] = useState(false);
   const [quickAddEducationValue, setQuickAddEducationValue] = useState<string | null>(null);
@@ -562,7 +563,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
         )}
 
         <Chip
-          label="Add Education"
+          label={t('profile.addEducation')}
           onClick={(e) => handleOpenEducationDialog(e)}
           icon={<AddCircle />}
           color="primary"
@@ -850,7 +851,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
         )}
 
         <Chip
-          label="Add Certification"
+          label={t('profile.addCertification')}
           onClick={handleOpenCertificationDialog}
           icon={<AddCircle />}
           color="primary"
@@ -890,7 +891,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
               select
-              label="Degree / Certification"
+              label={t('profile.degreeCertification')}
               fullWidth
               required
               value={newEducation.degree}
@@ -903,7 +904,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
               ))}
             </TextField>
             <TextField
-              label="School / Institution"
+              label={t('profile.schoolInstitution')}
               fullWidth
               required
               value={newEducation.school}
@@ -1019,7 +1020,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
               select
-              label="Certification Name"
+              label={t('profile.certificationName')}
               fullWidth
               required
               value={newCertification.name}
@@ -1063,7 +1064,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
               <AccordionDetails>
                 <TextField
                   type="month"
-                  label="Expiration Date"
+                  label={t('profile.expirationDate')}
                   fullWidth
                   value={newCertification.expirationDate}
                   onChange={(e) => setNewCertification({ ...newCertification, expirationDate: e.target.value })}
@@ -1091,7 +1092,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
                 fullWidth
                 disabled={uploading}
               >
-                {newCertification.file ? newCertification.file.name : 'Choose File'}
+                {newCertification.file ? newCertification.file.name : t('profile.chooseFile')}
                 <input
                   type="file"
                   hidden
@@ -1120,7 +1121,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
             onClick={handleSaveCertification}
             disabled={!newCertification.name || uploading}
           >
-            {uploading ? 'Uploading...' : 'Save'}
+            {uploading ? t('profile.uploading') : t('profile.save')}
           </Button>
         </DialogActions>
       </Dialog>

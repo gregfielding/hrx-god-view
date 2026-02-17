@@ -8,6 +8,7 @@ import { getDownloadURL, ref as storageRef } from 'firebase/storage';
 import { useAuth } from '../../../contexts/AuthContext';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { logger } from '../../../utils/logger';
+import { useT } from '../../../i18n';
 
 type Props = {
   tenantId: string;
@@ -25,6 +26,7 @@ interface UserResume {
 }
 
 const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
+  const t = useT();
   const [currentResume, setCurrentResume] = useState<UserResume | null>(null);
   const [loading, setLoading] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
@@ -68,7 +70,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
 
   const handleViewResume = async () => {
     if (!currentResume) {
-      setError('No resume available to view');
+      setError(t('apply.noResumeToView'));
       return;
     }
 
@@ -90,16 +92,16 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         return;
       }
       
-      setError('No valid storage path found for resume');
+      setError(t('apply.failedToOpenResume'));
     } catch (err) {
       logger.error('Failed to open resume:', err);
-      setError('Failed to open resume');
+      setError(t('apply.failedToOpenResume'));
     }
   };
 
   const handleDownloadResume = async () => {
     if (!currentResume) {
-      setError('No resume available to download');
+      setError(t('apply.noResumeToDownload'));
       return;
     }
 
@@ -131,10 +133,10 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         return;
       }
       
-      setError('No valid storage path found for resume');
+      setError(t('apply.failedToOpenResume'));
     } catch (err) {
       logger.error('Failed to download resume:', err);
-      setError('Failed to download resume');
+      setError(t('apply.failedToDownloadResume'));
     }
   };
 
@@ -249,7 +251,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
   return (
     <Box>
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
-        Upload your resume (PDF/Word/TXT)
+        {t('apply.uploadResume')}
       </Typography>
 
       {error && (
@@ -271,7 +273,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
           <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 2 }}>
               <Description color="primary" />
-              <Typography variant="h6">Current Resume</Typography>
+              <Typography variant="h6">{t('apply.currentResume')}</Typography>
             </Stack>
             
             <Box sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}>
@@ -290,7 +292,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
                   variant="outlined"
                   onClick={handleViewResume}
                 >
-                  View
+                  {t('apply.view')}
                 </Button>
                 <Button
                   startIcon={<Download />}
@@ -298,7 +300,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
                   variant="outlined"
                   onClick={handleDownloadResume}
                 >
-                  Download
+                  {t('apply.download')}
                 </Button>
                 <Button
                   startIcon={<Upload />}
@@ -306,7 +308,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
                   variant="contained"
                   onClick={() => setShowUpload(true)}
                 >
-                  Upload New Resume
+                  {t('apply.uploadNewResume')}
                 </Button>
               </Stack>
             </Box>
@@ -317,11 +319,11 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
       {!currentResume && !loading && userId && (
         <>
           <Alert severity="info" sx={{ mb: 1 }}>
-            Resume is optional. You can skip this step and continue, or upload your resume below.
+            {t('apply.resumeOptional')}
           </Alert>
           <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-            <Button variant="text" size="small" onClick={() => onChange?.({ ...(value || {}), skipped: true })} aria-label="Skip resume for now">
-              Skip for now
+            <Button variant="text" size="small" onClick={() => onChange?.({ ...(value || {}), skipped: true })} aria-label={t('apply.skipForNow')}>
+              {t('apply.skipForNow')}
             </Button>
           </Stack>
         </>
@@ -329,14 +331,14 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
 
       {currentResume && !showUpload && (
         <Alert severity="success" sx={{ mb: 2 }}>
-          Resume uploaded {formatDate(currentResume.timestamp)} -{' '}
+          {t('apply.resumeUploaded')} {formatDate(currentResume.timestamp)} -{' '}
           <Button 
             variant="text" 
             size="small" 
             onClick={handleViewResume}
             sx={{ textDecoration: 'underline', p: 0, minWidth: 'auto' }}
           >
-            click to open
+            {t('apply.clickToOpen')}
           </Button>
         </Alert>
       )}
@@ -345,7 +347,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
         <Box>
           {currentResume && (
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Uploading a new resume will replace your current resume.
+              {t('apply.uploadingNewReplaces')}
             </Typography>
           )}
           
@@ -355,7 +357,7 @@ const ResumeStep: React.FC<Props> = ({ tenantId, value, onChange }) => {
             onResumeParsed={handleResumeParsed}
           />
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            Accepted formats: PDF, DOCX, TXT. You can also skip this step and upload later.
+            {t('apply.acceptedFormats')}
           </Typography>
         </Box>
       )}

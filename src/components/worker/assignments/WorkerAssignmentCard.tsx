@@ -6,6 +6,7 @@
 import React, { useEffect } from 'react';
 import { Card, CardContent, CardActions, Typography, Stack, Chip, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
+import { useT, getLanguage } from '../../../i18n';
 
 export type AssignmentStatus =
   | 'scheduled'
@@ -32,32 +33,27 @@ export interface WorkerAssignmentItem {
   status: AssignmentStatus;
 }
 
-function formatDateAndTime(startAt: number | string, endAt?: number | string): string {
+function formatDateAndTime(startAt: number | string, endAt?: number | string, locale = 'en-US'): string {
   const start = typeof startAt === 'number' ? new Date(startAt) : new Date(startAt);
-  const day = start.toLocaleDateString('en-US', { weekday: 'short' });
-  const date = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  const time = start.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const day = start.toLocaleDateString(locale, { weekday: 'short' });
+  const date = start.toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' });
+  const time = start.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true });
   if (endAt) {
     const end = typeof endAt === 'number' ? new Date(endAt) : new Date(endAt);
-    const endTime = end.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+    const endTime = end.toLocaleTimeString(locale, { hour: 'numeric', minute: '2-digit', hour12: true });
     return `${day}, ${date} · ${time} – ${endTime}`;
   }
   return `${day}, ${date} at ${time}`;
 }
 
-function getStatusChip(status: AssignmentStatus): { label: string; color: 'default' | 'primary' | 'success' | 'error' | 'warning' } {
+function getStatusKey(status: AssignmentStatus): string {
   switch (status) {
-    case 'confirmed':
-      return { label: 'Confirmed', color: 'success' };
-    case 'cancelled':
-      return { label: 'Cancelled', color: 'error' };
-    case 'completed':
-      return { label: 'Completed', color: 'success' };
-    case 'no-show':
-      return { label: 'No-show', color: 'error' };
+    case 'confirmed': return 'assignments.statusConfirmed';
+    case 'cancelled': return 'assignments.statusCancelled';
+    case 'completed': return 'assignments.statusCompleted';
+    case 'no-show': return 'assignments.statusNoShow';
     case 'scheduled':
-    default:
-      return { label: 'Scheduled', color: 'default' };
+    default: return 'assignments.statusScheduled';
   }
 }
 
@@ -72,13 +68,18 @@ function formatPayRate(payRate: number | undefined): string {
   return `$${Number(payRate).toFixed(2)}/hr`;
 }
 
+const localeForLang = (lang: string) => (lang === 'es' ? 'es' : 'en-US');
+
 const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
   assignment,
   showViewDetails = true,
 }) => {
   const navigate = useNavigate();
-  const dateTimeStr = formatDateAndTime(assignment.startAt, assignment.endAt);
-  const chip = getStatusChip(assignment.status);
+  const t = useT();
+  const locale = localeForLang(getLanguage());
+  const dateTimeStr = formatDateAndTime(assignment.startAt, assignment.endAt, locale);
+  const statusKey = getStatusKey(assignment.status);
+  const chipColor = assignment.status === 'confirmed' || assignment.status === 'completed' ? 'success' : assignment.status === 'cancelled' || assignment.status === 'no-show' ? 'error' : 'default';
   const payStr = formatPayRate(assignment.payRate);
 
   useEffect(() => {
@@ -106,7 +107,7 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
               {assignment.jobTitle}
             </Typography>
-            <Chip label={chip.label} color={chip.color} size="small" />
+            <Chip label={t(statusKey)} color={chipColor} size="small" />
           </Stack>
           {assignment.clientName && (
             <Typography variant="body2" color="text.secondary">
@@ -136,7 +137,7 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
       {showViewDetails && (
         <CardActions sx={{ justifyContent: 'flex-end', px: 2, pt: 0, pb: 1.5 }}>
           <Button size="small" variant="text" onClick={handleViewDetails}>
-            View details
+            {t('assignments.viewDetails')}
           </Button>
         </CardActions>
       )}

@@ -10,6 +10,7 @@ import StarIcon from '@mui/icons-material/Star';
 import DescriptionIcon from '@mui/icons-material/Description';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import ChatIcon from '@mui/icons-material/Chat';
+import { useT } from '../../../i18n';
 
 export interface StatusCardItem {
   label: string;
@@ -40,16 +41,18 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
   documentsSubtext,
   applicationsCount,
   supportCardOnly = true,
-  supportSubtext = 'Get help',
+  supportSubtext,
   showSupportCard = false,
 }) => {
   const navigate = useNavigate();
+  const t = useT();
+  const supportSubtextResolved = supportSubtext ?? t('dashboard.getHelp');
 
   const supportCard: (StatusCardItem & { metricHidden?: boolean }) | null = showSupportCard
     ? {
-        label: 'Support',
+        label: t('dashboard.support'),
         metric: '',
-        subtext: supportSubtext,
+        subtext: supportSubtextResolved,
         to: '/c1/workers/support',
         icon: <ChatIcon fontSize="small" />,
         metricHidden: supportCardOnly,
@@ -58,24 +61,24 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
 
   const cards: (StatusCardItem & { metricHidden?: boolean })[] = [
     {
-      label: 'Job Readiness',
-      metric: readinessPercent != null ? `${readinessPercent}%` : 'Not available yet',
-      subtext: 'Unlock more shifts',
+      label: t('dashboard.jobReadiness'),
+      metric: readinessPercent != null ? `${readinessPercent}%` : t('dashboard.notAvailableYet'),
+      subtext: t('dashboard.unlockMoreShifts'),
       to: '/c1/workers/profile',
       icon: <StarIcon fontSize="small" />,
       metricHidden: readinessPercent == null,
     },
     {
-      label: 'Documents',
+      label: t('dashboard.documents'),
       metric: documentsStatus,
       subtext: documentsSubtext,
       to: '/c1/workers/documents',
       icon: <DescriptionIcon fontSize="small" />,
     },
     {
-      label: 'Applications',
-      metric: applicationsCount ?? 'Not available yet',
-      subtext: 'View your applications',
+      label: t('dashboard.applications'),
+      metric: applicationsCount ?? t('dashboard.notAvailableYet'),
+      subtext: t('dashboard.viewYourApplications'),
       to: '/c1/workers/applications',
       icon: <ListAltIcon fontSize="small" />,
       metricHidden: applicationsCount == null,

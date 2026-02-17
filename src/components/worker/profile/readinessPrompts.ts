@@ -14,7 +14,8 @@ export type ReadinessSectionId = keyof typeof READINESS_SECTION_IDS;
 
 export interface ReadinessPrompt {
   id: ReadinessSectionId;
-  text: string;
+  /** i18n key for message (e.g. profile.promptAvailability) */
+  textKey: string;
   icon: string;
 }
 
@@ -43,28 +44,28 @@ export function getReadinessPrompts(userDoc: any): ReadinessPrompt[] {
   if (!hasAvailability) {
     prompts.push({
       id: 'availability',
-      text: 'Add availability → Unlock more shifts',
+      textKey: 'profile.promptAvailability',
       icon: '🔓',
     });
   }
   if (!hasCertifications) {
     prompts.push({
       id: 'certifications',
-      text: 'Add a certification → Qualify for higher-paying roles',
+      textKey: 'profile.promptCertifications',
       icon: '🔓',
     });
   }
   if (!hasWorkExperience) {
     prompts.push({
       id: 'work-experience',
-      text: 'Add work experience → Increase your match rate',
+      textKey: 'profile.promptWorkExperience',
       icon: '🔓',
     });
   }
   if (!hasBio) {
     prompts.push({
       id: 'bio',
-      text: 'Add a short bio → Stand out to recruiters',
+      textKey: 'profile.promptBio',
       icon: '🔓',
     });
   }

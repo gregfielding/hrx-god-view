@@ -17,6 +17,9 @@ import {
   useMediaQuery,
   Snackbar,
   Skeleton,
+  Menu,
+  MenuItem,
+  Tooltip,
 } from '@mui/material';
 import {
   LocationOn as LocationIcon,
@@ -28,12 +31,15 @@ import {
   ContentCopy as ContentCopyIcon,
   VerifiedUser as VerifiedIcon,
   Lock as LockIcon,
+  Language as LanguageIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { useT, setLanguage } from '../i18n';
 import { formatDistanceToNow } from 'date-fns';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
@@ -42,7 +48,9 @@ import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import { getRequirementsWithStatus } from '../utils/jobRequirementStatus';
 import { JobRequirementChip } from '../components/JobRequirementChip';
+import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
+import AuthDialog from '../components/AuthDialog';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -74,6 +82,14 @@ const JobPostingDetail: React.FC = () => {
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [authDialogOpen, setAuthDialogOpen] = useState(false);
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const t = useT();
+
+  useEffect(() => {
+    setLanguage(guestLanguage);
+  }, [guestLanguage]);
 
   useEffect(() => {
     if (!resolvedTenantId || !postId) {
@@ -134,9 +150,12 @@ const JobPostingDetail: React.FC = () => {
               jobOrderId: jobOrderId,
               tenantId: resolvedTenantId,
               postTitle: jobOrderData.jobOrderName || jobTitle,
+              postTitle_i18n: jobOrderData.postTitle_i18n ?? jobOrderData.jobOrderName_i18n,
               jobTitle: jobTitle,
+              jobTitle_i18n: jobOrderData.jobTitle_i18n,
               jobType: 'gig',
               jobDescription: jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
+              jobDescription_i18n: jobOrderData.jobDescription_i18n ?? jobOrderData.jobOrderDescription_i18n,
               companyName: jobOrderData.companyName || '',
               worksiteName: jobOrderData.worksiteName || '',
               worksiteAddress: jobOrderData.worksiteAddress || {
@@ -1022,7 +1041,7 @@ const JobPostingDetail: React.FC = () => {
           onClick={() => navigate('/c1/jobs-board')}
           sx={{ mt: 2 }}
         >
-          Back to Jobs Board
+          {t('jobs.backToJobsBoard')}
         </Button>
       </Box>
     );
@@ -1132,7 +1151,7 @@ const JobPostingDetail: React.FC = () => {
   } as const;
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 2 }}>
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>
@@ -1142,15 +1161,100 @@ const JobPostingDetail: React.FC = () => {
         <script type="application/ld+json">{JSON.stringify(generateJobPostingSchema())}</script>
       </Helmet>
 
-      {/* Back Button */}
-      <Button
-        startIcon={<ArrowBackIcon />}
-        onClick={() => navigate('/c1/jobs-board')}
-        size={isMobile ? 'small' : 'medium'}
-        sx={{ mb: 3 }}
-      >
-        Back to Jobs Board
-      </Button>
+      {/* Top row: Back to Jobs Board + Language picker + Sign In or Create Account (when guest) */}
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mb: 3 }}>
+        <Button
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/c1/jobs-board')}
+          size={isMobile ? 'small' : 'medium'}
+        >
+          {t('jobs.backToJobsBoard')}
+        </Button>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          {!user && (
+            <>
+              <Tooltip title={guestLanguage === 'es' ? t('nav.messageLanguageEs') : t('nav.messageLanguageEn')}>
+                <Box
+                  component="button"
+                  onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
+                  aria-label={t('nav.language')}
+                  sx={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 0.5,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    px: 1,
+                    py: 0.75,
+                    bgcolor: 'background.paper',
+                    color: 'text.secondary',
+                    cursor: 'pointer',
+                    '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+                  }}
+                >
+                  <LanguageIcon sx={{ fontSize: 20 }} />
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {guestLanguage === 'es' ? 'ES' : 'EN'}
+                  </Typography>
+                </Box>
+              </Tooltip>
+          </>
+          )}
+          {!user && (
+            <Button
+              variant="contained"
+              onClick={() => setAuthDialogOpen(true)}
+              size={isMobile ? 'small' : 'medium'}
+              sx={{
+                px: { xs: 1.5, sm: 2 },
+                py: { xs: 0.75, sm: 1 },
+                fontWeight: 600,
+                borderRadius: 2,
+                textTransform: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {t('jobs.signInOrCreateAccount')}
+            </Button>
+          )}
+        </Box>
+      </Box>
+      {!user && (
+        <Menu
+          anchorEl={languageMenuAnchorEl}
+          open={Boolean(languageMenuAnchorEl)}
+          onClose={() => setLanguageMenuAnchorEl(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+        >
+          <MenuItem
+            selected={guestLanguage === 'en'}
+            onClick={() => {
+              setLanguageMenuAnchorEl(null);
+              setGuestLanguage('en');
+            }}
+          >
+            English (EN)
+          </MenuItem>
+          <MenuItem
+            selected={guestLanguage === 'es'}
+            onClick={() => {
+              setLanguageMenuAnchorEl(null);
+              setGuestLanguage('es');
+            }}
+          >
+            Español (ES)
+          </MenuItem>
+        </Menu>
+      )}
+
+      <AuthDialog
+        open={authDialogOpen}
+        onClose={() => setAuthDialogOpen(false)}
+        onAuthSuccess={() => setAuthDialogOpen(false)}
+        initialPreferredLanguage={guestLanguage}
+      />
 
       {/* Header */}
       <Paper elevation={2} sx={{ ...cardBaseSx, mb: 3 }}>
@@ -1179,7 +1283,7 @@ const JobPostingDetail: React.FC = () => {
                 component="h1"
                 sx={{ fontWeight: 'bold', fontSize: isMobile ? '1.25rem' : undefined }}
               >
-                {posting.postTitle}
+                {getJobPostingDisplayText(posting, 'postTitle', guestLanguage) || posting.postTitle}
               </Typography>
               {/* Copy Link Button */}
               <Button
@@ -1193,7 +1297,7 @@ const JobPostingDetail: React.FC = () => {
                 }}
                 sx={{ fontSize: isMobile ? '0.75rem' : undefined }}
               >
-                Copy Link
+                {t('jobs.copyLink')}
               </Button>
             </Box>
 
@@ -1470,7 +1574,7 @@ const JobPostingDetail: React.FC = () => {
                   fontWeight: 600,
                 }}
               >
-                Apply Now
+                {t('jobs.applyNow')}
               </Button>
             ))}
         </Box>
@@ -1495,7 +1599,7 @@ const JobPostingDetail: React.FC = () => {
                 Job Description
               </Typography>
               <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                {posting.jobDescription || 'No description provided'}
+                {getJobPostingDisplayText(posting, 'jobDescription', guestLanguage) || posting.jobDescription || 'No description provided'}
               </Typography>
             </CardContent>
           </Card>
@@ -1518,6 +1622,7 @@ const JobPostingDetail: React.FC = () => {
                     onDeclineShift={handleDeclineAssignmentForShift}
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
+                    language={guestLanguage}
                   />
                 ) : posting.jobOrderId ? (
                   <Alert severity="info">
@@ -1632,10 +1737,10 @@ const JobPostingDetail: React.FC = () => {
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
                   {statusButtonProps?.label === 'confirmed_special'
-                    ? "You've Been Hired"
+                    ? t('jobs.youveBeenHired')
                     : (statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode)
-                      ? 'Accept this Position'
-                      : 'Apply for this Position'}
+                      ? t('jobs.acceptThisPosition')
+                      : t('jobs.applyForThisPosition')}
                 </Typography>
 
                 <Divider sx={{ my: 2 }} />
@@ -1644,7 +1749,7 @@ const JobPostingDetail: React.FC = () => {
                   {posting.showPayRate && posting.payRate && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
-                        Pay Rate
+                        {t('jobs.payRate')}
                       </Typography>
                       <Typography variant="body1" fontWeight="medium">
                         ${posting.payRate}/hr
@@ -1655,7 +1760,7 @@ const JobPostingDetail: React.FC = () => {
                   {posting.workersNeeded && posting.showWorkersNeeded !== false && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
-                        Openings
+                        {t('jobs.openings')}
                       </Typography>
                       <Typography variant="body1" fontWeight="medium">
                         {posting.workersNeeded}
@@ -1666,10 +1771,10 @@ const JobPostingDetail: React.FC = () => {
                   {posting.jobType && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
-                        Type
+                        {t('jobs.type')}
                       </Typography>
                       <Typography variant="body1" fontWeight="medium">
-                        {posting.jobType === 'gig' ? 'Gig' : 'Career'}
+                        {posting.jobType === 'gig' ? t('jobs.gig') : t('jobs.career')}
                       </Typography>
                     </Box>
                   )}
@@ -1678,10 +1783,10 @@ const JobPostingDetail: React.FC = () => {
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
                         {assignmentStartDate
-                          ? 'Start Date'
+                          ? t('jobs.startDate')
                           : posting.jobType === 'career'
-                            ? 'Estimated Start Date'
-                            : 'Start Date'}
+                            ? t('jobs.estimatedStartDate')
+                            : t('jobs.startDate')}
                       </Typography>
                       <Typography variant="body1" fontWeight="medium">
                         {formatDate(assignmentStartDate ?? posting.startDate)}
@@ -1692,7 +1797,7 @@ const JobPostingDetail: React.FC = () => {
                   {posting.jobType === 'career' && careerWeeklyScheduleSummary && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2 }}>
                       <Typography variant="body2" color="text.secondary">
-                        Weekly Schedule
+                        {t('jobs.weeklySchedule')}
                       </Typography>
                       <Typography
                         variant="body1"
@@ -1708,7 +1813,7 @@ const JobPostingDetail: React.FC = () => {
                 {(statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, mt: 3 }}>
                     <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                      You&apos;ve been hired to work this job. Please click the button to Accept the position.
+                      {t('jobs.youveBeenHiredAccept')}
                     </Typography>
                     <Button
                       variant="contained"
@@ -1842,7 +1947,7 @@ const JobPostingDetail: React.FC = () => {
                     onClick={handleApply}
                     sx={{ mt: 3, py: 1.5 }}
                   >
-                    Apply Now
+                    {t('jobs.applyNow')}
                   </Button>
                 )}
 

@@ -14,6 +14,7 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Autocomplete,
   Alert,
   CircularProgress,
   Container,
@@ -30,6 +31,8 @@ import {
   Drawer,
   useMediaQuery,
   useTheme,
+  Menu,
+  Tooltip,
 } from '@mui/material';
 import {
   Search,
@@ -57,7 +60,9 @@ import { db, auth } from '../firebase';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { useAuth } from '../contexts/AuthContext';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { useFavorites, useFavoritesFilter } from '../hooks/useFavorites';
+import { useT, setLanguage } from '../i18n';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
 import Layout from '../components/Layout';
@@ -162,7 +167,14 @@ const PublicJobsBoard: React.FC = () => {
     needPhone: false,
     jobId: null as string | null
   });
-  
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const t = useT();
+
+  useEffect(() => {
+    setLanguage(guestLanguage);
+  }, [guestLanguage]);
+
   // Favorites system
   const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');
   
@@ -1306,24 +1318,78 @@ const PublicJobsBoard: React.FC = () => {
                 />
               )}
               
-              {/* Sign In or Create Account Button - Top right */}
-              <Button
-                variant="contained"
-                onClick={() => setAuthDialogOpen(true)}
-                size={isMobile ? 'small' : 'medium'}
-                sx={{
-                  px: { xs: 1.5, sm: 3 },
-                  py: { xs: 0.75, sm: 1.5 },
-                  fontWeight: 600,
-                  borderRadius: 2,
-                  textTransform: 'none',
-                  fontSize: { xs: '0.75rem', sm: '1rem' }, // Smaller font on mobile
-                  whiteSpace: 'nowrap'
+              {/* Language picker + Sign In or Create Account - Top right */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Tooltip title={guestLanguage === 'es' ? 'Idioma: Español' : 'Language: English'}>
+                  <Box
+                    component="button"
+                    onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
+                    aria-label={guestLanguage === 'es' ? 'Idioma' : 'Language'}
+                    sx={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 0.5,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      px: 1,
+                      py: 0.75,
+                      bgcolor: 'background.paper',
+                      color: 'text.secondary',
+                      cursor: 'pointer',
+                      '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+                    }}
+                  >
+                    <Language sx={{ fontSize: 20 }} />
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {guestLanguage === 'es' ? 'ES' : 'EN'}
+                    </Typography>
+                  </Box>
+                </Tooltip>
+                <Button
+                  variant="contained"
+                  onClick={() => setAuthDialogOpen(true)}
+                  size={isMobile ? 'small' : 'medium'}
+                  sx={{
+                    px: { xs: 1.5, sm: 3 },
+                    py: { xs: 0.75, sm: 1.5 },
+                    fontWeight: 600,
+                    borderRadius: 2,
+                    textTransform: 'none',
+                    fontSize: { xs: '0.75rem', sm: '1rem' },
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  Sign In or Create Account
+                </Button>
+              </Box>
+            </Box>
+            <Menu
+              anchorEl={languageMenuAnchorEl}
+              open={Boolean(languageMenuAnchorEl)}
+              onClose={() => setLanguageMenuAnchorEl(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+            >
+              <MenuItem
+                selected={guestLanguage === 'en'}
+                onClick={() => {
+                  setLanguageMenuAnchorEl(null);
+                  setGuestLanguage('en');
                 }}
               >
-                Sign In or Create Account
-              </Button>
-            </Box>
+                English (EN)
+              </MenuItem>
+              <MenuItem
+                selected={guestLanguage === 'es'}
+                onClick={() => {
+                  setLanguageMenuAnchorEl(null);
+                  setGuestLanguage('es');
+                }}
+              >
+                Español (ES)
+              </MenuItem>
+            </Menu>
             
             {/* Second row: Main Page Title */}
             <Typography 
@@ -1334,7 +1400,7 @@ const PublicJobsBoard: React.FC = () => {
                 lineHeight: { xs: 1.3, sm: 1.2 }
               }}
             >
-              {isC1Route ? 'Jobs Board' : 'Find Your Next Opportunity'}
+              {isC1Route ? t('nav.jobsBoard') : t('jobs.findMoreWork')}
             </Typography>
           </Box>
         </Box>
@@ -1346,7 +1412,7 @@ const PublicJobsBoard: React.FC = () => {
           <Grid item xs={12} md={6}>
             <TextField
               fullWidth
-              placeholder="Search jobs by title, location, or description..."
+              placeholder={t('jobs.searchPlaceholder')}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               InputProps={{
@@ -1398,44 +1464,41 @@ const PublicJobsBoard: React.FC = () => {
               }}
             />
           </Grid>
-          {/* Desktop filters - hidden on mobile */}
+          {/* Desktop filters - hidden on mobile; Location is autocomplete for long lists */}
           <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
-            <FormControl fullWidth>
-              <InputLabel>Location</InputLabel>
-              <Select
-                value={locationFilter}
-                label="Location"
-                onChange={(e) => setLocationFilter(e.target.value)}
-              >
-                <MenuItem value="all">All Locations</MenuItem>
-                {getUniqueLocations().map((location) => (
-                  <MenuItem key={location} value={location}>
-                    {location}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+            <Autocomplete
+              fullWidth
+              size="small"
+              options={['all', ...getUniqueLocations()]}
+              getOptionLabel={(option) => (option === 'all' ? t('jobs.allLocations') : option)}
+              value={locationFilter}
+              onChange={(_, newValue) => setLocationFilter(newValue ?? 'all')}
+              renderInput={(params) => (
+                <TextField {...params} label={t('jobs.location')} placeholder={t('jobs.allLocations')} />
+              )}
+              isOptionEqualToValue={(option, value) => option === value}
+            />
           </Grid>
           <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
-              <InputLabel>Job Type</InputLabel>
+              <InputLabel>{t('jobs.jobType')}</InputLabel>
               <Select
                 value={jobTypeFilter}
-                label="Job Type"
+                label={t('jobs.jobType')}
                 onChange={(e) => setJobTypeFilter(e.target.value)}
               >
-                <MenuItem value="all">All Types</MenuItem>
-                <MenuItem value="gig">Gig</MenuItem>
-                <MenuItem value="career">Career</MenuItem>
+                <MenuItem value="all">{t('jobs.allTypes')}</MenuItem>
+                <MenuItem value="gig">{t('jobs.gig')}</MenuItem>
+                <MenuItem value="career">{t('jobs.career')}</MenuItem>
               </Select>
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2} sx={{ display: { xs: 'none', md: 'block' } }}>
             <FormControl fullWidth>
-              <InputLabel>Sort By</InputLabel>
+              <InputLabel>{t('jobs.sortBy')}</InputLabel>
               <Select
                 value={sortBy}
-                label="Sort By"
+                label={t('jobs.sortBy')}
                 onChange={(e) => {
                   const newSortBy = e.target.value;
                   setSortBy(newSortBy);
@@ -1446,8 +1509,8 @@ const PublicJobsBoard: React.FC = () => {
                   }
                 }}
               >
-                <MenuItem value="newest">Newest First</MenuItem>
-                <MenuItem value="closest">Closest to Me</MenuItem>
+                <MenuItem value="newest">{t('jobs.newestFirst')}</MenuItem>
+                <MenuItem value="closest">{t('jobs.closestToMe')}</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -1458,42 +1521,39 @@ const PublicJobsBoard: React.FC = () => {
           <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
             <Grid container spacing={2}>
               <Grid item xs={12}>
-                <FormControl fullWidth>
-                  <InputLabel>Location</InputLabel>
-                  <Select
-                    value={locationFilter}
-                    label="Location"
-                    onChange={(e) => setLocationFilter(e.target.value)}
-                  >
-                    <MenuItem value="all">All Locations</MenuItem>
-                    {getUniqueLocations().map((location) => (
-                      <MenuItem key={location} value={location}>
-                        {location}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </FormControl>
+                <Autocomplete
+                  fullWidth
+                  size="small"
+                  options={['all', ...getUniqueLocations()]}
+                  getOptionLabel={(option) => (option === 'all' ? t('jobs.allLocations') : option)}
+                  value={locationFilter}
+                  onChange={(_, newValue) => setLocationFilter(newValue ?? 'all')}
+                  renderInput={(params) => (
+                    <TextField {...params} label={t('jobs.location')} placeholder={t('jobs.allLocations')} />
+                  )}
+                  isOptionEqualToValue={(option, value) => option === value}
+                />
               </Grid>
               <Grid item xs={12}>
                 <FormControl fullWidth>
-                  <InputLabel>Job Type</InputLabel>
+                  <InputLabel>{t('jobs.jobType')}</InputLabel>
                   <Select
                     value={jobTypeFilter}
-                    label="Job Type"
+                    label={t('jobs.jobType')}
                     onChange={(e) => setJobTypeFilter(e.target.value)}
                   >
-                    <MenuItem value="all">All Types</MenuItem>
-                    <MenuItem value="gig">Gig</MenuItem>
-                    <MenuItem value="career">Career</MenuItem>
+                    <MenuItem value="all">{t('jobs.allTypes')}</MenuItem>
+                    <MenuItem value="gig">{t('jobs.gig')}</MenuItem>
+                    <MenuItem value="career">{t('jobs.career')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
               <Grid item xs={12}>
                 <FormControl fullWidth>
-                  <InputLabel>Sort By</InputLabel>
+                  <InputLabel>{t('jobs.sortBy')}</InputLabel>
                   <Select
                     value={sortBy}
-                    label="Sort By"
+                    label={t('jobs.sortBy')}
                     onChange={(e) => {
                       const newSortBy = e.target.value;
                       setSortBy(newSortBy);
@@ -1504,8 +1564,8 @@ const PublicJobsBoard: React.FC = () => {
                       }
                     }}
                   >
-                    <MenuItem value="newest">Newest First</MenuItem>
-                    <MenuItem value="closest">Closest to Me</MenuItem>
+                    <MenuItem value="newest">{t('jobs.newestFirst')}</MenuItem>
+                    <MenuItem value="closest">{t('jobs.closestToMe')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -1744,7 +1804,7 @@ const PublicJobsBoard: React.FC = () => {
                               handleCardClick(job);
                             }}
                           >
-                            Apply Now
+                            {t('jobs.applyNow')}
                           </Button>
                         );
                       }
@@ -1769,7 +1829,7 @@ const PublicJobsBoard: React.FC = () => {
                                 handleApply(job);
                               }}
                             >
-                              Apply Now
+                              {t('jobs.applyNow')}
                             </Button>
                           );
                         }
@@ -1795,7 +1855,7 @@ const PublicJobsBoard: React.FC = () => {
                                 navigate(`/c1/workers/assignments/${assignmentId}`);
                               }}
                             >
-                              View Assignment
+                              {t('assignment.viewAssignment')}
                             </Button>
                           );
                         }
@@ -1845,7 +1905,7 @@ const PublicJobsBoard: React.FC = () => {
                             handleApply(job);
                           }}
                         >
-                          Apply Now
+                          {t('jobs.applyNow')}
                         </Button>
                       );
                     })()}
@@ -2343,7 +2403,7 @@ const PublicJobsBoard: React.FC = () => {
                           }
                         }}
                       >
-                        Apply Now
+                        {t('jobs.applyNow')}
                       </Button>
                     );
                   }
@@ -2380,7 +2440,7 @@ const PublicJobsBoard: React.FC = () => {
                       }
                     }}
                   >
-                    Apply Now
+                    {t('jobs.applyNow')}
                   </Button>
                 );
               })()}
@@ -2397,6 +2457,7 @@ const PublicJobsBoard: React.FC = () => {
           // Page will automatically update due to auth state change
           // No need for manual refresh
         }}
+        initialPreferredLanguage={guestLanguage}
       />
 
       {/* Eligibility Verification Modal */}

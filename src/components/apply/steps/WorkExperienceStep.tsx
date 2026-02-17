@@ -26,6 +26,7 @@ import {
 import { AddCircle, Delete as DeleteIcon, ExpandMore, Business, CalendarToday } from '@mui/icons-material';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
+import { useT } from '../../../i18n';
 import onetJobTitles from '../../../data/onetJobTitles.json';
 import { experienceOptions } from '../../../data/experienceOptions';
 
@@ -59,7 +60,7 @@ const commonJobTitles = [
 const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  
+  const t = useT();
   const [experienceDialogOpen, setExperienceDialogOpen] = useState(false);
   const [quickAddExperienceValue, setQuickAddExperienceValue] = useState<string | null>(null);
   
@@ -407,7 +408,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
         )}
 
         <Chip
-          label="Add Work Experience"
+          label={t('profile.addWorkExperience')}
           onClick={(e) => handleOpenExperienceDialog(e)}
           icon={<AddCircle />}
           color="primary"
@@ -441,7 +442,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
           }
         }}
       >
-        <DialogTitle>Add Work Experience</DialogTitle>
+        <DialogTitle>{t('profile.addWorkExperience')}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
@@ -453,7 +454,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label="Job Title"
+                  label={t('profile.jobTitle')}
                   fullWidth
                   required
                   InputProps={{
@@ -468,7 +469,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
               )}
             />
             <TextField
-              label="Company"
+              label={t('profile.company')}
               fullWidth
               required
               value={newExperience.employer}
@@ -497,7 +498,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
                 <Stack spacing={2}>
                   <TextField
                     select
-                    label="Start Year"
+                    label={t('profile.startYear')}
                     fullWidth
                     value={newExperience.startYear}
                     onChange={(e) => setNewExperience({ ...newExperience, startYear: e.target.value })}
@@ -526,16 +527,16 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
                         })}
                       />
                     }
-                    label="I'm still working here"
+                    label={t('profile.stillWorkingHere')}
                   />
                   {!newExperience.stillWorking && (
                     <TextField
                       select
-                      label="End Year"
+                      label={t('profile.endYear')}
                       fullWidth
                       value={newExperience.endYear}
                       onChange={(e) => setNewExperience({ ...newExperience, endYear: e.target.value })}
-                      helperText="Leave empty if still working"
+                      helperText={t('profile.leaveEmptyStillWorking')}
                       InputProps={{
                         startAdornment: (
                           <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>

@@ -1,198 +1,220 @@
-import React from 'react';
-import { 
-  Box, 
-  Typography, 
-  Container, 
-  List, 
-  ListItem, 
+import React, { useState } from 'react';
+import {
+  Box,
+  Typography,
+  Container,
+  List,
+  ListItem,
   Alert,
-  Link
+  Link,
+  Menu,
+  MenuItem,
+  Tooltip,
 } from '@mui/material';
+import LanguageIcon from '@mui/icons-material/Language';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { useT, setLanguage } from '../i18n';
 
 const Terms: React.FC = () => {
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const t = useT();
+
+  React.useEffect(() => {
+    setLanguage(guestLanguage);
+  }, [guestLanguage]);
+
   return (
-    <Container maxWidth="md" sx={{ py: 5, pb: 10 }}>
+    <Container maxWidth="md" sx={{ py: 5, pb: 10, pt: 2 }}>
+      {/* Language picker - 16px padding above (pt: 2) */}
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Tooltip title={guestLanguage === 'es' ? t('nav.messageLanguageEs') : t('nav.messageLanguageEn')}>
+          <Box
+            component="button"
+            onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
+            aria-label={t('nav.language')}
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 0.5,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+              px: 1,
+              py: 0.75,
+              bgcolor: 'background.paper',
+              color: 'text.secondary',
+              cursor: 'pointer',
+              '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+            }}
+          >
+            <LanguageIcon sx={{ fontSize: 20 }} />
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {guestLanguage === 'es' ? 'ES' : 'EN'}
+            </Typography>
+          </Box>
+        </Tooltip>
+      </Box>
+      <Menu
+        anchorEl={languageMenuAnchorEl}
+        open={Boolean(languageMenuAnchorEl)}
+        onClose={() => setLanguageMenuAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <MenuItem
+          selected={guestLanguage === 'en'}
+          onClick={() => { setLanguageMenuAnchorEl(null); setGuestLanguage('en'); }}
+        >
+          {t('nav.englishEn')}
+        </MenuItem>
+        <MenuItem
+          selected={guestLanguage === 'es'}
+          onClick={() => { setLanguageMenuAnchorEl(null); setGuestLanguage('es'); }}
+        >
+          {t('nav.espanolEs')}
+        </MenuItem>
+      </Menu>
+
       {/* Header */}
       <Box component="header" sx={{ mb: 3 }}>
         <Typography variant="h3" sx={{ fontWeight: 700, lineHeight: 1.2, mb: 1.5 }}>
-          Terms of Use
+          {t('legal.terms.title')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Effective Date: <time dateTime="2025-10-21">October 21, 2025</time> · Last Updated: <time dateTime="2025-10-21">October 21, 2025</time>
+          {t('legal.terms.effectiveDate')} <time dateTime="2025-10-21">October 21, 2025</time> · {t('legal.terms.lastUpdated')} <time dateTime="2025-10-21">October 21, 2025</time>
           <br />
-          Applies to: C1 Staffing, LLC and its affiliates, including HRX One, HRX Companion, and related products ("we," "us," "our").
+          {t('legal.terms.appliesTo')}
         </Typography>
         
         <Alert severity="info" sx={{ mb: 4 }}>
           <Typography variant="body2">
-            These Terms govern your access to and use of our websites, mobile applications, and related services. By creating an account or using our platform, you agree to these Terms of Use.
+            {t('legal.terms.introAlert')}
           </Typography>
         </Alert>
       </Box>
 
       {/* Sections */}
       <Box component="section" id="acceptance" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>1. Acceptance of Terms</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s1Title')}</Typography>
         <Typography paragraph>
-          By accessing or using any part of the C1 Staffing or HRX One platforms (collectively, the "Services"), you acknowledge that you have read, understood, and agree to be bound by these Terms of Use and our <Link href="/privacy">Privacy Policy</Link> and <Link href="/consent">SMS and Mobile Communications Consent Agreement</Link>.
+          {t('legal.terms.s1P1')} <Link href="/privacy">{t('legal.terms.s1P1Privacy')}</Link>{t('legal.terms.s1P1And')}<Link href="/consent">{t('legal.terms.s1P1Consent')}</Link>.
         </Typography>
         <Typography paragraph>
-          If you do not agree, do not access or use our Services. If you are accessing the Services on behalf of a company or organization, you represent that you are authorized to bind that entity to these Terms.
+          {t('legal.terms.s1P2')}
         </Typography>
       </Box>
 
       <Box component="section" id="eligibility" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>2. Eligibility</Typography>
-        <Typography paragraph>
-          You must be at least 16 years old (or the age of majority in your jurisdiction, if higher) to use our Services. Some job assignments may require a higher minimum age as required by law.
-        </Typography>
-        <Typography paragraph>
-          By registering, you represent that the information you provide is true, accurate, and complete, and that you will maintain it accordingly.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s2Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s2P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s2P2')}</Typography>
       </Box>
 
       <Box component="section" id="accounts" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>3. Account Registration and Security</Typography>
-        <Typography paragraph>
-          To access certain features, you must create an account. You are responsible for maintaining the confidentiality of your login credentials and for all activity under your account.
-        </Typography>
-        <Typography paragraph>
-          You agree to notify us immediately of any unauthorized access or breach of your account. We reserve the right to suspend or terminate any account that violates these Terms or is otherwise deemed insecure or fraudulent.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s3Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s3P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s3P2')}</Typography>
       </Box>
 
       <Box component="section" id="communications" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>4. Electronic Communications</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s4Title')}</Typography>
         <Typography paragraph>
-          By creating an account, you consent to receive communications electronically, including via email, SMS, and mobile notifications, as described in our <Link href="/consent">SMS and Mobile Communications Consent Agreement</Link>. You may withdraw certain consents as permitted by law, though doing so may limit your ability to use certain features.
+          {t('legal.terms.s4P1')} <Link href="/consent">{t('legal.terms.s4P1Consent')}</Link>{t('legal.terms.s4P1B')}
         </Typography>
       </Box>
 
       <Box component="section" id="platform-use" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>5. Use of the Services</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s5Title')}</Typography>
         <List sx={{ listStyleType: 'disc', pl: 3 }}>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Use the Services only for lawful purposes related to job seeking, employment, scheduling, and communication with us.</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Do not impersonate another person or entity or misrepresent your affiliation.</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Do not upload, transmit, or distribute any harmful, fraudulent, or unlawful material.</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Do not attempt to access data or systems you are not authorized to access.</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Do not interfere with or disrupt the security, integrity, or performance of the Services.</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s5L1')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s5L2')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s5L3')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s5L4')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s5L5')}</ListItem>
         </List>
-        <Typography paragraph>
-          We reserve the right to monitor, moderate, and remove content or access at our sole discretion to maintain platform integrity and compliance.
-        </Typography>
+        <Typography paragraph>{t('legal.terms.s5P2')}</Typography>
       </Box>
 
       <Box component="section" id="employment" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>6. Employment Relationship</Typography>
-        <Typography paragraph>
-          Your use of the platform does not in itself create an employment relationship. If you are hired or assigned to a client, your employment status, pay, and terms are governed by your separate employment documents with C1 Staffing or the relevant employer of record.
-        </Typography>
-        <Typography paragraph>
-          Nothing in these Terms guarantees a job, assignment, or continued employment.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s6Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s6P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s6P2')}</Typography>
       </Box>
 
       <Box component="section" id="intellectual" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>7. Intellectual Property</Typography>
-        <Typography paragraph>
-          All content, code, trademarks, logos, and other intellectual property in or related to the Services are owned or licensed by us and protected under applicable intellectual property laws.
-        </Typography>
-        <Typography paragraph>
-          You are granted a limited, non-exclusive, non-transferable license to access and use the Services for lawful purposes. No rights are transferred to you except as expressly stated.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s7Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s7P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s7P2')}</Typography>
       </Box>
 
       <Box component="section" id="user-content" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>8. User-Generated Content</Typography>
-        <Typography paragraph>
-          If you submit, upload, or post any information (such as resumes, feedback, or profile data), you grant us a worldwide, royalty-free, sublicensable license to use, host, display, and process such content solely to operate and improve our Services.
-        </Typography>
-        <Typography paragraph>
-          You remain responsible for the accuracy and legality of the content you provide.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s8Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s8P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s8P2')}</Typography>
       </Box>
 
       <Box component="section" id="privacy" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>9. Privacy and Data Protection</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s9Title')}</Typography>
         <Typography paragraph>
-          Our <Link href="/privacy">Privacy Policy</Link> explains how we collect, use, and share your information. By using our Services, you consent to our data practices as described therein.
+          {t('legal.terms.s9P1')} <Link href="/privacy">{t('legal.terms.s9P1Privacy')}</Link>{t('legal.terms.s9P1B')}
         </Typography>
       </Box>
 
       <Box component="section" id="third-parties" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>10. Third-Party Services and Links</Typography>
-        <Typography paragraph>
-          The Services may link to third-party websites or integrate with third-party systems (such as payroll, identity verification, or messaging providers). We are not responsible for the content or practices of any third party. Your use of such services is governed by their terms.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s10Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s10P1')}</Typography>
       </Box>
 
       <Box component="section" id="termination" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>11. Termination</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s11Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s11P1')}</Typography>
         <Typography paragraph>
-          We may suspend or terminate your access to the Services at any time, with or without notice, for conduct that we believe violates these Terms or is otherwise harmful to other users or to us.
-        </Typography>
-        <Typography paragraph>
-          You may deactivate your account at any time by contacting <Link href="mailto:support@c1staffing.com">support@c1staffing.com</Link>.
+          {t('legal.terms.s11P2')} <Link href="mailto:support@c1staffing.com">support@c1staffing.com</Link>.
         </Typography>
       </Box>
 
       <Box component="section" id="disclaimer" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>12. Disclaimers</Typography>
-        <Typography paragraph>
-          The Services are provided "as is" and "as available." We make no warranties, express or implied, regarding the reliability, accuracy, or availability of the Services, including any job listings or communications.
-        </Typography>
-        <Typography paragraph>
-          We do not guarantee employment or placement. Use of the platform is at your own risk.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s12Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s12P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s12P2')}</Typography>
       </Box>
 
       <Box component="section" id="liability" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>13. Limitation of Liability</Typography>
-        <Typography paragraph>
-          To the fullest extent permitted by law, we and our affiliates shall not be liable for any indirect, incidental, consequential, special, or punitive damages arising from or relating to your use of the Services, even if advised of the possibility of such damages.
-        </Typography>
-        <Typography paragraph>
-          Our total liability for any claim arising out of or relating to these Terms or your use of the Services shall not exceed one hundred U.S. dollars (US $100).
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s13Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s13P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s13P2')}</Typography>
       </Box>
 
       <Box component="section" id="indemnification" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>14. Indemnification</Typography>
-        <Typography paragraph>
-          You agree to indemnify and hold harmless C1 Staffing, HRX One, and their officers, directors, employees, and agents from any claims, losses, liabilities, damages, or expenses (including reasonable attorneys' fees) arising from your violation of these Terms or misuse of the Services.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s14Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s14P1')}</Typography>
       </Box>
 
       <Box component="section" id="arbitration" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>15. Governing Law and Arbitration</Typography>
-        <Typography paragraph>
-          These Terms and any dispute arising out of or related to them shall be governed by the laws of the State of Nevada, without regard to its conflict of law rules.
-        </Typography>
-        <Typography paragraph>
-          Except where prohibited by law, disputes will be resolved through binding arbitration administered by the American Arbitration Association (AAA) under its Commercial Arbitration Rules. You and we waive the right to a jury trial or to participate in a class action.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s15Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s15P1')}</Typography>
+        <Typography paragraph>{t('legal.terms.s15P2')}</Typography>
       </Box>
 
       <Box component="section" id="changes" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>16. Changes to These Terms</Typography>
-        <Typography paragraph>
-          We may update these Terms from time to time. The "Last Updated" date above will indicate the latest version. Continued use of the Services after changes become effective constitutes your acceptance of the updated Terms.
-        </Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s16Title')}</Typography>
+        <Typography paragraph>{t('legal.terms.s16P1')}</Typography>
       </Box>
 
       <Box component="section" id="misc" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>17. Miscellaneous</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.terms.s17Title')}</Typography>
         <List sx={{ listStyleType: 'disc', pl: 3 }}>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>If any provision is held invalid or unenforceable, the remaining provisions remain in full force and effect.</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Our failure to enforce any right or provision does not constitute a waiver of that right.</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>These Terms constitute the entire agreement between you and us regarding the Services.</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s17L1')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s17L2')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.terms.s17L3')}</ListItem>
         </List>
       </Box>
 
       {/* Footer */}
       <Box component="footer" sx={{ mt: 5, pt: 3, borderTop: 1, borderColor: 'divider' }}>
         <Typography variant="body2" color="text.secondary">
-          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved. | <Link href="/privacy">Privacy Policy</Link> | <Link href="/consent">SMS Consent</Link> | <Link href="/sms-privacy">SMS Privacy Notice</Link>
+          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. {t('legal.terms.footer')} | <Link href="/privacy">{t('legal.terms.linksPrivacy')}</Link> | <Link href="/consent">{t('legal.terms.linksSMS')}</Link> | <Link href="/sms-privacy">{t('legal.terms.linksSMSPrivacy')}</Link>
         </Typography>
       </Box>
     </Container>

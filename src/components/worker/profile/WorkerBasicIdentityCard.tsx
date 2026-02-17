@@ -20,6 +20,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Autocomplete } from '@react-google-maps/api';
 import { storage, db } from '../../../firebase';
+import { useT } from '../../../i18n';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import ImageCropDialog from '../../common/ImageCropDialog';
@@ -87,6 +88,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
   avatarUrl,
   onAvatarUpdated,
 }) => {
+  const t = useT();
   const [form, setForm] = useState<WorkerBasicIdentityForm>(() => fromUserDoc(userDoc));
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
@@ -284,17 +286,17 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                   boxShadow: 1,
                   '&:hover': { bgcolor: 'action.hover' },
                 }}
-                aria-label="Upload or replace photo"
+                aria-label={t('profile.uploadPhoto')}
               >
                 <CameraAltIcon fontSize="small" />
               </IconButton>
             </Box>
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                {form.firstName || form.lastName ? `${form.firstName} ${form.lastName}`.trim() : 'Your profile'}
+                {form.firstName || form.lastName ? `${form.firstName} ${form.lastName}`.trim() : t('profile.yourProfile')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Update your name, contact info, and address below.
+                {t('profile.updateNameContact')}
               </Typography>
             </Box>
           </Box>
@@ -302,7 +304,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
             <PersonIcon color="primary" fontSize="small" />
             <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-              Basic Identity
+              {t('profile.basicIdentity')}
             </Typography>
           </Box>
           <Grid container spacing={2}>
@@ -310,7 +312,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="First name"
+                label={t('profile.firstName')}
                 value={form.firstName}
                 onChange={handleChange('firstName')}
                 onBlur={() => persist({ firstName: form.firstName })}
@@ -320,7 +322,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="Last name"
+                label={t('profile.lastName')}
                 value={form.lastName}
                 onChange={handleChange('lastName')}
                 onBlur={() => persist({ lastName: form.lastName })}
@@ -330,7 +332,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="Phone"
+                label={t('profile.phone')}
                 type="tel"
                 value={form.phone}
                 onChange={handlePhoneChange}
@@ -341,7 +343,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="Email"
+                label={t('profile.email')}
                 type="email"
                 value={form.email}
                 onChange={handleChange('email')}
@@ -352,7 +354,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="Date of birth"
+                label={t('profile.dateOfBirth')}
                 type="date"
                 value={form.dateOfBirth}
                 onChange={handleChange('dateOfBirth')}
@@ -363,7 +365,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
           </Grid>
 
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mt: 3, mb: 1 }}>
-            Home address
+            {t('profile.homeAddress')}
           </Typography>
           <Grid container spacing={2}>
             <Grid item xs={12}>
@@ -379,7 +381,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                   <TextField
                     fullWidth
                     size="small"
-                    label="Street address"
+                    label={t('profile.streetAddress')}
                     value={form.streetAddress}
                     onChange={handleChange('streetAddress')}
                     onBlur={() => {
@@ -399,7 +401,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                 <TextField
                   fullWidth
                   size="small"
-                  label="Street address"
+                  label={t('profile.streetAddress')}
                   value={form.streetAddress}
                   onChange={handleChange('streetAddress')}
                   onBlur={() => {
@@ -413,7 +415,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="City"
+                label={t('profile.city')}
                 value={form.city}
                 onChange={handleChange('city')}
                 onBlur={() => persist({ city: form.city })}
@@ -423,7 +425,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="State"
+                label={t('profile.state')}
                 value={form.state}
                 onChange={handleChange('state')}
                 onBlur={() => persist({ state: form.state })}
@@ -433,7 +435,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
               <TextField
                 fullWidth
                 size="small"
-                label="ZIP"
+                label={t('profile.zip')}
                 value={form.zip}
                 onChange={handleChange('zip')}
                 onBlur={() => persist({ zip: form.zip })}
@@ -455,7 +457,7 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
         imageSrc={pendingImageSrc}
         aspect={1}
         cropShape="round"
-        confirmLabel={avatarBusy ? 'Saving…' : 'Save'}
+        confirmLabel={avatarBusy ? t('profile.saving') : t('profile.save')}
         loading={avatarBusy}
         onCancel={() => {
           if (!avatarBusy) {
