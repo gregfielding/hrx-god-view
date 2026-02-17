@@ -39,6 +39,9 @@ export interface SmsOutboundRequest {
   id?: string;
   tenantId: string;
   threadId?: string;
+  /** Canonical conversation (admin Messages). When set, delivery can update the message doc. */
+  conversationId?: string;
+  conversationMessageId?: string;
   // Recipient user id (preferred). If missing, worker may resolve via phone lookup.
   recipientUserId?: string;
   toPhoneE164: string;
@@ -105,6 +108,8 @@ export async function createOutboundRequest(
   params: {
     tenantId: string;
     threadId?: string;
+    conversationId?: string;
+    conversationMessageId?: string;
     recipientUserId?: string;
     toPhoneE164: string;
     fromPhoneE164?: string;
@@ -183,6 +188,8 @@ export async function createOutboundRequest(
     const requestData: Omit<SmsOutboundRequest, 'id'> = {
       tenantId: params.tenantId,
       threadId: params.threadId,
+      conversationId: params.conversationId,
+      conversationMessageId: params.conversationMessageId,
       recipientUserId: params.recipientUserId,
       toPhoneE164: params.toPhoneE164,
       fromPhoneE164: params.fromPhoneE164,
@@ -326,6 +333,46 @@ export const enqueueSmsOutbound = onDocumentCreated(
 );
 
 /**
+ * Update canonical conversation message with provider/delivery info (outbound SMS).
+ * No-op if any of conversationId/conversationMessageId is missing (legacy requests).
+ * Always uses { merge: true } so existing body/sender are not overwritten.
+ * Best-effort: never throws so the outbound worker is not blocked on canonical update errors.
+ */
+export async function updateCanonicalMessageDelivery(opts: {
+  tenantId: string;
+  conversationId?: string;
+  conversationMessageId?: string;
+  patch: Record<string, unknown>;
+}): Promise<void> {
+  const { tenantId, conversationId, conversationMessageId, patch } = opts;
+  if (!conversationId || !conversationMessageId) {
+    logger.debug('[OutboundSMS] canonical update skipped (no conversation linkage)', {
+      tenantId,
+      conversationId: conversationId ?? null,
+      conversationMessageId: conversationMessageId ?? null,
+    });
+    return;
+  }
+  try {
+    const ref = db
+      .collection('tenants')
+      .doc(tenantId)
+      .collection('conversations')
+      .doc(conversationId)
+      .collection('messages')
+      .doc(conversationMessageId);
+    await ref.set(patch, { merge: true });
+  } catch (err: any) {
+    logger.info('[OutboundSMS] canonical update failed', {
+      conversationId,
+      conversationMessageId,
+      error: err?.message,
+    });
+    // Do not rethrow: outbound worker must not block on canonical update
+  }
+}
+
+/**
  * Cloud Task worker: Process outbound SMS send
  * This is the enforcement point for compliance, consent, quiet hours, footer injection
  */
@@ -428,6 +475,19 @@ export const processSmsOutbound = onRequest(
               { merge: true }
             );
         }
+        await updateCanonicalMessageDelivery({
+          tenantId,
+          conversationId: requestData.conversationId,
+          conversationMessageId: requestData.conversationMessageId,
+          patch: {
+            delivery: {
+              status: 'failed',
+              failedAt: FieldValue.serverTimestamp(),
+              errorCode: complianceCheck.errorCode,
+              errorMessage: complianceCheck.reason,
+            },
+          },
+        });
         logger.warn(`Compliance check failed for request ${requestId}: ${complianceCheck.reason}`);
         response.status(200).json({ success: false, error: complianceCheck.reason });
         return;
@@ -525,6 +585,20 @@ export const processSmsOutbound = onRequest(
               );
           }
 
+          await updateCanonicalMessageDelivery({
+            tenantId,
+            conversationId: requestData.conversationId,
+            conversationMessageId: requestData.conversationMessageId,
+            patch: {
+              delivery: {
+                status: 'failed',
+                failedAt: FieldValue.serverTimestamp(),
+                errorCode: providerErrorCode,
+                errorMessage: providerErrorMessage,
+              },
+            },
+          });
+
           logger.info(`Blocked SMS request ${requestId} due to Twilio opt-out (21610)`, {
             tenantId,
             requestId,
@@ -560,6 +634,22 @@ export const processSmsOutbound = onRequest(
               },
               { merge: true }
             );
+        }
+
+        if (!isRetryable) {
+          await updateCanonicalMessageDelivery({
+            tenantId,
+            conversationId: requestData.conversationId,
+            conversationMessageId: requestData.conversationMessageId,
+            patch: {
+              delivery: {
+                status: 'failed',
+                failedAt: FieldValue.serverTimestamp(),
+                errorCode: sendResult.errorCode,
+                errorMessage: sendResult.errorMessage || 'Unknown error',
+              },
+            },
+          });
         }
         
         if (isRetryable) {
@@ -616,6 +706,30 @@ export const processSmsOutbound = onRequest(
           updatedAt: FieldValue.serverTimestamp(),
         });
       });
+
+      // Update canonical conversation message with provider + delivery (when linked)
+      await updateCanonicalMessageDelivery({
+        tenantId,
+        conversationId: requestData.conversationId,
+        conversationMessageId: requestData.conversationMessageId,
+        patch: {
+          provider: {
+            name: 'twilio',
+            messageId: sendResult.providerMessageId,
+          },
+          delivery: {
+            status: 'sent',
+            sentAt: FieldValue.serverTimestamp(),
+          },
+        },
+      });
+      if (requestData.conversationId && requestData.conversationMessageId) {
+        logger.info('[OutboundSMS] canonical update sent', {
+          conversationId: requestData.conversationId,
+          conversationMessageId: requestData.conversationMessageId,
+          sid: sendResult.providerMessageId,
+        });
+      }
 
       // Update existing message log if present; otherwise create one
       if (requestData.messageLogId) {

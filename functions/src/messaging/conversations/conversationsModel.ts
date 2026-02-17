@@ -71,6 +71,23 @@ export async function findOrCreateConversationForSms(params: {
   return { conversationId: newRef.id, ref: newRef };
 }
 
+/** Delivery status set by outbound SMS worker (processSmsOutbound). */
+export type MessageDeliveryStatus =
+  | 'queued'
+  | 'sent'
+  | 'failed'
+  | 'delivered'
+  | 'undelivered';
+
+export interface MessageDelivery {
+  status: MessageDeliveryStatus;
+  sentAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  failedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  deliveredAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 type AppendMessageParams = {
   tenantId: string;
   conversationId: string;
@@ -80,6 +97,7 @@ type AppendMessageParams = {
   visibility?: 'participants' | 'internal_only';
   direction?: 'inbound' | 'outbound';
   provider?: { name: string; messageId?: string; status?: string };
+  delivery?: MessageDelivery;
   createdAt?: admin.firestore.FieldValue;
 };
 

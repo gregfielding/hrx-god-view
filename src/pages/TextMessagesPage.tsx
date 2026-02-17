@@ -1,8 +1,9 @@
 /**
- * Text Messages Page
- * 
- * Dedicated SMS thread-based messenger interface with inbox view.
- * Shows thread list and messages with real-time updates.
+ * Messages Page (admin)
+ *
+ * Canonical conversation-based inbox. Lists SMS conversations and messages from
+ * tenants/{tenantId}/conversations and .../messages. Send flow uses
+ * sendConversationMessage + sendSmsFromConversation.
  */
 
 import React, { useState, useEffect, useRef } from 'react';
@@ -17,9 +18,9 @@ import {
   Chip,
   IconButton,
   Drawer,
-  Divider,
   TextField,
   Avatar,
+  Tooltip,
   useTheme,
   useMediaQuery,
   List,
@@ -29,36 +30,70 @@ import {
   ListItemAvatar,
 } from '@mui/material';
 import SmsIcon from '@mui/icons-material/Sms';
-import ReplyIcon from '@mui/icons-material/Reply';
 import CloseIcon from '@mui/icons-material/Close';
 import SendIcon from '@mui/icons-material/Send';
-import { getAuth } from 'firebase/auth';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
-import { collection, doc, getDoc, onSnapshot, query, orderBy, QuerySnapshot, DocumentData } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
-import { useSmsThreadMessages } from '../hooks/useSmsThreadMessages';
+import { useSmsConversationsForTenant, type SmsConversation } from '../hooks/useSmsConversationsForTenant';
+import { useConversationMessages } from '../hooks/useConversationMessages';
+import {
+  sendConversationMessageCallable,
+  sendSmsFromConversationCallable,
+} from '../api/conversationsApi';
 import { formatDistanceToNow, format } from 'date-fns';
+import type { MessageDelivery } from '../types/conversations';
 
-interface SmsThread {
-  id: string;
-  tenantId: string;
-  candidateUserId?: string;
-  candidatePhone?: string;
-  primaryRecruiterUserId?: string | null;
-  assignedToUserId?: string;
-  twilioNumber: string;
-  status: string;
-  lastMessageAt: any;
-  lastMessageSnippet?: string;
-  lastInboundAt?: any;
-  lastOutboundAt?: any;
-  participant?: {
-    id: string;
-    displayName?: string;
-    phoneE164?: string;
-  };
+function parseDeliveryDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return value;
+  if (typeof (value as { toDate?: () => Date }).toDate === 'function') return (value as { toDate: () => Date }).toDate();
+  const ms = typeof value === 'object' && value !== null && 'seconds' in value
+    ? (value as { seconds: number }).seconds * 1000
+    : typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms);
+}
+
+function formatDeliveryTooltip(delivery: MessageDelivery): string {
+  const lines: string[] = [];
+  const sentAt = parseDeliveryDate(delivery.sentAt);
+  if (sentAt) lines.push(`Sent: ${format(sentAt, 'MMM d, yyyy h:mm a')}`);
+  const failedAt = parseDeliveryDate(delivery.failedAt);
+  if (failedAt) lines.push(`Failed: ${format(failedAt, 'MMM d, yyyy h:mm a')}`);
+  const deliveredAt = parseDeliveryDate(delivery.deliveredAt);
+  if (deliveredAt) lines.push(`Delivered: ${format(deliveredAt, 'MMM d, yyyy h:mm a')}`);
+  if (delivery.errorMessage) lines.push(`Error: ${delivery.errorMessage}`);
+  if (delivery.errorCode) lines.push(`Code: ${delivery.errorCode}`);
+  return lines.length ? lines.join('\n') : delivery.status;
+}
+
+function DeliveryStatusChip({ delivery }: { delivery: MessageDelivery }) {
+  const label = delivery.status.charAt(0).toUpperCase() + delivery.status.slice(1);
+  const color =
+    delivery.status === 'queued'
+      ? 'warning'
+      : delivery.status === 'sent' || delivery.status === 'delivered'
+        ? 'success'
+        : 'error';
+  const isQueued = delivery.status === 'queued';
+  const chip = (
+    <Chip
+      icon={isQueued ? <CircularProgress size={12} color="inherit" sx={{ marginLeft: 0.5, marginRight: -0.5 }} /> : undefined}
+      label={label}
+      size="small"
+      color={color as 'warning' | 'success' | 'error'}
+      sx={{ height: 20, mb: 0.5, mr: 0.5 }}
+    />
+  );
+  const tooltipText = formatDeliveryTooltip(delivery);
+  return (
+    <Tooltip title={isQueued ? 'Sending…' + (tooltipText ? `\n${tooltipText}` : '') : tooltipText} placement="top" arrow>
+      <span>{chip}</span>
+    </Tooltip>
+  );
 }
 
 const TextMessagesPage: React.FC = () => {
@@ -66,10 +101,8 @@ const TextMessagesPage: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const effectiveTenantId = activeTenant?.id || '';
-  const [smsThreads, setSmsThreads] = useState<SmsThread[]>([]);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null);
   const [replyMessage, setReplyMessage] = useState('');
   const [sendingReply, setSendingReply] = useState(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean | null>(null);
@@ -78,14 +111,14 @@ const TextMessagesPage: React.FC = () => {
   const [loadingTwilioNumbers, setLoadingTwilioNumbers] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const selectedThread = smsThreads.find(t => t.id === selectedThreadId);
+  const { conversations, loading, error: conversationsError } = useSmsConversationsForTenant(effectiveTenantId);
+  const displayError = error || (conversationsError ? String(conversationsError) : null);
+  const selectedConversation = conversations.find((c) => c.id === selectedConversationId);
 
-  // Real-time messages for selected thread
-  const { messages, loading: loadingMessages } = useSmsThreadMessages({
-    tenantId: effectiveTenantId,
-    threadId: selectedThreadId || '',
-    enabled: !!selectedThreadId && !!effectiveTenantId,
-  });
+  const { messages, loading: loadingMessages } = useConversationMessages(
+    effectiveTenantId,
+    selectedConversationId
+  );
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -106,23 +139,11 @@ const TextMessagesPage: React.FC = () => {
     return format(d, 'MMM d, yyyy h:mm a');
   };
 
-  // Helper to get display name for a thread
-  const getThreadDisplayName = (thread: SmsThread): string => {
-    if (thread.participant?.displayName) {
-      return thread.participant.displayName;
-    }
-    // Fallback: try to get from candidateUserId if participant is missing
-    if (thread.candidateUserId) {
-      // For now, return a placeholder - could fetch user data if needed
-      return thread.candidatePhone ? `+${thread.candidatePhone.slice(-4)}` : 'Unknown';
-    }
-    return 'Unknown';
-  };
+  const getConversationDisplayName = (c: SmsConversation): string =>
+    c.topic?.label ?? c.channelEndpoints?.sms?.workerPhoneE164 ?? 'Unknown';
 
-  // Helper to get phone number for display
-  const getThreadPhone = (thread: SmsThread): string => {
-    return thread.participant?.phoneE164 || thread.candidatePhone || '';
-  };
+  const getConversationPhone = (c: SmsConversation): string =>
+    c.channelEndpoints?.sms?.workerPhoneE164 ?? '';
 
   // Check Twilio number assignment
   useEffect(() => {
@@ -163,79 +184,8 @@ const TextMessagesPage: React.FC = () => {
     checkTwilioNumber();
   }, [user?.uid, effectiveTenantId]);
 
-  // Real-time SMS threads listener
-  useEffect(() => {
-    if (!user?.uid || !effectiveTenantId) {
-      setSmsThreads([]);
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    const threadsRef = collection(db, 'tenants', effectiveTenantId, 'smsThreads');
-    // Query threads where this recruiter is the primary recruiter
-    const threadsQuery = query(
-      threadsRef,
-      orderBy('lastMessageAt', 'desc')
-    );
-
-    const unsubscribe = onSnapshot(
-      threadsQuery,
-      (snapshot: QuerySnapshot<DocumentData>) => {
-        const threadsList: SmsThread[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          // Filter threads for this recruiter
-          // Show threads where they are the primary recruiter OR assigned to them
-          const isPrimaryRecruiter = data.primaryRecruiterUserId === user.uid;
-          const isAssigned = data.assignedToUserId === user.uid;
-          
-          if (isPrimaryRecruiter || isAssigned) {
-            // Ensure lastMessageAt exists (fallback to createdAt if missing)
-            const threadData = {
-              id: doc.id,
-              ...data,
-              lastMessageAt: data.lastMessageAt || data.createdAt || new Date(),
-            } as SmsThread;
-            threadsList.push(threadData);
-          }
-        });
-        // Sort by lastMessageAt in case orderBy didn't work properly
-        threadsList.sort((a, b) => {
-          const aDate = a.lastMessageAt?.toDate?.() || (a.lastMessageAt instanceof Date ? a.lastMessageAt : new Date(a.lastMessageAt || 0));
-          const bDate = b.lastMessageAt?.toDate?.() || (b.lastMessageAt instanceof Date ? b.lastMessageAt : new Date(b.lastMessageAt || 0));
-          return bDate.getTime() - aDate.getTime();
-        });
-        setSmsThreads(threadsList);
-        setLoading(false);
-      },
-      (err) => {
-        console.error('Error listening to SMS threads:', err);
-        // Check if it's an index error
-        if (err.code === 'failed-precondition' || err.message?.includes('index')) {
-          setError('Database index is building. Please try again in a few minutes.');
-        } else {
-          setError('Failed to load SMS threads');
-        }
-        setLoading(false);
-      }
-    );
-
-    return () => unsubscribe();
-  }, [user?.uid, effectiveTenantId]);
-
-  /** Fetch with Firebase ID token for authenticated API calls */
-  const authedFetch = async (url: string, init?: RequestInit) => {
-    const token = await getAuth().currentUser?.getIdToken();
-    if (!token) throw new Error('Please sign in again.');
-    const headers = new Headers(init?.headers || {});
-    headers.set('Authorization', `Bearer ${token}`);
-    if (!headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    return fetch(url, { ...init, headers });
-  };
-
   const handleSendReply = async () => {
-    if (!replyMessage.trim() || !selectedThreadId || !user?.uid) return;
+    if (!replyMessage.trim() || !selectedConversationId || !effectiveTenantId) return;
 
     if (replyMessage.length > 1600) {
       setError('Message is too long (max 1600 characters)');
@@ -246,25 +196,24 @@ const TextMessagesPage: React.FC = () => {
     setError(null);
 
     try {
-      const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL || 
-        'https://us-central1-hrx1-d3beb.cloudfunctions.net';
-      
-      const response = await authedFetch(
-        `${API_BASE_URL}/sendThreadMessageApi?threadId=${encodeURIComponent(selectedThreadId)}`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ body: replyMessage }),
-        }
-      );
+      const { data: sendData } = await sendConversationMessageCallable({
+        tenantId: effectiveTenantId,
+        conversationId: selectedConversationId,
+        text: replyMessage.trim(),
+      });
+      const messageId = sendData?.messageId;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: { message: 'Failed to send message' } }));
-        throw new Error(errorData.error?.message || 'Failed to send message');
-      }
+      await sendSmsFromConversationCallable({
+        tenantId: effectiveTenantId,
+        conversationId: selectedConversationId,
+        text: replyMessage.trim(),
+        ...(messageId && { conversationMessageId: messageId }),
+      });
 
       setReplyMessage('');
-    } catch (err: any) {
-      setError(err.message || 'Failed to send message');
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to send message';
+      setError(message);
     } finally {
       setSendingReply(false);
     }
@@ -294,7 +243,7 @@ const TextMessagesPage: React.FC = () => {
     }
   };
 
-  if (loading && smsThreads.length === 0) {
+  if (loading && conversations.length === 0) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 'calc(100vh - 64px)' }}>
         <CircularProgress />
@@ -304,13 +253,13 @@ const TextMessagesPage: React.FC = () => {
 
   return (
     <Box sx={{ display: 'flex', height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
-      {error && (
-        <Alert 
-          severity="error" 
-          sx={{ position: 'absolute', top: 16, left: 16, right: 16, zIndex: 1300 }} 
+      {displayError && (
+        <Alert
+          severity="error"
+          sx={{ position: 'absolute', top: 16, left: 16, right: 16, zIndex: 1300 }}
           onClose={() => setError(null)}
         >
-          {error}
+          {displayError}
         </Alert>
       )}
 
@@ -328,7 +277,7 @@ const TextMessagesPage: React.FC = () => {
         {/* Header */}
         <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
           <Typography variant="h6" fontWeight={600}>
-            Text Messages
+            Messages
           </Typography>
         </Box>
 
@@ -362,29 +311,29 @@ const TextMessagesPage: React.FC = () => {
           </Box>
         )}
 
-        {/* Thread List */}
+        {/* Conversation List */}
         <Box sx={{ flex: 1, overflow: 'auto' }}>
-          {smsThreads.length === 0 ? (
+          {conversations.length === 0 ? (
             <Box sx={{ p: 4, textAlign: 'center' }}>
               <Typography variant="body2" color="text.secondary">
-                No SMS threads found
+                No conversations yet
               </Typography>
             </Box>
           ) : (
             <List sx={{ p: 0 }}>
-              {smsThreads.map((thread) => (
+              {conversations.map((conv) => (
                 <ListItem
-                  key={thread.id}
+                  key={conv.id}
                   disablePadding
                   sx={{
                     borderBottom: 1,
                     borderColor: 'divider',
-                    bgcolor: selectedThreadId === thread.id ? 'action.selected' : 'transparent',
+                    bgcolor: selectedConversationId === conv.id ? 'action.selected' : 'transparent',
                   }}
                 >
                   <ListItemButton
-                    onClick={() => setSelectedThreadId(thread.id)}
-                    selected={selectedThreadId === thread.id}
+                    onClick={() => setSelectedConversationId(conv.id)}
+                    selected={selectedConversationId === conv.id}
                   >
                     <ListItemAvatar>
                       <Avatar sx={{ bgcolor: 'primary.main' }}>
@@ -395,9 +344,9 @@ const TextMessagesPage: React.FC = () => {
                       primary={
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                           <Typography variant="subtitle2" fontWeight={600}>
-                            {getThreadDisplayName(thread)}
+                            {getConversationDisplayName(conv)}
                           </Typography>
-                          {thread.status === 'open' && (
+                          {conv.status === 'open' && (
                             <Chip label="Open" size="small" color="success" sx={{ height: 20 }} />
                           )}
                         </Box>
@@ -405,10 +354,10 @@ const TextMessagesPage: React.FC = () => {
                       secondary={
                         <Box>
                           <Typography variant="caption" color="text.secondary" display="block">
-                            {thread.lastMessageSnippet || 'No messages'}
+                            {conv.lastMessagePreview || 'No messages'}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {formatDate(thread.lastMessageAt)}
+                            {formatDate(conv.lastMessageAt)}
                           </Typography>
                         </Box>
                       }
@@ -422,15 +371,15 @@ const TextMessagesPage: React.FC = () => {
       </Box>
 
       {/* Message View */}
-      {selectedThread && !isMobile ? (
+      {selectedConversation && !isMobile ? (
         <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* Message Header */}
           <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
             <Typography variant="h6" fontWeight={600}>
-              {getThreadDisplayName(selectedThread)}
+              {getConversationDisplayName(selectedConversation)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              {getThreadPhone(selectedThread)}
+              {getConversationPhone(selectedConversation)}
             </Typography>
           </Box>
 
@@ -443,45 +392,55 @@ const TextMessagesPage: React.FC = () => {
             ) : messages.length === 0 ? (
               <Box sx={{ textAlign: 'center', p: 4 }}>
                 <Typography variant="body2" color="text.secondary">
-                  No messages in this thread
+                  No messages in this conversation
                 </Typography>
               </Box>
             ) : (
               <Stack spacing={2}>
-                {messages.map((msg) => (
-                  <Box
-                    key={msg.id}
-                    sx={{
-                      display: 'flex',
-                      justifyContent: msg.direction === 'outbound' ? 'flex-end' : 'flex-start',
-                    }}
-                  >
-                    <Paper
-                      elevation={1}
+                {messages.map((msg) => {
+                  const isOutbound = msg.direction === 'outbound';
+                  const text = typeof msg.body === 'string' ? msg.body : msg.body?.text ?? '';
+                  return (
+                    <Box
+                      key={msg.id}
                       sx={{
-                        p: 2,
-                        maxWidth: '70%',
-                        bgcolor: msg.direction === 'outbound' ? 'primary.main' : 'background.paper',
-                        color: msg.direction === 'outbound' ? 'primary.contrastText' : 'text.primary',
+                        display: 'flex',
+                        justifyContent: isOutbound ? 'flex-end' : 'flex-start',
                       }}
                     >
-                      <Typography variant="body2" sx={{ mb: 0.5, whiteSpace: 'pre-wrap' }}>
-                        {msg.body}
-                      </Typography>
-                      <Typography
-                        variant="caption"
+                      <Paper
+                        elevation={1}
                         sx={{
-                          opacity: 0.7,
-                          display: 'block',
-                          textAlign: msg.direction === 'outbound' ? 'right' : 'left',
+                          p: 2,
+                          maxWidth: '70%',
+                          bgcolor: isOutbound ? 'primary.main' : 'background.paper',
+                          color: isOutbound ? 'primary.contrastText' : 'text.primary',
                         }}
                       >
-                        {formatFullDate(msg.createdAt)}
-                        {msg.status && ` • ${msg.status}`}
-                      </Typography>
-                    </Paper>
-                  </Box>
-                ))}
+                        {msg.channel && (
+                          <Chip label={msg.channel} size="small" sx={{ mb: 0.5, mr: 0.5, height: 20 }} />
+                        )}
+                        {isOutbound && msg.delivery && (
+                          <DeliveryStatusChip delivery={msg.delivery} />
+                        )}
+                        <Typography variant="body2" sx={{ mb: 0.5, whiteSpace: 'pre-wrap' }}>
+                          {text}
+                        </Typography>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            opacity: 0.7,
+                            display: 'block',
+                            textAlign: isOutbound ? 'right' : 'left',
+                          }}
+                        >
+                          {formatFullDate(msg.createdAt)}
+                          {msg.sender?.role === 'worker' ? ' • Worker' : msg.sender?.role ? ` • ${msg.sender.role}` : ''}
+                        </Typography>
+                      </Paper>
+                    </Box>
+                  );
+                })}
                 <div ref={messagesEndRef} />
               </Stack>
             )}
@@ -519,11 +478,11 @@ const TextMessagesPage: React.FC = () => {
             </Stack>
           </Box>
         </Box>
-      ) : selectedThread && isMobile ? (
+      ) : selectedConversation && isMobile ? (
         <Drawer
           anchor="right"
-          open={!!selectedThread}
-          onClose={() => setSelectedThreadId(null)}
+          open={!!selectedConversation}
+          onClose={() => setSelectedConversationId(null)}
           PaperProps={{
             sx: { width: '100%' },
           }}
@@ -532,13 +491,13 @@ const TextMessagesPage: React.FC = () => {
             <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <Box>
                 <Typography variant="h6" fontWeight={600}>
-                  {getThreadDisplayName(selectedThread)}
+                  {getConversationDisplayName(selectedConversation)}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  {getThreadPhone(selectedThread)}
+                  {getConversationPhone(selectedConversation)}
                 </Typography>
               </Box>
-              <IconButton onClick={() => setSelectedThreadId(null)}>
+              <IconButton onClick={() => setSelectedConversationId(null)}>
                 <CloseIcon />
               </IconButton>
             </Box>
@@ -550,44 +509,51 @@ const TextMessagesPage: React.FC = () => {
               ) : messages.length === 0 ? (
                 <Box sx={{ textAlign: 'center', p: 4 }}>
                   <Typography variant="body2" color="text.secondary">
-                    No messages in this thread
+                    No messages in this conversation
                   </Typography>
                 </Box>
               ) : (
                 <Stack spacing={2}>
-                  {messages.map((msg) => (
-                    <Box
-                      key={msg.id}
-                      sx={{
-                        display: 'flex',
-                        justifyContent: msg.direction === 'outbound' ? 'flex-end' : 'flex-start',
-                      }}
-                    >
-                      <Paper
-                        elevation={1}
+                  {messages.map((msg) => {
+                    const isOutbound = msg.direction === 'outbound';
+                    const text = typeof msg.body === 'string' ? msg.body : msg.body?.text ?? '';
+                    return (
+                      <Box
+                        key={msg.id}
                         sx={{
-                          p: 2,
-                          maxWidth: '70%',
-                          bgcolor: msg.direction === 'outbound' ? 'primary.main' : 'background.paper',
-                          color: msg.direction === 'outbound' ? 'primary.contrastText' : 'text.primary',
+                          display: 'flex',
+                          justifyContent: isOutbound ? 'flex-end' : 'flex-start',
                         }}
                       >
-                        <Typography variant="body2" sx={{ mb: 0.5, whiteSpace: 'pre-wrap' }}>
-                          {msg.body}
-                        </Typography>
-                        <Typography
-                          variant="caption"
+                        <Paper
+                          elevation={1}
                           sx={{
-                            opacity: 0.7,
-                            display: 'block',
-                            textAlign: msg.direction === 'outbound' ? 'right' : 'left',
+                            p: 2,
+                            maxWidth: '70%',
+                            bgcolor: isOutbound ? 'primary.main' : 'background.paper',
+                            color: isOutbound ? 'primary.contrastText' : 'text.primary',
                           }}
                         >
-                          {formatFullDate(msg.createdAt)}
-                        </Typography>
-                      </Paper>
-                    </Box>
-                  ))}
+                          {isOutbound && msg.delivery && (
+                            <DeliveryStatusChip delivery={msg.delivery} />
+                          )}
+                          <Typography variant="body2" sx={{ mb: 0.5, whiteSpace: 'pre-wrap' }}>
+                            {text}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            sx={{
+                              opacity: 0.7,
+                              display: 'block',
+                              textAlign: isOutbound ? 'right' : 'left',
+                            }}
+                          >
+                            {formatFullDate(msg.createdAt)}
+                          </Typography>
+                        </Paper>
+                      </Box>
+                    );
+                  })}
                   <div ref={messagesEndRef} />
                 </Stack>
               )}
@@ -621,7 +587,7 @@ const TextMessagesPage: React.FC = () => {
       ) : (
         <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <Typography variant="body2" color="text.secondary">
-            Select a thread to view messages
+            Select a conversation to view messages
           </Typography>
         </Box>
       )}

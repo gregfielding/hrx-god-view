@@ -139,10 +139,10 @@ export async function generateMenuItems(
       });
     }
 
-    // Text Messages - only for security levels 5-7 (internal team)
+    // Messages (canonical conversations / SMS) - only for security levels 5-7 (internal team)
     if (effectiveSecurityLevel && ['5', '6', '7'].includes(String(effectiveSecurityLevel))) {
       menuItems.push({
-        text: 'Text Messages',
+        text: 'Messages',
         to: '/text-messages',
         icon: 'sms',
       });

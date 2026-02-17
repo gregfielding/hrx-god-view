@@ -14,3 +14,13 @@ export const markConversationReadCallable = httpsCallable<
   { tenantId: string; conversationId: string },
   void
 >(functions, 'markConversationRead');
+
+export const sendSmsFromConversationCallable = httpsCallable<
+  {
+    tenantId: string;
+    conversationId: string;
+    text: string;
+    conversationMessageId?: string;
+  },
+  { success: boolean; requestId: string }
+>(functions, 'sendSmsFromConversation');

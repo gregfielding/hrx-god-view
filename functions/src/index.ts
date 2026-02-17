@@ -11423,6 +11423,7 @@ export {
 
 export {
   sendConversationMessage,
+  sendSmsFromConversation,
   markConversationRead,
 } from './messaging/conversations/conversationsApi';
 

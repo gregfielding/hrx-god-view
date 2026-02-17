@@ -69,6 +69,22 @@ export interface MessageProvider {
   deliveredAt?: Timestamp;
 }
 
+export type MessageDeliveryStatus =
+  | 'queued'
+  | 'sent'
+  | 'failed'
+  | 'delivered'
+  | 'undelivered';
+
+export interface MessageDelivery {
+  status: MessageDeliveryStatus;
+  sentAt?: Timestamp;
+  failedAt?: Timestamp;
+  deliveredAt?: Timestamp;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
 export interface ConversationMessage {
   tenantId: string;
   conversationId: string;
@@ -79,5 +95,6 @@ export interface ConversationMessage {
   direction?: 'inbound' | 'outbound';
   visibility: MessageVisibility;
   provider?: MessageProvider;
+  delivery?: MessageDelivery;
   id?: string;
 }
