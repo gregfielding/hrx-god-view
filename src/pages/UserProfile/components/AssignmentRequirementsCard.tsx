@@ -22,6 +22,8 @@ import {
 } from '@mui/icons-material';
 import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../../firebase';
+import { p } from '../../../data/firestorePaths';
+import type { SignatureEnvelopeStatus } from '../../../types/phase1cOnboarding';
 
 interface AssignmentRequirementsCardProps {
   userId: string;
@@ -39,10 +41,19 @@ interface Assignment {
   onboardingPercent?: number;
 }
 
+interface ResolvedDocument {
+  key?: string;
+  docKey?: string;
+  title?: string;
+  required?: boolean;
+  blocking?: boolean;
+  mode?: string;
+}
+
 interface OnboardingInstance {
   status: string;
   percentComplete: number;
-  resolvedDocuments: Array<{ key: string; title?: string; required?: boolean; blocking?: boolean; mode?: string }>;
+  resolvedDocuments: ResolvedDocument[];
   resolvedSteps: Array<{ key: string; title?: string; required?: boolean; blocking?: boolean }>;
   resolvedChecks: Array<{ key: string; title?: string; required?: boolean; blocking?: boolean }>;
   blockedReason?: string | null;
@@ -72,6 +83,7 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [jobOrders, setJobOrders] = useState<Map<string, JobOrder>>(new Map());
   const [onboardingByAssignment, setOnboardingByAssignment] = useState<Map<string, OnboardingInstance>>(new Map());
+  const [envelopesByAssignment, setEnvelopesByAssignment] = useState<Map<string, Map<string, SignatureEnvelopeStatus>>>(new Map());
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -140,6 +152,29 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
         })
       );
       setOnboardingByAssignment(onboardingMap);
+
+      // Fetch signature envelopes for assignments with onboarding (Phase 1C)
+      const envelopesMap = new Map<string, Map<string, SignatureEnvelopeStatus>>();
+      await Promise.all(
+        onboardingInstanceIds.map(async (assignmentId) => {
+          try {
+            const q = query(
+              collection(db, p.signatureEnvelopes(tenantId)),
+              where('assignmentId', '==', assignmentId)
+            );
+            const snap = await getDocs(q);
+            const byDocKey = new Map<string, SignatureEnvelopeStatus>();
+            snap.docs.forEach((d) => {
+              const data = d.data() as { docKey?: string; status?: SignatureEnvelopeStatus };
+              if (data.docKey && data.status) byDocKey.set(data.docKey, data.status);
+            });
+            envelopesMap.set(assignmentId, byDocKey);
+          } catch {
+            envelopesMap.set(assignmentId, new Map());
+          }
+        })
+      );
+      setEnvelopesByAssignment(envelopesMap);
 
       // Fetch job orders for these assignments (try job_orders first, then recruiter_jobOrders)
       const jobOrdersMap = new Map<string, JobOrder>();
@@ -322,10 +357,37 @@ const AssignmentRequirementsCard: React.FC<AssignmentRequirementsCardProps> = ({
                       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
                         Documents
                       </Typography>
-                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
-                        {onboardingInstance.resolvedDocuments.map((d, i) => (
-                          <Chip key={d.key || i} label={d.title || d.key} size="small" variant="outlined" />
-                        ))}
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                        {onboardingInstance.resolvedDocuments.map((d, i) => {
+                          const docKey = d.key || d.docKey || '';
+                          const aid = assignmentWithOnboarding?.id;
+                          const envelopeStatus = aid
+                            ? envelopesByAssignment.get(aid)?.get(docKey)
+                            : undefined;
+                          const isAck = d.mode === 'acknowledge';
+                          const label = envelopeStatus
+                            ? `${d.title || docKey} (${envelopeStatus})`
+                            : isAck
+                              ? `${d.title || docKey} (—)`
+                              : `${d.title || docKey} (not_sent)`;
+                          const chipColor =
+                            envelopeStatus === 'signed'
+                              ? 'success'
+                              : envelopeStatus === 'declined' || envelopeStatus === 'failed'
+                                ? 'error'
+                                : envelopeStatus === 'sent' || envelopeStatus === 'viewed'
+                                  ? 'info'
+                                  : 'default';
+                          return (
+                            <Chip
+                              key={docKey || i}
+                              label={label}
+                              size="small"
+                              variant="outlined"
+                              color={chipColor}
+                            />
+                          );
+                        })}
                       </Stack>
                     </Box>
                   )}

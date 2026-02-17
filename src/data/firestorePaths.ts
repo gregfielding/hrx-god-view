@@ -84,6 +84,40 @@ export const p = {
   onboardingInstance: (tid: string, id: string) => `tenants/${tid}/onboarding_instances/${id}`,
 
   /**
+   * Onboarding Library (Phase 1B)
+   */
+  onboardingItemLibrary: (tid: string) => `tenants/${tid}/onboarding_item_library`,
+  onboardingItem: (tid: string, id: string) => `tenants/${tid}/onboarding_item_library/${id}`,
+  onboardingDocuments: (tid: string) => `tenants/${tid}/onboarding_documents`,
+  onboardingDocument: (tid: string, id: string) => `tenants/${tid}/onboarding_documents/${id}`,
+
+  /**
+   * Signature Envelopes (Phase 1C)
+   */
+  signatureEnvelopes: (tid: string) => `tenants/${tid}/signature_envelopes`,
+  signatureEnvelope: (tid: string, id: string) => `tenants/${tid}/signature_envelopes/${id}`,
+  signatureEnvelopeEvents: (tid: string, envelopeId: string) =>
+    `tenants/${tid}/signature_envelopes/${envelopeId}/events`,
+  signatureEnvelopeEvent: (tid: string, envelopeId: string, eventId: string) =>
+    `tenants/${tid}/signature_envelopes/${envelopeId}/events/${eventId}`,
+
+  /**
+   * Entity Master Data (Phase 1B Extension)
+   */
+  entityCostCenters: (tid: string) => `tenants/${tid}/entity_cost_centers`,
+  entityCostCenter: (tid: string, id: string) => `tenants/${tid}/entity_cost_centers/${id}`,
+  entityJurisdictions: (tid: string) => `tenants/${tid}/entity_jurisdictions`,
+  entityJurisdiction: (tid: string, id: string) => `tenants/${tid}/entity_jurisdictions/${id}`,
+  complianceDocuments: (tid: string) => `tenants/${tid}/compliance_documents`,
+  complianceDocument: (tid: string, id: string) => `tenants/${tid}/compliance_documents/${id}`,
+  workersComp: (tid: string) => `tenants/${tid}/workers_comp`,
+  workersCompPolicy: (tid: string, id: string) => `tenants/${tid}/workers_comp/${id}`,
+  workersCompClassCodes: (tid: string) => `tenants/${tid}/workers_comp_class_codes`,
+  workersCompClassCode: (tid: string, id: string) => `tenants/${tid}/workers_comp_class_codes/${id}`,
+  workersCompRateSets: (tid: string) => `tenants/${tid}/workers_comp_rate_sets`,
+  workersCompRateSet: (tid: string, id: string) => `tenants/${tid}/workers_comp_rate_sets/${id}`,
+
+  /**
    * User Groups (manual candidate grouping)
    */
   userGroups: (tid: string) => `tenants/${tid}/userGroups`,

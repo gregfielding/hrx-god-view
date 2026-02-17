@@ -210,8 +210,9 @@ async function resolveApplicationForAssignment(args: {
   createdBy: string;
   assignmentId: string;
   jobPostId?: string;
+  entityId?: string | null;
 }) {
-  const { tenantId, jobOrderId, shiftId, userId, createdBy, assignmentId, jobPostId } = args;
+  const { tenantId, jobOrderId, shiftId, userId, createdBy, assignmentId, jobPostId, entityId } = args;
   const applicationsRef = db.collection(`tenants/${tenantId}/applications`);
 
   const [byShiftSnap, byShiftIdsSnap] = await Promise.all([
@@ -235,17 +236,16 @@ async function resolveApplicationForAssignment(args: {
   if (existing) {
     const data = existing.data() || {};
     const nextShiftIds = Array.isArray(data.shiftIds) ? Array.from(new Set([...data.shiftIds, shiftId])) : [shiftId];
-    await existing.ref.set(
-      {
-        status: 'accepted',
-        assignmentId,
-        shiftId: data.shiftId || shiftId,
-        shiftIds: nextShiftIds,
-        updatedAt: now,
-        updatedBy: createdBy,
-      },
-      { merge: true },
-    );
+    const updateData: Record<string, any> = {
+      status: 'accepted',
+      assignmentId,
+      shiftId: data.shiftId || shiftId,
+      shiftIds: nextShiftIds,
+      updatedAt: now,
+      updatedBy: createdBy,
+    };
+    if (entityId != null) updateData.entityId = entityId;
+    await existing.ref.set(updateData, { merge: true });
     return existing.id;
   }
 
@@ -260,6 +260,7 @@ async function resolveApplicationForAssignment(args: {
     shiftIds: [shiftId],
     source: 'manual',
     assignmentId,
+    entityId: entityId ?? null,
     candidate: false,
     createdAt: now,
     updatedAt: now,
@@ -528,6 +529,7 @@ export const placementsCreateAssignments = onCall(async (request) => {
           createdBy,
           assignmentId: assignmentRef.id,
           jobPostId,
+          entityId: onboardingConfig.entityId,
         });
 
         await assignmentRef.set(

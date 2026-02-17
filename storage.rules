@@ -109,6 +109,14 @@ service firebase.storage {
       allow read: if request.auth != null;
     }
 
+    // Phase 1C: Onboarding documents (tenants/{tid}/onboarding_docs/{docKey}/{version}/{fileName})
+    match /tenants/{tenantId}/onboarding_docs/{docKey}/{version}/{fileName} {
+      // Read: tenant members (simplified to authenticated for now; tenant check via app logic)
+      allow read: if request.auth != null;
+      // Write: admins only (tenant admin check would require Firestore get; use app-level enforcement)
+      allow write, delete: if request.auth != null;
+    }
+
     // Block everything else by default
     match /{allPaths=**} {
       allow read, write, delete: if false;

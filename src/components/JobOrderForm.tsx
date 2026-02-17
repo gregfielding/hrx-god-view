@@ -250,6 +250,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     ppeRequirements: [],
     ppeProvidedBy: 'company',
     requirementPackId: '',
+    workersCompClassCode: '',
+    workersCompRate: '',
     
     // Customer Rules
     attendancePolicy: '',
@@ -761,6 +763,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           ppeRequirements: stageData.scoping?.compliance?.ppe || [],
           ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
           requirementPackId: (data as any).requirementPackId || '',
+          workersCompClassCode: (data as any).workersCompClassCode || '',
+          workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
           
           // Customer Rules - from stageData.scoping.customerRules
           attendancePolicy: stageData.scoping?.customerRules?.attendance || '',
@@ -1317,6 +1321,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         skillsRequired: formData.skillsRequired || [],
         physicalRequirements: formData.physicalRequirements || [],
         ppeRequirements: formData.ppeRequirements || [],
+        workersCompClassCode: formData.workersCompClassCode || undefined,
+        workersCompRate: formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined,
         ppeProvidedBy: formData.ppeProvidedBy || 'company',
         customUniformRequirements: formData.customUniformRequirements || undefined,
         requirementPackId: formData.requirementPackId || undefined,
@@ -1956,6 +1962,27 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         />
                       ))
                     }
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Workers Comp Class Code"
+                    value={formData.workersCompClassCode || ''}
+                    onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
+                    placeholder="e.g. 9015"
+                    helperText="From Settings > Onboarding Library > WC Class Codes"
+                  />
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <TextField
+                    fullWidth
+                    label="Workers Comp Rate"
+                    value={formData.workersCompRate || ''}
+                    onChange={(e) => handleInputChange('workersCompRate', e.target.value)}
+                    placeholder="e.g. 2.34"
+                    type="number"
+                    inputProps={{ step: 0.01, min: 0 }}
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>

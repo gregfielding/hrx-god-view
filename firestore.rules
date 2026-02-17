@@ -160,6 +160,33 @@ service cloud.firestore {
       match /entities/{entityId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        match /private/{privateDoc} {
+          allow read, write: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        }
+      }
+      match /entity_cost_centers/{costCenterId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /entity_jurisdictions/{jurisdictionId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /compliance_documents/{docId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /workers_comp/{wcId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /workers_comp_class_codes/{classCodeId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /workers_comp_rate_sets/{rateSetId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
       match /requirement_packages/{packageId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
@@ -172,6 +199,33 @@ service cloud.firestore {
           resource.data.userId == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /onboarding_item_library/{itemId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /onboarding_documents/{docId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      // Phase 1C: Signature envelopes (write via Cloud Functions only)
+      match /signature_envelopes/{envelopeId} {
+        // Read: admins + envelope owner (signer)
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        // Write: Cloud Functions only (Admin SDK bypasses rules)
+        allow create, update, delete: if false;
+        match /events/{eventId} {
+          allow read: if request.auth != null && (
+            isHRX() ||
+            hasTenantRole(tenantId, request.auth.token.roles) ||
+            get(/databases/$(database)/documents/tenants/$(tenantId)/signature_envelopes/$(envelopeId)).data.userId == request.auth.uid
+          );
+          allow create, update, delete: if false;
+        }
       }
     }
 

@@ -5190,6 +5190,12 @@ export const validatePromptConsistency = onCall(async (request) => {
 // Resume Parser Functions
 export { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl };
 
+// Phase 1C: Documents + E-Sign Infrastructure
+export {
+  signaturesStartEnvelope,
+  signaturesWebhookReceiver,
+} from './signatures';
+
 // Phase 4: HRXOne Worker Onboarding Flow Functions
 export const validateInviteToken = onCall(async (request) => {
   const { token } = request.data;

@@ -7,8 +7,12 @@ import PhoneAndroidIcon from '@mui/icons-material/PhoneAndroid';
 import ChatIcon from '@mui/icons-material/Chat';
 import PeopleIcon from '@mui/icons-material/People';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
+import LibraryBooksIcon from '@mui/icons-material/LibraryBooks';
 import PageHeader from '../../components/PageHeader';
 import CompanySetup from './CompanySetup';
+import EntitiesPage from './settings/EntitiesPage';
+import OnboardingLibraryPage from './settings/OnboardingLibraryPage';
 import MessagingTab from './MessagingTab';
 import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
@@ -16,7 +20,7 @@ import WorkforceManagement from './WorkforceManagement';
 import SmartGroupsSettings from './SmartGroupsSettings';
 import { useAuth } from '../../contexts/AuthContext';
 
-type SettingsTab = 'company-setup' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups';
+type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups';
 
 const SettingsLanding: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
@@ -28,6 +32,16 @@ const SettingsLanding: React.FC = () => {
       id: 'company-setup' as SettingsTab,
       title: 'Company Setup',
       icon: <BusinessIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'entities' as SettingsTab,
+      title: 'Entities',
+      icon: <AccountBalanceIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'onboarding-library' as SettingsTab,
+      title: 'Onboarding Library',
+      icon: <LibraryBooksIcon sx={{ fontSize: 20 }} />,
     },
     {
       id: 'messaging' as SettingsTab,
@@ -60,6 +74,10 @@ const SettingsLanding: React.FC = () => {
     switch (activeTab) {
       case 'company-setup':
         return <CompanySetup />;
+      case 'entities':
+        return <EntitiesPage />;
+      case 'onboarding-library':
+        return <OnboardingLibraryPage />;
       case 'messaging':
         return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
       case 'senders':
