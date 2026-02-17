@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toChipLabel } from '../../../../utils/chipLabel';
 import {
   Accordion,
   AccordionSummary,
@@ -178,13 +179,13 @@ const WorkExperienceSection = ({
                 <Autocomplete
                   multiple
                   options={onetSkills}
-                  groupBy={(option) => option.type}
-                  getOptionLabel={(option) => option.name}
+                  groupBy={(option) => (option as any)?.type ?? (option as any)?.category ?? ''}
+                  getOptionLabel={(option) => toChipLabel(option)}
                   value={entry.skillsUsed}
                   onChange={(_, newValue) => handleFieldChange(idx, 'skillsUsed', newValue)}
                   renderTags={(value, getTagProps) =>
                     value.map((option, index) => (
-                      <Chip label={option.name} {...getTagProps({ index })} key={option.name} />
+                      <Chip label={toChipLabel(option)} {...getTagProps({ index })} key={`${toChipLabel(option)}-${index}`} />
                     ))
                   }
                   renderInput={(params) => <TextField {...params} label="Skills Used" fullWidth />}

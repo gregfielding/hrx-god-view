@@ -31,6 +31,7 @@ import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/
 import FavoriteButton from '../../components/FavoriteButton';
 import { useFavorites } from '../../hooks/useFavorites';
 
+import { toChipLabel } from '../../utils/chipLabel';
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
 import UserGroupsTab from './components/UserGroupsTab';
@@ -1253,8 +1254,10 @@ const UserProfilePage = () => {
                 if (skillNames.length >= 5) break;
               }
               
-              // Final safety check - ensure all items are strings
-              return skillNames.filter((name): name is string => typeof name === 'string' && name.length > 0);
+              // Final safety check - ensure all items are strings (normalize any object that slipped through)
+              return skillNames
+                .map((s) => (typeof s === 'string' ? s : toChipLabel(s)))
+                .filter((name): name is string => typeof name === 'string' && name.length > 0);
             } catch (error) {
               console.error('Error extracting primary skills:', error);
               return [];

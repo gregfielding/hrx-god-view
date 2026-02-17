@@ -70,6 +70,7 @@ import Layout from '../components/Layout';
 import AuthDialog from '../components/AuthDialog';
 import EligibilityModal from '../components/EligibilityModal';
 import { checkMissingCertifications } from '../utils/checkMissingCertifications';
+import { toChipLabel } from '../utils/chipLabel';
 
 interface PublicJobPosting {
   id: string;
@@ -2133,7 +2134,7 @@ const PublicJobsBoard: React.FC = () => {
                       </Typography>
                       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                         {selectedJob.skills.map((skill, index) => (
-                          <Chip key={index} label={skill} size="small" variant="outlined" />
+                          <Chip key={index} label={toChipLabel(skill)} size="small" variant="outlined" />
                         ))}
                       </Box>
                     </Box>

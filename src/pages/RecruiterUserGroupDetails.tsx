@@ -32,6 +32,7 @@ import { SelectChangeEvent } from '@mui/material/Select';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { toChipLabel } from '../utils/chipLabel';
 import { calculateProfileScore } from '../utils/applicantScoring';
 import PageHeader from '../components/PageHeader';
 import FavoriteButton from '../components/FavoriteButton';
@@ -775,10 +776,10 @@ const RecruiterUserGroupDetails: React.FC = () => {
                         </TableCell>
                         <TableCell>
                           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                            {user.skills?.slice(0, 3).map((skill) => (
+                            {user.skills?.slice(0, 3).map((skill, i) => (
                               <Chip
-                                key={skill}
-                                label={skill}
+                                key={`${toChipLabel(skill)}-${i}`}
+                                label={toChipLabel(skill)}
                                 size="small"
                                 variant="outlined"
                                 icon={<StarIcon sx={{ fontSize: 14 }} />}

@@ -648,7 +648,7 @@ export class JobsBoardService {
           ...(Array.isArray(jobOrder.skillsRequired) ? jobOrder.skillsRequired : [])
         ].filter(Boolean),
         benefits: customData?.benefits,
-        shiftTimes: customData?.shiftTimes || jobOrder.shiftTimes?.join(', '),
+        shiftTimes: customData?.shiftTimes ?? (Array.isArray(jobOrder.shiftTimes) ? jobOrder.shiftTimes.join(', ') : (typeof jobOrder.shiftTimes === 'string' ? jobOrder.shiftTimes : undefined)),
         showShiftTimes: customData?.showShiftTimes !== undefined ? customData.showShiftTimes : jobOrder.showShiftTimes,
         
         // Metrics

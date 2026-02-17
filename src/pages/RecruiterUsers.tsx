@@ -30,6 +30,7 @@ import PhoneIcon from '@mui/icons-material/Phone';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import SmsIcon from '@mui/icons-material/Sms';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
+import { toChipLabel } from '../utils/chipLabel';
 import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
@@ -1475,12 +1476,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       <Tooltip
                         title={
                           user.skills.length <= 1
-                            ? user.skills[0]
+                            ? toChipLabel(user.skills[0])
                             : (
                               <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                                {user.skills.map((skill) => (
-                                  <Typography key={skill} component="span" variant="body2" sx={{ display: 'block' }}>
-                                    {skill}
+                                {user.skills.map((skill, i) => (
+                                  <Typography key={`${toChipLabel(skill)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>
+                                    {toChipLabel(skill)}
                                   </Typography>
                                 ))}
                               </Box>
@@ -1491,7 +1492,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                         disableInteractive={false}
                       >
                         <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
-                          {user.skills[0]}
+                          {toChipLabel(user.skills[0])}
                           {user.skills.length > 1 ? '…' : ''}
                         </Typography>
                       </Tooltip>

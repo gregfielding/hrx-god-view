@@ -50,6 +50,7 @@ import { collection, getDocs, doc, getDoc, addDoc, serverTimestamp, query, where
 import PageHeader from '../components/PageHeader';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { toChipLabel } from '../utils/chipLabel';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import { formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
@@ -1620,8 +1621,8 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                             {skills.length === 0 ? (
                               <Typography variant="body2" color="text.secondary">—</Typography>
                             ) : (
-                              <Tooltip title={skills.length <= 1 ? skills[0] : <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>{skills.map((s) => <Typography key={s} component="span" variant="body2" sx={{ display: 'block' }}>{s}</Typography>)}</Box>} placement="top" enterDelay={300} disableInteractive={false}>
-                                <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>{skills[0]}{skills.length > 1 ? '…' : ''}</Typography>
+                              <Tooltip title={skills.length <= 1 ? toChipLabel(skills[0]) : <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>{skills.map((s, i) => <Typography key={`${toChipLabel(s)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>{toChipLabel(s)}</Typography>)}</Box>} placement="top" enterDelay={300} disableInteractive={false}>
+                                <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>{toChipLabel(skills[0])}{skills.length > 1 ? '…' : ''}</Typography>
                               </Tooltip>
                             )}
                           </TableCell>
@@ -1861,12 +1862,12 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                             <Tooltip
                               title={
                                 row.entry.skills.length <= 1
-                                  ? row.entry.skills[0]
+                                  ? toChipLabel(row.entry.skills[0])
                                   : (
                                     <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                                      {row.entry.skills.map((skill) => (
-                                        <Typography key={skill} component="span" variant="body2" sx={{ display: 'block' }}>
-                                          {skill}
+                                      {row.entry.skills.map((skill, i) => (
+                                        <Typography key={`${toChipLabel(skill)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>
+                                          {toChipLabel(skill)}
                                         </Typography>
                                       ))}
                                     </Box>
@@ -1877,7 +1878,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                               disableInteractive={false}
                             >
                               <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
-                                {row.entry.skills[0]}
+                                {toChipLabel(row.entry.skills[0])}
                                 {row.entry.skills.length > 1 ? '…' : ''}
                               </Typography>
                             </Tooltip>

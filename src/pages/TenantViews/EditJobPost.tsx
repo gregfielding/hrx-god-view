@@ -28,6 +28,7 @@ import { db } from '../../firebase';
 import FavoriteButton from '../../components/FavoriteButton';
 import { useFavorites } from '../../hooks/useFavorites';
 import { calculateProfileScore } from '../../utils/applicantScoring';
+import { toChipLabel } from '../../utils/chipLabel';
 import PageHeader from '../../components/PageHeader';
 import StandardTablePagination from '../../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
@@ -863,10 +864,10 @@ const EditJobPost: React.FC = () => {
                             </TableCell>
                             <TableCell>
                               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                                {user.skills?.slice(0, 3).map((skill: string) => (
+                                {user.skills?.slice(0, 3).map((skill, i) => (
                                   <Chip
-                                    key={skill}
-                                    label={skill}
+                                    key={`${toChipLabel(skill)}-${i}`}
+                                    label={toChipLabel(skill)}
                                     size="small"
                                     variant="outlined"
                                     icon={<StarIcon sx={{ fontSize: 14 }} />}

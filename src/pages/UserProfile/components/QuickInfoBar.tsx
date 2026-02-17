@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { toChipLabel } from '../../../utils/chipLabel';
 import { Box, Typography, Tooltip, Chip, Stack, IconButton, Badge, Collapse } from '@mui/material';
 import VerifiedIcon from '@mui/icons-material/Verified';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
@@ -153,7 +154,7 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                     <Chip
                       size="small"
                       icon={<WorkHistoryIcon sx={{ fontSize: 14 }} />}
-                      label={`${yearsExperience} ${yearsExperience === '1' ? 'Year' : 'Years'} Exp`}
+                      label={`${toChipLabel(yearsExperience)} ${String(yearsExperience) === '1' ? 'Year' : 'Years'} Exp`}
                       sx={{
                         height: 22,
                         fontSize: '0.7rem',
@@ -175,7 +176,7 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                     <Chip
                       size="small"
                       icon={<SchoolIcon sx={{ fontSize: 14 }} />}
-                      label={educationLevel}
+                      label={toChipLabel(educationLevel)}
                       sx={{
                         height: 22,
                         fontSize: '0.7rem',
@@ -198,7 +199,7 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                   <Chip
                     key={index}
                     size="small"
-                    label={skill}
+                    label={toChipLabel(skill)}
                     onClick={onSkillsClick}
                     sx={{
                       height: 22,
@@ -245,13 +246,11 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                 <Typography variant="caption" sx={{ fontSize: '0.65rem', color: 'text.secondary', mr: 0.5 }}>
                   🌍 Languages:
                 </Typography>
-                {languages.slice(0, 5).map((lang, index) => {
-                  const langLabel = typeof lang === 'string' ? lang : (typeof lang === 'object' && lang !== null && 'language' in lang ? String((lang as any).language) : String(lang || ''));
-                  return (
+                {languages.slice(0, 5).map((lang, index) => (
                     <Chip
                       key={index}
                       size="small"
-                      label={langLabel}
+                      label={toChipLabel(lang)}
                       sx={{
                         height: 22,
                         fontSize: '0.7rem',
@@ -260,8 +259,7 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                         fontWeight: 500,
                       }}
                     />
-                  );
-                })}
+                ))}
                 {languages.length > 5 && (
                   <Chip
                     size="small"
@@ -287,7 +285,7 @@ const QuickInfoBar: React.FC<QuickInfoBarProps> = ({
                   <Chip
                     key={index}
                     size="small"
-                    label={trait}
+                    label={toChipLabel(trait)}
                     sx={{
                       height: 22,
                       fontSize: '0.7rem',

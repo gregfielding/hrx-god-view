@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { toChipLabel } from '../../../utils/chipLabel';
 import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge, GlobalStyles, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import { keyframes } from '@emotion/react';
 import useMediaQuery from '@mui/material/useMediaQuery';
@@ -1088,7 +1089,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 {primarySkills.slice(0, 5).map((skill, index) => (
                   <Chip
                     key={index}
-                    label={skill}
+                    label={toChipLabel(skill)}
                     size="small"
                     sx={{
                       height: 22,
@@ -1136,7 +1137,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
                 {/* Education Chips - Purple */}
                 {education.slice(0, 3).map((edu, index) => {
-                  const degree = edu?.degree || '';
+                  const degree = toChipLabel(edu?.degree ?? edu?.name ?? edu);
                   if (!degree) return null;
                   return (
                     <Chip
@@ -1158,7 +1159,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 })}
                 {/* Work Experience Chips - Navy Blue */}
                 {workExperience.slice(0, 3).map((exp, index) => {
-                  const jobTitle = exp?.jobTitle || exp?.title || '';
+                  const jobTitle = toChipLabel(exp?.jobTitle ?? exp?.title ?? exp?.name ?? exp);
                   if (!jobTitle) return null;
                   return (
                     <Chip
@@ -1180,7 +1181,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 })}
                 {/* Certifications Chips - Black */}
                 {certifications && certifications.slice(0, 3).map((cert, index) => {
-                  const certName = typeof cert === 'string' ? cert : cert?.name || '';
+                  const certName = toChipLabel(cert);
                   if (!certName) return null;
                   return (
                     <Chip
@@ -1661,7 +1662,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 {primarySkills.slice(0, 5).map((skill, index) => (
                   <Chip
                     key={index}
-                    label={skill}
+                    label={toChipLabel(skill)}
                     size="small"
                     sx={{
                       height: 22,
@@ -1709,7 +1710,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap alignItems="center">
                 {/* Education Chips - Purple */}
                 {education.slice(0, 3).map((edu, index) => {
-                  const degree = edu?.degree || '';
+                  const degree = toChipLabel(edu?.degree ?? edu?.name ?? edu);
                   if (!degree) return null;
                   return (
                     <Chip
@@ -1731,7 +1732,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 })}
                 {/* Work Experience Chips - Navy Blue */}
                 {workExperience.slice(0, 3).map((exp, index) => {
-                  const jobTitle = exp?.jobTitle || exp?.title || '';
+                  const jobTitle = toChipLabel(exp?.jobTitle ?? exp?.title ?? exp?.name ?? exp);
                   if (!jobTitle) return null;
                   return (
                     <Chip
@@ -1753,7 +1754,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 })}
                 {/* Certifications Chips - Black */}
                 {certifications && certifications.slice(0, 3).map((cert, index) => {
-                  const certName = typeof cert === 'string' ? cert : cert?.name || '';
+                  const certName = toChipLabel(cert);
                   if (!certName) return null;
                   return (
                     <Chip

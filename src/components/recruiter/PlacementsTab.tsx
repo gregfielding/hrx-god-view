@@ -381,7 +381,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         // Query all shifts for this job order
         // For gig jobs, shifts are in tenants/{tenantId}/job_orders/{jobOrderId}/shifts
         const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
-        const shiftsSnap = await getDocs(shiftsRef);
+        const [shiftsSnap, assignmentsSnap, placementsSnap] = await Promise.all([
+          getDocs(shiftsRef),
+          getDocs(query(collection(db, 'tenants', tenantId, 'assignments'), where('jobOrderId', '==', jobOrderId))),
+          getDocs(query(collection(db, 'tenants', tenantId, 'placements'), where('jobOrderId', '==', jobOrderId))),
+        ]);
+        
+        // Collect shiftIds that have placements or assignments (active shifts — show even if date is past)
+        const activeShiftIds = new Set<string>();
+        assignmentsSnap.docs.forEach((d) => {
+          const sid = (d.data() as { shiftId?: string })?.shiftId;
+          if (sid) activeShiftIds.add(sid);
+        });
+        placementsSnap.docs.forEach((d) => {
+          const sid = (d.data() as { shiftId?: string })?.shiftId;
+          if (sid) activeShiftIds.add(sid);
+        });
         
         // Filter shifts from today forward and enrich with pay rate
         const allShifts = shiftsSnap.docs.map(doc => {
@@ -401,8 +416,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return shiftData;
         });
         
-        // Filter for shifts from today forward
+        // Filter: include shifts from today forward OR shifts that have placements/assignments (active)
         const upcomingShifts = allShifts.filter(shift => {
+          const isActive = activeShiftIds.has(shift.id);
+          if (isActive) return true; // Always show shifts with placements or assignments
+          
           const shiftDate: any = shift.shiftDate;
           if (!shiftDate) return false;
           
@@ -490,6 +508,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             query(applicationsRef, where('jobOrderId', '==', jobOrderId)),
           );
           let docs = byOrderSnap.docs;
+
+          // Phase 2 / career: applications nested under job order
+          if (docs.length === 0) {
+            const nestedRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications');
+            const nestedSnap = await getDocs(nestedRef);
+            docs = nestedSnap.docs;
+          }
 
           if (docs.length === 0) {
             const jobPostingsSnap = await getDocs(

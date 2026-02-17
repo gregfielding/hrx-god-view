@@ -59,6 +59,7 @@ import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import PageHeader from '../../../components/PageHeader';
 import StandardTablePagination from '../../../components/StandardTablePagination';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
+import { toChipLabel } from '../../../utils/chipLabel';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
@@ -1372,12 +1373,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                               <Tooltip
                                 title={
                                   skills.length <= 1
-                                    ? skills[0]
+                                    ? toChipLabel(skills[0])
                                     : (
                                       <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                                        {skills.map((skill) => (
-                                          <Typography key={skill} component="span" variant="body2" sx={{ display: 'block' }}>
-                                            {skill}
+                                        {skills.map((skill, i) => (
+                                          <Typography key={`${toChipLabel(skill)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>
+                                            {toChipLabel(skill)}
                                           </Typography>
                                         ))}
                                       </Box>
@@ -1388,7 +1389,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                 disableInteractive={false}
                               >
                                 <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
-                                  {skills[0]}
+                                  {toChipLabel(skills[0])}
                                   {skills.length > 1 ? '…' : ''}
                                 </Typography>
                               </Tooltip>

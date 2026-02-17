@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { toChipLabel } from '../../../../utils/chipLabel';
 import { logger } from '../../../../utils/logger';
 import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../../../../firebase';
@@ -862,7 +863,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   </Typography>
                   <Box display="flex" flexWrap="wrap" gap={1}>
                     {aiInsights.skillGaps.slice(0, 3).map((gap, idx) => (
-                      <Chip key={idx} label={gap} size="small" color="warning" variant="outlined" />
+                      <Chip key={idx} label={toChipLabel(gap)} size="small" color="warning" variant="outlined" />
                     ))}
                   </Box>
                 </Box>
@@ -904,10 +905,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                     freeSolo
                     options={mapOnetSkillsToInternal(onetSkills).sort((a, b) => a.type.localeCompare(b.type))}
                     groupBy={(option) => option.type}
-                    getOptionLabel={(option) => {
-                      if (typeof option === 'string') return option;
-                      return typeof option.name === 'string' ? option.name : String(option.name || 'Unknown Skill');
-                    }}
+                    getOptionLabel={(option) => toChipLabel(option) || 'Unknown Skill'}
                     value={(() => {
                       // debug: Autocomplete value
                       // logger.debug('Autocomplete value - skills array:', skills);
@@ -945,7 +943,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                       // logger.debug('Rendering skills tags, value:', value);
                       return value.map((option, index) => {
                         // logger.debug('Rendering option:', option, 'name:', option.name, 'level:', option.level);
-                        const skillName = typeof option.name === 'string' ? option.name : String(option.name || 'Unknown Skill');
+                        const skillName = toChipLabel(option) || 'Unknown Skill';
                         return (
                           <Chip
                             label={skillName}
@@ -1106,11 +1104,11 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                     onUpdate(buildUpdatedDataWith({ industryPreferences: unique }));
                     saveUserPartial({ industryPreferences: unique });
                   }}
-                  renderTags={(value, getTagProps) =>
+                    renderTags={(value, getTagProps) =>
                     value.map((option, index) => (
                       <Chip
-                        key={`${option}-${index}`}
-                        label={option}
+                        key={`${toChipLabel(option)}-${index}`}
+                        label={toChipLabel(option)}
                         {...getTagProps({ index })}
                         color="primary"
                         variant="filled"

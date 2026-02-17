@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { toChipLabel } from '../../../utils/chipLabel';
 import {
   Box,
   TextField,
@@ -1105,9 +1106,9 @@ const transportOptions: Array<{
                             renderTags={(value: string[], getTagProps) =>
                               value.map((option: string, index: number) => (
                                 <Chip 
-                                  label={option} 
+                                  label={toChipLabel(option)} 
                                   {...getTagProps({ index })} 
-                                  key={option || index} 
+                                  key={toChipLabel(option) || index} 
                                 />
                               ))
                             }

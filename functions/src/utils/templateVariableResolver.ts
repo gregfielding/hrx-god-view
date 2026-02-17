@@ -161,6 +161,8 @@ export async function resolveTemplateVariables(
     locationState: resolveLocationState(resolvedContext),
     locationName: resolveLocationName(resolvedContext),
     locationPhrase: resolveLocationPhrase(resolvedContext),
+    /** " in Location" when location exists, "" otherwise. Use to avoid "in ." when empty. */
+    locationIn: resolveLocationIn(resolvedContext),
     locationAddress: resolveLocationAddress(resolvedContext),
     locationZipCode: resolveLocationZipCode(resolvedContext),
     
@@ -452,9 +454,11 @@ function resolveLocationCity(context: TemplateVariableContext): string {
     context.locationData?.city ||
     context.locationData?.locationCity ||
     context.jobOrderData?.worksiteAddress?.city ||
+    context.jobOrderData?.worksiteAddress?.address?.city ||
     context.jobOrderData?.locationCity ||
     context.jobOrderData?.worksiteCity ||
     context.jobOrderData?.worksiteName ||
+    context.assignmentData?.worksiteAddress?.city ||
     context.assignmentData?.locationCity ||
     context.assignmentData?.worksiteCity ||
     context.shiftData?.locationCity ||
@@ -484,7 +488,7 @@ function looksLikeDocId(value: string): boolean {
 }
 
 function resolveLocationName(context: TemplateVariableContext): string {
-  const raw = (
+  let raw = (
     context.locationData?.nickname ||
     context.locationData?.title ||
     context.locationData?.name ||
@@ -499,6 +503,10 @@ function resolveLocationName(context: TemplateVariableContext): string {
     context.applicationData?.locationName ||
     ''
   );
+  if (!raw && (context.jobOrderData?.worksiteAddress || context.assignmentData?.worksiteAddress)) {
+    const addr = context.jobOrderData?.worksiteAddress || context.assignmentData?.worksiteAddress;
+    raw = [addr?.city, addr?.state].filter(Boolean).join(', ');
+  }
   return looksLikeDocId(raw) ? '' : raw;
 }
 
@@ -506,6 +514,14 @@ function resolveLocationName(context: TemplateVariableContext): string {
 function resolveLocationPhrase(context: TemplateVariableContext): string {
   const name = resolveLocationName(context);
   return name?.trim() ? ` at ${name.trim()}` : '';
+}
+
+/** " in Las Vegas" when location exists, "" otherwise. Use in templates like "accepted for {{jobTitle}}{{locationIn}}" to avoid "in ." when empty. */
+function resolveLocationIn(context: TemplateVariableContext): string {
+  const name = resolveLocationName(context);
+  const city = resolveLocationCity(context);
+  const loc = name?.trim() || city?.trim();
+  return loc ? ` in ${loc}` : '';
 }
 
 function resolveLocationAddress(context: TemplateVariableContext): string {

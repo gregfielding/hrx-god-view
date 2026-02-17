@@ -755,10 +755,11 @@ export const resendAssignmentOffer = onCall(
   let jobTitle = assignment.jobTitle || 'a position';
   let checkInInstructions = '';
 
+  let jobOrderData: admin.firestore.DocumentData | undefined;
   if (assignment.jobOrderId) {
     try {
       const jobOrderDoc = await db.doc(`tenants/${tenantId}/job_orders/${assignment.jobOrderId}`).get();
-      const jobOrderData = jobOrderDoc.data();
+      jobOrderData = jobOrderDoc.data();
       if (jobOrderData?.jobTitle) jobTitle = jobOrderData.jobTitle;
       if (jobOrderData?.checkInInstructions) checkInInstructions = String(jobOrderData.checkInInstructions);
     } catch (_) {
@@ -777,7 +778,31 @@ export const resendAssignmentOffer = onCall(
   }
 
   const firstName = assignment.firstName || userData.firstName || 'there';
-  const worksiteName = assignment.locationNickname || assignment.worksiteName || '';
+  let worksiteName = assignment.locationNickname || assignment.worksiteName || '';
+  if (!worksiteName && jobOrderData) {
+    worksiteName = String(jobOrderData.worksiteName || jobOrderData.locationName || '');
+    if (!worksiteName) {
+      const locId = jobOrderData.worksiteId || jobOrderData.locationId;
+      if (locId) {
+        try {
+          const locSnap = await db.doc(`tenants/${tenantId}/locations/${locId}`).get();
+          const loc = locSnap.exists ? locSnap.data() : null;
+          worksiteName = loc?.nickname || loc?.title || loc?.name || loc?.locationName || '';
+          if (!worksiteName && jobOrderData.companyId) {
+            const crmLoc = await db.doc(`tenants/${tenantId}/crm_companies/${jobOrderData.companyId}/locations/${locId}`).get();
+            const crmData = crmLoc.exists ? crmLoc.data() : null;
+            worksiteName = crmData?.nickname || crmData?.title || crmData?.name || crmData?.locationName || '';
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+    }
+    if (!worksiteName && jobOrderData?.worksiteAddress) {
+      const addr = jobOrderData.worksiteAddress;
+      worksiteName = [addr.city, addr.state].filter(Boolean).join(', ');
+    }
+  }
   const locationText = worksiteName ? ` at ${worksiteName}` : '';
   const postingPath = assignment.jobPostId
     ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
