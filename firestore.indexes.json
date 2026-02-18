@@ -1,6 +1,23 @@
 {
   "indexes": [
     {
+      "collectionGroup": "everify_cases",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "userId", "order": "ASCENDING"},
+        {"fieldPath": "entityId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "everify_cases",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "userEmploymentId", "order": "ASCENDING"},
+        {"fieldPath": "status", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "job_orders",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

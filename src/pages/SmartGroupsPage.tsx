@@ -63,6 +63,7 @@ import {
   formatGeoLabel,
   getGeoHierarchy,
 } from '../data/metroSubareaSchema';
+import { getMetroDisplayLabel } from '../data/metroMaster';
 import { Autocomplete as GooglePlacesAutocomplete } from '@react-google-maps/api';
 import { geocodeAddress, getGeocodingErrorMessage } from '../utils/geocodeAddress';
 import { calculateDistance } from '../utils/locationUtils';
@@ -601,7 +602,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
   const metroSelectOptions = useMemo(
     () => [
       { value: '', label: 'All metros' },
-      ...metroOptions.map((m) => ({ value: m, label: formatGeoLabel(m) })),
+      ...metroOptions.map((m) => ({ value: m, label: getMetroDisplayLabel(m) })),
       { value: OTHER_METRO_VALUE, label: 'Other (non-metro)' },
     ],
     [metroOptions]

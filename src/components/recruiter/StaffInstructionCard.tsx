@@ -33,6 +33,23 @@ interface StaffInstructionCardProps {
   onRefresh: () => Promise<void>;
 }
 
+/**
+ * Normalize stored value to string for admin/recruiter view.
+ * Admin always shows English: value may be a string or i18n object { en?, es? }.
+ * We only use English; never show Spanish in the admin dashboard.
+ */
+function instructionTextToString(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    const en = o.en;
+    if (typeof en === 'string') return en;
+    return '';
+  }
+  return '';
+}
+
 const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
   title,
   fieldKey,
@@ -46,15 +63,17 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
 }) => {
   const instructionData = jobOrder?.staffInstructions?.[fieldKey];
   const inputId = `${fieldKey}-file-label`;
-  const [localText, setLocalText] = useState(instructionData?.text || '');
+  const initialText = instructionTextToString(instructionData?.text);
+  const [localText, setLocalText] = useState(() => typeof initialText === 'string' ? initialText : '');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastSavedRef = useRef<string>(instructionData?.text || '');
+  const lastSavedRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
 
-  // Update local text when job order data changes (e.g. after refresh)
+  // Update local text when job order data changes (e.g. after refresh). Admin always shows English.
   useEffect(() => {
-    const text = instructionData?.text || '';
-    setLocalText(text);
-    lastSavedRef.current = text;
+    const text = instructionTextToString(instructionData?.text);
+    const safe = typeof text === 'string' ? text : '';
+    setLocalText(safe);
+    lastSavedRef.current = safe;
   }, [instructionData?.text]);
 
   useEffect(() => {

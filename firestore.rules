@@ -208,6 +208,41 @@ service cloud.firestore {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
+      // E-Verify cases (HRX E-Verify Master Plan) - admin/HRX/recruiters only; workers use everify_cases_public.
+      match /everify_cases/{caseId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles)
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        match /events/{eventId} {
+          allow read: if request.auth != null && (
+            isHRX() ||
+            hasTenantRole(tenantId, request.auth.token.roles)
+          );
+          allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        }
+      }
+      // E-Verify public mirror: worker-safe (tenantId, userId, caseId, public, updatedAt). Workers read own.
+      match /everify_cases_public/{caseId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // User employments (E-Verify trigger source) - admin/HRX write; recruiters read; workers read own
+      match /user_employments/{employmentId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
       // Phase 1C: Signature envelopes (write via Cloud Functions only)
       match /signature_envelopes/{envelopeId} {
         // Read: admins + envelope owner (signer)

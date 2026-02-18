@@ -662,9 +662,17 @@ const AssignmentDetails: React.FC = () => {
     return format(d, 'h:mm a');
   };
 
-  /** Day-of-week order for display: Mon .. Sun (1..6, 0) */
+  /** Day-of-week order for display: Mon .. Sun (1..6, 0). Labels translated. */
   const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
-  const DOW_LABELS: Record<number, string> = { 0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday' };
+  const DOW_LABELS: Record<number, string> = {
+    0: t('assignment.sunday'),
+    1: t('assignment.monday'),
+    2: t('assignment.tuesday'),
+    3: t('assignment.wednesday'),
+    4: t('assignment.thursday'),
+    5: t('assignment.friday'),
+    6: t('assignment.saturday'),
+  };
 
   if (loading) {
     return (
@@ -869,13 +877,13 @@ const AssignmentDetails: React.FC = () => {
                   </Box>
                   {assignment.startDate && (
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Start date</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
                       <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
                     </Box>
                   )}
                   {assignment.jobOrderType === 'gig' && (assignment.endDate || scheduleShift.endDate) && (
                     <Box>
-                      <Typography variant="body2" color="text.secondary">End date</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
                       <Typography variant="body1">
                         {assignment.endDate ? formatDate(assignment.endDate) : (scheduleShift.endDate ? new Date(scheduleShift.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
                       </Typography>
@@ -940,11 +948,28 @@ const AssignmentDetails: React.FC = () => {
 
         {/* Staff Instructions: one card per section; show i18n text by preferred language, fallback to legacy .text */}
         {(() => {
+          const legacyToStr = (val: unknown): string => {
+            if (val == null) return '';
+            if (typeof val === 'string') return val;
+            if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+              const o = val as Record<string, unknown>;
+              const en = o.en;
+              const es = o.es;
+              if (preferredLanguage === 'es' && typeof es === 'string') return es;
+              if (typeof en === 'string') return en;
+              if (typeof es === 'string') return es;
+              return '';
+            }
+            return '';
+          };
           const getStaffText = (sectionKey: string): string => {
             const i18n = assignment.staffInstructions_i18n?.[sectionKey];
             const legacy = assignment.staffInstructions?.[sectionKey]?.text;
-            const text = (i18n?.[preferredLanguage] ?? legacy ?? (sectionKey === 'checkIn' ? assignment.checkInInstructions ?? '' : '')).trim();
-            return text || '';
+            const fromI18n = i18n?.[preferredLanguage];
+            const fromLegacy = legacyToStr(legacy);
+            const fallback = sectionKey === 'checkIn' ? (assignment.checkInInstructions ?? '') : '';
+            const text = (fromI18n ?? fromLegacy ?? fallback).trim();
+            return typeof text === 'string' ? text : '';
           };
           const sections: Array<{ key: string; title: string; getText: () => string; getFiles: () => any[] }> = [
             {

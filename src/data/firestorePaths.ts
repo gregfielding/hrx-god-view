@@ -92,6 +92,18 @@ export const p = {
   onboardingDocument: (tid: string, id: string) => `tenants/${tid}/onboarding_documents/${id}`,
 
   /**
+   * E-Verify cases (HRX E-Verify Master Plan)
+   */
+  everifyCases: (tid: string) => `tenants/${tid}/everify_cases`,
+  everifyCase: (tid: string, id: string) => `tenants/${tid}/everify_cases/${id}`,
+  everifyCasesPublic: (tid: string) => `tenants/${tid}/everify_cases_public`,
+  everifyCasePublic: (tid: string, id: string) => `tenants/${tid}/everify_cases_public/${id}`,
+  everifyCaseEvents: (tid: string, caseId: string) =>
+    `tenants/${tid}/everify_cases/${caseId}/events`,
+  everifyCaseEvent: (tid: string, caseId: string, eventId: string) =>
+    `tenants/${tid}/everify_cases/${caseId}/events/${eventId}`,
+
+  /**
    * Signature Envelopes (Phase 1C)
    */
   signatureEnvelopes: (tid: string) => `tenants/${tid}/signature_envelopes`,

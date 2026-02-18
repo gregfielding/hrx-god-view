@@ -67,6 +67,7 @@ import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
 
 import AddressFormFields from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
+import { EverifyComplianceCard } from './EverifyComplianceCard';
 
 type Props = {
   uid: string;
@@ -1470,6 +1471,13 @@ const transportOptions: Array<{
               </CardContent>
             </Card>
           </Grid>
+
+          {/* Compliance (I-9 + E-Verify) - admin view */}
+          {tenantId && (
+            <Grid item xs={12} sm={6} md={4}>
+              <EverifyComplianceCard tenantId={tenantId} userId={uid} />
+            </Grid>
+          )}
 
           {/* Work Eligibility Section */}
           <Grid item xs={12}>

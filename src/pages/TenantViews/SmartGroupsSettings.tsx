@@ -116,24 +116,37 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     if (!q || !citySearchIndex) return [];
-    const filtered = citySearchIndex.filter(
-      (hit) => formatGeoLabel(hit.cityKey).toLowerCase().includes(q)
+    const metroKeys = getMergedMetroOptions(EMPTY_CUSTOM_METROS);
+    const metroHits: CitySearchHit[] = [];
+    for (const metroKey of metroKeys) {
+      const displayLabel = getMetroDisplayLabel(metroKey).toLowerCase();
+      if (displayLabel.includes(q)) {
+        metroHits.push({
+          cityKey: `__metro__${metroKey}`,
+          metroKey,
+          metroLabel: getMetroDisplayLabel(metroKey),
+          subareaKey: '',
+          subareaLabel: '—',
+        });
+      }
+    }
+    const cityFiltered = citySearchIndex.filter(
+      (hit) => !hit.cityKey.startsWith('__metro__') && formatGeoLabel(hit.cityKey).toLowerCase().includes(q)
     );
-    // Rank: prefer metros whose label contains the query (e.g. "Houston" → Houston, TX first)
-    // then cities that start with the query, then rest
-    return filtered.sort((a, b) => {
+    const citySorted = cityFiltered.sort((a, b) => {
       const metroA = a.metroLabel.toLowerCase();
       const metroB = b.metroLabel.toLowerCase();
       const cityA = formatGeoLabel(a.cityKey).toLowerCase();
       const cityB = formatGeoLabel(b.cityKey).toLowerCase();
       const metroMatchA = metroA.includes(q) ? 1 : 0;
       const metroMatchB = metroB.includes(q) ? 1 : 0;
-      if (metroMatchA !== metroMatchB) return metroMatchB - metroMatchA; // metro matches first
+      if (metroMatchA !== metroMatchB) return metroMatchB - metroMatchA;
       const cityStartsA = cityA.startsWith(q) ? 1 : 0;
       const cityStartsB = cityB.startsWith(q) ? 1 : 0;
-      if (cityStartsA !== cityStartsB) return cityStartsB - cityStartsA; // city-starts matches next
+      if (cityStartsA !== cityStartsB) return cityStartsB - cityStartsA;
       return metroA.localeCompare(metroB);
     });
+    return [...metroHits, ...citySorted];
   }, [citySearchIndex, searchQuery]);
 
   const searchIndexReady = citySearchIndex !== null;
@@ -183,7 +196,9 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
   useEffect(() => {
     if (searchSelection) {
       setSelectedMetroKey(searchSelection.metroKey);
-      setSelectedSubareaKey(searchSelection.subareaKey);
+      setSelectedSubareaKey(
+        searchSelection.cityKey.startsWith('__metro__') ? null : searchSelection.subareaKey
+      );
     }
   }, [searchSelection?.cityKey, searchSelection?.metroKey, searchSelection?.subareaKey]);
 
@@ -232,7 +247,9 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
               >
                 {searchResults.map((hit) => (
                   <MenuItem key={hit.cityKey} value={hit.cityKey}>
-                    {formatGeoLabel(hit.cityKey)}
+                    {hit.cityKey.startsWith('__metro__')
+                      ? `${getMetroDisplayLabel(hit.metroKey)} (metro area)`
+                      : formatGeoLabel(hit.cityKey)}
                   </MenuItem>
                 ))}
               </Select>
@@ -242,11 +259,19 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
               <PlaceIcon color="primary" fontSize="small" />
               <Typography variant="body2">
-                <strong>{formatGeoLabel(searchSelection.cityKey)}</strong>
-                {' is in '}
-                <strong>{getMetroDisplayLabel(searchSelection.metroKey)}</strong>
-                {' → '}
-                <strong>{searchSelection.subareaLabel}</strong>
+                {searchSelection.cityKey.startsWith('__metro__') ? (
+                  <>
+                    Metro area: <strong>{getMetroDisplayLabel(searchSelection.metroKey)}</strong>
+                  </>
+                ) : (
+                  <>
+                    <strong>{formatGeoLabel(searchSelection.cityKey)}</strong>
+                    {' is in '}
+                    <strong>{getMetroDisplayLabel(searchSelection.metroKey)}</strong>
+                    {' → '}
+                    <strong>{searchSelection.subareaLabel}</strong>
+                  </>
+                )}
               </Typography>
             </Box>
           )}

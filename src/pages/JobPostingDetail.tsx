@@ -1068,7 +1068,10 @@ const JobPostingDetail: React.FC = () => {
   const urlAssignmentId = params.get('assignmentId');
   const intent = params.get('intent');
   const isAssignmentResponseMode = Boolean(urlAssignmentId && intent === 'assignment_response');
-  const assignmentDetailsId = acceptedAssignmentId || urlAssignmentId;
+  const assignmentDetailsId =
+    acceptedAssignmentId ||
+    urlAssignmentId ||
+    (applicationData?.assignmentId ? String(applicationData.assignmentId) : null);
   const assignmentDetailsUrl = assignmentDetailsId
     ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com'}/c1/workers/assignments/${assignmentDetailsId}`
     : null;

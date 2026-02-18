@@ -417,7 +417,15 @@
     "otherAttachments": "Other Attachments",
     "parking": "Parking",
     "checkIn": "Check In",
-    "noRecruiterAssigned": "No recruiter assigned to this job order. Reach out via Inbox if you need support."
+    "noRecruiterAssigned": "No recruiter assigned to this job order. Reach out via Inbox if you need support.",
+    "sunday": "Sunday",
+    "monday": "Monday",
+    "tuesday": "Tuesday",
+    "wednesday": "Wednesday",
+    "thursday": "Thursday",
+    "friday": "Friday",
+    "saturday": "Saturday",
+    "endDate": "End Date"
   },
   "documents": {},
   "forms": {

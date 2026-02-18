@@ -17,10 +17,12 @@ import MessagingTab from './MessagingTab';
 import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
 import WorkforceManagement from './WorkforceManagement';
+import EverifyAdminOpsPage from './EverifyAdminOpsPage';
 const SmartGroupsSettings = lazy(() => import('./SmartGroupsSettings'));
 import { useAuth } from '../../contexts/AuthContext';
+import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 
-type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups';
+type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups' | 'everify-ops';
 
 const SettingsLanding: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
@@ -68,6 +70,11 @@ const SettingsLanding: React.FC = () => {
       title: 'Smart Groups',
       icon: <GroupWorkIcon sx={{ fontSize: 20 }} />,
     },
+    {
+      id: 'everify-ops' as SettingsTab,
+      title: 'E-Verify Ops',
+      icon: <AdminPanelSettingsIcon sx={{ fontSize: 20 }} />,
+    },
   ];
 
   const renderTabContent = () => {
@@ -96,6 +103,8 @@ const SettingsLanding: React.FC = () => {
             <SmartGroupsSettings tenantId={effectiveTenantId} />
           </Suspense>
         ) : null;
+      case 'everify-ops':
+        return effectiveTenantId ? <EverifyAdminOpsPage tenantId={effectiveTenantId} /> : null;
       default:
         return <CompanySetup />;
     }

@@ -417,7 +417,15 @@
     "otherAttachments": "Otros archivos adjuntos",
     "parking": "Estacionamiento",
     "checkIn": "Registro",
-    "noRecruiterAssigned": "No hay reclutador asignado a esta orden. Contacte por Bandeja de entrada si necesita ayuda."
+    "noRecruiterAssigned": "No hay reclutador asignado a esta orden. Contacte por Bandeja de entrada si necesita ayuda.",
+    "sunday": "Domingo",
+    "monday": "Lunes",
+    "tuesday": "Martes",
+    "wednesday": "Miércoles",
+    "thursday": "Jueves",
+    "friday": "Viernes",
+    "saturday": "Sábado",
+    "endDate": "Fecha de fin"
   },
   "documents": {},
   "forms": {

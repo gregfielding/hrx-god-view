@@ -205,6 +205,22 @@ export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp 
 export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, resendAssignmentOffer } from './placementsApi';
+export {
+  everifyCreateCase,
+  everifyCheckEligibility,
+  everifyPingAuth,
+  everifyDryRunCreateAndSubmit,
+  everifyListCases,
+  everifyRetryCase,
+  everifyExceptionAction,
+  everifyMarkEmployeeNotified,
+  everifyMarkContested,
+  everifyMarkReferralInitiated,
+  everifyCloseCaseManual,
+  onUserEmploymentUpdatedEverify,
+  processEverifyCaseFromEmployment,
+  scheduledEverifyPoller,
+} from './integrations/everify';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

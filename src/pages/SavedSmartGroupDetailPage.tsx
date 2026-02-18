@@ -69,6 +69,7 @@ import {
   getMergedCityOptionsForSubarea,
   formatGeoLabel,
 } from '../data/metroSubareaSchema';
+import { getMetroDisplayLabel } from '../data/metroMaster';
 import { Autocomplete as GooglePlacesAutocomplete } from '@react-google-maps/api';
 import { geocodeAddress } from '../utils/geocodeAddress';
 
@@ -770,7 +771,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                         <MenuItem value="">All metros</MenuItem>
                         {metroOptions.map((m) => (
                           <MenuItem key={m} value={m}>
-                            {formatGeoLabel(m)}
+                            {getMetroDisplayLabel(m)}
                           </MenuItem>
                         ))}
                         <MenuItem value={OTHER_METRO_VALUE}>Other (non-metro)</MenuItem>
@@ -878,7 +879,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                         <MenuItem value="">All metros</MenuItem>
                         {metroOptions.map((m) => (
                           <MenuItem key={m} value={m}>
-                            {formatGeoLabel(m)}
+                            {getMetroDisplayLabel(m)}
                           </MenuItem>
                         ))}
                         <MenuItem value={OTHER_METRO_VALUE}>Other (non-metro)</MenuItem>
