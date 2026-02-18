@@ -23,6 +23,7 @@ import {
   CircularProgress,
   FormControlLabel,
   Switch,
+  Checkbox,
   Divider,
 } from '@mui/material';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
@@ -71,6 +72,9 @@ export interface EntityDocuments {
   workersCompInfoDocKey?: string;
 }
 
+/** Which steps are enabled for this entity (stepId -> true). Unset = not enabled. */
+export type OnboardingWorkflowStepsConfig = Record<string, boolean>;
+
 export interface Entity {
   id: string;
   name: string;
@@ -90,6 +94,8 @@ export interface Entity {
   defaultCostCenterId?: string | null;
   defaultGlCompanyCode?: string | null;
   isActive?: boolean;
+  /** Which onboarding workflow steps are active for this entity */
+  onboardingWorkflowSteps?: OnboardingWorkflowStepsConfig;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -97,6 +103,40 @@ export interface Entity {
 const WORKER_TYPES = ['W2', '1099', 'BOTH'] as const;
 const ENTITY_TYPES: EntityType[] = ['LLC', 'Inc', 'LP', 'SoleProp', 'Other'];
 const US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'];
+
+/** All available onboarding steps. Shown for every entity; checkboxes enable which apply to that entity. */
+export type OnboardingStepCategory = '1099' | 'W2' | 'both';
+export interface OnboardingWorkflowStepDef {
+  id: string;
+  label: string;
+  category: OnboardingStepCategory;
+}
+export const ONBOARDING_WORKFLOW_STEPS: OnboardingWorkflowStepDef[] = [
+  // 1099 / Contractor
+  { id: 'ic_agreement_sent', label: 'Independent Contractor Agreement Sent', category: '1099' },
+  { id: 'ic_agreement_signed', label: 'Independent Contractor Agreement Signed', category: '1099' },
+  { id: '1099_sent', label: '1099 / W-9 Sent', category: '1099' },
+  { id: '1099_completed', label: '1099 / W-9 Completed', category: '1099' },
+  { id: 'payroll_invite_sent', label: 'Payroll Invite Sent', category: '1099' },
+  { id: 'payroll_setup_complete', label: 'Payroll Setup Complete', category: '1099' },
+  { id: 'w9_received', label: 'W-9 Received', category: '1099' },
+  { id: 'direct_deposit_contractor', label: 'Direct Deposit / Banking Info (Contractor)', category: '1099' },
+  // W2
+  { id: 'handbook_sent', label: 'Handbook Sent', category: 'W2' },
+  { id: 'handbook_signed', label: 'Handbook Signed', category: 'W2' },
+  { id: 'i9_sent', label: 'I-9 Sent', category: 'W2' },
+  { id: 'i9_completed', label: 'I-9 Completed', category: 'W2' },
+  { id: 'everify_sent', label: 'E-Verify Sent', category: 'W2' },
+  { id: 'everify_completed', label: 'E-Verify Completed', category: 'W2' },
+  { id: 'w4_sent', label: 'W-4 Sent', category: 'W2' },
+  { id: 'w4_completed', label: 'W-4 Completed', category: 'W2' },
+  { id: 'direct_deposit_w2', label: 'Direct Deposit Setup', category: 'W2' },
+  { id: 'emergency_contact', label: 'Emergency Contact Form', category: 'W2' },
+  { id: 'benefits_enrollment', label: 'Benefits Enrollment', category: 'W2' },
+  { id: 'policy_acknowledgments', label: 'Policy Acknowledgments (e.g. harassment, confidentiality)', category: 'W2' },
+  { id: 'background_initiated', label: 'Background Check Initiated', category: 'W2' },
+  { id: 'background_completed', label: 'Background Check Completed', category: 'W2' },
+];
 
 const EntitiesPage: React.FC = () => {
   const { activeTenant } = useAuth();
@@ -195,6 +235,43 @@ const EntitiesPage: React.FC = () => {
     } catch (err: any) {
       setError(err?.message || 'Failed to save');
       throw err;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const [workflowSteps, setWorkflowSteps] = useState<OnboardingWorkflowStepsConfig>({});
+  useEffect(() => {
+    setWorkflowSteps(selectedEntity?.onboardingWorkflowSteps ?? {});
+  }, [selectedEntity?.id, selectedEntity?.onboardingWorkflowSteps]);
+
+  const handleWorkflowStepChange = (stepId: string, enabled: boolean) => {
+    setWorkflowSteps((prev) => ({
+      ...prev,
+      [stepId]: enabled,
+    }));
+  };
+
+  const handleSaveWorkflow = async () => {
+    if (!tenantId || !selectedEntity) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await setDoc(
+        doc(db, p.entity(tenantId, selectedEntity.id)),
+        { onboardingWorkflowSteps: workflowSteps, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      setSelectedEntity({ ...selectedEntity, onboardingWorkflowSteps: workflowSteps });
+      setEntities((prev) =>
+        prev.map((e) =>
+          e.id === selectedEntity.id ? { ...e, onboardingWorkflowSteps: workflowSteps } : e
+        )
+      );
+      setSuccess('Entity saved');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to save onboarding workflow');
     } finally {
       setSaving(false);
     }
@@ -576,9 +653,46 @@ const EntitiesPage: React.FC = () => {
                     />
                   )}
                   {entityTab === 'workflow' && (
-                    <Alert severity="info">
-                      Onboarding Workflow (checkbox matrix) — Coming in next phase.
-                    </Alert>
+                    <Box sx={{ maxWidth: 560 }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Enable the onboarding steps that apply to this entity. All steps are available for every entity; check the ones you want active (e.g. 1099 steps for C1 Events, W2 steps for C1 Select).
+                      </Typography>
+                      {(['1099', 'W2'] as const).map((cat) => {
+                        const steps = ONBOARDING_WORKFLOW_STEPS.filter((s) => s.category === cat);
+                        if (steps.length === 0) return null;
+                        return (
+                          <Box key={cat} sx={{ mb: 3 }}>
+                            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
+                              {cat === '1099' ? 'Independent Contractor (1099)' : 'W2 Employee'}
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                              {steps.map((step) => (
+                                <FormControlLabel
+                                  key={step.id}
+                                  control={
+                                    <Checkbox
+                                      checked={!!workflowSteps[step.id]}
+                                      onChange={(e) =>
+                                        handleWorkflowStepChange(step.id, e.target.checked)
+                                      }
+                                    />
+                                  }
+                                  label={step.label}
+                                />
+                              ))}
+                            </Box>
+                          </Box>
+                        );
+                      })}
+                      <Button
+                        variant="contained"
+                        onClick={handleSaveWorkflow}
+                        disabled={saving}
+                        sx={{ mt: 1 }}
+                      >
+                        {saving ? 'Saving...' : 'Save'}
+                      </Button>
+                    </Box>
                   )}
                   {entityTab === 'documents' && (
                     <EntityDocumentsTab
