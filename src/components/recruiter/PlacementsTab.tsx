@@ -54,6 +54,8 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
+import { format } from 'date-fns';
+
 import { db, functions } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
@@ -135,14 +137,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         const parsed = JSON.parse(saved);
         return {
           shiftId: parsed.shiftId || '',
-          workforce: parsed.workforce || '',
+          workforce: parsed.workforce || 'applicants',
         };
       }
     } catch (err) {
       console.error('Error loading persisted filters:', err);
     }
-    // Default values
-    return { shiftId: '', workforce: '' };
+    // Default values: Applicants as default workforce
+    return { shiftId: '', workforce: 'applicants' };
   };
 
   // Load initial state from localStorage
@@ -1223,9 +1225,79 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         event.preventDefault();
       }}
     >
-      <Typography variant="h6" gutterBottom sx={{ fontWeight: 700, mb: 1 }}>
-        Placements for this Job Order
-      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap', mb: 2 }}>
+        {showContent && shifts.length > 0 && (
+          <FormControl size="small" sx={{ minWidth: 280 }}>
+            <InputLabel>Shift</InputLabel>
+            <Select
+              value={safeSelectedShiftId}
+              label="Shift"
+              onChange={(e) => setSelectedShiftId(e.target.value)}
+              disabled={loading}
+            >
+              <MenuItem value="">
+                <em>Select shift</em>
+              </MenuItem>
+              {shifts.map((shift) => {
+                const dv = shift.shiftDate as string | Date | { toDate?: () => Date };
+                let dateStr = '';
+                if (typeof dv === 'string') dateStr = dv.split('T')[0];
+                else if (dv instanceof Date) dateStr = dv.toISOString().split('T')[0];
+                else if (dv && typeof (dv as { toDate?: () => Date }).toDate === 'function') dateStr = (dv as { toDate: () => Date }).toDate().toISOString().split('T')[0];
+                const formatted = dateStr ? format(new Date(dateStr), 'EEE, MMM d, yyyy') : 'Unknown date';
+                const jobTitle = (shift as any).defaultJobTitle ?? (shift as any).jobTitle ?? (jobOrder as any)?.jobTitle ?? '';
+                return (
+                  <MenuItem key={shift.id} value={shift.id}>
+                    <Box>
+                      <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {formatted} {jobTitle ? `• ${jobTitle}` : ''}
+                      </Typography>
+                    </Box>
+                  </MenuItem>
+                );
+              })}
+            </Select>
+          </FormControl>
+        )}
+        {selectedShift && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+            {(() => {
+              const startTime = (selectedShift as any).defaultStartTime ?? (selectedShift as any).startTime ?? '';
+              const endTime = (selectedShift as any).defaultEndTime ?? (selectedShift as any).endTime ?? '';
+              const formatTimeStr = (t: string) => {
+                if (!t) return '';
+                const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+                if (!m) return t;
+                const hour = parseInt(m[1], 10);
+                const min = m[2];
+                if (m[3]) return `${hour}:${min} ${m[3]}`;
+                const ampm = hour >= 12 ? 'PM' : 'AM';
+                const displayHour = hour % 12 || 12;
+                return `${displayHour}:${min} ${ampm}`;
+              };
+              const staffReq = (selectedShift as any).totalStaffRequested ?? (selectedShift as any).staffNeeded ?? (selectedShift as any).workersNeeded;
+              const overstaff = (selectedShift as any).overstaffCount ?? (selectedShift as any).overstaff ?? 0;
+              const scheduleStr = startTime && endTime ? `${formatTimeStr(startTime)} – ${formatTimeStr(endTime)}` : null;
+              return (
+                <>
+                  {scheduleStr && (
+                    <Typography variant="body2" color="text.secondary">
+                      {scheduleStr}
+                    </Typography>
+                  )}
+                  {typeof staffReq === 'number' && (
+                    <Typography variant="body2" color="text.secondary">
+                      Staff: {staffReq}
+                      {typeof overstaff === 'number' && overstaff > 0 ? ` (+${overstaff} overstaff)` : ''}
+                    </Typography>
+                  )}
+                </>
+              );
+            })()}
+          </Box>
+        )}
+      </Box>
 
       {/* Error Message */}
         {error && (
@@ -1234,221 +1306,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           </Alert>
         )}
 
-        {/* Content Area - three column board (always show so Assignments column never disappears when changing Workforce) */}
+        {/* Content Area - two column board */}
         {showContent && (
           <Grid container spacing={3}>
-            {/* Left: Shift Details */}
-            <Grid item xs={12} lg={2}>
-              <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
-                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>
-                    Shift Details
-          </Typography>
-                  <FormControl fullWidth size="small" sx={{ mb: 1 }}>
-                  <InputLabel>Shift</InputLabel>
-                  <Select
-                      value={safeSelectedShiftId}
-                    label="Shift"
-                    onChange={(e) => setSelectedShiftId(e.target.value)}
-                    disabled={loading || shifts.length === 0}
-                  >
-                      <MenuItem value="">
-                        <em>Select shift</em>
-                      </MenuItem>
-                    {shifts.length === 0 ? (
-                      <MenuItem disabled>
-                        {loading ? 'Loading shifts...' : 'No upcoming shifts available'}
-                      </MenuItem>
-                    ) : (
-                      shifts.map((shift) => {
-                        const shiftDate: any = shift.shiftDate;
-                        let formattedDate = '';
-                        if (shiftDate) {
-                          let date: Date;
-                          if (typeof shiftDate === 'string') {
-                            date = new Date(shiftDate);
-                          } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
-                            date = shiftDate.toDate();
-                          } else if (shiftDate instanceof Date) {
-                            date = shiftDate;
-                          } else {
-                            date = new Date();
-                          }
-                          formattedDate = date.toLocaleDateString('en-US', { 
-                            weekday: 'short', 
-                            month: 'short', 
-                            day: 'numeric',
-                              year: 'numeric',
-                          });
-                        }
-                        const jobTitle = (shift as any).defaultJobTitle ?? (shift as any).jobTitle ?? (jobOrder as any)?.jobTitle ?? '';
-                        return (
-                          <MenuItem key={shift.id} value={shift.id}>
-                            <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Typography variant="body2" fontWeight={600}>
-                                  {formattedDate}
-                                </Typography>
-                                {shift.spotsRemaining !== undefined && (
-                                  <Chip 
-                                    size="small" 
-                                    label={`${shift.spotsRemaining} spots`} 
-                                    sx={{ ml: 1 }}
-                                    color={shift.spotsRemaining > 0 ? 'success' : 'default'}
-                                  />
-                                )}
-                              </Box>
-                              <Typography variant="caption" color="text.secondary">
-                                {shift.shiftTitle || 'Shift'} • {shift.startTime || ''} {shift.endTime ? `to ${shift.endTime}` : ''}
-                              </Typography>
-                              {jobTitle && (
-                                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
-                                  {jobTitle}
-                                </Typography>
-                              )}
-                            </Box>
-                          </MenuItem>
-                        );
-                      })
-                    )}
-                  </Select>
-                </FormControl>
-                  {selectedShift && (
-                    <Stack spacing={1.25}>
-                      <Typography variant="subtitle1" fontWeight={700}>
-                        {selectedShift.shiftTitle || 'Shift'}
-                      </Typography>
-                      {(selectedShift as any).defaultJobTitle && (
-                        <Typography variant="body2" color="text.secondary">
-                            {(selectedShift as any).defaultJobTitle}
-                          </Typography>
-                      )}
-                      <Paper variant="outlined" sx={{ p: 0.5, bgcolor: 'grey.50' }}>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                          Date
-                        </Typography>
-                        <Typography variant="body2">
-                          {(() => {
-                            const shiftDate: any = selectedShift.shiftDate;
-                            if (shiftDate) {
-                              let date: Date;
-                              if (typeof shiftDate === 'string') {
-                                date = new Date(shiftDate);
-                              } else if (shiftDate?.toDate && typeof shiftDate.toDate === 'function') {
-                                date = shiftDate.toDate();
-                              } else if (shiftDate instanceof Date) {
-                                date = shiftDate;
-                              } else {
-                                return 'Unknown date';
-                              }
-                              return date.toLocaleDateString('en-US', { 
-                                weekday: 'short', 
-                                month: 'short', 
-                                day: 'numeric',
-                                year: 'numeric'
-                              });
-                            }
-                            return 'No date';
-                          })()}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                          Time
-                        </Typography>
-                        {(() => {
-                          const startTime = (selectedShift as any).startTime || (selectedShift as any).defaultStartTime;
-                          const endTime = (selectedShift as any).endTime || (selectedShift as any).defaultEndTime;
-                          if (startTime) {
-                            const formatTime = (time: string) => {
-                              if (!time) return '';
-                              let hours: string, minutes: string;
-                              if (time.includes(' ')) {
-                                const parts = time.split(' ');
-                                [hours, minutes] = parts[0].split(':');
-                                const ampm = parts[1] || (parseInt(hours, 10) >= 12 ? 'PM' : 'AM');
-                                const hour = parseInt(hours, 10);
-                                const displayHour = hour % 12 || 12;
-                                return `${displayHour}:${minutes || '00'} ${ampm}`;
-                              } else {
-                                // Format like "08:00"
-                                [hours, minutes] = time.split(':');
-                                const hour = parseInt(hours, 10);
-                                const ampm = hour >= 12 ? 'PM' : 'AM';
-                                const displayHour = hour % 12 || 12;
-                                return `${displayHour}:${minutes || '00'} ${ampm}`;
-                              }
-                            };
-                            const formattedStart = formatTime(startTime);
-                            const formattedEnd = endTime ? formatTime(endTime) : null;
-                            return (
-                              <Typography variant="body2" fontWeight={600}>
-                                {formattedEnd ? `${formattedStart} - ${formattedEnd}` : formattedStart}
-                              </Typography>
-                            );
-                          }
-                          return null;
-                        })()}
-                      </Paper>
-
-                      <Stack direction="row" spacing={1} flexWrap="wrap">
-                        {staffingTarget !== null && (
-                                  <Chip 
-                                    size="small"
-                            label={`${staffingFilled}/${staffingTarget} confirmed`}
-                            color={staffingFilled >= staffingTarget ? 'success' : staffingFilled > 0 ? 'info' : 'default'}
-                                    variant="outlined"
-                          />
-                        )}
-                        {selectedShift.spotsRemaining !== undefined && (
-                          <Chip
-                            size="small"
-                            label={`${selectedShift.spotsRemaining} open`}
-                            color={selectedShift.spotsRemaining > 0 ? 'warning' : 'success'}
-                            variant="outlined"
-                          />
-                        )}
-                        {confirmedApplicationsCount > 0 && (
-                          <Chip
-                            size="small"
-                            label={`${confirmedApplicationsCount} app confirmed`}
-                            variant="outlined"
-                          />
-                        )}
-                      </Stack>
-
-                      {(selectedShift as any).payRate && (
-                        <Typography variant="body2">
-                          Pay: <strong>${(selectedShift as any).payRate}/hr</strong>
-                          </Typography>
-                      )}
-                      
-                      {(selectedShift as any).poNumber && (
-                        <Typography variant="body2" color="text.secondary">
-                          PO: {(selectedShift as any).poNumber}
-                          </Typography>
-                      )}
-                      
-                      {(selectedShift as any).shiftDescription && (
-                        <Tooltip
-                          title={
-                            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 360 }}>
-                            {(selectedShift as any).shiftDescription}
-                            </Typography>
-                          }
-                          arrow
-                        >
-                          <Typography variant="caption" color="text.secondary" sx={{ cursor: 'help' }}>
-                            Hover for shift notes
-                          </Typography>
-                        </Tooltip>
-                      )}
-                    </Stack>
-                  )}
-                </CardContent>
-              </Card>
-            </Grid>
-
-            {/* Center: Assignments */}
-            <Grid item xs={12} lg={5}>
+            {/* Left: Assignments */}
+            <Grid item xs={12} lg={6}>
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
@@ -1661,8 +1523,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               </Card>
             </Grid>
 
-            {/* Right: Worker Pool (same width as Assignments) */}
-            <Grid item xs={12} lg={5}>
+            {/* Right: Worker Pool */}
+            <Grid item xs={12} lg={6}>
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 600 }}>

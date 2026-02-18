@@ -17,15 +17,27 @@ import {
 import { db } from '../../firebase';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 
-// Helper function to remove undefined values from object
+/** Remove undefined values from object (deep). Firestore rejects undefined at any level. */
 const removeUndefinedValues = (obj: any): any => {
-  const cleaned: any = {};
-  for (const [key, value] of Object.entries(obj)) {
-    if (value !== undefined) {
-      cleaned[key] = value;
-    }
+  if (obj === undefined) return undefined;
+  if (obj === null) return null;
+  if (obj instanceof Date) return obj;
+  if (Array.isArray(obj)) {
+    return obj.map((item) => removeUndefinedValues(item)).filter((item) => item !== undefined);
   }
-  return cleaned;
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        const cleanedValue = removeUndefinedValues(value);
+        if (cleanedValue !== undefined) {
+          cleaned[key] = cleanedValue;
+        }
+      }
+    }
+    return cleaned;
+  }
+  return obj;
 };
 
 /** Optional i18n for worker-facing shift fields (EN/ES) */
@@ -166,7 +178,7 @@ export interface JobsBoardPost {
   
   // Dynamic Shift Loading (NEW - for evergreen Gig postings)
   usesDynamicShifts?: boolean; // If true, shifts are loaded dynamically from shifts collection
-  shiftFilterDays?: number; // Number of days in future to show shifts (default: 30)
+  shiftFilterDays?: number; // Number of days in future to show shifts (default: 90 for gigs)
   
   // Requirements & Additional Info
   requirements?: string[];
@@ -395,7 +407,7 @@ export class JobsBoardService {
    * Only returns shifts starting today or in the future
    * @param tenantId Tenant ID
    * @param jobOrderId Job Order ID
-   * @param filterDays Number of days in future to include (default: 30)
+   * @param filterDays Number of days in future to include (default: 90 for event gigs)
    * @param positionJobTitle When set (Gig per-position posts), only shifts with matching defaultJobTitle
    */
   async fetchActiveShiftsForJobOrder(
@@ -598,10 +610,10 @@ export class JobsBoardService {
         // Dates & Compensation
         startDate: customData?.startDate ? (typeof customData.startDate === 'string' ? new Date(customData.startDate) : customData.startDate) : jobOrder.startDate,
         endDate: customData?.endDate ? (typeof customData.endDate === 'string' ? new Date(customData.endDate) : customData.endDate) : jobOrder.endDate,
-        nextShiftDate: undefined, // Will be set below for Gig jobs
+        // nextShiftDate omitted when undefined - Firestore rejects undefined values
         payRate: payRate,
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
-        workersNeeded: isGigJob ? undefined : (customData?.workersNeeded !== undefined ? customData.workersNeeded : jobOrder.workersNeeded),
+        workersNeeded: customData?.workersNeeded ?? (isGigJob ? 1 : (jobOrder.workersNeeded ?? 1)),
         showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : true, // Default to true if not set
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
         backgroundCheckPackages: customData?.backgroundCheckPackages !== undefined ? customData.backgroundCheckPackages : jobOrder.backgroundCheckPackages,
@@ -633,7 +645,7 @@ export class JobsBoardService {
         
         // Shift Selection (for Gig jobs - use dynamic loading)
         usesDynamicShifts, // New approach: load shifts at runtime
-        shiftFilterDays: 30, // Show shifts for next 30 days
+        shiftFilterDays: 90, // Show shifts for next 90 days (event gigs often post well in advance)
         includeShiftsInPosting: usesDynamicShifts, // Show shift selector if using dynamic shifts
         
         // Requirements & Additional Info
@@ -664,7 +676,7 @@ export class JobsBoardService {
       // For Gig jobs with dynamic shifts, fetch and set nextShiftDate (filter by position when per-position post)
       if (usesDynamicShifts && jobOrderId) {
         try {
-          const shifts = await this.fetchActiveShiftsForJobOrder(tenantId, jobOrderId, 30, positionJobTitle);
+          const shifts = await this.fetchActiveShiftsForJobOrder(tenantId, jobOrderId, 90, positionJobTitle);
           if (shifts.length > 0) {
             postData.nextShiftDate = new Date(shifts[0].shiftDate);
           }
@@ -673,7 +685,8 @@ export class JobsBoardService {
         }
       }
 
-      const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_postings'), postData);
+      const cleanedPostData = removeUndefinedValues(postData);
+      const docRef = await addDoc(collection(db, 'tenants', tenantId, 'job_postings'), cleanedPostData);
       return docRef.id;
     } catch (error) {
       console.error('Error creating jobs board post:', error);

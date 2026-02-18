@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, Suspense, lazy } from 'react';
 import { Box, Typography, Button } from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import BusinessIcon from '@mui/icons-material/Business';
@@ -17,7 +17,7 @@ import MessagingTab from './MessagingTab';
 import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
 import WorkforceManagement from './WorkforceManagement';
-import SmartGroupsSettings from './SmartGroupsSettings';
+const SmartGroupsSettings = lazy(() => import('./SmartGroupsSettings'));
 import { useAuth } from '../../contexts/AuthContext';
 
 type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups';
@@ -87,7 +87,15 @@ const SettingsLanding: React.FC = () => {
       case 'workforce':
         return <WorkforceManagement />;
       case 'smart-groups':
-        return effectiveTenantId ? <SmartGroupsSettings tenantId={effectiveTenantId} /> : null;
+        return effectiveTenantId ? (
+          <Suspense fallback={
+            <Box sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
+              <Typography color="text.secondary">Loading metros…</Typography>
+            </Box>
+          }>
+            <SmartGroupsSettings tenantId={effectiveTenantId} />
+          </Suspense>
+        ) : null;
       default:
         return <CompanySetup />;
     }

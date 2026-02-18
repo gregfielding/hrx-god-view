@@ -148,7 +148,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
-  const steps = stepKeys.map((k) => t(k));
+  const allStepLabels = stepKeys.map((k) => t(k));
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const returnTo = useMemo(() => {
@@ -250,6 +250,31 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [hasMissingRequiredCerts, setHasMissingRequiredCerts] = useState(false);
+
+  // Step indices to show - skip empty steps (Preferences for Gig jobs; Requirements when only transport + no job reqs)
+  const visibleStepIndices = useMemo(() => {
+    const all = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    if (!posting) return all;
+    // Skip Preferences (10) for Gig jobs - step is empty (no shift preferences for gigs)
+    if (posting.jobType === 'gig') {
+      return all.filter((i) => i !== 10);
+    }
+    return all;
+  }, [posting]);
+
+  const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
+  const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
+  const steps = visibleStepIndices.map((i) => allStepLabels[i]);
+
+  // Clamp activeStep when visible steps shrink (e.g. posting loads and we skip Preferences)
+  useEffect(() => {
+    if (activeStep >= visibleStepIndices.length) {
+      setActiveStep(Math.max(0, visibleStepIndices.length - 1));
+      try {
+        localStorage.setItem(stepStorageKey, String(Math.max(0, visibleStepIndices.length - 1)));
+      } catch {}
+    }
+  }, [visibleStepIndices.length, activeStep, stepStorageKey]);
 
   // Check if step was restored from localStorage
   useEffect(() => {
@@ -727,9 +752,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const advanceStep = useCallback(() => {
     setActiveStep((prev) => {
-      const newStep = Math.min(prev + 1, steps.length - 1);
-      // Reset required certs status when leaving step 7
-      if (prev === 7) {
+      const newStep = Math.min(prev + 1, visibleStepIndices.length - 1);
+      const leavingActualStep = visibleStepIndices[prev];
+      if (leavingActualStep === 7) {
         setHasMissingRequiredCerts(false);
       }
       try {
@@ -739,7 +764,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       }
       return newStep;
     });
-  }, [stepStorageKey]);
+  }, [stepStorageKey, visibleStepIndices]);
 
   const retreatStep = useCallback(() => {
     setActiveStep((prev) => {
@@ -868,7 +893,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     setSaving(true);
     try {
       // Create account after Personal Info step if not authenticated
-      if (activeStep === 0 && !auth.currentUser) {
+      if (actualStep === 0 && !auth.currentUser) {
         const email = String(formData?.personal?.email || '').trim();
         if (!email) {
           alert(t('apply.enterEmail'));
@@ -966,7 +991,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       const effectiveUid = auth.currentUser?.uid || uid;
       if (effectiveUid) {
         const userRef = doc(db, 'users', effectiveUid);
-        if (activeStep === 0) {
+        if (actualStep === 0) {
           // Personal Info → save name/email/phone/dob/address
           const p = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
           const update: any = { updatedAt: serverTimestamp() };
@@ -1127,7 +1152,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             setVerifyOpen(true);
             return; // pause progression until verification completes
           }
-        } else if (activeStep === 1) {
+        } else if (actualStep === 1) {
           // Address → save address data with coordinates
           // CRITICAL: Ensure coordinates are present before proceeding
           let p = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
@@ -1212,7 +1237,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, update, { merge: true });
           }
-        } else if (activeStep === 2) {
+        } else if (actualStep === 2) {
           // Work Eligibility → save attestation (not a document) + legacy workEligibility
           const e = formData.eligibility || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1231,7 +1256,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (e.veteranStatus !== undefined) update.veteranStatus = String(e.veteranStatus || '');
           if (e.disabilityStatus !== undefined) update.disabilityStatus = String(e.disabilityStatus || '');
           await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 3) {
+        } else if (actualStep === 3) {
           // Profile Picture → save profile picture URL
           const p = formData.profilePicture || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1239,7 +1264,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, update, { merge: true });
           }
-        } else if (activeStep === 5) {
+        } else if (actualStep === 5) {
           // Skills → save skills, certifications, languages to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1247,19 +1272,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Array.isArray(q.languages)) update.languages = normalizeLanguageList(q.languages);
           if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 6) {
+        } else if (actualStep === 6) {
           // Education → save education to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.education)) update.education = q.education;
           if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 7) {
+        } else if (actualStep === 7) {
           // Licenses and Certifications → save certifications to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 8) {
+        } else if (actualStep === 8) {
           // Work Experience → save work experience to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1269,7 +1294,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.workHistory = q.workExperience; // Also save to workHistory for backward compatibility
           }
           if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 9) {
+        } else if (actualStep === 9) {
           // Bio → save professional bio to profile
           const b = formData.bio || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1277,7 +1302,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.professionalBio = b.professionalBio.trim();
           }
           if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 10) {
+        } else if (actualStep === 10) {
           // Preferences → persist to user profile under a nested preferences object
           const p = formData.preferences || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1291,7 +1316,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update['preferences.shiftPreferences'] = update.preferences.shiftPreferences;
           }
           await setDoc(userRef, update, { merge: true });
-        } else if (activeStep === 11) {
+        } else if (actualStep === 11) {
           // Requirements → save screening responses and availability to user profile
           const r = formData.requirements || {};
           const p = formData.preferences || {};
@@ -2131,7 +2156,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   };
 
   const renderStep = () => {
-    switch (activeStep) {
+    switch (actualStep) {
       case 0:
         return (
           <PersonalInfoStep
@@ -2262,7 +2287,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
   };
 
-  const pctComplete = Math.round(((activeStep + 1) / steps.length) * 100);
+  const pctComplete = Math.round(((activeStep + 1) / visibleStepIndices.length) * 100);
 
   const conversationalTitleKeys = [
     'apply.titleTellUsAboutYou',
@@ -2391,7 +2416,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   );
 
   // Debug logging for form validation
-  if (activeStep === 0) {
+  if (actualStep === 0) {
     console.log('🔍 Personal Info Validation Debug:', {
       personalValid,
       phoneNeedsVerification,
@@ -2485,7 +2510,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         >
           {/* Full-bleed sticky progress under top bar (no side spacing) */}
           <MilestoneProgress
-            total={steps.length}
+            total={visibleStepIndices.length}
             completed={activeStep}
             labels={steps}
             sticky="top"
@@ -2541,28 +2566,29 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               </Button>
               <Button
                 variant="contained"
-                onClick={activeStep === 11 ? handleSubmit : handleNext}
+                onClick={isLastVisibleStep ? handleSubmit : handleNext}
                 disabled={
-                  (activeStep === 11 &&
+                  (isLastVisibleStep &&
+                    actualStep === 11 &&
                     (missing.drug ||
                       missing.background ||
                       missing.everify ||
                       missing.additional.length > 0)) ||
-                  (activeStep === 0 &&
+                  (actualStep === 0 &&
                     (!personalValid ||
                       (!auth.currentUser &&
                         (password.length < 6 || password !== confirmPassword)))) ||
-                  (activeStep === 1 && !addressValid) ||
-                  (activeStep === 2 && formData?.eligibility?.workAuthorized !== true) ||
-                  (activeStep === 3 && !hasProfilePicture) ||
+                  (actualStep === 1 && !addressValid) ||
+                  (actualStep === 2 && formData?.eligibility?.workAuthorized !== true) ||
+                  (actualStep === 3 && !hasProfilePicture) ||
                   saving
                 }
               >
-                {activeStep === 11
+                {isLastVisibleStep
                   ? t('apply.submitApplication')
-                  : activeStep === 4
+                  : actualStep === 4
                   ? t('apply.skip')
-                  : activeStep === 7 && hasMissingRequiredCerts
+                  : actualStep === 7 && hasMissingRequiredCerts
                   ? t('apply.skipForNow')
                   : t('apply.next')}
               </Button>
@@ -2596,18 +2622,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           </Button>
           <Button
             variant="contained"
-            onClick={activeStep === 11 ? handleSubmit : handleNext}
+            onClick={isLastVisibleStep ? handleSubmit : handleNext}
             aria-label={
-              activeStep === 11
+              isLastVisibleStep
                 ? t('apply.submitApplication')
-                : activeStep === 4
+                : actualStep === 4
                 ? t('apply.skip')
-                : activeStep === 7 && hasMissingRequiredCerts
+                : actualStep === 7 && hasMissingRequiredCerts
                 ? t('apply.skipForNow')
                 : t('apply.next')
             }
             disabled={
-              (activeStep === 11 &&
+              (isLastVisibleStep &&
+                actualStep === 11 &&
                 (missing.drug ||
                   missing.background ||
                   missing.everify ||
@@ -2615,11 +2642,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               saving
             }
           >
-            {activeStep === 11
+            {isLastVisibleStep
               ? t('apply.submitApplication')
-              : activeStep === 4
+              : actualStep === 4
               ? t('apply.skip')
-              : activeStep === 7 && hasMissingRequiredCerts
+              : actualStep === 7 && hasMissingRequiredCerts
               ? t('apply.skipForNow')
               : t('apply.next')}
           </Button>

@@ -444,10 +444,12 @@ const JobPostingDetail: React.FC = () => {
           setLoadingShifts(true);
           console.log('🔄 Loading dynamic shifts for Gig job...');
           const jobsBoardService = JobsBoardService.getInstance();
+          // Use at least 90 days for gig jobs so event shifts (e.g. festivals in 2+ months) are visible
+          const filterDays = Math.max(posting.shiftFilterDays ?? 90, 90);
           const shifts = await jobsBoardService.fetchActiveShiftsForJobOrder(
             posting.tenantId,
             posting.jobOrderId!,
-            posting.shiftFilterDays || 30,
+            filterDays,
             posting.positionJobTitle,
           );
           console.log('✅ Loaded shifts:', shifts);
@@ -653,20 +655,21 @@ const JobPostingDetail: React.FC = () => {
     }
   };
 
-  // Helper to safely format dates
+  // Helper to safely format calendar dates (avoids UTC→local timezone shift showing wrong day)
   const formatDate = (date: any): string => {
     if (!date) return 'Date TBD';
     try {
-      // Handle Firestore Timestamp
+      let d: Date;
       if (date?.toDate) {
-        return date.toDate().toLocaleDateString();
+        d = date.toDate();
+      } else {
+        d = new Date(date);
       }
-      // Handle Date object or string
-      const d = new Date(date);
-      if (isNaN(d.getTime())) {
-        return 'Date TBD';
-      }
-      return d.toLocaleDateString();
+      if (isNaN(d.getTime())) return 'Date TBD';
+      const m = d.getUTCMonth() + 1;
+      const day = d.getUTCDate();
+      const y = d.getUTCFullYear();
+      return `${m}/${day}/${y}`;
     } catch {
       return 'Date TBD';
     }

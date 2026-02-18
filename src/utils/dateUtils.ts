@@ -87,3 +87,32 @@ export const formatDateForDisplay = (dateString: string): string => {
   const date = new Date(dateString);
   return date.toLocaleDateString();
 };
+
+/**
+ * Format a calendar date for display without timezone shift.
+ * Use for dates that represent "a day" (e.g. job start date) rather than "a moment in time".
+ * When Firestore stores 2026-04-10T00:00:00.000Z, toLocaleDateString() shows 4/9 in US zones.
+ * This uses UTC date components so 4/10 displays correctly.
+ */
+export const formatCalendarDate = (dateValue: Date | { toDate: () => Date } | string | null | undefined): string => {
+  if (!dateValue) return '';
+  try {
+    let date: Date;
+    if (typeof dateValue === 'string') {
+      date = new Date(dateValue);
+    } else if (dateValue && typeof (dateValue as { toDate?: () => Date }).toDate === 'function') {
+      date = (dateValue as { toDate: () => Date }).toDate();
+    } else if (dateValue instanceof Date) {
+      date = dateValue;
+    } else {
+      date = new Date(dateValue as unknown as string | number | Date);
+    }
+    if (isNaN(date.getTime())) return '';
+    const m = date.getUTCMonth() + 1;
+    const d = date.getUTCDate();
+    const y = date.getUTCFullYear();
+    return `${m}/${d}/${y}`;
+  } catch {
+    return '';
+  }
+};

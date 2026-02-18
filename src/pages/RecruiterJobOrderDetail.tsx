@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 
 import { safeToDate, getJobOrderAge } from '../utils/dateUtils';
 import {
@@ -91,6 +91,7 @@ import PageHeader from '../components/PageHeader';
 import JobOrderForm from '../components/JobOrderForm';
 import { JobsBoardService, JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import ManageContactsDialog from '../components/ManageContactsDialog';
+import ManageSalespeopleDialog from '../components/ManageSalespeopleDialog';
 import StaffInstructionCard from '../components/recruiter/StaffInstructionCard';
 import ShiftSetupTab from '../components/recruiter/ShiftSetupTab';
 import CRMNotesTab from '../components/CRMNotesTab';
@@ -137,6 +138,21 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+// SectionCard component (matching DealDetails) - defined early so RecruiterJobOrderDetail can use it
+const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, action, children }) => (
+  <Card>
+    <CardHeader
+      title={title}
+      action={action}
+      sx={{ p: 2, pb: 1 }}
+      titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+    />
+    <CardContent sx={{ p: 2, pt: 0 }}>
+      {children}
+    </CardContent>
+  </Card>
+);
+
 // ApplicantsTable Component
 interface ApplicantsTableProps {
   jobOrderId: string;
@@ -145,6 +161,15 @@ interface ApplicantsTableProps {
   jobOrder: JobOrder | null;
   onCountChange?: (count: number) => void;
   onCandidateCountChange?: (count: number) => void;
+}
+
+interface ShiftOption {
+  id: string;
+  shiftDate: string | { toDate?: () => Date } | Date;
+  shiftTitle?: string;
+  defaultJobTitle?: string;
+  startTime?: string;
+  endTime?: string;
 }
 
 interface Applicant {
@@ -194,6 +219,11 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
   const defaultSortAppliedRef = useRef(false);
 
+  // Shift selector (for Gig jobs - filter applicants by shift)
+  const [shifts, setShifts] = useState<ShiftOption[]>([]);
+  const [selectedShiftId, setSelectedShiftId] = useState<string>('');
+  const appsStorageKey = `applications_shift_${tenantId}_${jobOrderId}`;
+
   // Default sort by Job Score when this job has a requirement pack (once jobOrder is available)
   useEffect(() => {
     if (jobOrder?.requirementPackId && !defaultSortAppliedRef.current) {
@@ -202,21 +232,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
   }, [jobOrder?.requirementPackId]);
 
-  // Notify parent of count changes
-  useEffect(() => {
-    if (onCountChange) {
-      onCountChange(applicants.length);
-    }
-  }, [applicants.length, onCountChange]);
-  // Notify parent of candidate count changes
-  useEffect(() => {
-    if (onCandidateCountChange) {
-      const candidateCount = applicants.filter(
-        (a) => a.applicationData?.candidate === true
-      ).length;
-      onCandidateCountChange(candidateCount);
-    }
-  }, [applicants, onCandidateCountChange]);
   const [statusMenuAnchor, setStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [levelMenuAnchor, setLevelMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const [switchJobDialogOpen, setSwitchJobDialogOpen] = useState(false);
@@ -353,6 +368,93 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   useEffect(() => {
     fetchApplicants();
   }, [fetchApplicants]);
+
+  // Load shifts for shift selector (Gig jobs only)
+  const isGigJob = jobOrder?.jobType === 'gig';
+  useEffect(() => {
+    if (!isGigJob) {
+      setShifts([]);
+      setSelectedShiftId('');
+      return;
+    }
+    const loadShifts = async () => {
+      if (!tenantId || !jobOrderId) {
+        setShifts([]);
+        return;
+      }
+      try {
+        const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
+        const snap = await getDocs(shiftsRef);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const loaded = snap.docs
+          .map((d) => ({ id: d.id, ...d.data() } as ShiftOption))
+          .filter((s) => {
+            const dateVal = s.shiftDate;
+            const dateStr = typeof dateVal === 'string' ? dateVal?.split('T')[0] : (dateVal && typeof (dateVal as any).toDate === 'function' ? (dateVal as any).toDate()?.toISOString?.()?.split('T')[0] : null);
+            return dateStr && dateStr >= todayStr;
+          })
+          .sort((a, b) => {
+            const toDateStr = (val: ShiftOption['shiftDate']) =>
+              typeof val === 'string' ? val : (val && typeof (val as any).toDate === 'function' ? (val as any).toDate()?.toISOString?.() || '' : '');
+            const da = toDateStr(a.shiftDate);
+            const db_ = toDateStr(b.shiftDate);
+            return da.localeCompare(db_);
+          });
+        setShifts(loaded);
+        // Restore persisted selection
+        try {
+          const saved = localStorage.getItem(appsStorageKey);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed?.shiftId && loaded.some((s) => s.id === parsed.shiftId)) {
+              setSelectedShiftId(parsed.shiftId);
+              return;
+            }
+          }
+        } catch {}
+        if (loaded.length > 0 && !selectedShiftId) setSelectedShiftId('');
+      } catch (err) {
+        console.warn('Error loading shifts for Applications:', err);
+        setShifts([]);
+      }
+    };
+    loadShifts();
+  }, [isGigJob, tenantId, jobOrderId, appsStorageKey]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(appsStorageKey, JSON.stringify({ shiftId: selectedShiftId }));
+    } catch {}
+  }, [selectedShiftId, appsStorageKey]);
+
+  // Filter applicants by selected shift (Gig jobs only)
+  const filteredApplicants = useMemo(() => {
+    if (!isGigJob || !selectedShiftId) return applicants;
+    return applicants.filter((a) => {
+      const app = a.applicationData || {};
+      if (app.shiftId === selectedShiftId) return true;
+      if (Array.isArray(app.shiftIds) && app.shiftIds.includes(selectedShiftId)) return true;
+      if (Array.isArray(app.selectedShifts)) {
+        return app.selectedShifts.some((s: any) =>
+          (typeof s === 'string' ? s : s?.shiftId || s?.id) === selectedShiftId
+        );
+      }
+      return false;
+    });
+  }, [applicants, selectedShiftId, isGigJob]);
+
+  // Notify parent of count changes (use filtered count)
+  useEffect(() => {
+    if (onCountChange) onCountChange(filteredApplicants.length);
+  }, [filteredApplicants.length, onCountChange]);
+  useEffect(() => {
+    if (onCandidateCountChange) {
+      const candidateCount = filteredApplicants.filter(
+        (a) => a.applicationData?.candidate === true
+      ).length;
+      onCandidateCountChange(candidateCount);
+    }
+  }, [filteredApplicants, onCandidateCountChange]);
 
   const handleRefreshScores = useCallback(async () => {
     const requirementPackId = (jobOrder as any)?.requirementPackId;
@@ -505,7 +607,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
-      const data = [...applicants];
+      const data = [...filteredApplicants];
       data.sort((a, b) => {
         const aM = toMillis(a.scoreSummary?.interviewLastAt);
         const bM = toMillis(b.scoreSummary?.interviewLastAt);
@@ -515,7 +617,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'jobScore') {
-      const data = [...applicants];
+      const data = [...filteredApplicants];
       data.sort((a, b) => {
         const aScore = a.jobScoreSummary?.jobScore ?? -1;
         const bScore = b.jobScoreSummary?.jobScore ?? -1;
@@ -524,10 +626,10 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
-    return applicants;
-  }, [applicants, applicantsSortBy, applicantsSortDirection]);
+    return filteredApplicants;
+  }, [filteredApplicants, applicantsSortBy, applicantsSortDirection]);
 
-  const displayedApplicants = applicantsSortBy ? sortedApplicants : applicants;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredApplicants;
   const isAllSelected = displayedApplicants.length > 0 && selectedApplicantIds.size === displayedApplicants.length;
   const isSomeSelected = selectedApplicantIds.size > 0;
 
@@ -1000,7 +1102,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     );
   }
 
-  if (applicants.length === 0) {
+  // When no applicants at all and NOT a Gig with shifts, show simple empty state
+  if (applicants.length === 0 && !(isGigJob && shifts.length > 0)) {
     return (
       <Card>
         <CardContent>
@@ -1019,7 +1122,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     <>
       <Card>
         <CardHeader 
-          title={`Applications (${applicants.length})`}
+          title={`Applications (${filteredApplicants.length})`}
           action={
             <Stack direction="row" alignItems="center" spacing={1}>
               {jobOrder?.requirementPackId && (
@@ -1045,6 +1148,41 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           sx={{ borderBottom: 1, borderColor: 'divider' }}
         />
         <CardContent sx={{ p: 0 }}>
+          {isGigJob && shifts.length > 0 && (
+            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+              <FormControl size="small" sx={{ minWidth: 280 }}>
+                <InputLabel>Shift</InputLabel>
+                <Select
+                  value={selectedShiftId}
+                  label="Shift"
+                  onChange={(e) => setSelectedShiftId(e.target.value)}
+                >
+                  <MenuItem value="">
+                    <em>All shifts</em>
+                  </MenuItem>
+                  {shifts.map((shift) => {
+                    const dv = shift.shiftDate;
+                    let dateStr = '';
+                    if (typeof dv === 'string') dateStr = dv.split('T')[0];
+                    else if (dv instanceof Date) dateStr = dv.toISOString().split('T')[0];
+                    else if (dv && typeof (dv as { toDate?: () => Date }).toDate === 'function') dateStr = (dv as { toDate: () => Date }).toDate().toISOString().split('T')[0];
+                    const formatted = dateStr ? format(new Date(dateStr), 'EEE, MMM d, yyyy') : 'Unknown date';
+                    const jobTitle = shift.defaultJobTitle ?? shift.shiftTitle ?? '';
+                    return (
+                      <MenuItem key={shift.id} value={shift.id}>
+                        <Box>
+                          <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatted} {jobTitle ? `• ${jobTitle}` : ''}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    );
+                  })}
+                </Select>
+              </FormControl>
+            </Box>
+          )}
           {isSomeSelected && (
             <Box
               sx={{
@@ -1128,6 +1266,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 <TableCell>Contact</TableCell>
                 <TableCell>Location</TableCell>
                 <TableCell>Applied</TableCell>
+                {isGigJob && shifts.length > 0 ? (
+                  <TableCell>Shift(s)</TableCell>
+                ) : null}
                 <TableCell>Profile</TableCell>
                 <TableCell>Fit</TableCell>
                 {jobOrder?.requirementPackId ? (
@@ -1160,7 +1301,19 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               </TableRow>
             </TableHead>
             <TableBody>
-              {displayedApplicants.map((applicant) => (
+              {displayedApplicants.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={20} sx={{ py: 4, textAlign: 'center' }}>
+                    <Alert severity="info" sx={{ justifyContent: 'center' }}>
+                      {applicants.length === 0
+                        ? 'No applications received yet for this job order.'
+                        : isGigJob && selectedShiftId
+                        ? 'No applicants for this shift. Select "All shifts" to see all applicants.'
+                        : 'No applicants.'}
+                    </Alert>
+                  </TableCell>
+                </TableRow>
+              ) : displayedApplicants.map((applicant) => (
                 <TableRow 
                   key={
                     applicant.applicationData?.id ||
@@ -1251,6 +1404,33 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                         : '-'}
                     </Typography>
                   </TableCell>
+                  {isGigJob && shifts.length > 0 ? (
+                    <TableCell>
+                      {(() => {
+                        const app = applicant.applicationData || {};
+                        const ids: string[] = [];
+                        if (app.shiftId) ids.push(app.shiftId);
+                        if (Array.isArray(app.shiftIds)) ids.push(...app.shiftIds);
+                        if (Array.isArray(app.selectedShifts)) {
+                          app.selectedShifts.forEach((s: any) => {
+                            const id = typeof s === 'string' ? s : s?.shiftId || s?.id;
+                            if (id && !ids.includes(id)) ids.push(id);
+                          });
+                        }
+                        const shiftLabels = ids
+                          .map((id) => shifts.find((s) => s.id === id)?.shiftTitle || id)
+                          .filter(Boolean);
+                        if (shiftLabels.length === 0) return <Typography variant="caption" color="text.secondary">—</Typography>;
+                        return (
+                          <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ maxWidth: 180 }}>
+                            {shiftLabels.map((label) => (
+                              <Chip key={label} label={label} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                            ))}
+                          </Stack>
+                        );
+                      })()}
+                    </TableCell>
+                  ) : null}
                   <TableCell>
                     <Tooltip title="Profile completeness score based on resume, skills, work history, and engagement">
                       <Chip 
@@ -2012,8 +2192,37 @@ const JobOrderJobsBoardTab: React.FC<{
     loadPosts();
   }, [loadPosts]);
 
+  const existingPostSingle = !isGigWithPositions ? (posts[0] ?? null) : null;
+
+  // Memoize initialData to prevent JobPostForm's useEffect from overwriting user input on every parent re-render.
+  // Without this, getInitialData() returns a new object each render, triggering JobPostForm to reset the form and wipe typed data.
+  const initialDataByPositionKey = useMemo(() => {
+    return (gigPositions ?? [])
+      .map((p) => {
+        const post = posts.find((x) => x.positionJobTitle === p.jobTitle);
+        return `${p.jobTitle}:${post?.id ?? 'new'}`;
+      })
+      .join('|');
+  }, [gigPositions, posts]);
+
+  const initialDataMap = useMemo(() => {
+    const map: Record<string, any> = {};
+    (gigPositions ?? []).forEach((position) => {
+      const existingPost = posts.find((p) => p.positionJobTitle === position.jobTitle) ?? null;
+      map[position.jobTitle] = getInitialDataStatic(existingPost, position);
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialDataByPositionKey drives recompute when posts/positions change
+  }, [initialDataByPositionKey, jobOrder?.id]);
+
+  const initialDataSingle = useMemo(
+    () => getInitialDataStatic(existingPostSingle, null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when post loads or job order changes
+    [existingPostSingle?.id ?? 'new', jobOrder?.id]
+  );
+
   // Convert job order data to JobPostForm initialData format (optionally for a specific Gig position)
-  const getInitialData = (existingPostForForm: JobsBoardPost | null | undefined, position: GigPosition | null | undefined): any => {
+  function getInitialDataStatic(existingPostForForm: JobsBoardPost | null | undefined, position: GigPosition | null | undefined): any {
     if (existingPostForForm) {
       return {
         ...existingPostForForm,
@@ -2203,6 +2412,7 @@ const JobOrderJobsBoardTab: React.FC<{
         await jobsBoardService.updatePost(tenantId, existingPostForForm.id, {
           ...data,
           jobOrderId: jobOrder.id,
+          ...(position && { positionJobTitle: position.jobTitle }),
         });
       } else if (isGigWithPositions && position) {
         await jobsBoardService.createPostFromJobOrder(tenantId, jobOrder.id, userId, {
@@ -2228,8 +2438,6 @@ const JobOrderJobsBoardTab: React.FC<{
   };
 
   const handleCancel = () => {};
-
-  const existingPostSingle = !isGigWithPositions ? (posts[0] ?? null) : null;
 
   const postForCopy = isGigWithPositions && gigPositions?.length
     ? posts.find((p) => p.positionJobTitle === gigPositions[jobsBoardSubTab]?.jobTitle) ?? null
@@ -2277,7 +2485,7 @@ const JobOrderJobsBoardTab: React.FC<{
                   <Card sx={{ bgcolor: 'background.paper' }}>
                     <CardContent>
                       <JobPostForm
-                        initialData={getInitialData(existingPostForPosition, position)}
+                        initialData={initialDataMap[position.jobTitle]}
                         onSave={(data) => handleSave(data, existingPostForPosition, position)}
                         onCancel={handleCancel}
                         loading={loading}
@@ -2309,7 +2517,7 @@ const JobOrderJobsBoardTab: React.FC<{
           <Card sx={{ bgcolor: 'background.paper' }}>
             <CardContent>
               <JobPostForm
-                initialData={getInitialData(existingPostSingle, null)}
+                initialData={initialDataSingle}
                 onSave={(data) => handleSave(data, existingPostSingle, null)}
                 onCancel={handleCancel}
                 loading={loading}
@@ -2380,6 +2588,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);
   const [manageContactsOpen, setManageContactsOpen] = useState(false);
+  const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
   const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
   const [availableRecruiters, setAvailableRecruiters] = useState<Array<{id: string; displayName: string; email?: string}>>([]);
   const [selectedRecruiterIds, setSelectedRecruiterIds] = useState<string[]>([]);
@@ -2395,6 +2604,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
+
+  const { isFavorite: isJobOrderFavorite, toggleFavorite: toggleJobOrderFavorite } = useFavorites('jobOrders');
 
   // Helper functions (defined before useEffect that uses them)
   const loadCompanyData = useCallback(async (companyId: string) => {
@@ -3020,6 +3231,76 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   };
 
+  const handleSalespeopleChange = async (updatedSalespeople: any[]) => {
+    if (!jobOrder || !tenantId || !jobOrderId) return;
+
+    try {
+      setAssociatedSalespeople(updatedSalespeople);
+
+      const updatedAssociations = {
+        ...(jobOrder.deal?.associations || {}),
+        salespeople: updatedSalespeople.map((sp) => ({
+          id: sp.id,
+          snapshot: {
+            fullName: sp.fullName,
+            firstName: sp.firstName,
+            lastName: sp.lastName,
+            displayName: sp.displayName,
+            email: sp.email,
+            phone: sp.phone,
+            title: sp.title,
+          },
+        })),
+      };
+
+      if (jobOrder.deal) {
+        await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+          'deal.associations': updatedAssociations,
+          updatedAt: new Date(),
+        });
+      } else {
+        const minimalDeal = {
+          id: null,
+          name: jobOrder.jobOrderName,
+          companyId: jobOrder.companyId,
+          companyName: jobOrder.companyName,
+          locationId: jobOrder.worksiteId,
+          locationName: jobOrder.worksiteName,
+          stage: null,
+          status: null,
+          estimatedRevenue: jobOrder.estimatedRevenue || 0,
+          closeDate: null,
+          owner: jobOrder.createdBy,
+          tags: [],
+          notes: '',
+          stageData: {},
+          associations: updatedAssociations,
+          createdAt: null,
+          updatedAt: new Date(),
+        };
+        await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+          deal: minimalDeal,
+          updatedAt: new Date(),
+        });
+      }
+
+      if (jobOrder.dealId) {
+        try {
+          await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', jobOrder.dealId), {
+            associations: updatedAssociations,
+            updatedAt: new Date(),
+          });
+        } catch {
+          // Ignore if source deal update fails
+        }
+      }
+
+      await fetchJobOrder();
+    } catch (error) {
+      console.error('Error updating salespeople:', error);
+      setAssociatedSalespeople(jobOrder?.deal?.associations?.salespeople || []);
+    }
+  };
 
   if (loading) {
     return (
@@ -3124,20 +3405,33 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 gap: 0.75,
               }}
             >
-              {/* Line 1: Name */}
-              <Typography
-                variant="h6"
-                        sx={{
-                  fontSize: { xs: '20px', md: '24px' },
-                  fontWeight: 600,
-                  lineHeight: 1.2,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {jobOrder.jobOrderName || 'Job Order'}
-              </Typography>
+              {/* Line 1: Name + Favorites star */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                {jobOrderId && (
+                  <FavoriteButton
+                    itemId={jobOrderId}
+                    favoriteType="jobOrders"
+                    isFavorite={isJobOrderFavorite}
+                    toggleFavorite={toggleJobOrderFavorite}
+                    size="small"
+                    tooltipText={{ favorited: 'Remove from favorites', notFavorited: 'Add to favorites' }}
+                    sx={{ p: 0.25 }}
+                  />
+                )}
+                <Typography
+                  variant="h6"
+                  sx={{
+                    fontSize: { xs: '20px', md: '24px' },
+                    fontWeight: 600,
+                    lineHeight: 1.2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {jobOrder.jobOrderName || 'Job Order'}
+                </Typography>
+              </Box>
 
               {/* Line 2: Job Order meta (two-row style from prod) */}
               <Box sx={{ mt: 0.25, display: 'flex', flexWrap: 'wrap', gap: 1.25, alignItems: 'center' }}>
@@ -3885,9 +4179,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 <Button
                   variant="outlined"
                   size="small"
-                  onClick={() => {
-                    // TODO: Open manage salespeople dialog
-                  }}
+                  onClick={() => setShowManageSalespeopleDialog(true)}
                   sx={{ 
                     minWidth: 'auto',
                     px: 1,
@@ -4349,6 +4641,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
         dealCompanyId={jobOrder?.companyId || company?.id}
       />
 
+      <ManageSalespeopleDialog
+        open={showManageSalespeopleDialog}
+        onClose={() => setShowManageSalespeopleDialog(false)}
+        tenantId={tenantId || ''}
+        currentSalespeople={associatedSalespeople}
+        onSalespeopleChange={handleSalespeopleChange}
+        filterByInternalTeam
+      />
+
       {/* Share Snackbar */}
       <Snackbar
         open={shareSnackbarOpen}
@@ -4448,20 +4749,5 @@ const RecruiterJobOrderDetail: React.FC = () => {
     </Box>
   );
 };
-
-// SectionCard component (matching DealDetails)
-const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children: React.ReactNode }> = ({ title, action, children }) => (
-  <Card>
-    <CardHeader 
-      title={title} 
-      action={action}
-      sx={{ p: 2, pb: 1 }}
-      titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-    />
-    <CardContent sx={{ p: 2, pt: 0 }}>
-      {children}
-    </CardContent>
-  </Card>
-);
 
 export default RecruiterJobOrderDetail;

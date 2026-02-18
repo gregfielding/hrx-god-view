@@ -29,7 +29,7 @@ import {
   formatGeoLabel,
   type CustomMetroInput,
 } from '../../data/metroSubareaSchema';
-import { getMetroTemplateByKey } from '../../data/metroMaster';
+import { getMetroTemplateByKey, getMetroDisplayLabel } from '../../data/metroMaster';
 
 /** One subarea with label and city keys (built-in + custom merged). */
 export interface SubareaWithCities {
@@ -91,17 +91,52 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
   const [selectedSubareaKey, setSelectedSubareaKey] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSearchCityKey, setSelectedSearchCityKey] = useState<string | null>(null);
+  const [citySearchIndex, setCitySearchIndex] = useState<CitySearchHit[] | null>(null);
 
-  const allMetroKeys = getMergedMetroOptions(EMPTY_CUSTOM_METROS);
-
-  const citySearchIndex = useMemo(() => buildCitySearchIndex(EMPTY_CUSTOM_METROS), []);
+  // Defer building the search index to avoid blocking initial render (metroMaster is 7MB+)
+  useEffect(() => {
+    let cancelled = false;
+    const build = () => {
+      const index = buildCitySearchIndex(EMPTY_CUSTOM_METROS);
+      if (!cancelled) setCitySearchIndex(index);
+    };
+    if (typeof requestIdleCallback !== 'undefined') {
+      const id = requestIdleCallback(build, { timeout: 3000 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(id);
+      };
+    }
+    const t = setTimeout(build, 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, []);
   const searchResults = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return [];
-    return citySearchIndex.filter(
+    if (!q || !citySearchIndex) return [];
+    const filtered = citySearchIndex.filter(
       (hit) => formatGeoLabel(hit.cityKey).toLowerCase().includes(q)
     );
+    // Rank: prefer metros whose label contains the query (e.g. "Houston" → Houston, TX first)
+    // then cities that start with the query, then rest
+    return filtered.sort((a, b) => {
+      const metroA = a.metroLabel.toLowerCase();
+      const metroB = b.metroLabel.toLowerCase();
+      const cityA = formatGeoLabel(a.cityKey).toLowerCase();
+      const cityB = formatGeoLabel(b.cityKey).toLowerCase();
+      const metroMatchA = metroA.includes(q) ? 1 : 0;
+      const metroMatchB = metroB.includes(q) ? 1 : 0;
+      if (metroMatchA !== metroMatchB) return metroMatchB - metroMatchA; // metro matches first
+      const cityStartsA = cityA.startsWith(q) ? 1 : 0;
+      const cityStartsB = cityB.startsWith(q) ? 1 : 0;
+      if (cityStartsA !== cityStartsB) return cityStartsB - cityStartsA; // city-starts matches next
+      return metroA.localeCompare(metroB);
+    });
   }, [citySearchIndex, searchQuery]);
+
+  const searchIndexReady = citySearchIndex !== null;
 
   useEffect(() => {
     if (searchResults.length > 0) {
@@ -126,7 +161,7 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
   const selectedMetroLabel =
     selectedMetroKey == null
       ? null
-      : getMetroTemplateByKey(selectedMetroKey)?.label ?? formatGeoLabel(selectedMetroKey);
+      : getMetroDisplayLabel(selectedMetroKey);
   const subareasForSelected = useMemo(
     () => (selectedMetroKey == null ? [] : getSubareasWithCities(selectedMetroKey, EMPTY_CUSTOM_METROS)),
     [selectedMetroKey]
@@ -144,6 +179,14 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
     }
   }, [selectedMetroKey, subareasForSelected, selectedSubarea]);
 
+  // When user selects a city from search, sync to the metro/area panels below
+  useEffect(() => {
+    if (searchSelection) {
+      setSelectedMetroKey(searchSelection.metroKey);
+      setSelectedSubareaKey(searchSelection.subareaKey);
+    }
+  }, [searchSelection?.cityKey, searchSelection?.metroKey, searchSelection?.subareaKey]);
+
   return (
     <Box sx={{ px: { xs: 2, md: 3 }, py: 2, maxWidth: 960 }}>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
@@ -155,12 +198,13 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
       <TextField
         fullWidth
         size="small"
-        placeholder="Search for a city (e.g. Joliet, Webster)"
+        placeholder={searchIndexReady ? "Search for a city (e.g. Houston, Joliet)" : "Loading search index…"}
         value={searchQuery}
         onChange={(e) => {
           setSearchQuery(e.target.value);
           setSelectedSearchCityKey(null);
         }}
+        disabled={!searchIndexReady}
         sx={{ mb: 2 }}
         InputProps={{
           startAdornment: (
@@ -200,7 +244,7 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
               <Typography variant="body2">
                 <strong>{formatGeoLabel(searchSelection.cityKey)}</strong>
                 {' is in '}
-                <strong>{searchSelection.metroLabel}</strong>
+                <strong>{getMetroDisplayLabel(searchSelection.metroKey)}</strong>
                 {' → '}
                 <strong>{searchSelection.subareaLabel}</strong>
               </Typography>
@@ -215,53 +259,43 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
       )}
 
       <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 2 }}>
-        Current metros
+        Metro hierarchy
       </Typography>
 
       <Box sx={{ display: 'flex', gap: 2, flexDirection: { xs: 'column', md: 'row' } }}>
-        {/* Left: metro list */}
-        <List
-          dense
+        {/* Left: selected metro (from search) */}
+        <Paper
+          variant="outlined"
           sx={{
-            flex: { md: '0 0 280px' },
-            bgcolor: 'background.paper',
-            borderRadius: 1,
-            border: '1px solid',
-            borderColor: 'divider',
-            maxHeight: { md: 420 },
-            overflow: 'auto',
+            flex: { md: '0 0 220px' },
+            minHeight: 200,
+            p: 2,
+            display: 'flex',
+            flexDirection: 'column',
           }}
         >
-          {allMetroKeys.map((metroKey) => {
-            const label = getMetroTemplateByKey(metroKey)?.label ?? formatGeoLabel(metroKey);
-            const selected = selectedMetroKey === metroKey;
-            return (
-              <ListItem
-                key={metroKey}
-                selected={selected}
-                onClick={() => {
-                  setSelectedMetroKey(metroKey);
-                  setSelectedSubareaKey(null);
-                }}
-                sx={{
-                  cursor: 'pointer',
-                  borderRadius: 1,
-                  mb: 0.5,
-                  bgcolor: selected ? 'action.selected' : 'transparent',
-                  '&:hover': { bgcolor: selected ? 'action.selected' : 'action.hover' },
-                }}
-              >
-                <ListItemText primary={label} />
-              </ListItem>
-            );
-          })}
-        </List>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            Metro
+          </Typography>
+          {selectedMetroKey == null ? (
+            <Typography variant="body2" color="text.secondary">
+              Search above and select a city to load its metro, areas, and cities.
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <PlaceIcon color="primary" fontSize="small" />
+              <Typography variant="subtitle1" fontWeight={600}>
+                {selectedMetroLabel}
+              </Typography>
+            </Box>
+          )}
+        </Paper>
 
         {/* Middle: areas for selected metro */}
         <Paper
           variant="outlined"
           sx={{
-            flex: { md: '0 0 320px' },
+            flex: { md: '0 0 280px' },
             minHeight: 200,
             p: 2,
             display: 'flex',
@@ -271,7 +305,7 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
         >
           {selectedMetroKey == null ? (
             <Typography variant="body2" color="text.secondary">
-              Click a metro on the left to see its areas and cities.
+              Search and select a city to see its areas.
             </Typography>
           ) : (
             <>
@@ -324,7 +358,7 @@ const SmartGroupsSettings: React.FC<{ tenantId: string }> = ({ tenantId: _tenant
         >
           {selectedMetroKey == null ? (
             <Typography variant="body2" color="text.secondary">
-              Select a metro and area to view cities.
+              Search and select a city to see its cities.
             </Typography>
           ) : selectedSubarea == null ? (
             <Typography variant="body2" color="text.secondary">

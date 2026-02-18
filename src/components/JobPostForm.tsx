@@ -701,13 +701,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     if (!formData.jobType) return false;
     if (!formData.jobDescription?.trim()) return false;
     
-    // If using company location and a company is selected, require worksite
-    if (useCompanyLocation && selectedCompanyId) {
-      if (!selectedLocationId) return false;
-    } else {
-      // Otherwise, require city and state (company is optional)
-      if (!formData.city?.trim() || !formData.state?.trim()) return false;
-    }
+    // Location: valid if we have city+state (e.g. from job order worksiteAddress) OR company worksite selected
+    // For Gig jobs and event worksites, worksite may not be in company locations subcollection, so city+state is sufficient
+    const hasLocationViaAddress = !!(formData.city?.trim() && formData.state?.trim());
+    const hasLocationViaWorksite = !!(useCompanyLocation && selectedCompanyId && selectedLocationId);
+    if (!hasLocationViaAddress && !hasLocationViaWorksite) return false;
     
     return true;
   };

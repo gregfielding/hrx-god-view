@@ -51,6 +51,8 @@ interface ManageSalespeopleDialogProps {
   tenantId: string;
   currentSalespeople: Salesperson[];
   onSalespeopleChange: (salespeople: Salesperson[]) => void;
+  /** When true, show internal team (securityLevel 5-7) instead of crm_sales users */
+  filterByInternalTeam?: boolean;
 }
 
 const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
@@ -59,6 +61,7 @@ const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
   tenantId,
   currentSalespeople,
   onSalespeopleChange,
+  filterByInternalTeam = false,
 }) => {
   const [availableSalespeople, setAvailableSalespeople] = useState<Salesperson[]>([]);
   const [selectedSalespersonId, setSelectedSalespersonId] = useState<string>('');
@@ -74,21 +77,65 @@ const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
       setError('');
 
       try {
-        console.log('Loading salespeople for tenant:', tenantId);
         const usersRef = collection(db, 'users');
-        
-        // Try multiple queries to find all available salespeople
         const allSalespeople: any[] = [];
-        
-        // Query 1: Users with crm_sales: true and active tenant status
-        try {
-          const activeQuery = query(
-            usersRef,
-            where('crm_sales', '==', true),
-            where(`tenantIds.${tenantId}.status`, '==', 'active')
-          );
-          const activeSnapshot = await getDocs(activeQuery);
-          console.log('Active tenant query results:', activeSnapshot.size);
+
+        const toSalesperson = (userData: any, docId: string) => {
+          const displayName = userData.firstName && userData.lastName
+            ? `${userData.firstName} ${userData.lastName}`
+            : userData.displayName || userData.email?.split('@')[0] || 'Unknown';
+          return {
+            id: userData.uid || docId,
+            fullName: displayName,
+            firstName: userData.firstName || '',
+            lastName: userData.lastName || '',
+            displayName: displayName,
+            email: userData.email || '',
+            phone: userData.phone || '',
+            title: userData.title || '',
+          };
+        };
+
+        if (filterByInternalTeam) {
+          // Internal team: securityLevel 5-7 (Sales, Manager, Admin)
+          try {
+            const internalQuery = query(
+              usersRef,
+              where(`tenantIds.${tenantId}.securityLevel`, 'in', ['5', '6', '7'])
+            );
+            const snapshot = await getDocs(internalQuery);
+            snapshot.docs.forEach((d) => {
+              const userData = d.data();
+              allSalespeople.push(toSalesperson(userData, d.id));
+            });
+          } catch (err) {
+            console.warn('Internal team query failed:', err);
+            // Fallback: fetch users with tenantIds and filter in-memory
+            try {
+              const fallbackQuery = query(usersRef, where(`tenantIds.${tenantId}`, '!=', null));
+              const fallbackSnapshot = await getDocs(fallbackQuery);
+              fallbackSnapshot.docs.forEach((d) => {
+                const userData = d.data();
+                const tenantData = userData.tenantIds?.[tenantId];
+                const sl = String(tenantData?.securityLevel ?? userData.securityLevel ?? '0');
+                if (['5', '6', '7'].includes(sl)) {
+                  allSalespeople.push(toSalesperson(userData, d.id));
+                }
+              });
+            } catch (fallbackErr) {
+              console.warn('Fallback internal team query failed:', fallbackErr);
+            }
+          }
+        } else {
+          // Original logic: crm_sales users
+          // Query 1: Users with crm_sales: true and active tenant status
+          try {
+            const activeQuery = query(
+              usersRef,
+              where('crm_sales', '==', true),
+              where(`tenantIds.${tenantId}.status`, '==', 'active')
+            );
+            const activeSnapshot = await getDocs(activeQuery);
           
           activeSnapshot.docs.forEach(doc => {
             const userData = doc.data();
@@ -187,7 +234,8 @@ const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
         console.log('Total unique salespeople found:', allSalespeople.length);
         console.log('All salespeople:', allSalespeople);
         setAvailableSalespeople(allSalespeople);
-        
+        }
+
       } catch (err: any) {
         console.error('Error loading available salespeople:', err);
         setError('Failed to load available salespeople');
@@ -197,7 +245,7 @@ const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
     };
 
     loadAvailableSalespeople();
-  }, [open, tenantId]);
+  }, [open, tenantId, filterByInternalTeam]);
 
   // Filter available salespeople to exclude current ones
   const availableToAdd = availableSalespeople.filter(salesperson => {

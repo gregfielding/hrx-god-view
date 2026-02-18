@@ -54,6 +54,20 @@ export function getMetroTemplateByKey(metroKey: string): MetroTemplateCompat | n
   return templateByKey.get(metroKey) ?? null;
 }
 
+/**
+ * User-friendly metro label. Census CBSA names like "Houston-Pasadena-The Woodlands, TX"
+ * are shortened to "Houston, TX" (primary city + state). Falls back to full label if no comma.
+ */
+export function getMetroDisplayLabel(metroKey: string): string {
+  const template = templateByKey.get(metroKey);
+  const label = template?.label ?? metroKey.replace(/_/g, ' ');
+  const commaIdx = label.indexOf(',');
+  if (commaIdx === -1) return label;
+  const primary = label.slice(0, commaIdx).split('-')[0].trim();
+  const state = label.slice(commaIdx + 1).trim();
+  return state ? `${primary}, ${state}` : label;
+}
+
 export function findTemplateContainingCity(cityKey: string): MetroTemplateCompat | null {
   for (const metro of METRO_TEMPLATES) {
     for (const sub of metro.subareas || []) {

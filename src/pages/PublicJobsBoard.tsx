@@ -1181,26 +1181,25 @@ const PublicJobsBoard: React.FC = () => {
     loadShiftsForDialog();
   }, [selectedJob]);
 
-  // Helper function to safely format dates for display
+  // Helper function to safely format calendar dates for display (avoids UTC→local shift)
   const formatDateForDisplay = (dateValue: any): string => {
     if (!dateValue) return '';
-    
     try {
       let date: Date;
-      
       if (typeof dateValue === 'string') {
         date = new Date(dateValue);
       } else if (dateValue && typeof dateValue.toDate === 'function') {
-        // Firestore Timestamp
         date = dateValue.toDate();
       } else if (dateValue && typeof dateValue.toISOString === 'function') {
-        // Date object
         date = dateValue;
       } else {
         date = new Date(dateValue);
       }
-      
-      return isNaN(date.getTime()) ? '' : date.toLocaleDateString();
+      if (isNaN(date.getTime())) return '';
+      const m = date.getUTCMonth() + 1;
+      const d = date.getUTCDate();
+      const y = date.getUTCFullYear();
+      return `${m}/${d}/${y}`;
     } catch (error) {
       console.warn('Error formatting date for display:', dateValue, error);
       return '';
