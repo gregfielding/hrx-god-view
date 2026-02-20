@@ -217,6 +217,8 @@
     "targetPayOptional": "Salario deseado (opcional)"
   },
   "apply": {
+    "availableShifts": "Turnos disponibles",
+    "availableShiftsInstruction": "Aplica a los turnos en los que estés disponible para trabajar. Nota: Algunos turnos se extienden durante la noche hasta el día siguiente.",
     "stepPersonalInfo": "Datos personales",
     "stepAddress": "Dirección",
     "stepWorkEligibility": "Elegibilidad para trabajar",

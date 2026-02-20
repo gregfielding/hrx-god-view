@@ -116,3 +116,36 @@ export const formatCalendarDate = (dateValue: Date | { toDate: () => Date } | st
     return '';
   }
 };
+
+/**
+ * Return the calendar day (YYYY-MM-DD) for a shift date in the user's local timezone.
+ * Use for "same day" comparisons (e.g. double-book checks) so that a shift at 11 PM Saturday
+ * and a shift at 1 AM Sunday are not considered the same day when the user is in a timezone
+ * where Saturday 11 PM is still Saturday.
+ * - Plain date-only strings (YYYY-MM-DD) are returned as-is (no timezone applied).
+ * - Timestamps and date-time strings are interpreted as a moment and converted to the
+ *   local calendar day (getFullYear/getMonth/getDate).
+ */
+export const getCalendarDayLocal = (shiftDate: string | Date | { toDate: () => Date } | null | undefined): string => {
+  if (shiftDate == null || shiftDate === '') return '';
+  if (typeof shiftDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(shiftDate)) return shiftDate;
+  try {
+    let date: Date;
+    if (typeof shiftDate === 'string') {
+      date = new Date(shiftDate);
+    } else if (shiftDate && typeof (shiftDate as { toDate?: () => Date }).toDate === 'function') {
+      date = (shiftDate as { toDate: () => Date }).toDate();
+    } else if (shiftDate instanceof Date) {
+      date = shiftDate;
+    } else {
+      return '';
+    }
+    if (isNaN(date.getTime())) return '';
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  } catch {
+    return '';
+  }
+};

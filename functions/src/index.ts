@@ -220,7 +220,7 @@ export {
   onUserEmploymentUpdatedEverify,
   processEverifyCaseFromEmployment,
   scheduledEverifyPoller,
-} from './integrations/everify';
+} from './integrations/everifyGate';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

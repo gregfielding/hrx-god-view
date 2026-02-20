@@ -512,7 +512,7 @@ const getTheme = (mode: 'light' | 'dark') => {
             boxShadow: 'none',
             border: 'none',
             borderRadius: 0,
-            overflow: 'visible',
+            overflow: 'auto',
           },
         },
       },

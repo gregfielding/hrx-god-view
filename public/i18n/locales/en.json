@@ -217,6 +217,8 @@
     "targetPayOptional": "Target pay (optional)"
   },
   "apply": {
+    "availableShifts": "Available Shifts",
+    "availableShiftsInstruction": "Please apply for the shifts you are available to work. Note: Some shifts extend overnight into the next calendar day.",
     "stepPersonalInfo": "Personal Info",
     "stepAddress": "Address",
     "stepWorkEligibility": "Work Eligibility",

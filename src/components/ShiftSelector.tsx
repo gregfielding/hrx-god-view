@@ -19,6 +19,7 @@ import { format } from 'date-fns';
 import { JobBoardShift } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { getShiftDisplayText } from '../utils/shiftI18n';
+import { useT } from '../i18n';
 
 interface ShiftSelectorProps {
   shifts: JobBoardShift[];
@@ -50,6 +51,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   tenantId,
   language = 'en',
 }) => {
+  const t = useT();
   const formatTime = (time: string) => {
     if (!time) return '';
     const [hours, minutes] = time.split(':');
@@ -92,8 +94,6 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
     return null;
   }
 
-  const hasMultiDay = shifts.some((s) => !!s.endDate && s.endDate !== s.shiftDate);
-
   const handleApply = (shiftId: string) => {
     if (onApplyToShift) {
       onApplyToShift(shiftId);
@@ -106,16 +106,11 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
   return (
     <Box sx={{ mb: 3 }}>
       <Typography variant="h6" fontWeight={700} gutterBottom>
-        Available Shifts
+        {t('apply.availableShifts')}
       </Typography>
       <Typography variant="body2" color="text.secondary" gutterBottom>
-        Each schedule is a separate application. Click "Apply" on the schedule(s) you want.
+        {t('apply.availableShiftsInstruction')}
       </Typography>
-      {hasMultiDay && (
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-          Some schedules span multiple days. The date range shows coverage, and the time line shows the day-by-day pattern.
-        </Typography>
-      )}
 
       <Stack spacing={1.5} sx={{ mt: 2 }}>
         {shifts.map((shift) => {

@@ -361,6 +361,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
 
             // Render template (new engine handles STOP footer automatically)
             message = await renderTemplate(templateResult.template, variables, tenantId);
+            message = cleanupMisSavedPlaceholders(message, variables);
             templateFound = true;
             logger.info(`Using ${templateResult.source} template for application ${applicationId} status change to ${newStatus}`);
           }

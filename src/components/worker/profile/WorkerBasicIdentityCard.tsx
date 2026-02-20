@@ -31,6 +31,8 @@ export interface WorkerBasicIdentityForm {
   phone: string;
   email: string;
   dateOfBirth: string;
+  emergencyContactName: string;
+  emergencyContactPhone: string;
   streetAddress: string;
   city: string;
   state: string;
@@ -45,6 +47,8 @@ const defaultForm: WorkerBasicIdentityForm = {
   phone: '',
   email: '',
   dateOfBirth: '',
+  emergencyContactName: '',
+  emergencyContactPhone: '',
   streetAddress: '',
   city: '',
   state: '',
@@ -56,6 +60,7 @@ const defaultForm: WorkerBasicIdentityForm = {
 function fromUserDoc(data: Record<string, unknown> | null): WorkerBasicIdentityForm {
   if (!data) return defaultForm;
   const addr = (data.addressInfo as Record<string, unknown>) || {};
+  const ec = (data.emergencyContact as Record<string, unknown>) || {};
   const dob = (data.dob ?? data.dateOfBirth) as string | undefined;
   const dobStr = typeof dob === 'string' ? dob : dob ? String(dob) : '';
   const homeLat = addr.homeLat != null && typeof addr.homeLat === 'number' ? addr.homeLat : null;
@@ -66,6 +71,8 @@ function fromUserDoc(data: Record<string, unknown> | null): WorkerBasicIdentityF
     phone: (data.phone as string) ?? '',
     email: (data.email as string) ?? '',
     dateOfBirth: dobStr,
+    emergencyContactName: (ec.name as string) ?? '',
+    emergencyContactPhone: (ec.phone as string) ?? '',
     streetAddress: (addr.streetAddress as string) ?? '',
     city: (addr.city as string) ?? (data.city as string) ?? '',
     state: (addr.state as string) ?? (data.state as string) ?? '',
@@ -126,6 +133,20 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
         ...(updates.email !== undefined && { email: updates.email }),
         ...(updates.dateOfBirth !== undefined && { dateOfBirth: updates.dateOfBirth, dob: updates.dateOfBirth }),
       };
+      if (
+        updates.emergencyContactName !== undefined ||
+        updates.emergencyContactPhone !== undefined
+      ) {
+        const f = formRef.current;
+        const currentEc = (userDoc?.emergencyContact as Record<string, unknown>) || {};
+        const name = updates.emergencyContactName !== undefined ? updates.emergencyContactName : f.emergencyContactName;
+        const phone = updates.emergencyContactPhone !== undefined ? updates.emergencyContactPhone : f.emergencyContactPhone;
+        payload.emergencyContact = {
+          name: name || '',
+          phone: phone || '',
+          relationship: (currentEc.relationship as string) ?? '',
+        };
+      }
       if (
         updates.streetAddress !== undefined ||
         updates.city !== undefined ||
@@ -360,6 +381,39 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                 onChange={handleChange('dateOfBirth')}
                 onBlur={() => persist({ dateOfBirth: form.dateOfBirth })}
                 InputLabelProps={{ shrink: true }}
+              />
+            </Grid>
+          </Grid>
+
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mt: 3, mb: 1 }}>
+            {t('profile.emergencyContact')}
+          </Typography>
+          <Grid container spacing={2}>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                size="small"
+                label={t('profile.emergencyContactName')}
+                value={form.emergencyContactName}
+                onChange={handleChange('emergencyContactName')}
+                onBlur={() => persist({ emergencyContactName: form.emergencyContactName })}
+              />
+            </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                size="small"
+                label={t('profile.emergencyContactPhone')}
+                type="tel"
+                value={form.emergencyContactPhone}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/\D/g, '');
+                  const formatted = raw.length >= 10 ? formatPhoneNumber(raw.slice(-10)) : e.target.value;
+                  setForm((prev) => ({ ...prev, emergencyContactPhone: formatted }));
+                  if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+                  saveTimeoutRef.current = setTimeout(() => persist({ emergencyContactPhone: formatted }), 600);
+                }}
+                onBlur={() => persist({ emergencyContactPhone: form.emergencyContactPhone })}
               />
             </Grid>
           </Grid>

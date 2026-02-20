@@ -1248,7 +1248,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               </Button>
             </Box>
           )}
-          <TableContainer>
+          <TableContainer sx={{ overflowX: 'auto' }}>
             <Table>
             <TableHead>
               <TableRow sx={{ bgcolor: 'grey.50' }}>

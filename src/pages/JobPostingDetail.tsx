@@ -952,6 +952,23 @@ const JobPostingDetail: React.FC = () => {
     return (preferred || snapshot.docs[0]).id;
   };
 
+  const findAssignmentIdByApplicationId = async (appId: string): Promise<string | null> => {
+    if (!resolvedTenantId || !user?.uid) return null;
+    const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
+    const assignmentQuery = query(
+      assignmentsRef,
+      where('userId', '==', user.uid),
+      where('applicationId', '==', appId),
+    );
+    const snapshot = await getDocs(assignmentQuery);
+    if (snapshot.empty) return null;
+    const preferred = snapshot.docs.find((docSnap) => {
+      const status = String((docSnap.data() || {}).status || '').toLowerCase();
+      return status === 'proposed' || status === 'confirmed';
+    });
+    return (preferred || snapshot.docs[0]).id;
+  };
+
   const handleAssignmentDecision = async (decision: 'accept' | 'decline', shiftId?: string) => {
     if (!resolvedTenantId || !user?.uid) return;
 
@@ -970,6 +987,9 @@ const JobPostingDetail: React.FC = () => {
       }
       if (!assignmentId && applicationData?.assignmentId) {
         assignmentId = String(applicationData.assignmentId);
+      }
+      if (!assignmentId && applicationDocId) {
+        assignmentId = await findAssignmentIdByApplicationId(applicationDocId);
       }
 
       if (!assignmentId) {

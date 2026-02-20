@@ -38,6 +38,7 @@ import {
   Error as ErrorIcon,
   Edit as EditIcon,
   Refresh as RefreshIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -57,6 +58,7 @@ import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
 
 import { db, functions } from '../../firebase';
+import { getCalendarDayLocal } from '../../utils/dateUtils';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
 import { JobOrder } from '../../types/recruiter/jobOrder';
@@ -348,9 +350,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setLoading(true);
       setError(null);
       try {
-        // Get today's date in YYYY-MM-DD format
+        // Today's date in recruiter's local timezone (YYYY-MM-DD) for consistent "from today" filter
         const today = new Date();
-        const todayStr = today.toISOString().split('T')[0];
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
         
         // Load job order to get pay rate information (using canonical path)
         const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
@@ -418,39 +420,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return shiftData;
         });
         
-        // Filter: include shifts from today forward OR shifts that have placements/assignments (active)
+        // Filter: include shifts from today forward OR shifts that have placements/assignments (active).
+        // Use local-timezone calendar day so "today" and shift dates are consistent.
         const upcomingShifts = allShifts.filter(shift => {
           const isActive = activeShiftIds.has(shift.id);
           if (isActive) return true; // Always show shifts with placements or assignments
-          
-          const shiftDate: any = shift.shiftDate;
-          if (!shiftDate) return false;
-          
-          // Handle both YYYY-MM-DD strings and Date objects/Timestamps
-          let shiftDateStr: string;
-          if (typeof shiftDate === 'string') {
-            shiftDateStr = shiftDate.split('T')[0];
-          } else if (shiftDate && typeof shiftDate === 'object') {
-            // Check for Firestore Timestamp first
-            if ('toDate' in shiftDate && typeof shiftDate.toDate === 'function') {
-              // Firestore Timestamp
-              shiftDateStr = shiftDate.toDate().toISOString().split('T')[0];
-            } else if (shiftDate instanceof Date) {
-              // Date object
-              shiftDateStr = shiftDate.toISOString().split('T')[0];
-            } else {
-              return false;
-            }
-          } else {
-            return false;
-          }
-          
-          // Include shifts from today forward
+          const shiftDateStr = getCalendarDayLocal(shift.shiftDate);
+          if (!shiftDateStr) return false;
           return shiftDateStr >= todayStr;
         }).sort((a, b) => {
-          // Sort by date ascending (earliest first)
-          const dateA = typeof a.shiftDate === 'string' ? a.shiftDate : a.shiftDate?.toDate?.()?.toISOString?.() || '';
-          const dateB = typeof b.shiftDate === 'string' ? b.shiftDate : b.shiftDate?.toDate?.()?.toISOString?.() || '';
+          const dateA = getCalendarDayLocal(a.shiftDate);
+          const dateB = getCalendarDayLocal(b.shiftDate);
           return dateA.localeCompare(dateB);
         });
         
@@ -484,12 +464,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         return;
       }
 
+      const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
+      const isGig = jobType === 'gig';
+      // Normalize legacy persisted values for Gig: applicants -> shift_applicants, candidates -> shift_candidates
+      const workforce =
+        isGig && selectedWorkforce === 'applicants'
+          ? 'shift_applicants'
+          : isGig && selectedWorkforce === 'candidates'
+            ? 'shift_candidates'
+            : selectedWorkforce;
+
       setLoading(true);
       setError(null);
       try {
         let workforceUsers: Worker[] = [];
 
-        const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
         const isCareerJob = jobType === 'career';
         const hasShiftMetadata = (applicationData: any) =>
           Boolean(
@@ -542,69 +531,89 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return docs.map((d) => ({ id: d.id, data: d.data() }));
         };
 
-        if (selectedWorkforce === 'applicants') {
-          // Load applicants for this job order AND this specific shift (exclude candidates — they appear in Candidates pool)
+        const includeApplicantByShift = (data: any) => {
+          const hasShift = matchesSelectedShift(data);
+          const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
+          return hasShift || allowCareerWithoutShift;
+        };
+
+        if (workforce === 'all_applicants' || workforce === 'shift_applicants') {
           const applicationDocs = await loadApplicationDocs();
-          
           const userIds = new Set<string>();
+          const filterByShift = workforce === 'shift_applicants';
           applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
-            if (data.candidate === true) return; // Candidates show in "Candidates" workforce only
+            if (data.candidate === true) return;
             const status = String(data.status || 'submitted').toLowerCase();
             if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
-            
-            const hasShift = matchesSelectedShift(data);
-            const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
-            if (hasShift || allowCareerWithoutShift) {
-              userIds.add(data.userId);
-            }
+            if (filterByShift && !includeApplicantByShift(data)) return;
+            userIds.add(data.userId);
           });
-
-          // Load user documents with full profile data
           const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) {
-              return extractWorkerData(userSnap.data(), userId);
-            }
+            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
             return null;
           });
-          
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
-          
-        } else if (selectedWorkforce === 'candidates') {
-          // Load candidates for this job order AND this specific shift
-          // Candidates are applicants who have been marked as candidates (shortlist)
+        } else if (workforce === 'all_candidates' || workforce === 'shift_candidates') {
           const applicationDocs = await loadApplicationDocs();
-          
-          // Filter candidates to only those who applied for this specific shift
+          const candidateUserIds = new Set<string>();
+          const filterByShift = workforce === 'shift_candidates';
+          applicationDocs.forEach(({ data }) => {
+            if (!data.userId || data.candidate !== true) return;
+            const status = String(data.status || 'submitted').toLowerCase();
+            if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
+            if (filterByShift && !includeApplicantByShift(data)) return;
+            candidateUserIds.add(data.userId);
+          });
+          const userPromises = Array.from(candidateUserIds).map(async (userId): Promise<Worker | null> => {
+            const userRef = doc(db, 'users', userId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
+            return null;
+          });
+          const users = await Promise.all(userPromises);
+          workforceUsers = users.filter((u): u is Worker => u !== null);
+        } else if (workforce === 'applicants') {
+          // Non-Gig: applicants for this job order and selected shift
+          const applicationDocs = await loadApplicationDocs();
+          const userIds = new Set<string>();
+          applicationDocs.forEach(({ data }) => {
+            if (!data.userId) return;
+            if (data.candidate === true) return;
+            const status = String(data.status || 'submitted').toLowerCase();
+            if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
+            if (!includeApplicantByShift(data)) return;
+            userIds.add(data.userId);
+          });
+          const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
+            const userRef = doc(db, 'users', userId);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
+            return null;
+          });
+          const users = await Promise.all(userPromises);
+          workforceUsers = users.filter((u): u is Worker => u !== null);
+        } else if (workforce === 'candidates') {
+          const applicationDocs = await loadApplicationDocs();
           const candidateUserIds = new Set<string>();
           applicationDocs.forEach(({ data }) => {
             if (!data.userId || data.candidate !== true) return;
             const status = String(data.status || 'submitted').toLowerCase();
             if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
-            
-            const hasShift = matchesSelectedShift(data);
-            const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
-            if (hasShift || allowCareerWithoutShift) {
-              candidateUserIds.add(data.userId);
-            }
+            if (!includeApplicantByShift(data)) return;
+            candidateUserIds.add(data.userId);
           });
-          
-          // Load user documents with full profile data
           const userPromises = Array.from(candidateUserIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) {
-              return extractWorkerData(userSnap.data(), userId);
-            }
+            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
             return null;
           });
-          
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
-          
         } else if (selectedWorkforce.startsWith('group_')) {
           // Load users from selected group
           const groupId = selectedWorkforce.replace('group_', '');
@@ -821,7 +830,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
   const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
-  const safeSelectedWorkforce = workforceOptions.some((o) => o.value === selectedWorkforce) ? selectedWorkforce : '';
+  // For Gig, map legacy persisted 'applicants'/'candidates' to shift_applicants/shift_candidates
+  const normalizedWorkforce =
+    String((jobOrder as any)?.jobType || '').toLowerCase() === 'gig' && selectedWorkforce === 'applicants'
+      ? 'shift_applicants'
+      : String((jobOrder as any)?.jobType || '').toLowerCase() === 'gig' && selectedWorkforce === 'candidates'
+        ? 'shift_candidates'
+        : selectedWorkforce;
+  const safeSelectedWorkforce = workforceOptions.some((o) => o.value === normalizedWorkforce) ? normalizedWorkforce : (workforceOptions[0]?.value ?? '');
+
+  // When workforce options change (e.g. job is Gig), sync selection if current value is no longer valid
+  useEffect(() => {
+    const valid = workforceOptions.some((o) => o.value === selectedWorkforce);
+    if (!valid && workforceOptions.length > 0 && selectedWorkforce !== 'choose_group') {
+      setSelectedWorkforce(workforceOptions[0].value);
+    }
+  }, [workforceOptions, selectedWorkforce]);
 
   const handleRemoveGroupFromWorkforce = async (groupValue: string) => {
     if (!groupValue.startsWith('group_') || !tenantId || !jobOrderId) return;
@@ -846,13 +870,24 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // Build workforce options: Applicants, Candidates, [last used group from Choose Group], labor pool groups, Choose Group
+  // Build workforce options. For Gigs: All Applicants, All Candidates, Shift Applicants, Shift Candidates, then groups.
+  // For non-Gigs: Applicants, Candidates, then groups.
   function getWorkforceOptions() {
-    const options: Array<{ value: string; label: string }> = [
-      { value: 'applicants', label: 'Applicants' },
-      { value: 'candidates', label: 'Candidates' },
-    ];
-    
+    const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
+    const isGig = jobType === 'gig';
+
+    const options: Array<{ value: string; label: string }> = isGig
+      ? [
+          { value: 'all_applicants', label: 'All Applicants' },
+          { value: 'all_candidates', label: 'All Candidates' },
+          { value: 'shift_applicants', label: 'Shift Applicants' },
+          { value: 'shift_candidates', label: 'Shift Candidates' },
+        ]
+      : [
+          { value: 'applicants', label: 'Applicants' },
+          { value: 'candidates', label: 'Candidates' },
+        ];
+
     // Add last group selected via "Choose Group" (stored on job order for quick re-select)
     const lastGroup = (jobOrder as any)?.placementsLastGroup;
     if (lastGroup?.id && lastGroup?.groupName) {
@@ -1041,16 +1076,84 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     [assignedWorkers],
   );
 
-  // Shift start date for display (YYYY-MM-DD and formatted)
+  // Shift start date for display (YYYY-MM-DD in recruiter's local timezone for same-day comparison)
   const shiftStartDateStr = useMemo(() => {
     if (!selectedShift) return '';
-    const raw = (selectedShift as any).shiftDate;
-    if (!raw) return '';
-    if (typeof raw === 'string') return raw.split('T')[0];
-    if (raw?.toDate && typeof raw.toDate === 'function') return raw.toDate().toISOString().split('T')[0];
-    if (raw instanceof Date) return raw.toISOString().split('T')[0];
-    return '';
+    return getCalendarDayLocal((selectedShift as any).shiftDate);
   }, [selectedShift]);
+
+  // Same-day shift IDs (other shifts on the same calendar day as the selected shift) for double-book protection.
+  // Uses recruiter's local timezone so "same day" is consistent (e.g. Saturday 10 PM and Saturday 2 PM are same day).
+  const getShiftDateStr = (shift: Shift | undefined) => {
+    if (!shift) return '';
+    return getCalendarDayLocal((shift as any).shiftDate);
+  };
+  const sameDayShiftIds = useMemo(() => {
+    if (!shiftStartDateStr || !selectedShiftId) return [];
+    return shifts
+      .filter((s) => s.id !== selectedShiftId && getShiftDateStr(s) === shiftStartDateStr)
+      .map((s) => s.id);
+  }, [shifts, selectedShiftId, shiftStartDateStr]);
+
+  // Map: userId -> list of { shiftId, shiftTitle, type } for same-day placements/assignments (double-book warning)
+  const [sameDayConflictByUserId, setSameDayConflictByUserId] = useState<Map<string, Array<{ shiftId: string; shiftTitle: string; type: 'placement' | 'assigned' | 'confirmed' }>>>(new Map());
+  useEffect(() => {
+    if (!tenantId || !jobOrderId || sameDayShiftIds.length === 0) {
+      setSameDayConflictByUserId(new Map());
+      return;
+    }
+    let cancelled = false;
+    const run = async () => {
+      const conflicts = new Map<string, Array<{ shiftId: string; shiftTitle: string; type: 'placement' | 'assigned' | 'confirmed' }>>();
+      const shiftTitleById = new Map<string, string>(shifts.map((s) => [s.id, (s as any).shiftTitle || s.shiftTitle || 'Shift']));
+
+      const placementsRef = collection(db, 'tenants', tenantId, 'placements');
+      const placementsQuery = query(
+        placementsRef,
+        where('jobOrderId', '==', jobOrderId),
+        where('shiftId', 'in', sameDayShiftIds.slice(0, 30)),
+      );
+      const placementsSnap = await getDocs(placementsQuery);
+      placementsSnap.docs.forEach((d) => {
+        const data = d.data() as { userId?: string; shiftId?: string };
+        const uid = data?.userId;
+        const shiftId = data?.shiftId;
+        if (!uid || !shiftId) return;
+        const list = conflicts.get(uid) ?? [];
+        list.push({ shiftId, shiftTitle: shiftTitleById.get(shiftId) ?? 'Shift', type: 'placement' });
+        conflicts.set(uid, list);
+      });
+
+      const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+      const assignmentQueries = sameDayShiftIds.slice(0, 30).map((shiftId) =>
+        query(
+          assignmentsRef,
+          where('shiftId', '==', shiftId),
+          where('status', 'in', ['proposed', 'confirmed', 'active']),
+        ),
+      );
+      const assignmentSnaps = await Promise.all(assignmentQueries.map((q) => getDocs(q)));
+      assignmentSnaps.forEach((snap, idx) => {
+        const shiftId = sameDayShiftIds[idx];
+        const shiftTitle = shiftTitleById.get(shiftId) ?? 'Shift';
+        snap.docs.forEach((d) => {
+          const data = d.data() as { userId?: string; candidateId?: string; status?: string };
+          const uid = data?.userId || data?.candidateId;
+          if (!uid) return;
+          const status = (data?.status || '').toLowerCase();
+          const type: 'placement' | 'assigned' | 'confirmed' = status === 'confirmed' || status === 'active' ? 'confirmed' : 'assigned';
+          const list = conflicts.get(uid) ?? [];
+          if (!list.some((x) => x.shiftId === shiftId)) list.push({ shiftId, shiftTitle, type });
+          conflicts.set(uid, list);
+        });
+      });
+
+      if (!cancelled) setSameDayConflictByUserId(conflicts);
+    };
+    run();
+    return () => { cancelled = true; };
+  }, [tenantId, jobOrderId, sameDayShiftIds, shifts]);
+
   const formatDateDisplay = (yyyyMmDd: string) => {
     if (!yyyyMmDd) return '';
     const d = new Date(yyyyMmDd + 'T12:00:00');
@@ -1110,6 +1213,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     setIsAssignmentDragOver(true);
   };
 
+  const [doubleBookConfirmWorker, setDoubleBookConfirmWorker] = useState<Worker | null>(null);
+
   const handleAssignmentsDrop = (event: React.DragEvent) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1118,8 +1223,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     if (!workerId) return;
     const worker = availableWorkers.find((w) => w.id === workerId);
     if (worker) {
-      createPlacement(worker);
+      tryPlaceWorker(worker);
     }
+  };
+
+  const tryPlaceWorker = (worker: Worker) => {
+    const conflicts = sameDayConflictByUserId.get(worker.id);
+    if (conflicts && conflicts.length > 0) {
+      setDoubleBookConfirmWorker(worker);
+      return;
+    }
+    createPlacement(worker);
   };
 
   const createPlacement = async (worker: Worker) => {
@@ -1127,10 +1241,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setError('Missing required information to place worker');
       return;
     }
+    setDoubleBookConfirmWorker(null);
     const placementId = `${selectedShiftId}__${worker.id}`;
     try {
       setError(null);
-      // Optimistic update: show in Assignments immediately; track so onSnapshot doesn't overwrite
       pendingPlacementAddsRef.current.add(worker.id);
       setPlacementUserIds((prev) => new Set([...prev, worker.id]));
       const placementRef = doc(db, 'tenants', tenantId, 'placements', placementId);
@@ -1145,7 +1259,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     } catch (err: any) {
       console.error('Error placing worker:', err);
       setError(err?.message || 'Failed to place worker');
-      // Revert optimistic update on error
       pendingPlacementAddsRef.current.delete(worker.id);
       setPlacementUserIds((prev) => {
         const next = new Set(prev);
@@ -1726,6 +1839,25 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                       </Box>
                                     </Box>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
+                                  {sameDayConflictByUserId.get(worker.id)?.length ? (
+                                    <Tooltip
+                                      title={
+                                        <Box>
+                                          <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                                            Already on a shift this day
+                                          </Typography>
+                                          {sameDayConflictByUserId.get(worker.id)?.map((c, i) => (
+                                            <Typography key={i} variant="caption" display="block">
+                                              {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Assigned' : 'Confirmed'})
+                                            </Typography>
+                                          ))}
+                                        </Box>
+                                      }
+                                      arrow
+                                    >
+                                      <WarningIcon fontSize="small" sx={{ color: 'warning.main' }} />
+                                    </Tooltip>
+                                  ) : null}
                                   {resumeUrl && (
                                 <Tooltip title="View resume">
                                       <IconButton
@@ -1975,6 +2107,32 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             <Button onClick={() => setCancelAssignmentWorker(null)}>Cancel</Button>
             <Button variant="contained" color="error" onClick={() => cancelAssignmentWorker && handleCancelAssignment(cancelAssignmentWorker)}>
               Remove assignment
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Double-book warning: worker already placed/assigned/confirmed on same day */}
+        <Dialog open={!!doubleBookConfirmWorker} onClose={() => setDoubleBookConfirmWorker(null)} maxWidth="sm" fullWidth>
+          <DialogTitle>Already working this day</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              {doubleBookConfirmWorker?.displayName ?? 'This worker'} is already placed, assigned, or confirmed on another shift this day:
+            </Typography>
+            <Stack component="ul" sx={{ pl: 2, m: 0 }}>
+              {doubleBookConfirmWorker && sameDayConflictByUserId.get(doubleBookConfirmWorker.id)?.map((c, i) => (
+                <Typography key={i} component="li" variant="body2" color="text.secondary">
+                  {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Assigned' : 'Confirmed'})
+                </Typography>
+              ))}
+            </Stack>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              Placing them on this shift as well may double-book them. Do you want to place anyway?
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDoubleBookConfirmWorker(null)}>Cancel</Button>
+            <Button variant="contained" onClick={() => doubleBookConfirmWorker && createPlacement(doubleBookConfirmWorker)}>
+              Place anyway
             </Button>
           </DialogActions>
         </Dialog>
