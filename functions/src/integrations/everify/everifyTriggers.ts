@@ -1,0 +1,89 @@
+/**
+ * E-Verify Firestore triggers.
+ * On user_employments i9Status → completed: enqueue Cloud Task to create case.
+ * Config-driven worker URL; creates/verifies EVERIFY_QUEUE.
+ */
+
+import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
+import { logger } from 'firebase-functions/v2';
+import { CloudTasksClient } from '@google-cloud/tasks';
+import { getEverifyWorkerUrl, getEverifyQueueName } from './everifyConfig';
+
+const tasksClient = new CloudTasksClient();
+const PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
+const LOCATION = process.env.FUNCTIONS_REGION || 'us-central1';
+
+/** Get worker URL: config-driven (EVERIFY_WORKER_URL) or default v2 pattern */
+function getWorkerUrl(): string | null {
+  const configured = getEverifyWorkerUrl();
+  if (configured) return configured;
+  if (!PROJECT || !LOCATION) return null;
+  return `https://${LOCATION}-${PROJECT}.cloudfunctions.net/processEverifyCaseFromEmployment`;
+}
+
+/** Enqueue Cloud Task to create E-Verify case (shared by trigger and retry callable) */
+export async function enqueueEverifyTask(tenantId: string, userEmploymentId: string): Promise<void> {
+  const queueName = getEverifyQueueName();
+  const workerUrl = getWorkerUrl();
+  if (!workerUrl) {
+    logger.warn('E-Verify worker URL not configured, skipping enqueue');
+    return;
+  }
+  const parent = tasksClient.queuePath(PROJECT, LOCATION, queueName);
+  const taskName = `${parent}/tasks/everify-${tenantId}-${userEmploymentId}-${Date.now()}`;
+  const task = {
+    name: taskName,
+    httpRequest: {
+      httpMethod: 'POST' as const,
+      url: workerUrl,
+      headers: { 'Content-Type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ tenantId, userEmploymentId })).toString('base64'),
+    },
+    scheduleTime: {
+      seconds: Math.floor(Date.now() / 1000) + 5,
+    },
+  };
+  await tasksClient.createTask({ parent, task });
+  logger.info('E-Verify task enqueued', { tenantId, userEmploymentId, queue: queueName });
+}
+
+export const onUserEmploymentUpdatedEverify = onDocumentUpdated(
+  {
+    document: 'tenants/{tenantId}/user_employments/{employmentId}',
+    region: LOCATION,
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    const tenantId = event.params.tenantId;
+    const employmentId = event.params.employmentId;
+
+    if (!before || !after) return;
+
+    const beforeI9 = String(before.i9Status || '').toLowerCase();
+    const afterI9 = String(after.i9Status || '').toLowerCase();
+
+    if (beforeI9 === 'completed' || afterI9 !== 'completed') return;
+
+    const isEmulator =
+      process.env.FUNCTIONS_EMULATOR === 'true' ||
+      !!process.env.FIREBASE_EMULATOR_HUB ||
+      !!process.env.FIRESTORE_EMULATOR_HOST;
+
+    if (isEmulator) {
+      logger.info(`[EMULATOR] Skipping E-Verify enqueue for user_employments/${employmentId}`);
+      return;
+    }
+
+    if (!PROJECT) {
+      logger.warn('GCLOUD_PROJECT not set, skipping E-Verify enqueue');
+      return;
+    }
+
+    try {
+      await enqueueEverifyTask(tenantId, employmentId);
+    } catch (err: unknown) {
+      logger.error(`Error enqueueing E-Verify task for ${employmentId}:`, err);
+    }
+  }
+);
