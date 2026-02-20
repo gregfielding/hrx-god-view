@@ -13,6 +13,7 @@ import PageHeader from '../../components/PageHeader';
 import CompanySetup from './CompanySetup';
 import EntitiesPage from './settings/EntitiesPage';
 import OnboardingLibraryPage from './settings/OnboardingLibraryPage';
+import SignaturesDocumentsPage from './settings/SignaturesDocumentsPage';
 import MessagingTab from './MessagingTab';
 import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
@@ -21,8 +22,9 @@ import EverifyAdminOpsPage from './EverifyAdminOpsPage';
 const SmartGroupsSettings = lazy(() => import('./SmartGroupsSettings'));
 import { useAuth } from '../../contexts/AuthContext';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
+import DescriptionIcon from '@mui/icons-material/Description';
 
-type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups' | 'everify-ops';
+type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'documents' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups' | 'everify-ops';
 
 const SettingsLanding: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
@@ -44,6 +46,11 @@ const SettingsLanding: React.FC = () => {
       id: 'onboarding-library' as SettingsTab,
       title: 'Onboarding Library',
       icon: <LibraryBooksIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'documents' as SettingsTab,
+      title: 'Documents & Signatures',
+      icon: <DescriptionIcon sx={{ fontSize: 20 }} />,
     },
     {
       id: 'messaging' as SettingsTab,
@@ -85,6 +92,8 @@ const SettingsLanding: React.FC = () => {
         return <EntitiesPage />;
       case 'onboarding-library':
         return <OnboardingLibraryPage />;
+      case 'documents':
+        return effectiveTenantId ? <SignaturesDocumentsPage /> : null;
       case 'messaging':
         return effectiveTenantId ? <MessagingTab tenantId={effectiveTenantId} /> : null;
       case 'senders':

@@ -23,6 +23,7 @@ import {
   Button,
   Link,
   TextField,
+  Checkbox,
 } from '@mui/material';
 import {
   Description as ResumeIcon,
@@ -39,6 +40,8 @@ import {
   Edit as EditIcon,
   Refresh as RefreshIcon,
   Warning as WarningIcon,
+  Email as EmailIcon,
+  Sms as SmsIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -59,6 +62,7 @@ import { format } from 'date-fns';
 
 import { db, functions } from '../../firebase';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
+import MessageDrawer, { type MessageRecipient } from '../MessageDrawer';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
 import { JobOrder } from '../../types/recruiter/jobOrder';
@@ -1037,11 +1041,56 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
   // Assignments column: all workers placed/assigned/confirmed/declined for this shift (from Firestore, not filtered by Workforce)
   const assignedWorkers = assignmentWorkersList;
+  // Exclude cancelled (and canceled) from the list so they are not shown
+  const displayedAssignedWorkers = useMemo(
+    () =>
+      assignedWorkers.filter(
+        (w) => w.assignmentStatus !== 'cancelled' && w.assignmentStatus !== 'canceled',
+      ),
+    [assignedWorkers],
+  );
   const placedOnlyWorkers = useMemo(
     () => assignedWorkers.filter((w) => w.isPlacementOnly),
     [assignedWorkers],
   );
   const [assignAllBusy, setAssignAllBusy] = useState(false);
+
+  // Selection and bulk messaging for assignees (same pattern as Applications tab)
+  const [selectedAssignmentWorkerIds, setSelectedAssignmentWorkerIds] = useState<Set<string>>(new Set());
+  const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
+  const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
+  const isAllAssignmentsSelected =
+    displayedAssignedWorkers.length > 0 &&
+    selectedAssignmentWorkerIds.size === displayedAssignedWorkers.length;
+  const isSomeAssignmentsSelected = selectedAssignmentWorkerIds.size > 0;
+  const handleSelectAllAssignments = () => {
+    if (isAllAssignmentsSelected) {
+      setSelectedAssignmentWorkerIds(new Set());
+    } else {
+      setSelectedAssignmentWorkerIds(new Set(displayedAssignedWorkers.map((w) => w.id)));
+    }
+  };
+  const handleSelectOneAssignment = (workerId: string) => {
+    setSelectedAssignmentWorkerIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(workerId)) next.delete(workerId);
+      else next.add(workerId);
+      return next;
+    });
+  };
+  const bulkAssignmentRecipients = useMemo(() => {
+    const selected = displayedAssignedWorkers.filter((w) =>
+      selectedAssignmentWorkerIds.has(w.id),
+    );
+    const recipients: MessageRecipient[] = selected.map((w) => ({
+      userId: w.id,
+      name: w.displayName || [w.firstName, w.lastName].filter(Boolean).join(' ').trim() || w.id,
+      email: w.email,
+      phone: w.phone,
+    }));
+    const recipientUserIds = selected.map((w) => w.id);
+    return { recipients, recipientUserIds };
+  }, [displayedAssignedWorkers, selectedAssignmentWorkerIds]);
   const handleAssignAll = async () => {
     if (placedOnlyWorkers.length === 0 || !selectedShift) return;
     setAssignAllBusy(true);
@@ -1158,6 +1207,69 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     if (!yyyyMmDd) return '';
     const d = new Date(yyyyMmDd + 'T12:00:00');
     return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const handleExportAssignmentsCsv = () => {
+    if (!selectedShift || displayedAssignedWorkers.length === 0) return;
+    const shift = selectedShift as any;
+    const job = jobOrder as any;
+    const shiftName = shift.shiftTitle ?? 'Shift';
+    const shiftDateStr = shiftStartDateStr || getShiftDateStr(selectedShift);
+    const shiftStartTime = shift.defaultStartTime ?? shift.startTime ?? '';
+    const jobTitle = shift.defaultJobTitle ?? shift.jobTitle ?? job?.jobTitle ?? '';
+    const payRate =
+      shift.payRate != null
+        ? String(shift.payRate)
+        : job?.payRate != null
+          ? String(job.payRate)
+          : '';
+    const worksiteNickname = job?.worksiteName ?? '';
+    const addr = job?.worksiteAddress;
+    const worksiteAddress = addr
+      ? [addr.street, addr.city, addr.state, addr.zipCode ?? addr.zip]
+        .filter(Boolean)
+        .join(', ')
+      : '';
+
+    const escapeCsv = (v: string) => {
+      const s = String(v ?? '').replace(/"/g, '""');
+      return /[",\r\n]/.test(s) ? `"${s}"` : s;
+    };
+
+    const header = [
+      'firstName',
+      'lastName',
+      'email',
+      'phone',
+      'shift name',
+      'shift start date',
+      'shift start time',
+      'job title',
+      'pay rate',
+      'worksite location nickname',
+      'worksite location address',
+    ];
+    const rows = displayedAssignedWorkers.map((w) => [
+      escapeCsv(w.firstName),
+      escapeCsv(w.lastName),
+      escapeCsv(w.email ?? ''),
+      escapeCsv(w.phone ?? ''),
+      escapeCsv(shiftName),
+      escapeCsv(shiftDateStr),
+      escapeCsv(shiftStartTime),
+      escapeCsv(jobTitle),
+      escapeCsv(payRate),
+      escapeCsv(worksiteNickname),
+      escapeCsv(worksiteAddress),
+    ]);
+    const csv = [header.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `assignments-${shiftDateStr || 'export'}-${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const [editStartDateWorker, setEditStartDateWorker] = useState<Worker | null>(null);
@@ -1427,9 +1539,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               <Card sx={{ height: '100%' }}>
                 <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                      Assignments ({assignedWorkers.length})
-                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      {selectedShiftId && displayedAssignedWorkers.length > 0 && (
+                        <Checkbox
+                          indeterminate={isSomeAssignmentsSelected && !isAllAssignmentsSelected}
+                          checked={isAllAssignmentsSelected}
+                          onChange={handleSelectAllAssignments}
+                          size="small"
+                          aria-label="select all assignees"
+                        />
+                      )}
+                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                        Assignments ({displayedAssignedWorkers.length})
+                      </Typography>
+                    </Box>
                     <Button
                       size="small"
                       variant="contained"
@@ -1439,7 +1562,64 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     >
                       {assignAllBusy ? 'Offering…' : 'Assign All'}
                     </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      disabled={displayedAssignedWorkers.length === 0 || !selectedShiftId}
+                      onClick={handleExportAssignmentsCsv}
+                    >
+                      Export
+                    </Button>
                   </Box>
+                  {isSomeAssignmentsSelected && (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 2,
+                        px: 0,
+                        py: 1,
+                        mb: 0.5,
+                        borderBottom: 1,
+                        borderColor: 'divider',
+                        bgcolor: 'action.hover',
+                      }}
+                    >
+                      <Typography variant="body2" color="text.secondary">
+                        {selectedAssignmentWorkerIds.size} selected
+                      </Typography>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<EmailIcon />}
+                        onClick={() => {
+                          setBulkDrawerChannel('email');
+                          setBulkDrawerOpen(true);
+                        }}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Bulk Email
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<SmsIcon />}
+                        onClick={() => {
+                          setBulkDrawerChannel('sms');
+                          setBulkDrawerOpen(true);
+                        }}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Bulk SMS
+                      </Button>
+                      <Button
+                        size="small"
+                        onClick={() => setSelectedAssignmentWorkerIds(new Set())}
+                      >
+                        Clear selection
+                      </Button>
+                    </Box>
+                  )}
                   <Box
                     onDragOver={handleAssignmentsDragOver}
                     onDragLeave={() => setIsAssignmentDragOver(false)}
@@ -1464,7 +1644,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       </Alert>
                     ) : (
                     <Stack spacing={1}>
-                      {assignedWorkers.map((worker) => {
+                      {displayedAssignedWorkers.map((worker) => {
                         const isPlacementOnly = Boolean(worker.isPlacementOnly);
                         const isDeclined = worker.assignmentStatus === 'declined';
                         const isCancelled = worker.assignmentStatus === 'cancelled' || worker.assignmentStatus === 'canceled';
@@ -1488,6 +1668,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               cursor: canDragBackToPool ? 'grab' : 'default',
                             }}
                           >
+                            <Checkbox
+                              checked={selectedAssignmentWorkerIds.has(worker.id)}
+                              onChange={() => handleSelectOneAssignment(worker.id)}
+                              size="small"
+                              onClick={(e) => e.stopPropagation()}
+                              aria-label={`Select ${worker.displayName}`}
+                              sx={{ py: 0, px: 0.5 }}
+                            />
                             <Box sx={{ minWidth: 0, flex: 1 }}>
                               <Typography variant="body2" fontWeight={600} noWrap>
                                 {worker.displayName}
@@ -1624,7 +1812,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           </Paper>
                         );
                       })}
-                      {assignedWorkers.length === 0 && (
+                      {displayedAssignedWorkers.length === 0 && (
                         <Alert severity="info">
                           No workers placed or assigned yet.
                         </Alert>
@@ -2162,6 +2350,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Button>
           </DialogActions>
         </Dialog>
+
+        <MessageDrawer
+          open={bulkDrawerOpen}
+          onClose={() => setBulkDrawerOpen(false)}
+          recipients={bulkAssignmentRecipients.recipients}
+          tenantId={tenantId}
+          bulkSystemMode={true}
+          recipientUserIds={bulkAssignmentRecipients.recipientUserIds}
+          defaultChannels={[bulkDrawerChannel]}
+          onSend={() => {
+            setSelectedAssignmentWorkerIds(new Set());
+            setBulkDrawerOpen(false);
+          }}
+        />
       </Box>
   );
 };

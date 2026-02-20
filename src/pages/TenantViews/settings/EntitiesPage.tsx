@@ -27,7 +27,8 @@ import {
   Divider,
 } from '@mui/material';
 import { collection, getDocs, doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
 import { useAuth } from '../../../contexts/AuthContext';
 import EntityCostCentersTab from './EntityCostCentersTab';
@@ -96,6 +97,12 @@ export interface Entity {
   isActive?: boolean;
   /** Which onboarding workflow steps are active for this entity */
   onboardingWorkflowSteps?: OnboardingWorkflowStepsConfig;
+  /** Payroll / Everee (HRX Everee Master Plan) */
+  payrollProvider?: 'none' | 'everee';
+  evereeEnabled?: boolean;
+  evereeTenantId?: string;
+  evereeEnvironment?: 'sandbox' | 'production';
+  evereeApiBaseUrl?: string;
   createdAt?: any;
   updatedAt?: any;
 }
@@ -151,6 +158,8 @@ const EntitiesPage: React.FC = () => {
   const [packages, setPackages] = useState<{ id: string; name: string }[]>([]);
   const [costCenters, setCostCenters] = useState<{ id: string; name: string }[]>([]);
   const [workersCompPolicies, setWorkersCompPolicies] = useState<{ id: string; entityId?: string; displayName: string }[]>([]);
+  const [exportTestLoading, setExportTestLoading] = useState(false);
+  const [exportTestResult, setExportTestResult] = useState<{ ok: boolean; message?: string } | null>(null);
 
   // Form state for overview tab
   const [form, setForm] = useState<Partial<Entity>>({});
@@ -277,6 +286,25 @@ const EntitiesPage: React.FC = () => {
     }
   };
 
+  const handleTestEvereeConfig = async () => {
+    if (!tenantId || !selectedEntity) return;
+    setExportTestLoading(true);
+    setExportTestResult(null);
+    try {
+      const evereePingFn = httpsCallable<{ tenantId: string; entityId: string }, { ok: boolean; message?: string }>(functions, 'evereePing');
+      const res = await evereePingFn({ tenantId, entityId: selectedEntity.id });
+      const data = res.data;
+      setExportTestResult({ ok: data?.ok ?? false, message: data?.message });
+    } catch (err: any) {
+      setExportTestResult({
+        ok: false,
+        message: err?.message || err?.code || 'Everee test failed. Ensure EVEREE_ENABLED is set and entity has Everee configured.',
+      });
+    } finally {
+      setExportTestLoading(false);
+    }
+  };
+
   const handleSaveOverview = async () => {
     if (!tenantId || !selectedEntity) return;
     setSaving(true);
@@ -298,6 +326,11 @@ const EntitiesPage: React.FC = () => {
         defaultCostCenterId: form.defaultCostCenterId || null,
         defaultGlCompanyCode: form.defaultGlCompanyCode || null,
         isActive: form.isActive ?? true,
+        payrollProvider: form.payrollProvider || 'none',
+        evereeEnabled: form.evereeEnabled ?? false,
+        evereeTenantId: form.evereeTenantId?.trim() || null,
+        evereeEnvironment: form.evereeEnvironment || null,
+        evereeApiBaseUrl: form.evereeApiBaseUrl?.trim() || null,
         updatedAt: serverTimestamp(),
       };
       if (form.addresses?.length) payload.addresses = form.addresses;
@@ -623,6 +656,76 @@ const EntitiesPage: React.FC = () => {
                         }
                         label="Active"
                       />
+                      <Divider sx={{ my: 1 }} />
+                      <Typography variant="subtitle2" color="text.secondary">
+                        Payroll (Everee)
+                      </Typography>
+                      <FormControl fullWidth>
+                        <InputLabel>Payroll provider</InputLabel>
+                        <Select
+                          value={form.payrollProvider || 'none'}
+                          label="Payroll provider"
+                          onChange={(e) =>
+                            setForm((f) => ({
+                              ...f,
+                              payrollProvider: e.target.value as 'none' | 'everee',
+                              evereeEnabled: e.target.value === 'everee' ? f.evereeEnabled : false,
+                            }))
+                          }
+                        >
+                          <MenuItem value="none">None</MenuItem>
+                          <MenuItem value="everee">Everee</MenuItem>
+                        </Select>
+                      </FormControl>
+                      {form.payrollProvider === 'everee' && (
+                        <>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={form.evereeEnabled ?? false}
+                                onChange={(e) =>
+                                  setForm((f) => ({ ...f, evereeEnabled: e.target.checked }))
+                                }
+                              />
+                            }
+                            label="Everee enabled for this entity"
+                          />
+                          <TextField
+                            label="Everee Tenant ID"
+                            value={form.evereeTenantId || ''}
+                            onChange={(e) =>
+                              setForm((f) => ({ ...f, evereeTenantId: e.target.value }))
+                            }
+                            fullWidth
+                            placeholder="From Everee dashboard"
+                          />
+                          <FormControl fullWidth>
+                            <InputLabel>Environment</InputLabel>
+                            <Select
+                              value={form.evereeEnvironment || 'sandbox'}
+                              label="Environment"
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  evereeEnvironment: e.target.value as 'sandbox' | 'production',
+                                }))
+                              }
+                            >
+                              <MenuItem value="sandbox">Sandbox</MenuItem>
+                              <MenuItem value="production">Production</MenuItem>
+                            </Select>
+                          </FormControl>
+                          <TextField
+                            label="API base URL (optional)"
+                            value={form.evereeApiBaseUrl || ''}
+                            onChange={(e) =>
+                              setForm((f) => ({ ...f, evereeApiBaseUrl: e.target.value }))
+                            }
+                            fullWidth
+                            placeholder="Leave blank for default sandbox/production URL"
+                          />
+                        </>
+                      )}
                       <Button
                         variant="contained"
                         onClick={handleSaveOverview}
@@ -703,9 +806,23 @@ const EntitiesPage: React.FC = () => {
                     />
                   )}
                   {entityTab === 'export' && (
-                    <Alert severity="info">
-                      Export / Integrations — Everee payroll, entityCode usage. Coming in Phase 2.
-                    </Alert>
+                    <Box sx={{ maxWidth: 560 }}>
+                      <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 2 }}>
+                        Test Everee connection for this entity (validates config and credentials). EntityCode is used in payroll export.
+                      </Typography>
+                      <Button
+                        variant="outlined"
+                        disabled={!selectedEntity?.evereeEnabled || !selectedEntity?.evereeTenantId || exportTestLoading}
+                        onClick={handleTestEvereeConfig}
+                      >
+                        {exportTestLoading ? 'Testing…' : 'Test Everee config'}
+                      </Button>
+                      {exportTestResult !== null && (
+                        <Alert severity={exportTestResult.ok ? 'success' : 'error'} sx={{ mt: 2 }}>
+                          {exportTestResult.ok ? 'Everee config OK.' : exportTestResult.message ?? 'Test failed.'}
+                        </Alert>
+                      )}
+                    </Box>
                   )}
                 </Box>
               </>

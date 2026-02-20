@@ -92,6 +92,22 @@ export const p = {
   onboardingDocument: (tid: string, id: string) => `tenants/${tid}/onboarding_documents/${id}`,
 
   /**
+   * Everee payroll integration (HRX Everee Master Plan)
+   */
+  evereeWorkers: (tid: string) => `tenants/${tid}/everee_workers`,
+  evereeWorker: (tid: string, entityId: string, userId: string) =>
+    `tenants/${tid}/everee_workers/${entityId}__${userId}`,
+  evereeEmbedSessions: (tid: string) => `tenants/${tid}/everee_embed_sessions`,
+  evereeEmbedSession: (tid: string, sessionId: string) =>
+    `tenants/${tid}/everee_embed_sessions/${sessionId}`,
+  evereeWebhookEvents: (tid: string) => `tenants/${tid}/everee_webhook_events`,
+  evereeWebhookEvent: (tid: string, eventId: string) =>
+    `tenants/${tid}/everee_webhook_events/${eventId}`,
+  evereePayHistoryCache: (tid: string) => `tenants/${tid}/everee_pay_history_cache`,
+  evereePayHistoryCacheDoc: (tid: string, cacheId: string) =>
+    `tenants/${tid}/everee_pay_history_cache/${cacheId}`,
+
+  /**
    * E-Verify cases (HRX E-Verify Master Plan)
    */
   everifyCases: (tid: string) => `tenants/${tid}/everify_cases`,
@@ -104,14 +120,22 @@ export const p = {
     `tenants/${tid}/everify_cases/${caseId}/events/${eventId}`,
 
   /**
-   * Signature Envelopes (Phase 1C)
+   * Signatures (Phase 1C + HRX Signatures Spec: document templates, bundles, envelopes, sessions)
    */
+  documentTemplates: (tid: string) => `tenants/${tid}/document_templates`,
+  documentTemplate: (tid: string, id: string) => `tenants/${tid}/document_templates/${id}`,
+  documentBundles: (tid: string) => `tenants/${tid}/document_bundles`,
+  documentBundle: (tid: string, id: string) => `tenants/${tid}/document_bundles/${id}`,
   signatureEnvelopes: (tid: string) => `tenants/${tid}/signature_envelopes`,
   signatureEnvelope: (tid: string, id: string) => `tenants/${tid}/signature_envelopes/${id}`,
   signatureEnvelopeEvents: (tid: string, envelopeId: string) =>
     `tenants/${tid}/signature_envelopes/${envelopeId}/events`,
   signatureEnvelopeEvent: (tid: string, envelopeId: string, eventId: string) =>
     `tenants/${tid}/signature_envelopes/${envelopeId}/events/${eventId}`,
+  signatureSessions: (tid: string) => `tenants/${tid}/signature_sessions`,
+  signatureSession: (tid: string, id: string) => `tenants/${tid}/signature_sessions/${id}`,
+  signatureEnvelopesPublic: (tid: string) => `tenants/${tid}/signature_envelopes_public`,
+  signatureEnvelopePublic: (tid: string, id: string) => `tenants/${tid}/signature_envelopes_public/${id}`,
 
   /**
    * Entity Master Data (Phase 1B Extension)

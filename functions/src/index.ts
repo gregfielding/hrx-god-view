@@ -221,6 +221,15 @@ export {
   processEverifyCaseFromEmployment,
   scheduledEverifyPoller,
 } from './integrations/everifyGate';
+export {
+  evereePing,
+  evereeEnsureWorker,
+  evereeCreateOnboardingSession,
+  evereeGetPayHistory,
+  evereeGetPayStatement,
+  evereeAdminPushShift,
+  evereeAdminPreparePayout,
+} from './integrations/evereeGate';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -5211,6 +5220,15 @@ export {
   signaturesStartEnvelope,
   signaturesWebhookReceiver,
 } from './signatures';
+export {
+  signatureCreateEnvelope,
+  signatureCreateSigningSession,
+  signatureGetSession,
+  signatureGetSigningUrl,
+  signatureAdminListEnvelopes,
+  signatureAdminVoidEnvelope,
+  webhooksSignaturesDropboxsign,
+} from './integrations/signatures';
 
 // Phase 4: HRXOne Worker Onboarding Flow Functions
 export const validateInviteToken = onCall(async (request) => {

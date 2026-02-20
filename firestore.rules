@@ -233,6 +233,35 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
+      // Everee payroll (HRX Everee Master Plan) - admins full; workers read own linkage
+      match /everee_workers/{workerDocId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.firebaseUid == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /everee_embed_sessions/{sessionId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /everee_webhook_events/{eventId} {
+        allow read, write: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /everee_pay_history_cache/{cacheId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
       // User employments (E-Verify trigger source) - admin/HRX write; recruiters read; workers read own
       match /user_employments/{employmentId} {
         allow read: if request.auth != null && (
@@ -240,6 +269,16 @@ service cloud.firestore {
           hasTenantRole(tenantId, request.auth.token.roles) ||
           resource.data.userId == request.auth.uid
         );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // HRX Signatures Spec: document templates + bundles (read tenant roles; write admin/HRX)
+      match /document_templates/{docTemplateId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+      match /document_bundles/{bundleId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
@@ -261,6 +300,24 @@ service cloud.firestore {
           );
           allow create, update, delete: if false;
         }
+      }
+      // Signing sessions: read signer + admins; write backend only
+      match /signature_sessions/{sessionId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+      // Worker-safe envelope mirror (status + optional download link)
+      match /signature_envelopes_public/{envelopeId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if false;
       }
     }
 

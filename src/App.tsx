@@ -57,6 +57,7 @@ import Communications from './pages/Communications';
 import Terms from './pages/Terms';
 import Privacy from './pages/Privacy';
 import SMSPrivacy from './pages/SMSPrivacy';
+import SignerPage from './pages/SignerPage';
 import Apply from './pages/Apply';
 import TenantCRM from './pages/TenantViews/TenantCRM';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
@@ -373,7 +374,13 @@ function App() {
       <Route path="/terms" element={<Terms />} />
       <Route path="/privacy" element={<Privacy />} />
       <Route path="/sms-privacy" element={<SMSPrivacy />} />
-      
+      {/* HRX Signatures — signer page (works in Web + Flutter webview) */}
+      <Route path="/sign/s/:sessionId" element={
+        <ProtectedRoute>
+          <SignerPage />
+        </ProtectedRoute>
+      } />
+
       {/* Single layout for /c1 and /apply so nav + top bar stay mounted on back/forward */}
       <Route element={<ConditionalWorkerLayout />}>
         <Route path="/c1" element={<Outlet />}>
