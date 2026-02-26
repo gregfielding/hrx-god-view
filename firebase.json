@@ -40,6 +40,7 @@
         "*.local"
       ],
       "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run copy-env",
         "npm --prefix \"$RESOURCE_DIR\" run build"
       ],
       "environmentVariables": {

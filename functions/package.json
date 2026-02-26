@@ -1,6 +1,7 @@
 {
   "name": "functions",
   "scripts": {
+    "copy-env": "node scripts/copyEnvFromRoot.js",
     "lint": "eslint --ext .js,.ts .",
     "build": "tsc",
     "build:watch": "tsc --watch",

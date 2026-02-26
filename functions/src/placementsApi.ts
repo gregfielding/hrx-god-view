@@ -847,13 +847,8 @@ export const resendAssignmentOffer = onCall(
  */
 export const previewAssignmentDetailsEmail = onCall(
   {
-    cors: [
-      'http://localhost:3000',
-      'https://hrx1-d3beb.web.app',
-      'https://hrx1-d3beb.firebaseapp.com',
-      'https://hrxone.com',
-      'https://www.hrxone.com',
-    ],
+    // Allow all origins so localhost and production both work (v2 callables can be strict with CORS)
+    cors: true,
   },
   async (request) => {
     if (!request.auth?.uid) {
