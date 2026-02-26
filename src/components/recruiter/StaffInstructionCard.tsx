@@ -8,6 +8,8 @@ import {
   TextField,
   Button,
   IconButton,
+  Snackbar,
+  Alert,
 } from '@mui/material';
 import {
   Description as DescriptionIcon,
@@ -36,15 +38,20 @@ interface StaffInstructionCardProps {
 /**
  * Normalize stored value to string for admin/recruiter view.
  * Admin always shows English: value may be a string or i18n object { en?, es? }.
- * We only use English; never show Spanish in the admin dashboard.
+ * Also handles legacy shapes: .instructions, .text (nested), or raw object.
+ * Never returns [object Object] - always a proper string or ''.
  */
 function instructionTextToString(value: unknown): string {
   if (value == null) return '';
   if (typeof value === 'string') return value;
   if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
     const o = value as Record<string, unknown>;
-    const en = o.en;
-    if (typeof en === 'string') return en;
+    if (typeof o.en === 'string') return o.en;
+    if (typeof o.instructions === 'string') return o.instructions;
+    if (typeof o.text === 'string') return o.text;
+    if (typeof o.text === 'object' && o.text !== null && typeof (o.text as Record<string, unknown>).en === 'string') {
+      return (o.text as Record<string, unknown>).en as string;
+    }
     return '';
   }
   return '';
@@ -63,18 +70,23 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
 }) => {
   const instructionData = jobOrder?.staffInstructions?.[fieldKey];
   const inputId = `${fieldKey}-file-label`;
-  const initialText = instructionTextToString(instructionData?.text);
+  // Support both { text: "..." } and legacy flat/weird shapes
+  const rawValue = instructionData?.text ?? instructionData;
+  const initialText = instructionTextToString(rawValue);
   const [localText, setLocalText] = useState(() => typeof initialText === 'string' ? initialText : '');
+  const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'error' } | null>(null);
+  const latestTextRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastSavedRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
 
   // Update local text when job order data changes (e.g. after refresh). Admin always shows English.
   useEffect(() => {
-    const text = instructionTextToString(instructionData?.text);
+    const text = instructionTextToString(rawValue);
     const safe = typeof text === 'string' ? text : '';
     setLocalText(safe);
+    latestTextRef.current = safe;
     lastSavedRef.current = safe;
-  }, [instructionData?.text]);
+  }, [instructionData?.text, instructionData]);
 
   useEffect(() => {
     return () => flushPendingSave();
@@ -95,15 +107,16 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
         updatedAt: new Date()
       });
       lastSavedRef.current = text;
-      // Don't call onRefresh() here: it triggers a full fetch + setLoading(true) and
-      // causes the page to flash/reload. Local state is already correct; Firestore is updated.
-    } catch (error) {
+      setToast({ open: true, message: 'Saved', severity: 'success' });
+    } catch (error: any) {
       console.error(`Error saving ${fieldKey} instructions:`, error);
+      setToast({ open: true, message: `Failed to save: ${error?.message || 'Permission denied'}`, severity: 'error' });
     }
   };
 
   const handleTextChange = (newText: string) => {
     setLocalText(newText);
+    latestTextRef.current = newText;
     flushPendingSave();
     saveTimeoutRef.current = setTimeout(() => {
       saveTimeoutRef.current = null;
@@ -113,7 +126,9 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
 
   const handleBlur = () => {
     flushPendingSave();
-    saveTextToFirestore(localText);
+    // Use ref to avoid stale closure when blur happens before re-render
+    const textToSave = latestTextRef.current ?? localText;
+    saveTextToFirestore(textToSave);
   };
 
   return (
@@ -294,6 +309,11 @@ const StaffInstructionCard: React.FC<StaffInstructionCardProps> = ({
           </Box>
         </Box>
       </CardContent>
+      <Snackbar open={!!toast?.open} autoHideDuration={toast?.severity === 'error' ? 6000 : 3000} onClose={() => setToast(null)} anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}>
+        <Alert severity={toast?.severity || 'info'} onClose={() => setToast(null)} sx={{ width: '100%' }}>
+          {toast?.message}
+        </Alert>
+      </Snackbar>
     </Card>
   );
 };

@@ -189,13 +189,21 @@ export async function buildAssignmentDetailsEmail(
 
     const jobOrderType = a.jobOrderType === 'gig' || a.jobOrderType === 'career' ? a.jobOrderType : undefined;
 
-    // Recruiters
-    const recruiters: Array<{ displayName: string; email?: string; phone?: string }> = [];
+    // Job order (for recruiters + staff instructions – job order is source of truth for Staff Instructions tab edits)
+    let jobOrderData: Record<string, unknown> | null = null;
     if (a.jobOrderId) {
       const jobOrderSnap = await db.doc(`tenants/${tenantId}/job_orders/${a.jobOrderId}`).get();
-      const ids: string[] = [];
       if (jobOrderSnap.exists) {
-        const jo = jobOrderSnap.data() || {};
+        jobOrderData = (jobOrderSnap.data() || {}) as Record<string, unknown>;
+      }
+    }
+
+    // Recruiters
+    const recruiters: Array<{ displayName: string; email?: string; phone?: string }> = [];
+    if (a.jobOrderId && jobOrderData) {
+      const ids: string[] = [];
+      {
+        const jo = jobOrderData;
         const assigned = jo.assignedRecruiters as string[] | undefined;
         const legacyId = jo.recruiterId as string | undefined;
         if (Array.isArray(assigned) && assigned.length) ids.push(...assigned);
@@ -300,15 +308,25 @@ export async function buildAssignmentDetailsEmail(
     }
     sections.push(scheduleHtml);
 
-    // Staff Instructions
+    // Staff Instructions – use job order as primary (user edits there); fallback to assignment
+    const joStaff = (jobOrderData?.staffInstructions ?? {}) as Record<string, { text?: string | { en?: string; es?: string }; files?: any[] } | undefined>;
+    const aStaff = (a.staffInstructions ?? {}) as Record<string, { text?: string | { en?: string; es?: string }; files?: any[] } | undefined>;
+    const getStaffText = (section: string): string => {
+      const raw = joStaff[section]?.text ?? aStaff[section]?.text;
+      if (typeof raw === 'string') return raw.trim();
+      if (raw && typeof raw === 'object' && (raw.en || raw.es)) return ((raw as { en?: string; es?: string }).en || (raw as { en?: string; es?: string }).es || '').trim();
+      if (section === 'checkIn') return (a.checkInInstructions as string ?? '').trim();
+      return '';
+    };
+    const getStaffFiles = (section: string): any[] => joStaff[section]?.files ?? aStaff[section]?.files ?? [];
     const staffSections: Array<{ title: string; text: string; files: any[] }> = [
-      { title: 'First Day Instructions', text: (a.staffInstructions?.firstDay?.text ?? '').trim(), files: a.staffInstructions?.firstDay?.files ?? [] },
-      { title: 'Parking Instructions', text: (a.staffInstructions?.parking?.text ?? '').trim(), files: a.staffInstructions?.parking?.files ?? [] },
-      { title: 'Check-In Instructions', text: ((a.staffInstructions?.checkIn?.text || a.checkInInstructions) ?? '').trim(), files: a.staffInstructions?.checkIn?.files ?? [] },
-      { title: 'Uniform Instructions', text: (a.staffInstructions?.uniform?.text ?? '').trim(), files: a.staffInstructions?.uniform?.files ?? [] },
-      { title: 'Credential Instructions', text: (a.staffInstructions?.credentials?.text ?? '').trim(), files: a.staffInstructions?.credentials?.files ?? [] },
-      { title: 'Other Instructions', text: (a.staffInstructions?.other?.text ?? '').trim(), files: a.staffInstructions?.other?.files ?? [] },
-      { title: 'Other Attachments', text: '', files: a.staffInstructions?.attachments?.files ?? [] },
+      { title: 'First Day Instructions', text: getStaffText('firstDay'), files: getStaffFiles('firstDay') },
+      { title: 'Parking Instructions', text: getStaffText('parking'), files: getStaffFiles('parking') },
+      { title: 'Check-In Instructions', text: getStaffText('checkIn'), files: getStaffFiles('checkIn') },
+      { title: 'Uniform Instructions', text: getStaffText('uniform'), files: getStaffFiles('uniform') },
+      { title: 'Credential Instructions', text: getStaffText('credentials'), files: getStaffFiles('credentials') },
+      { title: 'Other Instructions', text: getStaffText('other'), files: getStaffFiles('other') },
+      { title: 'Other Attachments', text: '', files: getStaffFiles('attachments') },
     ];
     for (const sec of staffSections) {
       if (sec.text || (Array.isArray(sec.files) && sec.files.length > 0)) {

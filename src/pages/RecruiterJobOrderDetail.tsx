@@ -2641,83 +2641,28 @@ const RecruiterJobOrderDetail: React.FC = () => {
       setLoading(false);
       return;
     }
-    
     setLoading(true);
     try {
-      // First try the current tenant-scoped path
       const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
-      
       const jobOrderSnap = await getDoc(jobOrderRef);
-      
       if (jobOrderSnap.exists()) {
         const data = jobOrderSnap.data() as JobOrder;
         setJobOrder({ ...data, id: jobOrderSnap.id });
-        
-        // Load company data if companyId exists in deal data
         const flatCompanyId = (data as any).companyId || data.deal?.companyId;
-        if (flatCompanyId) {
-          await loadCompanyData(flatCompanyId);
-        }
-        
-        // Load connected job board posts
+        if (flatCompanyId) await loadCompanyData(flatCompanyId);
         await loadConnectedJobPosts(jobOrderId);
       } else {
-        // Try the top-level collection as fallback
-        const topLevelJobOrderRef = doc(db, 'jobOrders', jobOrderId);
-        const topLevelJobOrderSnap = await getDoc(topLevelJobOrderRef);
-        
-        if (topLevelJobOrderSnap.exists()) {
-          const data = topLevelJobOrderSnap.data() as JobOrder;
-          setJobOrder({ ...data, id: topLevelJobOrderSnap.id });
-          
-          // Load company data if companyId exists in deal data
-          const flatCompanyIdTop = (data as any).companyId || data.deal?.companyId;
-          if (flatCompanyIdTop) {
-            await loadCompanyData(flatCompanyIdTop);
-          }
-          
-          // Load connected job board posts
+        const topLevelRef = doc(db, 'jobOrders', jobOrderId);
+        const topSnap = await getDoc(topLevelRef);
+        if (topSnap.exists()) {
+          const data = topSnap.data() as JobOrder;
+          setJobOrder({ ...data, id: topSnap.id });
+          const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+          if (flatCompanyId) await loadCompanyData(flatCompanyId);
           await loadConnectedJobPosts(jobOrderId);
-          setLoading(false);
-          return; // Exit early since we found the job order
+        } else {
+          setJobOrder(null);
         }
-        // Job order not found - let's see what job orders actually exist
-        
-        try {
-          const { collection, getDocs } = await import('firebase/firestore');
-          
-          // Check the current path
-          const jobOrdersRef = collection(db, p.jobOrders(tenantId));
-          const jobOrdersSnapshot = await getDocs(jobOrdersRef);
-          
-          // Check legacy path
-          const legacyJobOrdersRef = collection(db, `tenants/${tenantId}/recruiter_jobOrders`);
-          const legacyJobOrdersSnapshot = await getDocs(legacyJobOrdersRef);
-          
-          // Check top-level jobOrders collection (legacy)
-          const topLevelJobOrdersRef = collection(db, 'jobOrders');
-          const topLevelJobOrdersSnapshot = await getDocs(topLevelJobOrdersRef);
-          
-          // Check if the specific job order exists in top-level path
-          const foundJobOrder = topLevelJobOrdersSnapshot.docs.find(doc => doc.id === jobOrderId);
-          if (foundJobOrder) {
-            // Load the job order from the top-level collection
-            const data = foundJobOrder.data() as JobOrder;
-            setJobOrder({ ...data, id: foundJobOrder.id });
-            
-            // Load company data if companyId exists in deal data
-            const flatCompanyIdLegacy = (data as any).companyId || data.deal?.companyId;
-            if (flatCompanyIdLegacy) {
-              await loadCompanyData(flatCompanyIdLegacy);
-            }
-            setLoading(false);
-            return; // Exit early since we found the job order
-          }
-        } catch (error) {
-          console.error('Error listing job orders:', error);
-        }
-        
-        setJobOrder(null);
       }
     } catch (error) {
       console.error('Error fetching job order:', error);
@@ -2727,14 +2672,57 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   }, [jobOrderId, tenantId, loadCompanyData, loadConnectedJobPosts]);
 
-  // Load job order
+  // Subscribe to job order with onSnapshot so Staff Instructions inputs update in real time; save on blur
+  const jobOrderInitialLoadDone = useRef(false);
   useEffect(() => {
-    if (jobOrderId && tenantId) {
-      fetchJobOrder();
-    } else {
+    if (!jobOrderId || !tenantId) {
       setLoading(false);
+      return;
     }
-  }, [jobOrderId, tenantId, fetchJobOrder]);
+    jobOrderInitialLoadDone.current = false;
+    setLoading(true);
+    const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+    const unsubscribe = onSnapshot(
+      jobOrderRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as JobOrder;
+          setJobOrder({ ...data, id: snap.id });
+          if (!jobOrderInitialLoadDone.current) {
+            jobOrderInitialLoadDone.current = true;
+            const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+            if (flatCompanyId) loadCompanyData(flatCompanyId);
+            loadConnectedJobPosts(jobOrderId);
+          }
+        } else {
+          // Fallback: try legacy top-level jobOrders path (no real-time for legacy)
+          getDoc(doc(db, 'jobOrders', jobOrderId)).then((legacySnap) => {
+            if (legacySnap.exists()) {
+              const data = legacySnap.data() as JobOrder;
+              setJobOrder({ ...data, id: legacySnap.id });
+              if (!jobOrderInitialLoadDone.current) {
+                jobOrderInitialLoadDone.current = true;
+                const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+                if (flatCompanyId) loadCompanyData(flatCompanyId);
+                loadConnectedJobPosts(jobOrderId);
+              }
+            } else {
+              setJobOrder(null);
+            }
+            setLoading(false);
+          });
+          return;
+        }
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Job order onSnapshot error:', err);
+        setJobOrder(null);
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [jobOrderId, tenantId, loadCompanyData, loadConnectedJobPosts]);
 
   // Load shifts for this job order
   useEffect(() => {
