@@ -131,6 +131,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   jobOrder,
   onJobOrderUpdated,
 }) => {
+  // Only present in hrx-god-view workspace build (Assign All + Export + Preview Email)
+  if (typeof console !== 'undefined' && console.log) {
+    console.log('[PlacementsTab] Loaded WITH Preview Email button (run from /Users/gregfielding/hrx-god-view)');
+  }
   const { user } = useAuth();
   // Generate a unique storage key for this job order
   const storageKey = `placements_filters_${tenantId}_${jobOrderId}`;
@@ -1336,16 +1340,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // Debug: Log shift data to help identify field names
-  useEffect(() => {
-    if (selectedShift) {
-      console.log('Selected Shift Data:', selectedShift);
-      console.log('Start Time:', (selectedShift as any).startTime || (selectedShift as any).defaultStartTime);
-      console.log('End Time:', (selectedShift as any).endTime || (selectedShift as any).defaultEndTime);
-      console.log('Staff Needed:', (selectedShift as any).staffNeeded || (selectedShift as any).totalStaffRequested || (selectedShift as any).workersNeeded);
-    }
-  }, [selectedShift]);
-
   const handleWorkerDragStart = (event: React.DragEvent, workerId: string) => {
     event.dataTransfer.setData(WORKER_DRAG_MIME, workerId);
     // Keep plain text for browser compatibility, but we only read the custom MIME on drop.
@@ -1586,6 +1580,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       )}
                       <Typography variant="h6" sx={{ fontWeight: 600 }} noWrap>
                         Assignments ({displayedAssignedWorkers.length})
+                        <Typography component="span" sx={{ ml: 0.5, fontSize: '0.7rem', color: 'text.secondary', fontWeight: 400 }} title="New UI with Preview Email">
+                          (updated)
+                        </Typography>
                       </Typography>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto', ml: 'auto' }}>
