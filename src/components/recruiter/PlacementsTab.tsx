@@ -178,6 +178,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [resendCooldownUntilByAssignmentId, setResendCooldownUntilByAssignmentId] = useState<Record<string, number>>({});
   const [confirmingPlacementUserId, setConfirmingPlacementUserId] = useState<string | null>(null);
   const [cancelAssignmentWorker, setCancelAssignmentWorker] = useState<Worker | null>(null);
+  const [previewEmailOpen, setPreviewEmailOpen] = useState(false);
+  const [previewEmailSubject, setPreviewEmailSubject] = useState<string>('');
+  const [previewEmailHtml, setPreviewEmailHtml] = useState<string>('');
+  const [previewEmailLoading, setPreviewEmailLoading] = useState(false);
+  const [previewEmailError, setPreviewEmailError] = useState<string | null>(null);
 
   // Helper function to extract full profile data from user document
   const extractWorkerData = (userData: any, userId: string): Worker => {
@@ -1272,6 +1277,36 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     URL.revokeObjectURL(url);
   };
 
+  const handlePreviewEmail = async () => {
+    const firstWithAssignment = displayedAssignedWorkers.find((w) => assignmentIdByUserId.get(w.id));
+    const assignmentId = firstWithAssignment ? assignmentIdByUserId.get(firstWithAssignment.id) : null;
+    if (!tenantId || !assignmentId) {
+      setPreviewEmailError('Add at least one assignment (place a worker and click "Offer position") to preview the confirmation email.');
+      setPreviewEmailOpen(true);
+      setPreviewEmailSubject('');
+      setPreviewEmailHtml('');
+      return;
+    }
+    setPreviewEmailError(null);
+    setPreviewEmailLoading(true);
+    setPreviewEmailOpen(true);
+    setPreviewEmailSubject('');
+    setPreviewEmailHtml('');
+    try {
+      const preview = httpsCallable<{ tenantId: string; assignmentId: string }, { subject: string; html: string }>(
+        functions,
+        'previewAssignmentDetailsEmail'
+      );
+      const { data } = await preview({ tenantId, assignmentId });
+      setPreviewEmailSubject(data.subject ?? '');
+      setPreviewEmailHtml(data.html ?? '');
+    } catch (err: any) {
+      setPreviewEmailError(err?.message ?? 'Failed to load email preview.');
+    } finally {
+      setPreviewEmailLoading(false);
+    }
+  };
+
   const [editStartDateWorker, setEditStartDateWorker] = useState<Worker | null>(null);
   const [editStartDateValue, setEditStartDateValue] = useState('');
   const [editStartDateSaving, setEditStartDateSaving] = useState(false);
@@ -1537,9 +1572,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             {/* Left: Assignments */}
             <Grid item xs={12} lg={6}>
               <Card sx={{ height: '100%' }}>
-                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' } }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.5 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CardContent sx={{ p: '16px', '&:last-child': { pb: '16px' }, overflow: 'visible' }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', mb: 0.5, overflow: 'visible' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: '0 1 auto' }}>
                       {selectedShiftId && displayedAssignedWorkers.length > 0 && (
                         <Checkbox
                           indeterminate={isSomeAssignmentsSelected && !isAllAssignmentsSelected}
@@ -1549,27 +1584,39 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           aria-label="select all assignees"
                         />
                       )}
-                      <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 600 }} noWrap>
                         Assignments ({displayedAssignedWorkers.length})
                       </Typography>
                     </Box>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      color="primary"
-                      disabled={placedOnlyWorkers.length === 0 || !selectedShiftId || assignAllBusy}
-                      onClick={handleAssignAll}
-                    >
-                      {assignAllBusy ? 'Offering…' : 'Assign All'}
-                    </Button>
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      disabled={displayedAssignedWorkers.length === 0 || !selectedShiftId}
-                      onClick={handleExportAssignmentsCsv}
-                    >
-                      Export
-                    </Button>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto', ml: 'auto' }}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        color="primary"
+                        disabled={placedOnlyWorkers.length === 0 || !selectedShiftId || assignAllBusy}
+                        onClick={handleAssignAll}
+                      >
+                        {assignAllBusy ? 'Offering…' : 'Assign All'}
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        disabled={displayedAssignedWorkers.length === 0 || !selectedShiftId}
+                        onClick={handleExportAssignmentsCsv}
+                      >
+                        Export
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<EmailIcon />}
+                        disabled={!selectedShiftId}
+                        onClick={handlePreviewEmail}
+                        title="Preview the confirmation email workers receive (staff details, parking, check-in, attachments)"
+                      >
+                        Preview Email
+                      </Button>
+                    </Box>
                   </Box>
                   {isSomeAssignmentsSelected && (
                     <Box
@@ -2296,6 +2343,52 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             <Button variant="contained" color="error" onClick={() => cancelAssignmentWorker && handleCancelAssignment(cancelAssignmentWorker)}>
               Remove assignment
             </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Preview confirmation email (staff details, parking, check-in, attachments) */}
+        <Dialog
+          open={previewEmailOpen}
+          onClose={() => { setPreviewEmailOpen(false); setPreviewEmailError(null); }}
+          maxWidth="md"
+          fullWidth
+          PaperProps={{ sx: { maxHeight: '90vh' } }}
+        >
+          <DialogTitle>Preview: Confirmation Email</DialogTitle>
+          <DialogContent>
+            {previewEmailLoading && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress />
+              </Box>
+            )}
+            {previewEmailError && (
+              <Alert severity="warning" sx={{ mb: 2 }} onClose={() => setPreviewEmailError(null)}>
+                {previewEmailError}
+              </Alert>
+            )}
+            {!previewEmailLoading && previewEmailSubject && (
+              <>
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>Subject</Typography>
+                <Typography variant="body1" sx={{ mb: 2, fontWeight: 600 }}>{previewEmailSubject}</Typography>
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>Body (staff details, parking, check-in instructions; attachments appear as links below)</Typography>
+                <Box
+                  sx={{
+                    border: 1,
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    p: 2,
+                    maxHeight: 400,
+                    overflow: 'auto',
+                    bgcolor: 'grey.50',
+                  }}
+                >
+                  <Box component="div" dangerouslySetInnerHTML={{ __html: previewEmailHtml }} />
+                </Box>
+              </>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => { setPreviewEmailOpen(false); setPreviewEmailError(null); }}>Close</Button>
           </DialogActions>
         </Dialog>
 

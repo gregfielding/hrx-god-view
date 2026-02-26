@@ -123,6 +123,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
   const [showCompletionDialog, setShowCompletionDialog] = useState(false);
   const [completionNotes, setCompletionNotes] = useState('');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDismissDialog, setShowDismissDialog] = useState(false);
   const [associatedCompanies, setAssociatedCompanies] = useState<any[]>([]);
   const [associatedDeals, setAssociatedDeals] = useState<any[]>([]);
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
@@ -540,6 +541,41 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
     } catch (err) {
       console.error('Error deleting task:', err);
       setError('Failed to delete task');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const isSystemManaged =
+    !!(
+      (formData.description && String(formData.description).includes('System-managed checklist task')) ||
+      (task && (task as any).description && String((task as any).description).includes('System-managed checklist task')) ||
+      (task as any)?.jobOrderId ||
+      (task as any)?.sourceType === 'recruiting' ||
+      (task as any)?.systemManaged === true ||
+      (task as any)?.systemSource === 'job_order_checklist'
+    );
+
+  const handleDismiss = () => setShowDismissDialog(true);
+
+  const handleConfirmDismiss = async () => {
+    if (!task?.id) return;
+
+    setSaving(true);
+    setError(null);
+
+    try {
+      await taskService.updateTask(task.id, { status: 'dismissed' }, tenantId);
+
+      if (onTaskUpdated) {
+        onTaskUpdated(task.id);
+      }
+
+      setShowDismissDialog(false);
+      onClose();
+    } catch (err) {
+      console.error('Error dismissing task:', err);
+      setError('Failed to dismiss task');
     } finally {
       setSaving(false);
     }
@@ -1074,6 +1110,16 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
           >
             Delete
           </Button>
+          {task && isSystemManaged && task.status !== 'completed' && task.status !== 'dismissed' && (
+            <Button
+              onClick={handleDismiss}
+              variant="outlined"
+              disabled={saving}
+              title="Remove from your list without completing. Use for system-generated checklist tasks you want to skip."
+            >
+              Dismiss
+            </Button>
+          )}
           <Button 
             onClick={handleSubmit} 
             variant="contained"
@@ -1137,6 +1183,28 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
             disabled={saving}
           >
             {saving ? 'Deleting...' : 'Delete Task'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Dismiss Confirmation Dialog (system-managed tasks) */}
+      <Dialog open={showDismissDialog} onClose={() => setShowDismissDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Dismiss Task</DialogTitle>
+        <DialogContent>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Remove this task from your list without completing it? You can use this for system-generated checklist tasks you want to skip. The task will no longer appear in My Tasks.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowDismissDialog(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleConfirmDismiss} 
+            variant="contained"
+            disabled={saving}
+          >
+            {saving ? 'Dismissing...' : 'Dismiss'}
           </Button>
         </DialogActions>
       </Dialog>

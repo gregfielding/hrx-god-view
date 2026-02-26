@@ -840,3 +840,39 @@ export const resendAssignmentOffer = onCall(
 
   return { success: result.success, error: result.error };
 });
+
+/**
+ * Preview the assignment details email (subject + HTML) that workers receive when confirmed.
+ * Does not send anything; used for recruiter preview in Placements tab.
+ */
+export const previewAssignmentDetailsEmail = onCall(
+  {
+    cors: [
+      'http://localhost:3000',
+      'https://hrx1-d3beb.web.app',
+      'https://hrx1-d3beb.firebaseapp.com',
+      'https://hrxone.com',
+      'https://www.hrxone.com',
+    ],
+  },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+
+    const { tenantId, assignmentId } = (request.data || {}) as { tenantId?: string; assignmentId?: string };
+    if (!tenantId || !assignmentId) {
+      throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+    }
+    if (!(await canManageAssignments(request.auth, tenantId, request.auth.uid))) {
+      throw new HttpsError('permission-denied', 'Insufficient permissions to preview assignment email');
+    }
+
+    const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+    const result = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+    if (!result) {
+      throw new HttpsError('not-found', 'Assignment not found or email could not be built');
+    }
+    return { subject: result.subject, html: result.html };
+  }
+);
