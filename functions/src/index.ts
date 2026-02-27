@@ -8223,11 +8223,17 @@ function normalizePhoneE164(phone: string): string | null {
 /**
  * Send recruiter invite: custom email + optional SMS (same body).
  * Used by Invite Users page; path/template are resolved on the client.
+ * Uses same SendGrid pattern as inviteUserV2 / spec: process.env.SENDGRID_API_KEY.
+ * Twilio secrets required so SMS is actually sent (otherwise config is not injected).
  */
-export const sendRecruiterInvite = onCall(async (request) => {
+export const sendRecruiterInvite = onCall(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN] },
+  async (request) => {
+  try {
   if (!request.auth) {
-    throw new HttpsError('unauthenticated', 'Must be signed in to send invites');
+    throw new HttpsError('unauthenticated', 'Please sign in to send invites.');
   }
+
   const { email, phone, subject, body, tenantId, firstName, lastName, path, pathLabel } = request.data as {
     email?: string;
     phone?: string;
@@ -8239,15 +8245,16 @@ export const sendRecruiterInvite = onCall(async (request) => {
     path?: string;
     pathLabel?: string;
   };
-  if (!email || typeof email !== 'string' || !email.trim()) {
-    throw new HttpsError('invalid-argument', 'Email is required');
+  const toEmail = typeof email === 'string' ? email.trim() : '';
+  const phoneStr = typeof phone === 'string' ? phone.trim() : '';
+  if (!toEmail && !phoneStr) {
+    throw new HttpsError('invalid-argument', 'Enter an email address and/or phone number.');
   }
-  const toEmail = email.trim();
+
   const subjectStr = typeof subject === 'string' ? subject : 'You\'re invited';
   const bodyStr = typeof body === 'string' ? body : '';
   const firstNameStr = typeof firstName === 'string' ? firstName.trim() : '';
   const lastNameStr = typeof lastName === 'string' ? lastName.trim() : '';
-  const phoneStr = typeof phone === 'string' ? phone.trim() : '';
 
   let fromName = 'HRX Notifications';
   if (tenantId) {
@@ -8266,19 +8273,30 @@ export const sendRecruiterInvite = onCall(async (request) => {
   let emailSent = false;
   let smsSent = false;
 
-  try {
-    await sgMail.send({
-      to: toEmail,
-      from: { email: 'no-reply@hrxone.com', name: fromName },
-      subject: subjectStr,
-      text: bodyStr,
-    });
-    emailSent = true;
-  } catch (emailErr: any) {
-    console.error('sendRecruiterInvite email failed:', emailErr);
-    throw new HttpsError('internal', emailErr?.message || 'Failed to send email');
+  if (toEmail) {
+    if (!SENDGRID_API_KEY || !SENDGRID_API_KEY.startsWith('SG.')) {
+      console.error('sendRecruiterInvite: SendGrid API key not configured');
+      throw new HttpsError('failed-precondition', 'Email sending is not configured. Please contact support.');
+    }
+    try {
+      await sgMail.send({
+        to: toEmail,
+        from: { email: 'no-reply@hrxone.com', name: fromName },
+        subject: subjectStr,
+        text: bodyStr,
+        // Disable link rewriting so recipients see https://hrxone.com/... instead of tracking URLs
+        tracking_settings: {
+          click_tracking: { enable: false },
+        },
+      } as Parameters<typeof sgMail.send>[0]);
+      emailSent = true;
+    } catch (emailErr: any) {
+      console.error('sendRecruiterInvite email failed:', emailErr);
+      throw new HttpsError('internal', emailErr?.message || 'Failed to send email. Please try again.');
+    }
   }
 
+  let smsError: string | undefined;
   if (phoneStr && bodyStr) {
     const e164 = normalizePhoneE164(phoneStr);
     if (e164) {
@@ -8288,9 +8306,15 @@ export const sendRecruiterInvite = onCall(async (request) => {
         tenantId: tenantId || undefined,
       });
       smsSent = smsResult.success;
-      if (!smsResult.success && smsResult.error && !smsResult.error.includes('opted out')) {
-        console.warn('sendRecruiterInvite SMS failed (email still sent):', smsResult.error);
+      if (!smsResult.success && smsResult.error) {
+        smsError = smsResult.error;
+        if (!smsResult.error.includes('opted out') && !smsResult.error.includes('STOP')) {
+          console.warn('sendRecruiterInvite SMS failed (email still sent):', smsResult.error);
+        }
       }
+    } else {
+      smsError = 'Invalid phone number (need 10 digits)';
+      console.warn('sendRecruiterInvite: phone provided but invalid for SMS:', phoneStr);
     }
   }
 
@@ -8300,7 +8324,7 @@ export const sendRecruiterInvite = onCall(async (request) => {
       await db.collection('tenants').doc(tenantId.trim()).collection('invite_log').add({
         firstName: firstNameStr,
         lastName: lastNameStr,
-        email: toEmail,
+        email: toEmail || null,
         phone: phoneStr || null,
         path: typeof path === 'string' ? path : 'general',
         pathLabel: typeof pathLabel === 'string' ? pathLabel : null,
@@ -8312,7 +8336,12 @@ export const sendRecruiterInvite = onCall(async (request) => {
     }
   }
 
-  return { success: true, emailSent, smsSent };
+  return { success: true, emailSent, smsSent, smsError: smsError || undefined };
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    console.error('sendRecruiterInvite unexpected error:', err);
+    throw new HttpsError('internal', err?.message || 'Something went wrong. Please try again.');
+  }
 });
 
 export const activateCampaignTemplate = onCall(async (request) => {

@@ -32,9 +32,9 @@ import {
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import { collection, getDocs, query, orderBy } from 'firebase/firestore';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { httpsCallable } from 'firebase/functions';
 import { format } from 'date-fns';
-import { db } from '../firebase';
+import { db, functions } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -62,6 +62,14 @@ Thank you for your application. You seem like a perfect fit. Please click the li
 {applyLink}
 
 We look forward to speaking with you.`;
+
+/** Format 10-digit US phone as (###)###-#### for display. */
+function formatCellPhoneDisplay(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 10);
+  if (digits.length <= 3) return digits.replace(/(\d{1,3})/, '($1');
+  if (digits.length <= 6) return digits.replace(/(\d{3})(\d{1,3})/, '($1)$2');
+  return digits.replace(/(\d{3})(\d{3})(\d{1,4})/, '($1)$2-$3');
+}
 
 export interface InviteUsersPageProps {
   hideHeader?: boolean;
@@ -197,14 +205,14 @@ const InviteUsersPage: React.FC<InviteUsersPageProps> = ({ hideHeader = false })
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const email = emailAddress.trim();
-    if (!email) {
-      setSnackbar({ open: true, message: 'Email address is required.', severity: 'error' });
+    const phone = cellPhone.trim();
+    if (!email && !phone) {
+      setSnackbar({ open: true, message: 'Enter an email address and/or phone number.', severity: 'error' });
       return;
     }
     setSending(true);
     setSnackbar(prev => ({ ...prev, open: false }));
     try {
-      const functions = getFunctions();
       const pathLabel =
         path === 'general'
           ? 'General'
@@ -217,25 +225,42 @@ const InviteUsersPage: React.FC<InviteUsersPageProps> = ({ hideHeader = false })
                 : path === 'job_post'
                   ? 'Job Post'
                   : 'General';
-      const sendInvite = httpsCallable<{ email: string; firstName?: string; lastName?: string; phone?: string; subject: string; body: string; tenantId?: string; path?: string; pathLabel?: string }, { success: boolean; emailSent: boolean; smsSent: boolean }>(functions, 'sendRecruiterInvite');
-      await sendInvite({
-        email,
+      const sendInvite = httpsCallable<
+        { email?: string; firstName?: string; lastName?: string; phone?: string; subject: string; body: string; tenantId?: string; path?: string; pathLabel?: string },
+        { success: boolean; emailSent: boolean; smsSent: boolean; smsError?: string }
+      >(functions, 'sendRecruiterInvite');
+      const result = await sendInvite({
+        email: email || undefined,
         firstName: firstName.trim(),
         lastName: lastName.trim(),
-        phone: cellPhone.trim() || undefined,
+        phone: phone || undefined,
         subject: previewSubject,
         body: previewBody,
         tenantId: tenantId ?? undefined,
         path,
         pathLabel,
       });
+      const data = result.data;
       setFirstName('');
       setLastName('');
       setCellPhone('');
       setEmailAddress('');
-      setSnackbar({ open: true, message: 'Invite sent successfully. Email and SMS (if phone provided) were delivered.', severity: 'success' });
+      const hadPhone = !!phone;
+      let successMsg = 'Invite sent.';
+      if (data.emailSent) successMsg += ' Email delivered.';
+      if (hadPhone && !data.smsSent) {
+        successMsg += data.smsError ? ` SMS could not be sent: ${data.smsError}.` : ' SMS could not be sent.';
+      } else if (data.smsSent) {
+        successMsg += ' SMS delivered.';
+      }
+      setSnackbar({ open: true, message: successMsg, severity: 'success' });
     } catch (err: any) {
-      const message = err?.message || err?.code || 'Failed to send invite. Please try again.';
+      const code = err?.code as string | undefined;
+      const msg = err?.message ?? '';
+      const message =
+        code === 'functions/unauthenticated' || msg.toLowerCase().includes('unauthorized')
+          ? 'Please sign in again and try sending the invite.'
+          : msg || code || 'Failed to send invite. Please try again.';
       setSnackbar({ open: true, message, severity: 'error' });
     } finally {
       setSending(false);
@@ -391,10 +416,11 @@ const InviteUsersPage: React.FC<InviteUsersPageProps> = ({ hideHeader = false })
                     fullWidth
                     label="Cell Phone"
                     value={cellPhone}
-                    onChange={(e) => setCellPhone(e.target.value)}
+                    onChange={(e) => setCellPhone(formatCellPhoneDisplay(e.target.value))}
                     variant="outlined"
                     size="small"
-                    placeholder="e.g. (555) 123-4567"
+                    placeholder="(555)555-5555"
+                    inputProps={{ inputMode: 'tel', maxLength: 14 }}
                   />
                 </Grid>
                 <Grid item xs={12}>
