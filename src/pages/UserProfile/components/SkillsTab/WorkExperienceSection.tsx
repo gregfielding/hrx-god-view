@@ -89,8 +89,8 @@ const WorkExperienceSection = ({
         <Accordion key={idx} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography>
-              {entry.jobTitle || 'Job Title'} @ {entry.employer || 'Employer'}
-              {entry.startDate && ` (${entry.startDate} - ${entry.endDate || 'Present'})`}
+              {toChipLabel(entry.jobTitle) || 'Job Title'} @ {toChipLabel(entry.employer) || 'Employer'}
+              {entry.startDate && ` (${toChipLabel(entry.startDate)} - ${toChipLabel(entry.endDate) || 'Present'})`}
             </Typography>
             <IconButton
               onClick={(e) => {

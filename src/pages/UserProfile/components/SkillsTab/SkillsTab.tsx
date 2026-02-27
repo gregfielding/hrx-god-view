@@ -1345,7 +1345,7 @@ const SkillsTab: React.FC<SkillsTabProps> = ({ user, onUpdate, onetSkills, onetJ
                   <Box display="flex" justifyContent="space-between" alignItems="flex-start">
                     <Box flex={1}>
                       <Typography variant="subtitle2" fontWeight="bold">
-                        {cert.name}
+                        {toChipLabel(cert)}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
                         Issued by: {cert.issuer}

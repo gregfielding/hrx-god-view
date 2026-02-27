@@ -1,6 +1,22 @@
 {
   "indexes": [
     {
+      "collectionGroup": "crm_contacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "pipelineStage", "order": "ASCENDING"},
+        {"fieldPath": "contactName", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "crm_contacts",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "pipelineStage", "order": "ASCENDING"},
+        {"fieldPath": "fullName", "order": "ASCENDING"}
+      ]
+    },
+    {
       "collectionGroup": "everify_cases",
       "queryScope": "COLLECTION",
       "fields": [

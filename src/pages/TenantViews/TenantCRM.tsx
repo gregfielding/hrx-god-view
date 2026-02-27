@@ -1786,6 +1786,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         companyName: contactForm.companyName || null,
         associations,
         tenantId,
+        pipelineStage: 'contact',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         salesOwnerId: currentUser?.uid || null,

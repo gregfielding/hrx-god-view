@@ -36,6 +36,7 @@ import CircularProgress from '@mui/material/CircularProgress';
 import jobTitlesData from '../../data/onetJobTitles.json';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { toChipLabel } from '../../utils/chipLabel';
 
 const languageOptions = [
   'English',
@@ -583,7 +584,7 @@ const FlexPositions: React.FC = () => {
                 {certifications.map((cert, index) => (
                   <Chip
                     key={index}
-                    label={cert}
+                    label={toChipLabel(cert)}
                     onDelete={() => setCertifications(certifications.filter((_, i) => i !== index))}
                     size="small"
                   />
@@ -605,7 +606,7 @@ const FlexPositions: React.FC = () => {
                 {skills.map((skill, index) => (
                   <Chip
                     key={index}
-                    label={skill}
+                    label={toChipLabel(skill)}
                     onDelete={() => setSkills(skills.filter((_, i) => i !== index))}
                     size="small"
                   />

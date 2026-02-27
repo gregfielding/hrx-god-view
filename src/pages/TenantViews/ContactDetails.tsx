@@ -104,7 +104,10 @@ import { Stack } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { ContactHeaderMarketing, type CrmContactIndustrySegment } from '../../components/crm/contacts/ContactHeaderMarketing';
+import { PipelineStageContainer } from '../../components/crm/contacts/PipelineStageContainer';
+import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage } from '../../types/CRM';
 import { formatPhoneNumber } from '../../utils/formatPhone';
+import { toChipLabel } from '../../utils/chipLabel';
 
 interface ContactData {
   id: string;
@@ -141,6 +144,12 @@ interface ContactData {
   lastContactedMode?: string;
   leadSource?: string;
   leadStatus?: string;
+  /** Pipeline stage: Contact, Prospect, or Lead */
+  pipelineStage?: PipelineStage | null;
+  prospectFollowPlan?: string;
+  leadTiming?: string;
+  leadVolume?: string;
+  leadNotes?: string;
   salesOwnerId?: string;
   salesOwnerName?: string;
   salesOwnerRef?: string;
@@ -1216,6 +1225,36 @@ const ContactDetails: React.FC = () => {
     }
   };
 
+  const handlePipelineUpdate = async (updates: Record<string, unknown>) => {
+    if (!contactId || !tenantId || !contact || !user?.uid) return;
+    try {
+      const cleanUpdates = removeUndefinedValues(updates) as Record<string, unknown>;
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+        ...cleanUpdates,
+        updatedAt: new Date(),
+      });
+      setContact((prev) => (prev ? { ...prev, ...cleanUpdates } : null));
+      setAiSuccess('Pipeline updated');
+      setTimeout(() => setAiSuccess(null), 3000);
+    } catch (err) {
+      console.error('Error updating pipeline:', err);
+      setError('Failed to update pipeline.');
+    }
+  };
+
+  const handleCreateOpportunity = () => {
+    if (!tenantId || !contact) return;
+    const params = new URLSearchParams({
+      contactId: contact.id ?? '',
+      contactName: (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim()) ?? '',
+      companyName: contact.companyName ?? '',
+      companyId: contact.companyId ?? '',
+      locationId: contact.locationId ?? '',
+      worksiteName: (contact as any).worksiteName ?? '',
+    });
+    navigate(`/crm?tab=1&new=1&${params.toString()}`);
+  };
+
   // Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
   const removeUndefinedValues = (obj: any): any => {
     if (obj === null || obj === undefined) {
@@ -1844,6 +1883,25 @@ const ContactDetails: React.FC = () => {
                       }}
                     />
                   )}
+                  <FormControl size="small" sx={{ minWidth: 140 }}>
+                    <InputLabel>Pipeline</InputLabel>
+                    <Select
+                      value={(contact.pipelineStage ?? 'contact') as PipelineStage}
+                      label="Pipeline"
+                      onChange={(e) => handlePipelineUpdate({ pipelineStage: e.target.value as PipelineStage })}
+                      sx={{
+                        height: 32,
+                        borderRadius: 1,
+                        fontSize: '0.875rem',
+                      }}
+                    >
+                      {PIPELINE_STAGES.map((s) => (
+                        <MenuItem key={s} value={s}>
+                          {PIPELINE_STAGE_LABELS[s]}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
                   <FavoriteButton
                     itemId={contact.id}
                     favoriteType="contacts"
@@ -2446,6 +2504,25 @@ const ContactDetails: React.FC = () => {
           {/* Left Column - Contact Details & Core Info */}
           <Grid item xs={12} md={8}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Pipeline Stage: Prospect/Lead notes and actions */}
+              <PipelineStageContainer
+                contact={{
+                  id: contact.id,
+                  contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+                  fullName: contact.fullName,
+                  companyName: contact.companyName,
+                  companyId: contact.companyId,
+                  locationId: contact.locationId,
+                  pipelineStage: contact.pipelineStage ?? 'contact',
+                  prospectFollowPlan: contact.prospectFollowPlan,
+                  leadTiming: contact.leadTiming,
+                  leadVolume: contact.leadVolume,
+                  leadNotes: contact.leadNotes,
+                }}
+                onUpdate={handlePipelineUpdate}
+                onCreateOpportunity={handleCreateOpportunity}
+              />
+
               {/* AI Summary */}
               {/* <Card>
                 <CardHeader 
@@ -2555,10 +2632,10 @@ const ContactDetails: React.FC = () => {
                             {contact.apolloEnrichment.person.employment_history.slice(0, 2).map((job: any, index: number) => (
                               <Box key={index} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
                                 <Typography variant="body2" fontWeight="medium">
-                                  {job.title} at {job.organization_name}
+                                  {toChipLabel(job.title)} at {toChipLabel(job.organization_name)}
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary">
-                                  {job.start_date} - {job.current ? 'Present' : job.end_date || 'Unknown'}
+                                  {toChipLabel(job.start_date)} - {job.current ? 'Present' : toChipLabel(job.end_date) || 'Unknown'}
                                 </Typography>
                               </Box>
                             ))}

@@ -24,6 +24,7 @@ import {
   Refresh
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
+import { toChipLabel } from '../utils/chipLabel';
 
 interface ResumeHistoryProps {
   userId: string;
@@ -269,7 +270,7 @@ const ResumeDataPreview: React.FC<ResumeDataPreviewProps> = ({ data }) => {
             {data.skills.map((skill: any, index: number) => (
               <Chip 
                 key={index} 
-                label={skill.name} 
+                label={toChipLabel(skill)} 
                 color="primary" 
                 variant="outlined"
               />
@@ -285,10 +286,10 @@ const ResumeDataPreview: React.FC<ResumeDataPreviewProps> = ({ data }) => {
           {data.education.map((edu: any, index: number) => (
             <Box key={index} sx={{ mb: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
               <Typography variant="subtitle1" fontWeight="bold">
-                {edu.degree} {edu.field && `in ${edu.field}`}
+                {toChipLabel(edu.degree)} {edu.field && `in ${toChipLabel(edu.field)}`}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {edu.institution}
+                {toChipLabel(edu.institution)}
               </Typography>
               {edu.graduationYear && (
                 <Typography variant="body2" color="text.secondary">
@@ -307,13 +308,13 @@ const ResumeDataPreview: React.FC<ResumeDataPreviewProps> = ({ data }) => {
           {data.experience.map((exp: any, index: number) => (
             <Box key={index} sx={{ mb: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
               <Typography variant="subtitle1" fontWeight="bold">
-                {exp.title}
+                {toChipLabel(exp.title)}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {exp.company}
+                {toChipLabel(exp.company)}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {exp.startDate} - {exp.endDate || 'Present'}
+                {toChipLabel(exp.startDate)} - {toChipLabel(exp.endDate) || 'Present'}
               </Typography>
               {exp.description && (
                 <Typography variant="body2" sx={{ mt: 1 }}>
@@ -333,7 +334,7 @@ const ResumeDataPreview: React.FC<ResumeDataPreviewProps> = ({ data }) => {
             {data.certifications.map((cert: any, index: number) => (
               <Chip 
                 key={index} 
-                label={cert.name} 
+                label={toChipLabel(cert)} 
                 color="secondary" 
                 variant="outlined"
               />

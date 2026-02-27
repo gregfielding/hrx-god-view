@@ -1,5 +1,14 @@
 // AI-Driven CRM Types
 
+// Contact/Prospect/Lead pipeline stage on crm_contacts
+export type PipelineStage = 'contact' | 'prospect' | 'lead';
+export const PIPELINE_STAGES: PipelineStage[] = ['contact', 'prospect', 'lead'];
+export const PIPELINE_STAGE_LABELS: Record<PipelineStage, string> = {
+  contact: 'Contact',
+  prospect: 'Prospect',
+  lead: 'Lead',
+};
+
 // 🆕 UNIVERSAL ASSOCIATION SYSTEM
 export interface CRMAssociation {
   id: string;

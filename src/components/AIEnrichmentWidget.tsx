@@ -124,6 +124,7 @@ const AIEnrichmentWidget: React.FC<Props> = ({ company, tenantId }) => {
         email: rc.email || '',
         phone: rc.phone || '',
         status: 'Prospect',
+        pipelineStage: 'prospect',
         role: 'decision_maker',
         leadSource: 'AI Enrichment',
         createdAt: new Date(),

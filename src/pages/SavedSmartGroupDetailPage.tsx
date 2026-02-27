@@ -48,6 +48,7 @@ import LocationOnIcon from '@mui/icons-material/LocationOn';
 import WorkIcon from '@mui/icons-material/Work';
 import InsightsIcon from '@mui/icons-material/Insights';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { toChipLabel } from '../utils/chipLabel';
 import BlockIcon from '@mui/icons-material/Block';
 import ClearIcon from '@mui/icons-material/Clear';
 import SmsIcon from '@mui/icons-material/Sms';
@@ -253,7 +254,10 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     const skillsSet = new Set<string>();
     membersData.forEach(m => {
       if (Array.isArray(m.skills)) {
-        m.skills.forEach(s => skillsSet.add(s));
+        m.skills.forEach(s => {
+          const label = toChipLabel(s);
+          if (label) skillsSet.add(label);
+        });
       }
     });
     return Array.from(skillsSet).sort();
@@ -1246,8 +1250,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                         {skills.length === 0 ? (
                           <Typography variant="body2" color="text.secondary">—</Typography>
                         ) : (
-                          <Tooltip title={skills.length <= 1 ? skills[0] : <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>{skills.map((s) => <Typography key={s} component="span" variant="body2" sx={{ display: 'block' }}>{s}</Typography>)}</Box>} placement="top" enterDelay={300}>
-                            <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>{skills[0]}{skills.length > 1 ? '…' : ''}</Typography>
+                          <Tooltip title={skills.length <= 1 ? toChipLabel(skills[0]) : <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>{skills.map((s, i) => <Typography key={`${toChipLabel(s)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>{toChipLabel(s)}</Typography>)}</Box>} placement="top" enterDelay={300}>
+                            <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>{toChipLabel(skills[0])}{skills.length > 1 ? '…' : ''}</Typography>
                           </Tooltip>
                         )}
                       </TableCell>

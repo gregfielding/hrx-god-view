@@ -24,6 +24,7 @@ import {
 import { collection, getDocs, query, where } from 'firebase/firestore';
 
 import { db } from '../../firebase';
+import { toChipLabel } from '../../utils/chipLabel';
 
 interface PeopleGridViewProps {
   tenantId: string;
@@ -299,8 +300,8 @@ const PeopleGridView: React.FC<PeopleGridViewProps> = ({ tenantId }) => {
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', gap: 0.5, flexWrap: 'wrap' }}>
-                        {personData.tags.map((tag: string, index: number) => (
-                          <Chip key={index} label={tag} size="small" variant="outlined" />
+                        {(Array.isArray(personData.tags) ? personData.tags : []).map((tag: unknown, index: number) => (
+                          <Chip key={index} label={toChipLabel(tag)} size="small" variant="outlined" />
                         ))}
                       </Box>
                     </TableCell>
