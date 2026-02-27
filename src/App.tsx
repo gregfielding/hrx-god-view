@@ -138,7 +138,9 @@ import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
 import SmartGroupsPage from './pages/SmartGroupsPage';
+import AllSmartGroupsPage from './pages/AllSmartGroupsPage';
 import MySmartGroupsListPage from './pages/MySmartGroupsListPage';
+import InviteUsersPage from './pages/InviteUsersPage';
 import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
 import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
@@ -567,8 +569,10 @@ function App() {
           <Route index element={<Navigate to="/users/all" replace />} />
           <Route path="all" element={<RecruiterUsers hideHeader scope="all" />} />
           <Route path="my" element={<RecruiterUsers hideHeader scope="my" />} />
+          <Route path="invite-users" element={<InviteUsersPage hideHeader />} />
           <Route path="user-groups" element={<TenantUserGroups hideHeader />} />
           <Route path="smart-groups" element={<SmartGroupsPage hideHeader />} />
+          <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
           <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
           <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
           <Route path=":uid" element={<UserProfile />} />

@@ -889,6 +889,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         memberStatusById[id] = 'member';
       });
       const ref = collection(db, 'tenants', tenantId, 'savedSmartGroups');
+      const createdByName = authUser?.displayName || authUser?.email || (authUser?.uid ? 'Unknown' : null);
       await addDoc(ref, {
         name,
         filterMode,
@@ -897,6 +898,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         memberStatusById,
         createdAt: serverTimestamp(),
         createdBy: authUser?.uid ?? null,
+        createdByName: createdByName ?? null,
         updatedAt: serverTimestamp(),
       });
       setSaveDialogOpen(false);

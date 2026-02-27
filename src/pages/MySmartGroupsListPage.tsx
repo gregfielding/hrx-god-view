@@ -14,7 +14,7 @@ import {
   Paper,
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -29,13 +29,16 @@ const MySmartGroupsListPage: React.FC<MySmartGroupsListPageProps> = ({ hideHeade
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const { user } = useAuth();
+
   useEffect(() => {
-    if (!tenantId) return;
+    if (!tenantId || !user?.uid) return;
     let mounted = true;
     (async () => {
       try {
         const ref = collection(db, 'tenants', tenantId, 'savedSmartGroups');
-        const snap = await getDocs(ref);
+        const q = query(ref, where('createdBy', '==', user.uid));
+        const snap = await getDocs(q);
         if (!mounted) return;
         const list = snap.docs.map((d) => {
           const data = d.data();
@@ -54,7 +57,7 @@ const MySmartGroupsListPage: React.FC<MySmartGroupsListPageProps> = ({ hideHeade
       }
     })();
     return () => { mounted = false; };
-  }, [tenantId]);
+  }, [tenantId, user?.uid]);
 
   const formatDate = (ts: any) => {
     if (!ts) return '—';

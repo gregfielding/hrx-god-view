@@ -604,6 +604,12 @@ service cloud.firestore {
         allow read: if isAssignedToTenant(tenantId);
       }
 
+      // --- INVITE LOG (Tenants) - recruiter sent invites; written by sendRecruiterInvite callable ---
+      match /invite_log/{entryId} {
+        allow read: if isHRX() || isTenantAdmin(tenantId) || (request.auth != null && request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin']);
+        allow create, update, delete: if false;
+      }
+
       // --- SAVED SMART GROUPS (Tenants) ---
       match /savedSmartGroups/{groupId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);

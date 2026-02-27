@@ -160,6 +160,12 @@ export const p = {
   userGroup: (tid: string, id: string) => `tenants/${tid}/userGroups/${id}`,
 
   /**
+   * Recruiter invite log (sent invites from Invite Users page)
+   */
+  inviteLog: (tid: string) => `tenants/${tid}/invite_log`,
+  inviteLogEntry: (tid: string, id: string) => `tenants/${tid}/invite_log/${id}`,
+
+  /**
    * Tasks (todos, appointments)
    */
   tasks: (tid: string) => `tenants/${tid}/tasks`,

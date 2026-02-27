@@ -1,7 +1,7 @@
 /**
  * Users Layout
  *
- * Single header with five tabs: All Users | My Users | User Groups | Smart Groups | My Smart Groups.
+ * Single header with tabs: All Users | My Users | Invite Users | User Groups | Smart Groups | All Smart Groups | My Smart Groups.
  * Search (with Favorites) and, for User Groups, Create button are in the header, right-justified.
  */
 
@@ -13,7 +13,7 @@ import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 
-export type UsersTab = 'all' | 'my' | 'user-groups' | 'smart-groups' | 'my-smart-groups';
+export type UsersTab = 'all' | 'my' | 'invite-users' | 'user-groups' | 'smart-groups' | 'all-smart-groups' | 'my-smart-groups';
 
 export interface UsersLayoutOutletContext {
   usersTab: UsersTab;
@@ -28,15 +28,19 @@ export interface UsersLayoutOutletContext {
 const TAB_PATHS: { tab: UsersTab; path: string; label: string }[] = [
   { tab: 'all', path: '/users/all', label: 'All Users' },
   { tab: 'my', path: '/users/my', label: 'My Users' },
+  { tab: 'invite-users', path: '/users/invite-users', label: 'Invite Users' },
   { tab: 'user-groups', path: '/users/user-groups', label: 'User Groups' },
   { tab: 'smart-groups', path: '/users/smart-groups', label: 'Smart Groups' },
+  { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'All Smart Groups' },
   { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
 ];
 
 function getActiveTab(pathname: string): UsersTab {
   if (pathname.includes('/users/user-groups')) return 'user-groups';
   if (pathname.includes('/users/my-smart-groups')) return 'my-smart-groups';
+  if (pathname.includes('/users/all-smart-groups')) return 'all-smart-groups';
   if (pathname.includes('/users/smart-groups')) return 'smart-groups';
+  if (pathname.includes('/users/invite-users')) return 'invite-users';
   if (pathname.includes('/users/my')) return 'my';
   if (pathname.includes('/users/all')) return 'all';
   return 'all';

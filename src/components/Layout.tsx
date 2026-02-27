@@ -1927,6 +1927,7 @@ const Layout: React.FC = React.memo(function Layout() {
             flexDirection: 'column',
             minHeight: 0,
             mt: '64px', // Offset for fixed top bar
+            pb: '16px',
           }}
         >
           <Outlet />

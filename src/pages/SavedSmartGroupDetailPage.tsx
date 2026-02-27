@@ -83,7 +83,7 @@ export interface SavedSmartGroupDetailPageProps {
 const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ hideHeader = false }) => {
   const navigate = useNavigate();
   const { groupId } = useParams<{ groupId: string }>();
-  const { tenantId } = useAuth();
+  const { tenantId, user } = useAuth();
   const [group, setGroup] = useState<{
     name: string;
     memberIds: string[];
@@ -111,9 +111,15 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
   const [isEditing, setIsEditing] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [unsaveDialogOpen, setUnsaveDialogOpen] = useState(false);
+  const [unsaving, setUnsaving] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  
+  const [createdByUid, setCreatedByUid] = useState<string | null>(null);
+  const [creatorDisplayName, setCreatorDisplayName] = useState<string | null>(null);
+  const [copiedFromGroupId, setCopiedFromGroupId] = useState<string | null>(null);
+  const [originalCreatorName, setOriginalCreatorName] = useState<string | null>(null);
+
   // Selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectAllResults, setSelectAllResults] = useState(false);
@@ -186,6 +192,31 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         setEditRadiusMiles(filters.radiusMiles ?? 10);
         setEditSelectedSkills(filters.selectedSkills || []);
         setEditSelectedCertifications(filters.selectedCertifications || []);
+        const createdBy = data?.createdBy ?? null;
+        const copiedFrom = data?.copiedFromGroupId ?? null;
+        setCreatedByUid(createdBy);
+        setCopiedFromGroupId(copiedFrom);
+        setCreatorDisplayName(null);
+        setOriginalCreatorName(null);
+        const resolveCreatorName = async (uid: string): Promise<string> => {
+          const userSnap = await getDoc(doc(db, 'users', uid));
+          if (!userSnap.exists()) return 'Unknown';
+          const d = userSnap.data() as any;
+          return [d?.firstName, d?.lastName].filter(Boolean).join(' ').trim() || d?.email || 'Unknown';
+        };
+        if (copiedFrom) {
+          const sourceSnap = await getDoc(doc(db, 'tenants', tenantId, 'savedSmartGroups', copiedFrom));
+          if (mounted && sourceSnap.exists()) {
+            const originalUid = sourceSnap.data()?.createdBy ?? null;
+            if (originalUid) {
+              const name = await resolveCreatorName(originalUid);
+              if (mounted) setOriginalCreatorName(name);
+            }
+          }
+        } else if (createdBy) {
+          const name = await resolveCreatorName(createdBy);
+          if (mounted) setCreatorDisplayName(name);
+        }
         if (memberIds.length === 0) {
           setMembersData([]);
           return;
@@ -352,6 +383,21 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
       setSaveError(err?.message ?? 'Failed to save filters');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleUnsaveGroup = async () => {
+    if (!tenantId || !groupId) return;
+    setUnsaving(true);
+    try {
+      const ref = doc(db, 'tenants', tenantId, 'savedSmartGroups', groupId);
+      await deleteDoc(ref);
+      setUnsaveDialogOpen(false);
+      navigate('/users/my-smart-groups');
+    } catch (err: any) {
+      setUpdateError(err?.message ?? 'Failed to unsave group');
+    } finally {
+      setUnsaving(false);
     }
   };
 
@@ -665,22 +711,49 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                   size="small"
                   onClick={() => setIsEditing(true)}
                   sx={{ ml: 0.5 }}
+                  title="Edit filters"
                 >
                   <EditIcon fontSize="small" />
                 </IconButton>
-                <IconButton
-                  size="small"
-                  onClick={() => setDeleteDialogOpen(true)}
-                  color="error"
-                >
-                  <DeleteIcon fontSize="small" />
-                </IconButton>
+                {copiedFromGroupId ? (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="secondary"
+                    onClick={() => setUnsaveDialogOpen(true)}
+                    sx={{ textTransform: 'none', ml: 0.5 }}
+                  >
+                    Unsave
+                  </Button>
+                ) : (
+                  <IconButton
+                    size="small"
+                    onClick={() => setDeleteDialogOpen(true)}
+                    color="error"
+                    title="Delete group"
+                  >
+                    <DeleteIcon fontSize="small" />
+                  </IconButton>
+                )}
               </>
             )}
           </Box>
           {!isEditing && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               {formatFiltersSummary(group.filters)}
+            </Typography>
+          )}
+          {!isEditing && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              {copiedFromGroupId
+                ? (originalCreatorName != null ? `Original creator: ${originalCreatorName}` : 'Original creator: …')
+                : createdByUid === user?.uid
+                  ? 'Created by: me'
+                  : creatorDisplayName != null
+                    ? `Created by: ${creatorDisplayName}`
+                    : createdByUid
+                      ? 'Created by: …'
+                      : null}
             </Typography>
           )}
         </Box>
@@ -1281,9 +1354,26 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           <Button onClick={handleDeleteGroup} color="error" disabled={deleting} variant="contained">
             {deleting ? 'Deleting…' : 'Delete'}
           </Button>
-          </DialogActions>
-        </Dialog>
-        
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={unsaveDialogOpen} onClose={() => setUnsaveDialogOpen(false)}>
+        <DialogTitle>Unsave Smart Group</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Remove &quot;{group.name}&quot; from My Smart Groups? The group will no longer appear in your list, but the original (if any) is unchanged.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setUnsaveDialogOpen(false)} disabled={unsaving}>
+            Cancel
+          </Button>
+          <Button onClick={handleUnsaveGroup} color="primary" disabled={unsaving} variant="contained">
+            {unsaving ? 'Removing…' : 'Unsave'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
         <MessageDrawer
           open={bulkDrawerOpen}
           onClose={() => setBulkDrawerOpen(false)}
