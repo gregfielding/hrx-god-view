@@ -42,6 +42,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
+import { usePageCache } from '../hooks/usePageCache';
 import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -72,6 +73,15 @@ interface RecruiterJobOrdersProps {
   onlyMyOrders?: boolean;
 }
 
+const CACHE_DEFAULTS = {
+  statusFilter: '',
+  sortField: 'jobOrderNumber',
+  sortDirection: 'desc' as const,
+  companyFilter: 'all',
+  page: 0,
+  rowsPerPage: 20,
+};
+
 const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({ 
   search: searchProp = '', 
   showFavoritesOnly: showFavoritesOnlyProp = false,
@@ -85,20 +95,28 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const effectiveOnlyMyOrders = typeof onlyMyOrdersProp === 'boolean'
     ? onlyMyOrdersProp
     : outletCtx?.activeTab === 'my-orders';
+
+  const pageKey = effectiveOnlyMyOrders ? 'recruiterMyJobOrders' : 'recruiterJobOrders';
+  const { cacheState, updateCache } = usePageCache({
+    pageKey,
+    defaultState: CACHE_DEFAULTS,
+  });
+
+  const statusFilter = cacheState.statusFilter ?? CACHE_DEFAULTS.statusFilter;
+  const sortField = cacheState.sortField ?? CACHE_DEFAULTS.sortField;
+  const sortDirection = (cacheState.sortDirection ?? CACHE_DEFAULTS.sortDirection) as 'asc' | 'desc';
+  const companyFilter = cacheState.companyFilter ?? CACHE_DEFAULTS.companyFilter;
+  const page = typeof cacheState.page === 'number' ? cacheState.page : CACHE_DEFAULTS.page;
+  const rowsPerPage = typeof cacheState.rowsPerPage === 'number' ? cacheState.rowsPerPage : CACHE_DEFAULTS.rowsPerPage;
   
-  // State
+  // State (not cached)
   const [jobOrders, setJobOrders] = useState<JobOrderWithDetails[]>([]);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState<string>('');
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderWithDetails | null>(null);
-  const [sortField, setSortField] = useState<string>('jobOrderNumber');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [companyFilter, setCompanyFilter] = useState<string>('all');
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(20);
   const [loadError, setLoadError] = useState<string | null>(null);
   const firstLoadRef = useRef(true);
+  const prevFiltersRef = useRef<{ search: string; statusFilter: string; companyFilter: string; showFavoritesOnly: boolean } | null>(null);
 
   const { favorites, toggleFavorite, isFavorite } = useFavorites('jobOrders');
 
@@ -289,11 +307,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   // Reset and reload when filters/search/sort change
   useEffect(() => {
     if (tenantId) {
-      // Reset pagination state
       setJobOrders([]);
-      setPage(0); // Reset to first page when filters change
       firstLoadRef.current = true;
-      // Load fresh data
       fetchJobOrders();
     }
   }, [tenantId, statusFilter, sortField, sortDirection, companyFilter, fetchJobOrders]);
@@ -303,15 +318,37 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     if (!tenantId) return;
     
     const timeoutId = setTimeout(() => {
-      // Reset pagination when search/favorites change
       setJobOrders([]);
-      setPage(0); // Reset to first page when search/favorites change
+      updateCache({ page: 0 });
       firstLoadRef.current = true;
       fetchJobOrders();
     }, 500); // 500ms debounce
     
     return () => clearTimeout(timeoutId);
-  }, [effectiveSearch, effectiveShowFavoritesOnly, tenantId, fetchJobOrders]);
+  }, [effectiveSearch, effectiveShowFavoritesOnly, tenantId, fetchJobOrders, updateCache]);
+
+  // Reset page to 0 when user changes filters/search (not on initial mount / restore from cache)
+  useEffect(() => {
+    const current = {
+      search: effectiveSearch,
+      statusFilter,
+      companyFilter,
+      showFavoritesOnly: effectiveShowFavoritesOnly,
+    };
+    if (prevFiltersRef.current === null) {
+      prevFiltersRef.current = current;
+      return;
+    }
+    if (
+      prevFiltersRef.current.search !== current.search ||
+      prevFiltersRef.current.statusFilter !== current.statusFilter ||
+      prevFiltersRef.current.companyFilter !== current.companyFilter ||
+      prevFiltersRef.current.showFavoritesOnly !== current.showFavoritesOnly
+    ) {
+      updateCache({ page: 0 });
+      prevFiltersRef.current = current;
+    }
+  }, [effectiveSearch, effectiveShowFavoritesOnly, statusFilter, companyFilter, updateCache]);
 
   // Client-side filtering for real-time search and other filters
   const filteredJobOrders = jobOrders.filter(jo => {
@@ -413,18 +450,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, paginatedJobOrders]);
 
-  // Reset page when filtered results change
-  useEffect(() => {
-    setPage(0);
-  }, [effectiveSearch, effectiveShowFavoritesOnly, statusFilter, companyFilter]);
-
   const handleSort = (field: string) => {
-    if (field === 'Requested/Filled') return; // Don't sort this column
-    
+    if (field === 'Requested/Filled') return;
     const newDirection = sortField === field && sortDirection === 'desc' ? 'asc' : 'desc';
-    setSortField(field);
-    setSortDirection(newDirection);
-    setPage(0); // Reset to first page when sorting changes
+    updateCache({ sortField: field, sortDirection: newDirection, page: 0 });
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, jobOrder: JobOrderWithDetails) => {
@@ -506,7 +535,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
           <Select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => updateCache({ statusFilter: e.target.value })}
             label="Status"
             sx={{
               height: 36,
@@ -534,7 +563,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           <InputLabel sx={{ fontSize: '0.875rem' }}>Company</InputLabel>
           <Select
             value={companyFilter}
-            onChange={(e) => setCompanyFilter(e.target.value)}
+            onChange={(e) => updateCache({ companyFilter: e.target.value })}
             label="Company"
             sx={{
               height: 36,
@@ -562,7 +591,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
           <Select
             value={sortField}
-            onChange={(e) => setSortField(e.target.value)}
+            onChange={(e) => updateCache({ sortField: e.target.value })}
             label="Sort By"
             sx={{
               height: 36,
@@ -886,11 +915,11 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
           <StandardTablePagination
             count={filteredJobOrders.length}
             page={page}
-            onPageChange={(_, newPage) => setPage(newPage)}
+            onPageChange={(_, newPage) => updateCache({ page: newPage })}
             rowsPerPage={rowsPerPage}
             onRowsPerPageChange={(e) => {
-              setRowsPerPage(parseInt(e.target.value, 10));
-              setPage(0);
+              const value = parseInt(e.target.value, 10);
+              updateCache({ rowsPerPage: value, page: 0 });
             }}
           />
         </Box>

@@ -544,10 +544,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return docs.map((d) => ({ id: d.id, data: d.data() }));
         };
 
+        // Career applicants are not shift-specific: show all in the labor pool regardless of selected shift.
+        // Gig applicants are shift-specific: filter by selected shift when using shift_applicants / shift_candidates.
         const includeApplicantByShift = (data: any) => {
+          if (isCareerJob) return true;
           const hasShift = matchesSelectedShift(data);
-          const allowCareerWithoutShift = isCareerJob && !hasShiftMetadata(data);
-          return hasShift || allowCareerWithoutShift;
+          const allowWithoutShift = !hasShiftMetadata(data);
+          return hasShift || allowWithoutShift;
         };
 
         if (workforce === 'all_applicants' || workforce === 'shift_applicants') {

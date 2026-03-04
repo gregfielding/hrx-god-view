@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
@@ -135,6 +135,7 @@ import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
 import RecruiterMain from './pages/RecruiterMain';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
+import RecruiterAccounts from './pages/RecruiterAccounts';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
 import SmartGroupsPage from './pages/SmartGroupsPage';
@@ -146,6 +147,7 @@ import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
 import RecruiterCompanies from './pages/RecruiterCompanies';
 import RecruiterCompanyDetails from './pages/RecruiterCompanyDetails';
+import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import RecruiterLocationDetails from './pages/RecruiterLocationDetails';
@@ -188,6 +190,11 @@ function UsersRedirect() {
 function RecruiterUserGroupsRedirect() {
   const { groupId } = useParams();
   return <Navigate to={`/usergroups/${groupId}`} replace />;
+}
+
+function RecruiterAccountDetailsRedirect() {
+  const { accountId } = useParams();
+  return <Navigate to={accountId ? `/accounts/${accountId}` : '/recruiter/accounts'} replace />;
 }
 
 function CrmCompaniesRedirect() {
@@ -558,6 +565,21 @@ function App() {
               </CRMAccessGuard>
             </ProtectedRoute>
           }
+        />
+        <Route
+          path="accounts/:accountId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <RecruiterAccountDetails />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        {/* Legacy account detail path -> canonical /accounts/:accountId */}
+        <Route
+          path="recruiter/accounts/:accountId"
+          element={<RecruiterAccountDetailsRedirect />}
         />
         <Route path="users" element={
           <ProtectedRoute requiredSecurityLevel="5">
@@ -1035,7 +1057,9 @@ function App() {
             </RecruiterAccessGuard>
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/recruiter/job-orders" replace />} />
+          <Route index element={<Navigate to="/recruiter/accounts" replace />} />
+          <Route path="accounts" element={<RecruiterAccounts />} />
+          <Route path="my-accounts" element={<RecruiterAccounts onlyMyAccounts />} />
           <Route path="job-orders" element={<RecruiterJobOrders />} />
           <Route path="my-orders" element={<RecruiterJobOrders />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
@@ -1108,14 +1132,16 @@ function App() {
               <AssociationsCacheProvider>
                 <SalespeopleProvider>
                   {googleMapsApiKey ? (
-                    <LoadScript googleMapsApiKey={googleMapsApiKey} libraries={googleMapsLibraries}>
-                      {routes}
+                    <LoadScript
+                      id="script-loader"
+                      googleMapsApiKey={googleMapsApiKey}
+                      libraries={googleMapsLibraries}
+                      loadingElement={<div style={{ position: 'absolute', left: -9999 }}>Loading maps...</div>}
+                    >
+                      <div style={{ display: 'none' }} aria-hidden="true" />
                     </LoadScript>
-                  ) : (
-                    <div>
-                      {routes}
-                    </div>
-                  )}
+                  ) : null}
+                  {routes}
                 </SalespeopleProvider>
               </AssociationsCacheProvider>
             </ChatGPTProvider>

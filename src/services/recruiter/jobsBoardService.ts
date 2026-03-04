@@ -858,6 +858,23 @@ export class JobsBoardService {
       });
       
       await updateDoc(postRef, cleanedUpdates);
+
+      // When connecting this post to a job order, backfill jobOrderId on existing applications
+      // so they show as job order applicants and any logic that queries by jobOrderId sees them.
+      const newJobOrderId = updates.jobOrderId;
+      if (newJobOrderId && typeof newJobOrderId === 'string') {
+        const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+        const q = query(applicationsRef, where('jobId', '==', postId));
+        const snap = await getDocs(q);
+        await Promise.all(
+          snap.docs.map((d) =>
+            updateDoc(d.ref, { jobOrderId: newJobOrderId, updatedAt: new Date() })
+          )
+        );
+        if (snap.docs.length > 0) {
+          console.log(`Backfilled jobOrderId on ${snap.docs.length} application(s) for post ${postId}`);
+        }
+      }
     } catch (error) {
       console.error('Error updating jobs board post:', error);
       throw error;

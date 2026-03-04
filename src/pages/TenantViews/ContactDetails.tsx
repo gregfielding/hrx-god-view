@@ -1001,9 +1001,14 @@ const ContactDetails: React.FC = () => {
     try {
       setLoadingJobOrders(true);
       const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
-      
-      // Query job orders where contact ID matches any of the role fields
-      // Firestore doesn't support OR queries with multiple fields, so we query each field separately
+
+      const getAssocId = (entry: any): string | null => {
+        if (!entry) return null;
+        if (typeof entry === 'string') return entry;
+        if (typeof entry === 'object' && typeof entry.id === 'string') return entry.id;
+        return null;
+      };
+
       const contactRoleFields = [
         'hrContactId',
         'decisionMaker',
@@ -1011,33 +1016,133 @@ const ContactDetails: React.FC = () => {
         'procurementContactId',
         'billingContactId',
         'safetyContactId',
-        'invoiceContactId'
+        'invoiceContactId',
       ];
-      
-      const queries = contactRoleFields.map(field => 
-        query(jobOrdersRef, where(field, '==', contactId))
-      );
-      
-      // Execute all queries in parallel
-      const queryResults = await Promise.all(
-        queries.map(q => getDocs(q).catch(err => {
-          console.warn(`Query failed for ${q}:`, err);
-          return { docs: [] };
-        }))
-      );
-      
-      // Combine and deduplicate results
+
+      const baseQueries = [
+        ...contactRoleFields.map((field) => query(jobOrdersRef, where(field, '==', contactId))),
+        query(jobOrdersRef, where('contactIds', 'array-contains', contactId)),
+        query(jobOrdersRef, where('associations.contacts', 'array-contains', contactId)),
+        query(jobOrdersRef, where('deal.contactIds', 'array-contains', contactId)),
+      ];
+
+      const runSafe = async (q: any) =>
+        getDocs(q).catch((err) => {
+          console.warn('Job orders contact query failed:', err);
+          return { docs: [] as any[] };
+        });
+
+      const baseSnapshots = await Promise.all(baseQueries.map(runSafe));
       const allJobOrders = new Map<string, any>();
-      
-      queryResults.forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          const jobOrderData = { id: doc.id, ...doc.data() };
-          allJobOrders.set(doc.id, jobOrderData);
+
+      baseSnapshots.forEach((snapshot: any) => {
+        snapshot.docs.forEach((snap: any) => {
+          allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
         });
       });
-      
-      const uniqueJobOrders = Array.from(allJobOrders.values());
-      setJobOrders(uniqueJobOrders);
+
+      // Also include job orders linked to any deal associated with this contact.
+      const associatedDealIds = new Set<string>();
+      const associatedCompanyIds = new Set<string>();
+      try {
+        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        if (contactDoc.exists()) {
+          const contactData = contactDoc.data() as any;
+          const legacyCompanyId = contactData?.companyId;
+          if (legacyCompanyId && typeof legacyCompanyId === 'string') {
+            associatedCompanyIds.add(legacyCompanyId);
+          }
+          const assocCompanies = contactData?.associations?.companies;
+          if (Array.isArray(assocCompanies)) {
+            assocCompanies.forEach((c: any) => {
+              const id = getAssocId(c);
+              if (id) associatedCompanyIds.add(id);
+            });
+          }
+          const rawDeals = contactData?.associations?.deals;
+          if (Array.isArray(rawDeals)) {
+            rawDeals.forEach((d: any) => {
+              const id = getAssocId(d);
+              if (id) associatedDealIds.add(id);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load contact deal associations for job orders:', err);
+      }
+
+      // Fallback deals query for older mappings.
+      try {
+        const dealsSnap = await getDocs(
+          query(collection(db, 'tenants', tenantId, 'crm_deals'), where('contactIds', 'array-contains', contactId))
+        );
+        dealsSnap.docs.forEach((d) => associatedDealIds.add(d.id));
+      } catch (err) {
+        console.warn('Fallback deal query failed while loading contact job orders:', err);
+      }
+
+      // Also discover deals through company association + associations.contacts object array.
+      const companyIds = Array.from(associatedCompanyIds);
+      if (companyIds.length > 0) {
+        for (let i = 0; i < companyIds.length; i += 10) {
+          const chunk = companyIds.slice(i, i + 10);
+          try {
+            const companyDealsSnap = await getDocs(
+              query(collection(db, 'tenants', tenantId, 'crm_deals'), where('companyId', 'in', chunk))
+            );
+            companyDealsSnap.docs.forEach((d) => {
+              const data = d.data() as any;
+              const direct = Array.isArray(data?.contactIds) && data.contactIds.includes(contactId);
+              const assoc =
+                Array.isArray(data?.associations?.contacts) &&
+                data.associations.contacts.some((c: any) => getAssocId(c) === contactId);
+              if (direct || assoc) associatedDealIds.add(d.id);
+            });
+          } catch (err) {
+            console.warn('Company-scoped deal lookup failed for contact job orders:', err);
+          }
+        }
+      }
+
+      const dealIds = Array.from(associatedDealIds);
+      if (dealIds.length > 0) {
+        for (let i = 0; i < dealIds.length; i += 10) {
+          const chunk = dealIds.slice(i, i + 10);
+          const byDealId = await runSafe(query(jobOrdersRef, where('dealId', 'in', chunk)));
+          byDealId.docs.forEach((snap: any) => {
+            allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+          });
+        }
+      }
+
+      // Fallback: company-scoped job orders (some records only embed contact under deal.associations.contacts).
+      if (companyIds.length > 0) {
+        for (let i = 0; i < companyIds.length; i += 10) {
+          const chunk = companyIds.slice(i, i + 10);
+          const byCompany = await runSafe(query(jobOrdersRef, where('companyId', 'in', chunk)));
+          byCompany.docs.forEach((snap: any) => {
+            allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+          });
+        }
+      }
+
+      // Final client-side guard to support mixed historical schemas.
+      const filtered = Array.from(allJobOrders.values()).filter((jobOrder: any) => {
+        const directRoleMatch = contactRoleFields.some((field) => jobOrder?.[field] === contactId);
+        if (directRoleMatch) return true;
+        if (Array.isArray(jobOrder?.contactIds) && jobOrder.contactIds.includes(contactId)) return true;
+        if (Array.isArray(jobOrder?.associations?.contacts)) {
+          if (jobOrder.associations.contacts.some((c: any) => getAssocId(c) === contactId)) return true;
+        }
+        if (Array.isArray(jobOrder?.deal?.contactIds) && jobOrder.deal.contactIds.includes(contactId)) return true;
+        if (Array.isArray(jobOrder?.deal?.associations?.contacts)) {
+          if (jobOrder.deal.associations.contacts.some((c: any) => getAssocId(c) === contactId)) return true;
+        }
+        if (jobOrder?.dealId && associatedDealIds.has(jobOrder.dealId)) return true;
+        return false;
+      });
+
+      setJobOrders(filtered);
     } catch (err) {
       console.error('Error loading job orders for contact:', err);
       setJobOrders([]);

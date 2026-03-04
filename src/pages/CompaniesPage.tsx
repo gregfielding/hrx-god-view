@@ -65,7 +65,9 @@ const CompaniesPage: React.FC = () => {
   const [deals, setDeals] = useState<any[]>([]);
   const [salesTeam, setSalesTeam] = useState<any[]>([]);
   const [search, setSearch] = useState(cacheState.search || '');
-  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>(cacheState.companyFilter || 'all');
+  const [companyFilter, setCompanyFilter] = useState<'all' | 'my'>(
+    cacheState.companyFilter === 'my' ? 'my' : 'all',
+  );
   const [locationStateFilter, setLocationStateFilter] = useState<string>(cacheState.locationStateFilter || 'all');
   const [companiesLoading, setCompaniesLoading] = useState(!cachedResults); // Don't show loading if we have cached results
   const [companiesLastDoc, setCompaniesLastDoc] = useState<any>(null);

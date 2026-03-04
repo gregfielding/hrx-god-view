@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { doc, getDoc, getDocs, onSnapshot, collection, query, where, orderBy, limit, updateDoc } from 'firebase/firestore';
 import {
   Avatar,
@@ -81,7 +81,28 @@ const appBarHeight = 64;
 /** Charcoal for staff (0-4) shell icons and text */
 const STAFF_SHELL_CHARCOAL = '#36454F';
 
-const Layout: React.FC = React.memo(function Layout() {
+/** Wrapper that consumes router location so it re-renders on navigation. */
+const LayoutOutlet: React.FC = () => {
+  useLocation(); // subscribe to location so Outlet re-renders on nav
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        overflowY: 'auto',
+        overflowX: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        minHeight: 0,
+        mt: '64px',
+        pb: '16px',
+      }}
+    >
+      <Outlet />
+    </Box>
+  );
+};
+
+const Layout: React.FC = function Layout() {
   // REMOVED: Excessive logging causing re-renders
   const { toggleMode, mode } = useThemeMode();
   const { 
@@ -155,6 +176,11 @@ const Layout: React.FC = React.memo(function Layout() {
     // Companies routes (check before CRM to avoid conflicts)
     if (pathname.startsWith('/companies')) {
       return 'Companies';
+    }
+
+    // Account detail
+    if (pathname.startsWith('/accounts/')) {
+      return 'Account Details';
     }
     
     // Jobs Board routes
@@ -562,6 +588,11 @@ const Layout: React.FC = React.memo(function Layout() {
   const handleSettings = () => {
     if (user) navigate(`/users/${user.uid}`);
     handleMenuClose();
+  };
+
+  // SPA-safe navigation helper for sidebar/topbar actions.
+  const navigateSafe = (target: string) => {
+    navigate(target);
   };
 
   // Generate menu items based on user role and org type
@@ -1041,9 +1072,9 @@ const Layout: React.FC = React.memo(function Layout() {
               <ListItem disablePadding sx={{ display: 'block' }}>
                 <Tooltip title="Dashboard" arrow placement="right" enterDelay={150}>
                   <ListItemButton
-                    component={Link}
-                    to={dashboardPath}
+                    component="button"
                     onClick={() => {
+                      navigateSafe(dashboardPath);
                       if (isMobile) setOpen(false);
                     }}
                     sx={{
@@ -1142,9 +1173,9 @@ const Layout: React.FC = React.memo(function Layout() {
               <ListItem disablePadding sx={{ display: 'block' }}>
                 <Tooltip title="Jobs Board" arrow placement="right" enterDelay={150}>
                   <ListItemButton
-                    component={Link}
-                    to={jobsPath}
+                    component="button"
                     onClick={() => {
+                      navigateSafe(jobsPath);
                       if (isMobile) setOpen(false);
                     }}
                     sx={{
@@ -1288,11 +1319,11 @@ const Layout: React.FC = React.memo(function Layout() {
               <ListItem key={text} disablePadding sx={{ display: 'block' }}>
                 <Tooltip title={text} arrow placement="right" enterDelay={150}>
                   <ListItemButton
-                    component={text === 'Log out' ? 'button' : Link}
-                    {...(text !== 'Log out' ? { to } : {})}
-                    onClick={text === 'Log out' 
-                      ? async () => { await logout(); } 
+                    component="button"
+                    onClick={text === 'Log out'
+                      ? async () => { await logout(); }
                       : () => {
+                          if (to) navigateSafe(to);
                           if (isMobile) setOpen(false);
                         }
                     }
@@ -1444,6 +1475,7 @@ const Layout: React.FC = React.memo(function Layout() {
 
       <Box
         component="main"
+        data-router-path={location.pathname}
         sx={{
           flexGrow: 1,
           display: 'flex',
@@ -1510,7 +1542,7 @@ const Layout: React.FC = React.memo(function Layout() {
                     margin: 0,
                   },
                 }}
-                onClick={() => navigate('/')} // Optional: go home on click
+                onClick={() => navigateSafe('/')} // Optional: go home on click
               >
               <img
                 src="/C1Y.png"
@@ -1565,7 +1597,7 @@ const Layout: React.FC = React.memo(function Layout() {
               {inboxUnreadCount > 0 && (
                 <Tooltip title={`${inboxUnreadCount} unread inbox messages`}>
                   <IconButton
-                    onClick={() => navigate('/inbox')}
+                    onClick={() => navigateSafe('/inbox')}
                     sx={{
                       backgroundColor: 'transparent !important',
                       color: location.pathname.startsWith('/inbox') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
@@ -1592,7 +1624,7 @@ const Layout: React.FC = React.memo(function Layout() {
               {messagesUnreadCount > 0 && (
                 <Tooltip title={`${messagesUnreadCount} unread messages`}>
                   <IconButton
-                    onClick={() => navigate('/messages')}
+                    onClick={() => navigateSafe('/messages')}
                     sx={{
                       backgroundColor: 'transparent !important',
                       color: location.pathname.startsWith('/messages') ? '#0057B8' : (isStaffShell ? STAFF_SHELL_CHARCOAL : 'rgba(255,255,255,.8)'),
@@ -1656,7 +1688,7 @@ const Layout: React.FC = React.memo(function Layout() {
               {hasAdminLevel && (
                 <Tooltip title={mentionsUnreadCount > 0 ? `${mentionsUnreadCount} unread mention${mentionsUnreadCount !== 1 ? 's' : ''}` : 'Slack & Mentions'}>
                   <IconButton
-                    onClick={() => navigate('/slack')}
+                    onClick={() => navigateSafe('/slack')}
                     sx={{
                       backgroundColor: 'transparent !important',
                       color: location.pathname.startsWith('/slack') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
@@ -1692,7 +1724,7 @@ const Layout: React.FC = React.memo(function Layout() {
               {hasAdminLevel && (
                 <Tooltip title="Tasks">
                   <IconButton
-                    onClick={() => navigate('/tasks')}
+                    onClick={() => navigateSafe('/tasks')}
                     sx={{
                       backgroundColor: 'transparent !important',
                       color: location.pathname.startsWith('/tasks') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
@@ -1711,7 +1743,7 @@ const Layout: React.FC = React.memo(function Layout() {
               {hasAdminLevel && (
                 <Tooltip title="Calendar">
                   <IconButton
-                    onClick={() => navigate('/calendar')}
+                    onClick={() => navigateSafe('/calendar')}
                     sx={{
                       backgroundColor: 'transparent !important',
                       color: location.pathname.startsWith('/calendar') ? '#FFFFFF' : 'rgba(255,255,255,.8)',
@@ -1845,14 +1877,14 @@ const Layout: React.FC = React.memo(function Layout() {
                 const isWorker = effectiveSecurityLevel && ['1', '2', '3', '4'].includes(effectiveSecurityLevel);
                 const tenantSlug = activeTenant?.slug || 'c1';
                 const profilePath = isWorker ? `/${tenantSlug}/users/${user?.uid}` : `/users/${user?.uid}`;
-                navigate(profilePath);
+                navigateSafe(profilePath);
                 setAvatarMenuAnchorEl(null);
               }}>
                 My Profile
               </MenuItem>
               <Divider />
               <MenuItem onClick={() => {
-                navigate('/privacy-settings');
+                navigateSafe('/privacy-settings');
                 setAvatarMenuAnchorEl(null);
               }}>
                 Settings
@@ -1917,21 +1949,8 @@ const Layout: React.FC = React.memo(function Layout() {
           </Box>
         </Box>
 
-        {/* Scrollable content area - with top bar offset */}
-        <Box
-          sx={{
-            flex: 1,
-            overflowY: 'auto',
-            overflowX: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            minHeight: 0,
-            mt: '64px', // Offset for fixed top bar
-            pb: '16px',
-          }}
-        >
-          <Outlet />
-        </Box>
+        {/* Scrollable content area - LayoutOutlet re-renders on location change and remounts Outlet so content updates when clicking sidebar links */}
+        <LayoutOutlet />
         
         {/* Direct Messenger Drawer */}
         <MessengerDrawer />
@@ -2002,6 +2021,6 @@ const Layout: React.FC = React.memo(function Layout() {
   ) : (
     layout
   );
-});
+};
 
-export default React.memo(Layout);
+export default Layout;

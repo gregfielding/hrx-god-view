@@ -63,6 +63,7 @@ import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import { formatOneDecimal } from '../utils/scoreSummary';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import FavoriteButton from '../components/FavoriteButton';
+import InterviewCell from '../components/InterviewCell';
 import { useFavorites } from '../hooks/useFavorites';
 import {
   getMergedMetroOptions,
@@ -1278,11 +1279,11 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                       <TableCell><Chip size="small" label={ws.label} color={ws.color} /></TableCell>
                       <TableCell>{renderAiScore(m)}</TableCell>
                       <TableCell>
-                        {m.scoreSummary?.interviewLastAt != null && typeof m.scoreSummary?.interviewLastScore10 === 'number' ? (
-                          <Typography variant="body2">{formatDate(m.scoreSummary.interviewLastAt)} — {formatOneDecimal(m.scoreSummary.interviewLastScore10)}/10</Typography>
-                        ) : (
-                          <Typography variant="body2" color="text.secondary">—</Typography>
-                        )}
+                        <InterviewCell
+                          userId={m.id}
+                          scoreSummary={m.scoreSummary}
+                          formatDate={formatDate}
+                        />
                       </TableCell>
                       <TableCell onClick={(e) => e.stopPropagation()}>
                         <Chip

@@ -44,6 +44,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import FavoriteButton from '../components/FavoriteButton';
+import InterviewCell from '../components/InterviewCell';
 import { useFavorites } from '../hooks/useFavorites';
 import { db } from '../firebase';
 import { collection, getDocs, doc, getDoc, addDoc, serverTimestamp, query, where, documentId } from 'firebase/firestore';
@@ -1611,11 +1612,11 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
                           <TableCell><Chip size="small" label={ws.label} color={ws.color} sx={ws.sx} /></TableCell>
                           <TableCell>{renderResidenceAiScore(row)}</TableCell>
                           <TableCell>
-                            {row.scoreSummary?.interviewLastAt != null && typeof row.scoreSummary?.interviewLastScore10 === 'number' ? (
-                              <Typography variant="body2">{formatDate(row.scoreSummary.interviewLastAt)} — {formatOneDecimal(row.scoreSummary.interviewLastScore10)}/10</Typography>
-                            ) : (
-                              <Typography variant="body2" color="text.secondary">—</Typography>
-                            )}
+                            <InterviewCell
+                              userId={row.userId}
+                              scoreSummary={row.scoreSummary}
+                              formatDate={formatDate}
+                            />
                           </TableCell>
                           <TableCell>
                             <Typography variant="body2" color="text.secondary">—</Typography>

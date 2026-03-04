@@ -1,7 +1,7 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
+
     // ============================================================================
     // PHASE 2 - CLAIMS-BASED AUTHORIZATION (NEW)
     // ============================================================================
@@ -76,6 +76,16 @@ service cloud.firestore {
         allow read: if true;
         // Only admins and recruiters can write
         allow write: if request.auth != null && (isTenantAdmin(tenantId) || (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']));
+      }
+
+      // Recruiter accounts (customer hub: companies, contacts, job orders, etc.)
+      match /accounts/{accountId} {
+        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId));
+        allow create, update, delete: if request.auth != null && (
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
+          (isAssignedToTenant(tenantId) && hasRecruiterAccess())
+        );
       }
       
       // Assignments subcollection - BULLETPROOF RULES
@@ -420,7 +430,7 @@ service cloud.firestore {
 
       // --- PUSH TOKENS (FCM web/mobile) — signed-in user stores their own tokens
       match /pushTokens/{tokenId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if request.auth != null && request.auth.uid == userId;
       }
 
       // --- NOTIFICATIONS (worker in-app + push) — server creates; user reads and marks read

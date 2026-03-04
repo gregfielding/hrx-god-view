@@ -80,7 +80,7 @@ import {
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, type DocumentSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -101,6 +101,7 @@ import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
+import InterviewCell from '../components/InterviewCell';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
 import { normalizeScoreSummary, formatOneDecimal, getUserScore } from '../utils/scoreSummary';
 import { getOrComputeJobScoreSummary } from '../utils/jobScore';
@@ -263,17 +264,26 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
       const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
       const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+
+      // 1) Applications linked by jobOrderId (e.g. applied when post was already connected, or from job order flow)
       const appsByOrderQ = query(applicationsRef, where('jobOrderId', '==', jobOrderId));
       const appsByOrderSnap = await getDocs(appsByOrderQ);
+      const docMap = new Map<string, DocumentSnapshot>();
+      appsByOrderSnap.docs.forEach((d) => docMap.set(d.id, d));
 
-      let appDocs = appsByOrderSnap.docs;
-      if (appDocs.length === 0 && jobPostIds.length > 0) {
-        const slice = jobPostIds.slice(0, 10);
-        const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
-        const appsByPostSnap = await getDocs(appsByPostQ);
-        appDocs = appsByPostSnap.docs;
+      // 2) Applications to connected job board posts (jobId = post id). Include these so that when a post
+      // was connected after applicants applied, those applicants still show on the job order.
+      if (jobPostIds.length > 0) {
+        const IN_LIMIT = 10;
+        for (let i = 0; i < jobPostIds.length; i += IN_LIMIT) {
+          const slice = jobPostIds.slice(i, i + IN_LIMIT);
+          const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
+          const appsByPostSnap = await getDocs(appsByPostQ);
+          appsByPostSnap.docs.forEach((d) => docMap.set(d.id, d));
+        }
       }
 
+      const appDocs = Array.from(docMap.values());
       if (appDocs.length === 0) {
         setApplicants([]);
         setLoading(false);
@@ -556,6 +566,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   };
 
   const handleOpenActionMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
+    event.stopPropagation();
     setActionMenuAnchor({ ...actionMenuAnchor, [applicantUid]: event.currentTarget });
   };
 
@@ -680,18 +691,20 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     return { recipients, recipientUserIds };
   }, [applicants, selectedApplicantIds]);
 
-  const renderInterviewCell = (applicant: Applicant) => {
-    const lastAt = applicant.scoreSummary?.interviewLastAt;
-    const lastScore = applicant.scoreSummary?.interviewLastScore10;
-    if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
-    const millis = toMillis(lastAt);
-    if (millis <= 0) return null;
-    return (
-      <Typography variant="body2">
-        {format(new Date(millis), 'MMM d, yyyy')} — {formatOneDecimal(lastScore)}/10
-      </Typography>
-    );
+  const formatInterviewDate = (ts: any) => {
+    const d = ts?.toDate?.();
+    if (d) return format(d, 'MMM d, yyyy');
+    const d2 = ts instanceof Date ? ts : new Date(ts);
+    return Number.isNaN(d2.getTime()) ? 'N/A' : format(d2, 'MMM d, yyyy');
   };
+
+  const renderInterviewCell = (applicant: Applicant) => (
+    <InterviewCell
+      userId={applicant.uid}
+      scoreSummary={applicant.scoreSummary}
+      formatDate={formatInterviewDate}
+    />
+  );
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
@@ -1320,9 +1333,13 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     `${applicant.uid || 'unknown'}_${applicant.applicationData?.jobId || jobOrderId || 'unknown'}`
                   }
                   hover
-                  sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
+                  onClick={() => handleViewApplicant(applicant.uid)}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:last-child td, &:last-child th': { border: 0 },
+                  }}
                 >
-                  <TableCell padding="checkbox" sx={{ width: 48 }}>
+                  <TableCell padding="checkbox" sx={{ width: 48 }} onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selectedApplicantIds.has(applicant.uid)}
                       onChange={() => handleSelectOne(applicant.uid)}
@@ -1331,7 +1348,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       aria-label={`Select ${applicant.displayName}`}
                     />
                   </TableCell>
-                  <TableCell sx={{ py: 1 }}>
+                  <TableCell sx={{ py: 1 }} onClick={(e) => e.stopPropagation()}>
                     <FavoriteButton
                       itemId={applicant.uid}
                       favoriteType="users"
@@ -1555,7 +1572,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </TableCell>
                     </>
                   ) : null}
-                  <TableCell>{renderInterviewCell(applicant)}</TableCell>
+                  <TableCell>
+                    {renderInterviewCell(applicant)}
+                  </TableCell>
                   <TableCell>
                     {applicant.compliancePercent != null ? (
                       <Tooltip title={applicant.complianceStatus === 'expiring_soon' ? 'Expiring soon' : applicant.complianceStatus === 'non_compliant' ? 'Expired or non-compliant' : applicant.complianceStatus === 'compliant' ? 'Compliant' : 'Incomplete'}>
@@ -1575,7 +1594,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       <Typography variant="caption" color="text.secondary">—</Typography>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const placementStatus = assignmentStatusByUserId.get(applicant.uid);
                       const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
@@ -1618,7 +1637,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </MenuItem>
                     </Menu>
                   </TableCell>
-                  <TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <Chip 
                       label={applicant.applicationData?.candidate ? '⭐ Candidate' : 'Applicant'}
                       size="small"
@@ -1648,7 +1667,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </MenuItem>
                     </Menu>
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <IconButton
                       size="small"
                       onClick={(e) => handleOpenActionMenu(e, applicant.uid)}
@@ -1660,16 +1679,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       open={Boolean(actionMenuAnchor[applicant.uid])}
                       onClose={() => handleCloseActionMenu(applicant.uid)}
                     >
-                      <MenuItem onClick={() => { handleViewApplicant(applicant.uid); handleCloseActionMenu(applicant.uid); }}>
-                        <PersonIcon fontSize="small" sx={{ mr: 1 }} />
-                        View Profile
-                      </MenuItem>
-                      {!applicant.applicationData?.candidateStatus && (
-                        <MenuItem onClick={() => handleMarkAsCandidate(applicant)}>
-                          <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
-                          Mark as Candidate
-                        </MenuItem>
-                      )}
                       <MenuItem onClick={() => handleOpenSwitchJobDialog(applicant)}>
                         <WorkIcon fontSize="small" sx={{ mr: 1 }} />
                         Switch to Different Job

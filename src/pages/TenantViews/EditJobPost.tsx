@@ -26,6 +26,7 @@ import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBo
 import JobPostForm from '../../components/JobPostForm';
 import { db } from '../../firebase';
 import FavoriteButton from '../../components/FavoriteButton';
+import InterviewCell from '../../components/InterviewCell';
 import { useFavorites } from '../../hooks/useFavorites';
 import { calculateProfileScore } from '../../utils/applicantScoring';
 import { toChipLabel } from '../../utils/chipLabel';
@@ -465,19 +466,6 @@ const EditJobPost: React.FC = () => {
     setPage(0);
   };
 
-  const renderInterviewCell = (user: any) => {
-    const lastAt = user?.scoreSummary?.interviewLastAt;
-    const lastScore = user?.scoreSummary?.interviewLastScore10;
-    if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
-    const millis = toMillis(lastAt);
-    if (millis <= 0) return null;
-    return (
-      <Typography variant="body2">
-        {formatDate(new Date(millis))} — {formatOneDecimal(lastScore)}/10
-      </Typography>
-    );
-  };
-
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" minHeight="400px">
@@ -833,7 +821,13 @@ const EditJobPost: React.FC = () => {
                               />
                             </TableCell>
                             <TableCell>{renderAiScore(user)}</TableCell>
-                            <TableCell>{renderInterviewCell(user)}</TableCell>
+                            <TableCell>
+                              <InterviewCell
+                                userId={user.id}
+                                scoreSummary={user.scoreSummary}
+                                formatDate={formatDate}
+                              />
+                            </TableCell>
                             <TableCell>
                               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
                                 {user.userGroupIds.length === 0 && (
