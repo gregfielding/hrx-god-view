@@ -4890,6 +4890,40 @@ const CompaniesTab: React.FC<{
     return userDeals.length;
   };
 
+  const escapeCsv = (v: string): string => {
+    const s = String(v ?? '').replace(/"/g, '""');
+    return /[",\n\r]/.test(s) ? `"${s}"` : s;
+  };
+
+  const handleExportOpportunitiesCsv = () => {
+    const headers = ['Deal Name', 'Company', 'Stage', 'Value', 'Age', 'Status', 'Health', 'Close Date', 'Owner'];
+    const rows = filteredDeals.map((deal) => {
+      const age = getDealAge(deal?.createdAt);
+      const ageStr = age ? `${age.days}d` : '-';
+      const status = getDealStatus(deal);
+      const health = getDealHealth(deal);
+      return [
+        escapeCsv(deal.name ?? ''),
+        escapeCsv(getDealCompanyName(deal) ?? ''),
+        escapeCsv(deal.stage ?? ''),
+        escapeCsv(getDealEstimatedValue(deal)),
+        escapeCsv(ageStr),
+        escapeCsv(status?.label ?? ''),
+        escapeCsv(health?.bucket ?? String(health?.score ?? '')),
+        escapeCsv(getDealCloseDate(deal)),
+        escapeCsv(getDealOwner(deal) ?? ''),
+      ];
+    });
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `crm-opportunities-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const getDealOwner = (deal: any) => {
     // Helper to resolve a display name from a salesperson object or id
     const resolveFromId = (id: string): string => {
@@ -5302,6 +5336,15 @@ const CompaniesTab: React.FC<{
               })}
             </Select>
           </FormControl>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExportOpportunitiesCsv}
+            sx={{ height: 36, minWidth: 'auto', px: 1.5 }}
+          >
+            Export CSV
+          </Button>
         </Box>
       </Box>
       

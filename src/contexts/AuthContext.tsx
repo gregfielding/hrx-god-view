@@ -630,7 +630,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             
             setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
             setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
-            setJobsBoardEnabled(!!(tenantData.jobsBoard ?? userData.jobsBoard));
+            // Jobs Board is included with Recruiter access (WorkersTable comment); explicit jobsBoard flag also grants access
+            const hasRecruiter = !!(tenantData.recruiter ?? userData.recruiter);
+            const hasJobsBoard = !!(tenantData.jobsBoard ?? userData.jobsBoard);
+            setJobsBoardEnabled(hasJobsBoard || hasRecruiter);
             
             // Store userData in a ref so we can access it in the useEffect below
             lastUserDataRef.current = userData;
@@ -794,7 +797,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     
     setCrmSalesEnabled(!!(tenantData.crm_sales ?? userData.crm_sales));
     setRecruiterEnabled(!!(tenantData.recruiter ?? userData.recruiter));
-    setJobsBoardEnabled(!!(tenantData.jobsBoard ?? userData.jobsBoard));
+    const hasRecruiter = !!(tenantData.recruiter ?? userData.recruiter);
+    const hasJobsBoard = !!(tenantData.jobsBoard ?? userData.jobsBoard);
+    setJobsBoardEnabled(hasJobsBoard || hasRecruiter);
   }, [activeTenant?.id]);
 
   const logout = async () => {
