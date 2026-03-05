@@ -29,7 +29,7 @@ const UnifiedTaskFilters: React.FC<UnifiedTaskFiltersProps> = ({
   filters,
   onUpdateFilter,
 }) => {
-  const statusOptions: TaskStatus[] = ['scheduled', 'upcoming', 'due', 'overdue', 'completed', 'cancelled'];
+  const statusOptions: TaskStatus[] = ['scheduled', 'upcoming', 'due', 'overdue', 'completed', 'cancelled', 'dismissed'];
   const priorityOptions: TaskPriority[] = ['low', 'medium', 'high', 'urgent'];
   const typeOptions: TaskType[] = [
     'email',

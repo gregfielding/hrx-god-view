@@ -10,6 +10,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
+import { toChipLabel } from '../../../utils/chipLabel';
 
 export type CrmContactIndustrySegment = 'healthcare' | 'hospitality' | 'industrial' | 'none';
 
@@ -106,9 +107,9 @@ export const ContactHeaderMarketing: React.FC<ContactHeaderMarketingProps> = ({ 
           />
         ))}
 
-        {manualTags.map((tag) => (
+        {manualTags.map((tag, idx) => (
           <Chip
-            key={tag}
+            key={`${tag}-${idx}`}
             label={tag}
             size="small"
             color="primary"

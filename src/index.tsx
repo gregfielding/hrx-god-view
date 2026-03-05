@@ -8,12 +8,29 @@ import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { ThemeModeProvider } from './theme/theme';
 
-// FCM Web Push — register service worker for background notifications
+// FCM Web Push — avoid SW caching issues on localhost dev.
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/firebase-messaging-sw.js').catch((err) => {
+  const isLocalhost =
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+
+  window.addEventListener('load', async () => {
+    try {
+      if (isLocalhost) {
+        // In dev, proactively remove stale SW registrations that can serve old bundles.
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(
+          regs
+            .filter((r) => r.scope.includes(window.location.origin))
+            .map((r) => r.unregister())
+        );
+        return;
+      }
+
+      await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+    } catch (err) {
       console.warn('[SW] firebase-messaging-sw registration failed', err);
-    });
+    }
   });
 }
 

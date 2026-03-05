@@ -80,7 +80,7 @@ import {
 } from '@mui/icons-material';
 import { useParams, useNavigate } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, type DocumentSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -101,6 +101,7 @@ import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
 import FavoriteButton from '../components/FavoriteButton';
+import InterviewCell from '../components/InterviewCell';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
 import { normalizeScoreSummary, formatOneDecimal, getUserScore } from '../utils/scoreSummary';
 import { getOrComputeJobScoreSummary } from '../utils/jobScore';
@@ -263,17 +264,26 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
       const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
       const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+
+      // 1) Applications linked by jobOrderId (e.g. applied when post was already connected, or from job order flow)
       const appsByOrderQ = query(applicationsRef, where('jobOrderId', '==', jobOrderId));
       const appsByOrderSnap = await getDocs(appsByOrderQ);
+      const docMap = new Map<string, DocumentSnapshot>();
+      appsByOrderSnap.docs.forEach((d) => docMap.set(d.id, d));
 
-      let appDocs = appsByOrderSnap.docs;
-      if (appDocs.length === 0 && jobPostIds.length > 0) {
-        const slice = jobPostIds.slice(0, 10);
-        const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
-        const appsByPostSnap = await getDocs(appsByPostQ);
-        appDocs = appsByPostSnap.docs;
+      // 2) Applications to connected job board posts (jobId = post id). Include these so that when a post
+      // was connected after applicants applied, those applicants still show on the job order.
+      if (jobPostIds.length > 0) {
+        const IN_LIMIT = 10;
+        for (let i = 0; i < jobPostIds.length; i += IN_LIMIT) {
+          const slice = jobPostIds.slice(i, i + IN_LIMIT);
+          const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
+          const appsByPostSnap = await getDocs(appsByPostQ);
+          appsByPostSnap.docs.forEach((d) => docMap.set(d.id, d));
+        }
       }
 
+      const appDocs = Array.from(docMap.values());
       if (appDocs.length === 0) {
         setApplicants([]);
         setLoading(false);
@@ -556,6 +566,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   };
 
   const handleOpenActionMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
+    event.stopPropagation();
     setActionMenuAnchor({ ...actionMenuAnchor, [applicantUid]: event.currentTarget });
   };
 
@@ -680,18 +691,20 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     return { recipients, recipientUserIds };
   }, [applicants, selectedApplicantIds]);
 
-  const renderInterviewCell = (applicant: Applicant) => {
-    const lastAt = applicant.scoreSummary?.interviewLastAt;
-    const lastScore = applicant.scoreSummary?.interviewLastScore10;
-    if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
-    const millis = toMillis(lastAt);
-    if (millis <= 0) return null;
-    return (
-      <Typography variant="body2">
-        {format(new Date(millis), 'MMM d, yyyy')} — {formatOneDecimal(lastScore)}/10
-      </Typography>
-    );
+  const formatInterviewDate = (ts: any) => {
+    const d = ts?.toDate?.();
+    if (d) return format(d, 'MMM d, yyyy');
+    const d2 = ts instanceof Date ? ts : new Date(ts);
+    return Number.isNaN(d2.getTime()) ? 'N/A' : format(d2, 'MMM d, yyyy');
   };
+
+  const renderInterviewCell = (applicant: Applicant) => (
+    <InterviewCell
+      userId={applicant.uid}
+      scoreSummary={applicant.scoreSummary}
+      formatDate={formatInterviewDate}
+    />
+  );
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
@@ -1320,9 +1333,13 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     `${applicant.uid || 'unknown'}_${applicant.applicationData?.jobId || jobOrderId || 'unknown'}`
                   }
                   hover
-                  sx={{ '&:last-child td, &:last-child th': { border: 0 } }}
+                  onClick={() => handleViewApplicant(applicant.uid)}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:last-child td, &:last-child th': { border: 0 },
+                  }}
                 >
-                  <TableCell padding="checkbox" sx={{ width: 48 }}>
+                  <TableCell padding="checkbox" sx={{ width: 48 }} onClick={(e) => e.stopPropagation()}>
                     <Checkbox
                       checked={selectedApplicantIds.has(applicant.uid)}
                       onChange={() => handleSelectOne(applicant.uid)}
@@ -1331,7 +1348,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       aria-label={`Select ${applicant.displayName}`}
                     />
                   </TableCell>
-                  <TableCell sx={{ py: 1 }}>
+                  <TableCell sx={{ py: 1 }} onClick={(e) => e.stopPropagation()}>
                     <FavoriteButton
                       itemId={applicant.uid}
                       favoriteType="users"
@@ -1555,7 +1572,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </TableCell>
                     </>
                   ) : null}
-                  <TableCell>{renderInterviewCell(applicant)}</TableCell>
+                  <TableCell>
+                    {renderInterviewCell(applicant)}
+                  </TableCell>
                   <TableCell>
                     {applicant.compliancePercent != null ? (
                       <Tooltip title={applicant.complianceStatus === 'expiring_soon' ? 'Expiring soon' : applicant.complianceStatus === 'non_compliant' ? 'Expired or non-compliant' : applicant.complianceStatus === 'compliant' ? 'Compliant' : 'Incomplete'}>
@@ -1575,7 +1594,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       <Typography variant="caption" color="text.secondary">—</Typography>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     {(() => {
                       const placementStatus = assignmentStatusByUserId.get(applicant.uid);
                       const isConfirmed = placementStatus && ['confirmed', 'active'].includes(placementStatus);
@@ -1618,7 +1637,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </MenuItem>
                     </Menu>
                   </TableCell>
-                  <TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
                     <Chip 
                       label={applicant.applicationData?.candidate ? '⭐ Candidate' : 'Applicant'}
                       size="small"
@@ -1648,7 +1667,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       </MenuItem>
                     </Menu>
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <IconButton
                       size="small"
                       onClick={(e) => handleOpenActionMenu(e, applicant.uid)}
@@ -1660,16 +1679,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       open={Boolean(actionMenuAnchor[applicant.uid])}
                       onClose={() => handleCloseActionMenu(applicant.uid)}
                     >
-                      <MenuItem onClick={() => { handleViewApplicant(applicant.uid); handleCloseActionMenu(applicant.uid); }}>
-                        <PersonIcon fontSize="small" sx={{ mr: 1 }} />
-                        View Profile
-                      </MenuItem>
-                      {!applicant.applicationData?.candidateStatus && (
-                        <MenuItem onClick={() => handleMarkAsCandidate(applicant)}>
-                          <CheckCircleIcon fontSize="small" sx={{ mr: 1 }} />
-                          Mark as Candidate
-                        </MenuItem>
-                      )}
                       <MenuItem onClick={() => handleOpenSwitchJobDialog(applicant)}>
                         <WorkIcon fontSize="small" sx={{ mr: 1 }} />
                         Switch to Different Job
@@ -2641,83 +2650,28 @@ const RecruiterJobOrderDetail: React.FC = () => {
       setLoading(false);
       return;
     }
-    
     setLoading(true);
     try {
-      // First try the current tenant-scoped path
       const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
-      
       const jobOrderSnap = await getDoc(jobOrderRef);
-      
       if (jobOrderSnap.exists()) {
         const data = jobOrderSnap.data() as JobOrder;
         setJobOrder({ ...data, id: jobOrderSnap.id });
-        
-        // Load company data if companyId exists in deal data
         const flatCompanyId = (data as any).companyId || data.deal?.companyId;
-        if (flatCompanyId) {
-          await loadCompanyData(flatCompanyId);
-        }
-        
-        // Load connected job board posts
+        if (flatCompanyId) await loadCompanyData(flatCompanyId);
         await loadConnectedJobPosts(jobOrderId);
       } else {
-        // Try the top-level collection as fallback
-        const topLevelJobOrderRef = doc(db, 'jobOrders', jobOrderId);
-        const topLevelJobOrderSnap = await getDoc(topLevelJobOrderRef);
-        
-        if (topLevelJobOrderSnap.exists()) {
-          const data = topLevelJobOrderSnap.data() as JobOrder;
-          setJobOrder({ ...data, id: topLevelJobOrderSnap.id });
-          
-          // Load company data if companyId exists in deal data
-          const flatCompanyIdTop = (data as any).companyId || data.deal?.companyId;
-          if (flatCompanyIdTop) {
-            await loadCompanyData(flatCompanyIdTop);
-          }
-          
-          // Load connected job board posts
+        const topLevelRef = doc(db, 'jobOrders', jobOrderId);
+        const topSnap = await getDoc(topLevelRef);
+        if (topSnap.exists()) {
+          const data = topSnap.data() as JobOrder;
+          setJobOrder({ ...data, id: topSnap.id });
+          const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+          if (flatCompanyId) await loadCompanyData(flatCompanyId);
           await loadConnectedJobPosts(jobOrderId);
-          setLoading(false);
-          return; // Exit early since we found the job order
+        } else {
+          setJobOrder(null);
         }
-        // Job order not found - let's see what job orders actually exist
-        
-        try {
-          const { collection, getDocs } = await import('firebase/firestore');
-          
-          // Check the current path
-          const jobOrdersRef = collection(db, p.jobOrders(tenantId));
-          const jobOrdersSnapshot = await getDocs(jobOrdersRef);
-          
-          // Check legacy path
-          const legacyJobOrdersRef = collection(db, `tenants/${tenantId}/recruiter_jobOrders`);
-          const legacyJobOrdersSnapshot = await getDocs(legacyJobOrdersRef);
-          
-          // Check top-level jobOrders collection (legacy)
-          const topLevelJobOrdersRef = collection(db, 'jobOrders');
-          const topLevelJobOrdersSnapshot = await getDocs(topLevelJobOrdersRef);
-          
-          // Check if the specific job order exists in top-level path
-          const foundJobOrder = topLevelJobOrdersSnapshot.docs.find(doc => doc.id === jobOrderId);
-          if (foundJobOrder) {
-            // Load the job order from the top-level collection
-            const data = foundJobOrder.data() as JobOrder;
-            setJobOrder({ ...data, id: foundJobOrder.id });
-            
-            // Load company data if companyId exists in deal data
-            const flatCompanyIdLegacy = (data as any).companyId || data.deal?.companyId;
-            if (flatCompanyIdLegacy) {
-              await loadCompanyData(flatCompanyIdLegacy);
-            }
-            setLoading(false);
-            return; // Exit early since we found the job order
-          }
-        } catch (error) {
-          console.error('Error listing job orders:', error);
-        }
-        
-        setJobOrder(null);
       }
     } catch (error) {
       console.error('Error fetching job order:', error);
@@ -2727,14 +2681,57 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   }, [jobOrderId, tenantId, loadCompanyData, loadConnectedJobPosts]);
 
-  // Load job order
+  // Subscribe to job order with onSnapshot so Staff Instructions inputs update in real time; save on blur
+  const jobOrderInitialLoadDone = useRef(false);
   useEffect(() => {
-    if (jobOrderId && tenantId) {
-      fetchJobOrder();
-    } else {
+    if (!jobOrderId || !tenantId) {
       setLoading(false);
+      return;
     }
-  }, [jobOrderId, tenantId, fetchJobOrder]);
+    jobOrderInitialLoadDone.current = false;
+    setLoading(true);
+    const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+    const unsubscribe = onSnapshot(
+      jobOrderRef,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as JobOrder;
+          setJobOrder({ ...data, id: snap.id });
+          if (!jobOrderInitialLoadDone.current) {
+            jobOrderInitialLoadDone.current = true;
+            const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+            if (flatCompanyId) loadCompanyData(flatCompanyId);
+            loadConnectedJobPosts(jobOrderId);
+          }
+        } else {
+          // Fallback: try legacy top-level jobOrders path (no real-time for legacy)
+          getDoc(doc(db, 'jobOrders', jobOrderId)).then((legacySnap) => {
+            if (legacySnap.exists()) {
+              const data = legacySnap.data() as JobOrder;
+              setJobOrder({ ...data, id: legacySnap.id });
+              if (!jobOrderInitialLoadDone.current) {
+                jobOrderInitialLoadDone.current = true;
+                const flatCompanyId = (data as any).companyId || data.deal?.companyId;
+                if (flatCompanyId) loadCompanyData(flatCompanyId);
+                loadConnectedJobPosts(jobOrderId);
+              }
+            } else {
+              setJobOrder(null);
+            }
+            setLoading(false);
+          });
+          return;
+        }
+        setLoading(false);
+      },
+      (err) => {
+        console.error('Job order onSnapshot error:', err);
+        setJobOrder(null);
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [jobOrderId, tenantId, loadCompanyData, loadConnectedJobPosts]);
 
   // Load shifts for this job order
   useEffect(() => {

@@ -110,9 +110,9 @@ export function useMyTasks(options: UseMyTasksOptions = {}): UseMyTasksResult {
       const applyInMemoryFilters = (incoming: UnifiedTask[]): UnifiedTask[] => {
         let allTasks = incoming;
 
-        // Filter out completed tasks if not included
+        // Filter out completed and dismissed tasks if not included
         if (!includeCompleted) {
-          allTasks = allTasks.filter((t) => t.status !== 'completed');
+          allTasks = allTasks.filter((t) => t.status !== 'completed' && t.status !== 'dismissed');
         }
 
         // Snooze handling

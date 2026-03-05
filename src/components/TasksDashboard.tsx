@@ -273,7 +273,7 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
           const completedTasks = baseTasks.filter(task => task.status === 'completed');
           
           // Show all tasks in the main list, not just those due today
-          const allTasks = baseTasks.filter(task => task.status !== 'completed');
+          const allTasks = baseTasks.filter(task => task.status !== 'completed' && task.status !== 'dismissed');
           
           // Add overdue tasks to today's tasks
           const overdueTasks = baseTasks.filter(task => task.status === 'overdue');
@@ -374,13 +374,13 @@ const TasksDashboard: React.FC<TasksDashboardProps> = ({
             today: {
               totalTasks: todayTasksWithOverdue.length,
               completedTasks: todayTasksWithOverdue.filter(t => t.status === 'completed').length,
-              pendingTasks: todayTasksWithOverdue.filter(t => t.status !== 'completed').length,
+              pendingTasks: todayTasksWithOverdue.filter(t => t.status !== 'completed' && t.status !== 'dismissed').length,
               tasks: todayTasksWithOverdue
             },
             thisWeek: {
               totalTasks: thisWeekTasks.length,
               completedTasks: thisWeekTasks.filter(t => t.status === 'completed').length,
-              pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed').length,
+              pendingTasks: thisWeekTasks.filter(t => t.status !== 'completed' && t.status !== 'dismissed').length,
               quotaProgress: {
                 percentage: thisWeekTasks.length > 0 ? (thisWeekTasks.filter(t => t.status === 'completed').length / thisWeekTasks.length) * 100 : 0,
                 completed: thisWeekTasks.filter(t => t.status === 'completed').length,

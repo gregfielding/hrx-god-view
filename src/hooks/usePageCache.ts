@@ -5,7 +5,8 @@ export interface PageCacheState {
   filter?: string;
   locationStateFilter?: string;
   showFavoritesOnly?: boolean;
-  companyFilter?: 'all' | 'my';
+  /** Companies page: 'all' | 'my'. Job orders page: 'all' | company name string. */
+  companyFilter?: string;
   contactFilter?: 'all' | 'my';
   sortBy?: string;
   sortDirection?: 'asc' | 'desc';

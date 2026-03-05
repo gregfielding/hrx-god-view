@@ -123,10 +123,10 @@ const EnhancedTasksLayout: React.FC<EnhancedTasksLayoutProps> = ({
   });
 
   const allTodoTasks = tasks.filter(task => task.classification === 'todo');
-  const appointmentTasks = tasks.filter(task => task.classification === 'appointment' && task.status !== 'completed');
+  const appointmentTasks = tasks.filter(task => task.classification === 'appointment' && task.status !== 'completed' && task.status !== 'dismissed');
   
   const openTasks = allTodoTasks
-    .filter(task => task.status !== 'completed')
+    .filter(task => task.status !== 'completed' && task.status !== 'dismissed')
     .sort((a, b) => {
       const dateA = (a.classification === 'todo' ? a.dueDate : a.scheduledDate) ? new Date((a.classification === 'todo' ? a.dueDate : a.scheduledDate) + 'T00:00:00').getTime() : 0;
       const dateB = (b.classification === 'todo' ? b.dueDate : b.scheduledDate) ? new Date((b.classification === 'todo' ? b.dueDate : b.scheduledDate) + 'T00:00:00').getTime() : 0;

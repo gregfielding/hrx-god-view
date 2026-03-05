@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   Box,
   Typography,
@@ -281,6 +281,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
   const [initialDataLoaded, setInitialDataLoaded] = useState(false);
   const companiesLoadSeq = useRef(0);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const dealsTabRef = useRef<{ exportCsv: () => void } | null>(null);
   const [lockHeight, setLockHeight] = useState<number | null>(null);
 
 
@@ -1786,6 +1787,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         companyName: contactForm.companyName || null,
         associations,
         tenantId,
+        pipelineStage: 'contact',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         salesOwnerId: currentUser?.uid || null,
@@ -2043,7 +2045,7 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
         }
         rightActions={
           standaloneTab === 'contacts' ? undefined : (
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }} data-testid="crm-header-actions">
               {(tabValue === 1 || tabValue === 3) && (
                 <InboxSearchBar
                   value={search}
@@ -2052,35 +2054,51 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                   placeholder={tabValue === 3 ? "Search archived opportunities..." : "Search opportunities..."}
                 />
               )}
-
+              <Button
+                variant="contained"
+                size="small"
+                startIcon={<FileDownloadIcon />}
+                onClick={() => dealsTabRef.current?.exportCsv()}
+                disabled={tabValue !== 1 && tabValue !== 3}
+                data-testid="crm-opportunities-export-btn"
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '6px',
+                  height: '40px',
+                  fontWeight: 500,
+                  fontSize: '14px',
+                  bgcolor: '#2E7D32',
+                  '&:hover': { bgcolor: '#1B5E20' },
+                }}
+              >
+                Export CSV
+              </Button>
               {tabValue === 1 && (
-                <>
-                  <Button
-                    variant="contained"
-                    startIcon={<AddIcon />}
-                    onClick={() => {
-                      setOpportunityDialogOpen(true);
-                    }}
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '24px',
-                      px: 2.5,
-                      py: 1,
-                      height: '40px',
-                      fontWeight: 500,
-                      fontSize: '14px',
-                      bgcolor: '#0057B8',
-                      boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                      '&:hover': {
-                        bgcolor: '#004a9f',
-                        boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                      },
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Add Opportunity
-                  </Button>
-                </>
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    setOpportunityDialogOpen(true);
+                  }}
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '24px',
+                    px: 2.5,
+                    py: 1,
+                    height: '40px',
+                    fontWeight: 500,
+                    fontSize: '14px',
+                    bgcolor: '#0057B8',
+                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
+                    '&:hover': {
+                      bgcolor: '#004a9f',
+                      boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
+                    },
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Add Opportunity
+                </Button>
               )}
             </Box>
           )
@@ -2136,7 +2154,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       
       {tabValue === 1 && (
         <Box data-testid="deals-panel">
-          <DealsTab 
+          <DealsTab
+            ref={dealsTabRef}
             deals={deals}
             allDeals={allDeals}
             companies={companies}
@@ -2175,7 +2194,8 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
       
       {tabValue === 3 && (
         <Box data-testid="archive-panel">
-          <DealsTab 
+          <DealsTab
+            ref={dealsTabRef}
             deals={deals}
             allDeals={allDeals}
             companies={companies}
@@ -4635,7 +4655,7 @@ const CompaniesTab: React.FC<{
   );
 };
 // Deals Tab Component
-  const DealsTab: React.FC<{
+  const DealsTab = forwardRef<{ exportCsv: () => void }, {
   deals: any[];
   allDeals: any[];
     companies: any[];
@@ -4655,7 +4675,7 @@ const CompaniesTab: React.FC<{
   onOpportunityDialogOpenChange: (next: boolean) => void;
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
   showArchived?: boolean;
-  }> = ({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false }) => {
+  }>(function DealsTab({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false }, ref) {
   const navigate = useNavigate();
   const [showDealDialog, setShowDealDialog] = useState(false);
   const [editingDeal, setEditingDeal] = useState<any>(null);
@@ -4767,6 +4787,37 @@ const CompaniesTab: React.FC<{
       getSalespersonKey(sp)
     );
   };
+
+  const handleExportOpportunitiesCsv = useCallback(() => {
+    const escape = (s: string) => '"' + String(s ?? '').replace(/"/g, '""') + '"';
+    const headers = ['Deal Name', 'Company', 'Stage', 'Value', 'Age', 'Status', 'Health', 'Close Date', 'Owner'];
+    const rows = filteredDeals.map((deal) => {
+      const age = getDealAge(deal?.createdAt);
+      const status = getDealStatus(deal);
+      const health = getDealHealth(deal);
+      return [
+        escape(deal.name ?? ''),
+        escape(getDealCompanyName(deal) ?? ''),
+        escape(deal.stage ?? ''),
+        escape(getDealEstimatedValue(deal) ?? ''),
+        escape(age ? `${age.days}d` : '-'),
+        escape(status?.label ?? ''),
+        escape((health as any)?.display?.label ?? (health as any)?.bucket ?? ''),
+        escape(getDealCloseDate(deal) ?? ''),
+        escape(getDealOwner(deal) ?? ''),
+      ].join(',');
+    });
+    const csv = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `opportunities-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [filteredDeals, getDealAge, getDealStatus, getDealHealth, getDealCompanyName, getDealEstimatedValue, getDealCloseDate, getDealOwner]);
+
+  useImperativeHandle(ref, () => ({ exportCsv: handleExportOpportunitiesCsv }), [handleExportOpportunitiesCsv]);
 
   // Helper function to get avatar background color - softer pastel palette
   const getAvatarColor = (name: string) => {
@@ -5261,7 +5312,7 @@ const CompaniesTab: React.FC<{
           scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
         }}
       >
-        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content', width: '100%' }}>
           {/* Deal Filter Toggle */}
           <ToggleButtonGroup
             value={dealFilter}
@@ -5336,15 +5387,23 @@ const CompaniesTab: React.FC<{
               })}
             </Select>
           </FormControl>
-          <Button
-            size="small"
-            variant="outlined"
-            startIcon={<FileDownloadIcon />}
-            onClick={handleExportOpportunitiesCsv}
-            sx={{ height: 36, minWidth: 'auto', px: 1.5 }}
-          >
-            Export CSV
-          </Button>
+          <Box sx={{ marginLeft: 'auto', flexShrink: 0 }}>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<FileDownloadIcon />}
+              onClick={handleExportOpportunitiesCsv}
+              disabled={filteredDeals.length === 0}
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                fontSize: '0.875rem',
+                textTransform: 'none',
+              }}
+            >
+              Export CSV
+            </Button>
+          </Box>
         </Box>
       </Box>
       
@@ -5965,7 +6024,7 @@ const CompaniesTab: React.FC<{
       </Dialog>
     </Box>
   );
-};
+});
 
 // Admin helper: run duplicate cleanup via callable
 const DuplicateCleanupButton: React.FC<{ tenantId: string }> = ({ tenantId }) => {

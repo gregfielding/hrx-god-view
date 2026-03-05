@@ -264,12 +264,19 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
         if (email) {
           await sendPasswordResetEmail(auth, email);
           setResetEmailSent(true);
-          setTimeout(() => setResetEmailSent(false), 3000);
+          setTimeout(() => setResetEmailSent(false), 5000);
+        } else {
+          setPrivacyMessage('No email on file for this user. Add an email in the Overview tab to send a password reset.');
+          setShowPrivacyToast(true);
         }
+      } else {
+        setPrivacyMessage('User not found.');
+        setShowPrivacyToast(true);
       }
     } catch (error) {
       console.error('Error sending password reset:', error);
-      alert('Failed to send password reset email');
+      setPrivacyMessage('Failed to send password reset email. Please try again.');
+      setShowPrivacyToast(true);
     }
   };
 
@@ -426,24 +433,23 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
                     label="CRM/Sales Access"
                   />
                 </Grid>
-
-                <Grid item xs={12}>
-                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, mt: 2 }}>
-                    Account Management
-                  </Typography>
-                </Grid>
-
-                <Grid item xs={12}>
-                  <Button
-                    variant="outlined"
-                    onClick={handlePasswordReset}
-                    disabled={resetEmailSent}
-                  >
-                    {resetEmailSent ? 'Password Reset Email Sent' : 'Send Password Reset Email'}
-                  </Button>
-                </Grid>
               </>
             )}
+
+            <Grid item xs={12}>
+              <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1, mt: 2 }}>
+                Account Management
+              </Typography>
+            </Grid>
+            <Grid item xs={12}>
+              <Button
+                variant="outlined"
+                onClick={handlePasswordReset}
+                disabled={resetEmailSent}
+              >
+                {resetEmailSent ? 'Password Reset Email Sent' : 'Send Password Reset Email'}
+              </Button>
+            </Grid>
           </Grid>
 
           {hasSystemAccessChanges && (

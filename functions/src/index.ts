@@ -204,7 +204,7 @@ export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp };
 export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
-export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, resendAssignmentOffer } from './placementsApi';
+export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
 export {
   everifyCreateCase,
   everifyCheckEligibility,
@@ -8209,6 +8209,138 @@ export const revokeInviteV2 = onCall(async (request) => {
     });
     
     throw error;
+  }
+});
+
+/** Normalize US phone to E.164 for Twilio (e.g. 5551234567 -> +15551234567). Returns null if not valid. */
+function normalizePhoneE164(phone: string): string | null {
+  const digits = (phone || '').replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return null;
+}
+
+/**
+ * Send recruiter invite: custom email + optional SMS (same body).
+ * Used by Invite Users page; path/template are resolved on the client.
+ * Uses same SendGrid pattern as inviteUserV2 / spec: process.env.SENDGRID_API_KEY.
+ * Twilio secrets required so SMS is actually sent (otherwise config is not injected).
+ */
+export const sendRecruiterInvite = onCall(
+  { secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN] },
+  async (request) => {
+  try {
+  if (!request.auth) {
+    throw new HttpsError('unauthenticated', 'Please sign in to send invites.');
+  }
+
+  const { email, phone, subject, body, tenantId, firstName, lastName, path, pathLabel } = request.data as {
+    email?: string;
+    phone?: string;
+    subject?: string;
+    body?: string;
+    tenantId?: string;
+    firstName?: string;
+    lastName?: string;
+    path?: string;
+    pathLabel?: string;
+  };
+  const toEmail = typeof email === 'string' ? email.trim() : '';
+  const phoneStr = typeof phone === 'string' ? phone.trim() : '';
+  if (!toEmail && !phoneStr) {
+    throw new HttpsError('invalid-argument', 'Enter an email address and/or phone number.');
+  }
+
+  const subjectStr = typeof subject === 'string' ? subject : 'You\'re invited';
+  const bodyStr = typeof body === 'string' ? body : '';
+  const firstNameStr = typeof firstName === 'string' ? firstName.trim() : '';
+  const lastNameStr = typeof lastName === 'string' ? lastName.trim() : '';
+
+  let fromName = 'HRX Notifications';
+  if (tenantId) {
+    try {
+      const tenantDoc = await db.collection('tenants').doc(tenantId).get();
+      if (tenantDoc.exists) {
+        const data = tenantDoc.data();
+        const branding = await db.collection('tenants').doc(tenantId).collection('branding').doc('settings').get();
+        fromName = (branding.data()?.senderName as string) || (data?.name as string) || fromName;
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  let emailSent = false;
+  let smsSent = false;
+
+  if (toEmail) {
+    if (!SENDGRID_API_KEY || !SENDGRID_API_KEY.startsWith('SG.')) {
+      console.error('sendRecruiterInvite: SendGrid API key not configured');
+      throw new HttpsError('failed-precondition', 'Email sending is not configured. Please contact support.');
+    }
+    try {
+      await sgMail.send({
+        to: toEmail,
+        from: { email: 'no-reply@hrxone.com', name: fromName },
+        subject: subjectStr,
+        text: bodyStr,
+        // Disable link rewriting so recipients see https://hrxone.com/... instead of tracking URLs
+        tracking_settings: {
+          click_tracking: { enable: false },
+        },
+      } as Parameters<typeof sgMail.send>[0]);
+      emailSent = true;
+    } catch (emailErr: any) {
+      console.error('sendRecruiterInvite email failed:', emailErr);
+      throw new HttpsError('internal', emailErr?.message || 'Failed to send email. Please try again.');
+    }
+  }
+
+  let smsError: string | undefined;
+  if (phoneStr && bodyStr) {
+    const e164 = normalizePhoneE164(phoneStr);
+    if (e164) {
+      const smsResult = await sendWorkerMessageInternal(e164, bodyStr, {
+        source: 'recruiter',
+        sourceId: request.auth.uid,
+        tenantId: tenantId || undefined,
+      });
+      smsSent = smsResult.success;
+      if (!smsResult.success && smsResult.error) {
+        smsError = smsResult.error;
+        if (!smsResult.error.includes('opted out') && !smsResult.error.includes('STOP')) {
+          console.warn('sendRecruiterInvite SMS failed (email still sent):', smsResult.error);
+        }
+      }
+    } else {
+      smsError = 'Invalid phone number (need 10 digits)';
+      console.warn('sendRecruiterInvite: phone provided but invalid for SMS:', phoneStr);
+    }
+  }
+
+  // Log to tenant invite_log subcollection for "Past invites" table
+  if (tenantId && tenantId.trim()) {
+    try {
+      await db.collection('tenants').doc(tenantId.trim()).collection('invite_log').add({
+        firstName: firstNameStr,
+        lastName: lastNameStr,
+        email: toEmail || null,
+        phone: phoneStr || null,
+        path: typeof path === 'string' ? path : 'general',
+        pathLabel: typeof pathLabel === 'string' ? pathLabel : null,
+        inviteSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        sentByUid: request.auth.uid,
+      });
+    } catch (logErr: any) {
+      console.warn('sendRecruiterInvite: failed to write invite_log', logErr.message);
+    }
+  }
+
+  return { success: true, emailSent, smsSent, smsError: smsError || undefined };
+  } catch (err: any) {
+    if (err instanceof HttpsError) throw err;
+    console.error('sendRecruiterInvite unexpected error:', err);
+    throw new HttpsError('internal', err?.message || 'Something went wrong. Please try again.');
   }
 });
 

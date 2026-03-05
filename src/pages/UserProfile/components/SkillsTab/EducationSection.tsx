@@ -10,6 +10,7 @@ import {
   Grid,
   MenuItem,
 } from '@mui/material';
+import { toChipLabel } from '../../../../utils/chipLabel';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import DeleteIcon from '@mui/icons-material/Delete';
 
@@ -83,8 +84,8 @@ const EducationSection = ({
         <Accordion key={idx} sx={{ mb: 2 }}>
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
             <Typography>
-              {entry.degree || 'Degree'} @ {entry.school || 'School'}
-              {entry.startDate && ` (${entry.startDate} - ${entry.endDate || 'Present'})`}
+              {toChipLabel(entry.degree) || 'Degree'} @ {toChipLabel(entry.school) || 'School'}
+              {entry.startDate && ` (${toChipLabel(entry.startDate)} - ${toChipLabel(entry.endDate) || 'Present'})`}
             </Typography>
             <IconButton
               onClick={(e) => {

@@ -232,6 +232,7 @@ const DecisionMakersPanel: React.FC<DecisionMakersPanelProps> = ({
         workPhone: extractedPhone, // Also save as workPhone for compatibility
         leadSource: 'AI Generated - Decision Maker',
         status: 'Prospect',
+        pipelineStage: 'prospect',
         role: 'decision_maker', // Set role based on context
         tags: ['AI Generated', 'Decision Maker', `Relevance: ${decisionMaker.relevance}%`],
         notes: `AI Generated Contact from Decision Makers Panel

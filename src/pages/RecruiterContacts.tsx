@@ -132,6 +132,8 @@ interface Contact {
   locationName?: string;
   role: string;
   status: string;
+  /** Pipeline stage: contact, prospect, or lead */
+  pipelineStage?: 'contact' | 'prospect' | 'lead' | null;
   tags: string[];
   createdAt?: any;
   updatedAt?: any;
@@ -149,6 +151,7 @@ const RecruiterContacts: React.FC = () => {
       companyFilter: 'all',
       roleFilter: 'all',
       statusFilter: 'all',
+      pipelineFilter: 'all',
       stateFilter: 'all',
       sortField: 'fullName',
       sortDirection: 'asc',
@@ -199,6 +202,7 @@ const RecruiterContacts: React.FC = () => {
   const [companyFilter, setCompanyFilter] = useState<string>(cacheState.companyFilter || 'all');
   const [roleFilter, setRoleFilter] = useState<string>(cacheState.roleFilter || 'all');
   const [statusFilter, setStatusFilter] = useState<string>(cacheState.statusFilter || 'all');
+  const [pipelineFilter, setPipelineFilter] = useState<string>(cacheState.pipelineFilter || 'all');
   const [stateFilter, setStateFilter] = useState<string>(() => {
     const raw = cacheState.stateFilter || 'all';
     if (raw === 'all') return 'all';
@@ -242,6 +246,7 @@ const RecruiterContacts: React.FC = () => {
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [contactError, setContactError] = useState<string | null>(null);
   const [contactSuccess, setContactSuccess] = useState(false);
+  const firstNameInputRef = useRef<HTMLInputElement | null>(null);
 
   // Restore search from cache when using outlet context (on mount only)
   useEffect(() => {
@@ -276,6 +281,15 @@ const RecruiterContacts: React.FC = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
+
+  // Move focus into dialog as soon as it opens to avoid aria-hidden focus warnings.
+  useEffect(() => {
+    if (!showAddContactDialog) return;
+    const timeoutId = window.setTimeout(() => {
+      firstNameInputRef.current?.focus();
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [showAddContactDialog]);
 
   // Reload contacts when search changes (reset pagination)
   // Note: Other filters (company, role, status, state) are applied client-side
@@ -338,6 +352,7 @@ const RecruiterContacts: React.FC = () => {
       companyFilter: companyFilter as any,
       roleFilter,
       statusFilter,
+      pipelineFilter,
       stateFilter,
       sortField,
       sortDirection,
@@ -346,7 +361,7 @@ const RecruiterContacts: React.FC = () => {
       rowsPerPage,
       showFavoritesOnly: headerShowFavoritesOnly,
     });
-  }, [companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection, headerSearch, page, rowsPerPage, headerShowFavoritesOnly, updateCache]);
+  }, [companyFilter, roleFilter, statusFilter, pipelineFilter, stateFilter, sortField, sortDirection, headerSearch, page, rowsPerPage, headerShowFavoritesOnly, updateCache]);
 
   // Reset UI pagination when filters/search/sort change (but preserve when navigating back)
   // Only reset if this is a new filter/search, not when restoring from cache
@@ -357,7 +372,7 @@ const RecruiterContacts: React.FC = () => {
       return; // Don't reset on initial mount (cache will restore pagination)
     }
     setPage(0);
-  }, [headerSearch, headerShowFavoritesOnly, companyFilter, roleFilter, statusFilter, stateFilter, sortField, sortDirection]);
+  }, [headerSearch, headerShowFavoritesOnly, companyFilter, roleFilter, statusFilter, pipelineFilter, stateFilter, sortField, sortDirection]);
 
   const loadCompanies = async () => {
     if (!tenantId) return;
@@ -730,6 +745,14 @@ const RecruiterContacts: React.FC = () => {
       filtered = filtered.filter(contact => contact.status === statusFilter);
     }
     
+    // Apply pipeline stage filter (Contact / Prospect / Lead)
+    if (pipelineFilter !== 'all') {
+      filtered = filtered.filter(contact => {
+        const stage = contact.pipelineStage ?? 'contact';
+        return stage === pipelineFilter;
+      });
+    }
+    
     // Apply state filter (requires loading company data)
     if (stateFilter !== 'all') {
       const selectedCode = normalizeUsStateCode(stateFilter);
@@ -753,7 +776,7 @@ const RecruiterContacts: React.FC = () => {
     });
     
     return filtered;
-  }, [contacts, effectiveSearch, sortField, sortDirection, companyFilter, roleFilter, statusFilter, stateFilter, headerShowFavoritesOnly, isFavorite, companies, favorites]);
+  }, [contacts, effectiveSearch, sortField, sortDirection, companyFilter, roleFilter, statusFilter, pipelineFilter, stateFilter, headerShowFavoritesOnly, isFavorite, companies, favorites]);
 
   const paginatedContacts = useMemo(() => {
     const start = page * rowsPerPage;
@@ -815,7 +838,20 @@ const RecruiterContacts: React.FC = () => {
   };
 
   const handleAddNew = () => {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) {
+      active.blur();
+    }
     setShowAddContactDialog(true);
+  };
+
+  const handleCloseAddContactDialog = () => {
+    if (savingContact) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) {
+      active.blur();
+    }
+    setShowAddContactDialog(false);
   };
 
   const handleContactFormChange = (field: string, value: any) => {
@@ -875,6 +911,7 @@ const RecruiterContacts: React.FC = () => {
         companyId: contactForm.companyId || '',
         locationId: contactForm.locationId || '',
         locationName: selectedLocation ? (selectedLocation.nickname || selectedLocation.name || '') : '',
+        pipelineStage: 'contact',
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -1030,12 +1067,18 @@ const RecruiterContacts: React.FC = () => {
             size="small"
             options={companies}
             getOptionLabel={(option) => option.companyName || option.name || 'Unnamed Company'}
+            isOptionEqualToValue={(option, value) => option?.id === value?.id}
             value={companyFilter === 'all' ? null : companies.find(c => c.id === companyFilter) || null}
             onChange={(_, newValue) => {
               const newFilter = newValue?.id || 'all';
               setCompanyFilter(newFilter);
               updateCache({ companyFilter: newFilter });
             }}
+            renderOption={(props, option) => (
+              <li {...props} key={option.id}>
+                {option.companyName || option.name || 'Unnamed Company'}
+              </li>
+            )}
             sx={{ 
               minWidth: 200,
               height: 36,
@@ -1113,6 +1156,37 @@ const RecruiterContacts: React.FC = () => {
               <MenuItem value="all">All Status</MenuItem>
               <MenuItem value="active">Active</MenuItem>
               <MenuItem value="inactive">Inactive</MenuItem>
+            </Select>
+          </FormControl>
+
+          {/* Pipeline Filter (Contact / Prospect / Lead) */}
+          <FormControl size="small" sx={{ minWidth: 140, height: 36 }}>
+            <InputLabel sx={{ fontSize: '0.875rem' }}>Pipeline</InputLabel>
+            <Select
+              value={pipelineFilter}
+              onChange={(e) => {
+                const newFilter = String(e.target.value);
+                setPipelineFilter(newFilter);
+                updateCache({ pipelineFilter: newFilter });
+              }}
+              label="Pipeline"
+              sx={{
+                height: 36,
+                borderRadius: '6px',
+                backgroundColor: 'white',
+                fontSize: '0.875rem',
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#E5E7EB',
+                },
+                '&:hover .MuiOutlinedInput-notchedOutline': {
+                  borderColor: '#D1D5DB',
+                },
+              }}
+            >
+              <MenuItem value="all">All Pipeline</MenuItem>
+              <MenuItem value="contact">Contact</MenuItem>
+              <MenuItem value="prospect">Prospect</MenuItem>
+              <MenuItem value="lead">Lead</MenuItem>
             </Select>
           </FormControl>
 
@@ -1255,11 +1329,11 @@ const RecruiterContacts: React.FC = () => {
       </Box>
 
       {/* Add Contact Dialog */}
-      <Dialog open={showAddContactDialog} onClose={() => !savingContact && setShowAddContactDialog(false)} maxWidth="md" fullWidth>
+      <Dialog open={showAddContactDialog} onClose={handleCloseAddContactDialog} maxWidth="md" fullWidth>
         <DialogTitle>
           <Box display="flex" alignItems="center" justifyContent="space-between">
             <Typography variant="h6">Add New Contact</Typography>
-            <IconButton onClick={() => !savingContact && setShowAddContactDialog(false)} disabled={savingContact}>
+            <IconButton onClick={handleCloseAddContactDialog} disabled={savingContact}>
               <CloseIcon />
             </IconButton>
           </Box>
@@ -1276,6 +1350,7 @@ const RecruiterContacts: React.FC = () => {
                 <TextField
                   fullWidth
                   label="First Name"
+                  inputRef={firstNameInputRef}
                   value={contactForm.firstName}
                   onChange={(e) => handleContactFormChange('firstName', e.target.value)}
                   required
@@ -1353,6 +1428,7 @@ const RecruiterContacts: React.FC = () => {
                   size="small"
                   options={companies}
                   getOptionLabel={(option) => option.companyName || option.name || 'Unnamed Company'}
+                  isOptionEqualToValue={(option, value) => option?.id === value?.id}
                   value={contactForm.companyId ? companies.find(c => c.id === contactForm.companyId) || null : null}
                   onChange={(_, newValue) => {
                     handleContactFormChange('companyId', newValue?.id || '');
@@ -1360,6 +1436,11 @@ const RecruiterContacts: React.FC = () => {
                     handleContactFormChange('locationId', '');
                   }}
                   disabled={savingContact}
+                  renderOption={(props, option) => (
+                    <li {...props} key={option.id}>
+                      {option.companyName || option.name || 'Unnamed Company'}
+                    </li>
+                  )}
                   renderInput={(params) => (
                     <TextField
                       {...params}
@@ -1447,7 +1528,7 @@ const RecruiterContacts: React.FC = () => {
           </Box>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setShowAddContactDialog(false)} disabled={savingContact}>
+          <Button onClick={handleCloseAddContactDialog} disabled={savingContact}>
             Cancel
           </Button>
           <Button onClick={handleSaveContact} variant="contained" disabled={savingContact}>

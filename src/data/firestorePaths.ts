@@ -44,6 +44,13 @@ export const p = {
   accountDeals: (tid: string, accId: string) => `tenants/${tid}/crm_companies/${accId}/crm_deals`,
 
   /**
+   * Recruiter Accounts (tenant subcollection: customers hub – companies, contacts, job orders, etc.)
+   * Active/Inactive; bridge between opportunity, contact, company, job order.
+   */
+  recruiterAccounts: (tid: string) => `tenants/${tid}/accounts`,
+  recruiterAccount: (tid: string, id: string) => `tenants/${tid}/accounts/${id}`,
+
+  /**
    * Job Orders (authoritative tenant-level collection)
    */
   jobOrders: (tid: string) => `tenants/${tid}/job_orders`,
@@ -158,6 +165,12 @@ export const p = {
    */
   userGroups: (tid: string) => `tenants/${tid}/userGroups`,
   userGroup: (tid: string, id: string) => `tenants/${tid}/userGroups/${id}`,
+
+  /**
+   * Recruiter invite log (sent invites from Invite Users page)
+   */
+  inviteLog: (tid: string) => `tenants/${tid}/invite_log`,
+  inviteLogEntry: (tid: string, id: string) => `tenants/${tid}/invite_log/${id}`,
 
   /**
    * Tasks (todos, appointments)

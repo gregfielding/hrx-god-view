@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "module": "commonjs",
+    "moduleResolution": "node",
     "noImplicitReturns": false,
     "noUnusedLocals": false,
     "outDir": "lib",
@@ -8,14 +9,10 @@
     "sourceMap": true,
     "strict": false,
     "target": "es2017",
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "skipLibCheck": true
   },
   "compileOnSave": true,
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "src/**/*.test.ts",
-    "src/**/__tests__/**/*"
-  ]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts", "src/**/__tests__/**/*"]
 }

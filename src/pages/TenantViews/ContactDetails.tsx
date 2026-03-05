@@ -104,7 +104,10 @@ import { Stack } from '@mui/material';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { ContactHeaderMarketing, type CrmContactIndustrySegment } from '../../components/crm/contacts/ContactHeaderMarketing';
+import { PipelineStageContainer } from '../../components/crm/contacts/PipelineStageContainer';
+import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage } from '../../types/CRM';
 import { formatPhoneNumber } from '../../utils/formatPhone';
+import { toChipLabel } from '../../utils/chipLabel';
 
 interface ContactData {
   id: string;
@@ -141,6 +144,12 @@ interface ContactData {
   lastContactedMode?: string;
   leadSource?: string;
   leadStatus?: string;
+  /** Pipeline stage: Contact, Prospect, or Lead */
+  pipelineStage?: PipelineStage | null;
+  prospectFollowPlan?: string;
+  leadTiming?: string;
+  leadVolume?: string;
+  leadNotes?: string;
   salesOwnerId?: string;
   salesOwnerName?: string;
   salesOwnerRef?: string;
@@ -992,9 +1001,14 @@ const ContactDetails: React.FC = () => {
     try {
       setLoadingJobOrders(true);
       const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
-      
-      // Query job orders where contact ID matches any of the role fields
-      // Firestore doesn't support OR queries with multiple fields, so we query each field separately
+
+      const getAssocId = (entry: any): string | null => {
+        if (!entry) return null;
+        if (typeof entry === 'string') return entry;
+        if (typeof entry === 'object' && typeof entry.id === 'string') return entry.id;
+        return null;
+      };
+
       const contactRoleFields = [
         'hrContactId',
         'decisionMaker',
@@ -1002,33 +1016,133 @@ const ContactDetails: React.FC = () => {
         'procurementContactId',
         'billingContactId',
         'safetyContactId',
-        'invoiceContactId'
+        'invoiceContactId',
       ];
-      
-      const queries = contactRoleFields.map(field => 
-        query(jobOrdersRef, where(field, '==', contactId))
-      );
-      
-      // Execute all queries in parallel
-      const queryResults = await Promise.all(
-        queries.map(q => getDocs(q).catch(err => {
-          console.warn(`Query failed for ${q}:`, err);
-          return { docs: [] };
-        }))
-      );
-      
-      // Combine and deduplicate results
+
+      const baseQueries = [
+        ...contactRoleFields.map((field) => query(jobOrdersRef, where(field, '==', contactId))),
+        query(jobOrdersRef, where('contactIds', 'array-contains', contactId)),
+        query(jobOrdersRef, where('associations.contacts', 'array-contains', contactId)),
+        query(jobOrdersRef, where('deal.contactIds', 'array-contains', contactId)),
+      ];
+
+      const runSafe = async (q: any) =>
+        getDocs(q).catch((err) => {
+          console.warn('Job orders contact query failed:', err);
+          return { docs: [] as any[] };
+        });
+
+      const baseSnapshots = await Promise.all(baseQueries.map(runSafe));
       const allJobOrders = new Map<string, any>();
-      
-      queryResults.forEach(snapshot => {
-        snapshot.docs.forEach(doc => {
-          const jobOrderData = { id: doc.id, ...doc.data() };
-          allJobOrders.set(doc.id, jobOrderData);
+
+      baseSnapshots.forEach((snapshot: any) => {
+        snapshot.docs.forEach((snap: any) => {
+          allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
         });
       });
-      
-      const uniqueJobOrders = Array.from(allJobOrders.values());
-      setJobOrders(uniqueJobOrders);
+
+      // Also include job orders linked to any deal associated with this contact.
+      const associatedDealIds = new Set<string>();
+      const associatedCompanyIds = new Set<string>();
+      try {
+        const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
+        if (contactDoc.exists()) {
+          const contactData = contactDoc.data() as any;
+          const legacyCompanyId = contactData?.companyId;
+          if (legacyCompanyId && typeof legacyCompanyId === 'string') {
+            associatedCompanyIds.add(legacyCompanyId);
+          }
+          const assocCompanies = contactData?.associations?.companies;
+          if (Array.isArray(assocCompanies)) {
+            assocCompanies.forEach((c: any) => {
+              const id = getAssocId(c);
+              if (id) associatedCompanyIds.add(id);
+            });
+          }
+          const rawDeals = contactData?.associations?.deals;
+          if (Array.isArray(rawDeals)) {
+            rawDeals.forEach((d: any) => {
+              const id = getAssocId(d);
+              if (id) associatedDealIds.add(id);
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load contact deal associations for job orders:', err);
+      }
+
+      // Fallback deals query for older mappings.
+      try {
+        const dealsSnap = await getDocs(
+          query(collection(db, 'tenants', tenantId, 'crm_deals'), where('contactIds', 'array-contains', contactId))
+        );
+        dealsSnap.docs.forEach((d) => associatedDealIds.add(d.id));
+      } catch (err) {
+        console.warn('Fallback deal query failed while loading contact job orders:', err);
+      }
+
+      // Also discover deals through company association + associations.contacts object array.
+      const companyIds = Array.from(associatedCompanyIds);
+      if (companyIds.length > 0) {
+        for (let i = 0; i < companyIds.length; i += 10) {
+          const chunk = companyIds.slice(i, i + 10);
+          try {
+            const companyDealsSnap = await getDocs(
+              query(collection(db, 'tenants', tenantId, 'crm_deals'), where('companyId', 'in', chunk))
+            );
+            companyDealsSnap.docs.forEach((d) => {
+              const data = d.data() as any;
+              const direct = Array.isArray(data?.contactIds) && data.contactIds.includes(contactId);
+              const assoc =
+                Array.isArray(data?.associations?.contacts) &&
+                data.associations.contacts.some((c: any) => getAssocId(c) === contactId);
+              if (direct || assoc) associatedDealIds.add(d.id);
+            });
+          } catch (err) {
+            console.warn('Company-scoped deal lookup failed for contact job orders:', err);
+          }
+        }
+      }
+
+      const dealIds = Array.from(associatedDealIds);
+      if (dealIds.length > 0) {
+        for (let i = 0; i < dealIds.length; i += 10) {
+          const chunk = dealIds.slice(i, i + 10);
+          const byDealId = await runSafe(query(jobOrdersRef, where('dealId', 'in', chunk)));
+          byDealId.docs.forEach((snap: any) => {
+            allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+          });
+        }
+      }
+
+      // Fallback: company-scoped job orders (some records only embed contact under deal.associations.contacts).
+      if (companyIds.length > 0) {
+        for (let i = 0; i < companyIds.length; i += 10) {
+          const chunk = companyIds.slice(i, i + 10);
+          const byCompany = await runSafe(query(jobOrdersRef, where('companyId', 'in', chunk)));
+          byCompany.docs.forEach((snap: any) => {
+            allJobOrders.set(snap.id, { id: snap.id, ...snap.data() });
+          });
+        }
+      }
+
+      // Final client-side guard to support mixed historical schemas.
+      const filtered = Array.from(allJobOrders.values()).filter((jobOrder: any) => {
+        const directRoleMatch = contactRoleFields.some((field) => jobOrder?.[field] === contactId);
+        if (directRoleMatch) return true;
+        if (Array.isArray(jobOrder?.contactIds) && jobOrder.contactIds.includes(contactId)) return true;
+        if (Array.isArray(jobOrder?.associations?.contacts)) {
+          if (jobOrder.associations.contacts.some((c: any) => getAssocId(c) === contactId)) return true;
+        }
+        if (Array.isArray(jobOrder?.deal?.contactIds) && jobOrder.deal.contactIds.includes(contactId)) return true;
+        if (Array.isArray(jobOrder?.deal?.associations?.contacts)) {
+          if (jobOrder.deal.associations.contacts.some((c: any) => getAssocId(c) === contactId)) return true;
+        }
+        if (jobOrder?.dealId && associatedDealIds.has(jobOrder.dealId)) return true;
+        return false;
+      });
+
+      setJobOrders(filtered);
     } catch (err) {
       console.error('Error loading job orders for contact:', err);
       setJobOrders([]);
@@ -1214,6 +1328,36 @@ const ContactDetails: React.FC = () => {
       console.error('Error updating contact:', err);
       setError('Failed to update contact. Please try again.');
     }
+  };
+
+  const handlePipelineUpdate = async (updates: Record<string, unknown>) => {
+    if (!contactId || !tenantId || !contact || !user?.uid) return;
+    try {
+      const cleanUpdates = removeUndefinedValues(updates) as Record<string, unknown>;
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+        ...cleanUpdates,
+        updatedAt: new Date(),
+      });
+      setContact((prev) => (prev ? { ...prev, ...cleanUpdates } : null));
+      setAiSuccess('Pipeline updated');
+      setTimeout(() => setAiSuccess(null), 3000);
+    } catch (err) {
+      console.error('Error updating pipeline:', err);
+      setError('Failed to update pipeline.');
+    }
+  };
+
+  const handleCreateOpportunity = () => {
+    if (!tenantId || !contact) return;
+    const params = new URLSearchParams({
+      contactId: contact.id ?? '',
+      contactName: (contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim()) ?? '',
+      companyName: contact.companyName ?? '',
+      companyId: contact.companyId ?? '',
+      locationId: contact.locationId ?? '',
+      worksiteName: (contact as any).worksiteName ?? '',
+    });
+    navigate(`/crm?tab=1&new=1&${params.toString()}`);
   };
 
   // Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
@@ -1844,6 +1988,25 @@ const ContactDetails: React.FC = () => {
                       }}
                     />
                   )}
+                  <FormControl size="small" sx={{ minWidth: 140 }}>
+                    <InputLabel>Pipeline</InputLabel>
+                    <Select
+                      value={(contact.pipelineStage ?? 'contact') as PipelineStage}
+                      label="Pipeline"
+                      onChange={(e) => handlePipelineUpdate({ pipelineStage: e.target.value as PipelineStage })}
+                      sx={{
+                        height: 32,
+                        borderRadius: 1,
+                        fontSize: '0.875rem',
+                      }}
+                    >
+                      {PIPELINE_STAGES.map((s) => (
+                        <MenuItem key={s} value={s}>
+                          {PIPELINE_STAGE_LABELS[s]}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
                   <FavoriteButton
                     itemId={contact.id}
                     favoriteType="contacts"
@@ -2446,6 +2609,25 @@ const ContactDetails: React.FC = () => {
           {/* Left Column - Contact Details & Core Info */}
           <Grid item xs={12} md={8}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              {/* Pipeline Stage: Prospect/Lead notes and actions */}
+              <PipelineStageContainer
+                contact={{
+                  id: contact.id,
+                  contactName: contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
+                  fullName: contact.fullName,
+                  companyName: contact.companyName,
+                  companyId: contact.companyId,
+                  locationId: contact.locationId,
+                  pipelineStage: contact.pipelineStage ?? 'contact',
+                  prospectFollowPlan: contact.prospectFollowPlan,
+                  leadTiming: contact.leadTiming,
+                  leadVolume: contact.leadVolume,
+                  leadNotes: contact.leadNotes,
+                }}
+                onUpdate={handlePipelineUpdate}
+                onCreateOpportunity={handleCreateOpportunity}
+              />
+
               {/* AI Summary */}
               {/* <Card>
                 <CardHeader 
@@ -2555,10 +2737,10 @@ const ContactDetails: React.FC = () => {
                             {contact.apolloEnrichment.person.employment_history.slice(0, 2).map((job: any, index: number) => (
                               <Box key={index} sx={{ p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
                                 <Typography variant="body2" fontWeight="medium">
-                                  {job.title} at {job.organization_name}
+                                  {toChipLabel(job.title)} at {toChipLabel(job.organization_name)}
                                 </Typography>
                                 <Typography variant="caption" color="text.secondary">
-                                  {job.start_date} - {job.current ? 'Present' : job.end_date || 'Unknown'}
+                                  {toChipLabel(job.start_date)} - {job.current ? 'Present' : toChipLabel(job.end_date) || 'Unknown'}
                                 </Typography>
                               </Box>
                             ))}

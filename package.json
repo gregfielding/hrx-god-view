@@ -52,6 +52,7 @@
   },
   "scripts": {
     "start": "react-scripts start",
+    "start:placements": "node scripts/run-local-with-placements-ui.js",
     "start:lenient": "NODE_OPTIONS=--max-old-space-size=4096 DISABLE_ESLINT_PLUGIN=true TSC_COMPILE_ON_ERROR=true react-scripts start",
     "start:safe": "NODE_OPTIONS=--max-old-space-size=8192 DISABLE_ESLINT_PLUGIN=true TSC_COMPILE_ON_ERROR=true SKIP_PREFLIGHT_CHECK=true react-scripts start",
     "build": "CI=false DISABLE_ESLINT_PLUGIN=true react-scripts build",

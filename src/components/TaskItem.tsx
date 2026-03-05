@@ -186,7 +186,7 @@ export const TaskItem: React.FC<TaskItemProps> = ({
 
         {/* Actions */}
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
-          {task.status !== 'completed' && onMarkComplete && (
+          {task.status !== 'completed' && task.status !== 'dismissed' && onMarkComplete && (
             <IconButton
               size="small"
               onClick={() => onMarkComplete(task.id)}

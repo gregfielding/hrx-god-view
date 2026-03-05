@@ -46,6 +46,7 @@ import PhoneIcon from '@mui/icons-material/Phone';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import SmsIcon from '@mui/icons-material/Sms';
 import MessageDrawer, { type MessageRecipient } from '../../../components/MessageDrawer';
+import InterviewCell from '../../../components/InterviewCell';
 import StarIcon from '@mui/icons-material/Star';
 import InsightsIcon from '@mui/icons-material/Insights';
 import IconButton from '@mui/material/IconButton';
@@ -1304,16 +1305,11 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                           <TableCell>{renderAiScore(u)}</TableCell>
 
                           <TableCell>
-                            {(() => {
-                              const lastAt = u?.scoreSummary?.interviewLastAt;
-                              const lastScore = u?.scoreSummary?.interviewLastScore10;
-                              if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
-                              return (
-                                <Typography variant="body2">
-                                  {formatDate(lastAt)} — {formatOneDecimal(lastScore)}/10
-                                </Typography>
-                              );
-                            })()}
+                            <InterviewCell
+                              userId={u.id}
+                              scoreSummary={u.scoreSummary}
+                              formatDate={formatDate}
+                            />
                           </TableCell>
 
                           <TableCell onClick={(event) => event.stopPropagation()}>

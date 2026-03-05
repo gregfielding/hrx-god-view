@@ -35,10 +35,11 @@ import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { collection, getDocs, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData, documentId } from 'firebase/firestore';
+import { collection, getDocs, getDoc, doc, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData, documentId } from 'firebase/firestore';
 import { SelectChangeEvent } from '@mui/material/Select';
 
 import FavoriteButton from '../components/FavoriteButton';
+import InterviewCell from '../components/InterviewCell';
 import { usePageCache } from '../hooks/usePageCache';
 import StandardTablePagination from '../components/StandardTablePagination';
 import PageHeader from '../components/PageHeader';
@@ -93,6 +94,67 @@ interface TenantUserGroup {
   id: string;
   title?: string;
   description?: string;
+}
+
+/** Map a Firestore user doc to RecruiterUser for the given tenant; null if not in tenant or not security 0–4. */
+function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, tenantId: string): RecruiterUser | null {
+  const userData = userDoc.data() as any;
+  const tenantData = userData.tenantIds?.[tenantId] || null;
+  if (!tenantData) return null;
+
+  const securityLevel = tenantData.securityLevel || userData.securityLevel || '0';
+  if (!['0', '1', '2', '3', '4'].includes(String(securityLevel))) return null;
+
+  const rawSkills = Array.isArray(userData.skills)
+    ? userData.skills
+    : Array.isArray(tenantData.skills)
+    ? tenantData.skills
+    : [];
+  const normalizedSkills = rawSkills
+    .map((skill: any) => {
+      if (!skill) return null;
+      if (typeof skill === 'string') return skill;
+      if (typeof skill === 'object') {
+        if (typeof skill.label === 'string') return skill.label;
+        if (typeof skill.name === 'string') return skill.name;
+        if (typeof skill.value === 'string') return skill.value;
+      }
+      return null;
+    })
+    .filter((skill): skill is string => !!skill);
+
+  const mergedScoreSummary = normalizeScoreSummary({
+    ...(userData.scoreSummary || {}),
+    ...(tenantData?.scoreSummary || {}),
+  });
+
+  return {
+    id: userDoc.id,
+    firstName: userData.firstName || '',
+    lastName: userData.lastName || '',
+    email: userData.email || '',
+    phone: userData.phone || '',
+    avatar: userData.avatar || tenantData.avatar,
+    securityLevel: String(securityLevel),
+    employeeOnboardStatus: userData.employeeOnboardStatus,
+    contractorOnboardStatus: userData.contractorOnboardStatus,
+    onboardingType: userData.onboardingType,
+    scoreSummary: mergedScoreSummary,
+    lastLoginAt: userData.lastLoginAt,
+    updatedAt: userData.updatedAt,
+    createdAt: userData.createdAt,
+    aiProfileScore:
+      tenantData.aiProfileScore ??
+      userData.aiProfileScore ??
+      userData.aiScore ??
+      userData.aiProfile?.score ??
+      calculateProfileScore(userData),
+    aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
+    userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
+    skills: normalizedSkills,
+    city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
+    state: userData.state || userData.address?.state || (userData.addressInfo && (userData.addressInfo as any).state) || '',
+  };
 }
 
 export interface RecruiterUsersProps {
@@ -219,6 +281,48 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     setPage(0);
   }, [searchTerm, effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
 
+  // When "show favorites only" is on, ensure favorited user ids are loaded so they appear in the table
+  // (e.g. users starred as applicants on a job order are stored as user favorites and must show here)
+  useEffect(() => {
+    if (!showFavoritesOnly || !favorites.length || !tenantId) return;
+    const existingIds = new Set(users.map((u) => u.id));
+    const missingIds = favorites.filter((id) => !existingIds.has(id));
+    if (missingIds.length === 0) return;
+
+    const usersRef = collection(db, 'users');
+    const chunk = <T,>(arr: T[], size: number): T[][] => {
+      const out: T[][] = [];
+      for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+      return out;
+    };
+    const IN_QUERY_LIMIT = 30;
+    let cancelled = false;
+
+    (async () => {
+      for (const ids of chunk(missingIds, IN_QUERY_LIMIT)) {
+        if (cancelled) return;
+        try {
+          const snap = await getDocs(query(usersRef, where(documentId(), 'in', ids)));
+          const mapped = snap.docs
+            .map((d) => mapUserDocToRecruiterUser(d, tenantId))
+            .filter((u): u is RecruiterUser => !!u);
+          if (mapped.length > 0) {
+            setUsers((prev) => {
+              const map = new Map(prev.map((u) => [u.id, u]));
+              mapped.forEach((u) => map.set(u.id, u));
+              return Array.from(map.values());
+            });
+          }
+        } catch (e) {
+          console.warn('RecruiterUsers: failed to load favorited users', e);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [showFavoritesOnly, favorites, tenantId, users]);
+
   const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin') => {
     if (sortBy === key) {
       const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
@@ -262,61 +366,6 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         const out: T[][] = [];
         for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
         return out;
-      };
-
-      const mapUserDocToRecruiterUser = (userDoc: any): RecruiterUser | null => {
-        const userData = userDoc.data() as any;
-        const tenantData = userData.tenantIds?.[tenantId] || null;
-        if (!tenantData) return null;
-
-        const securityLevel = tenantData.securityLevel || userData.securityLevel || '0';
-        if (!['0', '1', '2', '3', '4'].includes(String(securityLevel))) return null;
-
-        const rawSkills = Array.isArray(userData.skills)
-          ? userData.skills
-          : Array.isArray(tenantData.skills)
-          ? tenantData.skills
-          : [];
-        const normalizedSkills = rawSkills
-          .map((skill: any) => {
-            if (!skill) return null;
-            if (typeof skill === 'string') return skill;
-            if (typeof skill === 'object') {
-              if (typeof skill.label === 'string') return skill.label;
-              if (typeof skill.name === 'string') return skill.name;
-              if (typeof skill.value === 'string') return skill.value;
-            }
-            return null;
-          })
-          .filter((skill): skill is string => !!skill);
-
-        return {
-          id: userDoc.id,
-          firstName: userData.firstName || '',
-          lastName: userData.lastName || '',
-          email: userData.email || '',
-          phone: userData.phone || '',
-          avatar: userData.avatar || tenantData.avatar,
-          securityLevel: String(securityLevel),
-          employeeOnboardStatus: userData.employeeOnboardStatus,
-          contractorOnboardStatus: userData.contractorOnboardStatus,
-          onboardingType: userData.onboardingType,
-          scoreSummary: normalizeScoreSummary(userData.scoreSummary),
-          lastLoginAt: userData.lastLoginAt,
-          updatedAt: userData.updatedAt,
-          createdAt: userData.createdAt,
-          aiProfileScore:
-            tenantData.aiProfileScore ??
-            userData.aiProfileScore ??
-            userData.aiScore ??
-            userData.aiProfile?.score ??
-            calculateProfileScore(userData),
-          aiJobFitScore: tenantData.aiJobFitScore ?? userData.aiJobFitScore,
-          userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
-          skills: normalizedSkills,
-          city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
-          state: userData.state || userData.address?.state || (userData.addressInfo && (userData.addressInfo as any).state) || '',
-        };
       };
 
       const extractUserId = (data: any): string | null => {
@@ -443,7 +492,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         ).flat();
 
         const mapped = userDocs
-          .map((d) => mapUserDocToRecruiterUser(d))
+          .map((d) => mapUserDocToRecruiterUser(d, tenantId))
           .filter((u): u is RecruiterUser => !!u);
 
         setUsers(mapped);
@@ -487,7 +536,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       setHasMore(snapshot.docs.length === effectivePageSize);
 
       const data: RecruiterUser[] = snapshot.docs
-        .map((userDoc) => mapUserDocToRecruiterUser(userDoc))
+        .map((userDoc) => mapUserDocToRecruiterUser(userDoc, tenantId))
         .filter((u): u is RecruiterUser => !!u);
       
       // If initial load, replace users; if loading more, append (dedupe by id)
@@ -590,20 +639,22 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   };
 
   const formatDate = (timestamp: any) => {
-    if (!timestamp) return 'N/A';
+    if (timestamp == null) return 'N/A';
     let date: Date;
     if (timestamp instanceof Date) {
       date = timestamp;
     } else if (typeof timestamp === 'number') {
       date = new Date(timestamp);
-    } else if (timestamp?.toDate) {
+    } else if (typeof timestamp === 'string') {
+      date = new Date(timestamp);
+    } else if (timestamp?.toDate && typeof timestamp.toDate === 'function') {
       date = timestamp.toDate();
     } else if (timestamp?._seconds) {
       date = new Date(timestamp._seconds * 1000);
     } else {
       return 'N/A';
     }
-
+    if (Number.isNaN(date.getTime())) return 'N/A';
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -1429,16 +1480,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   </TableCell>
                   <TableCell>{renderAiScore(user)}</TableCell>
                   <TableCell>
-                    {(() => {
-                      const lastAt = user.scoreSummary?.interviewLastAt;
-                      const lastScore = user.scoreSummary?.interviewLastScore10;
-                      if (!lastAt || typeof lastScore !== 'number' || Number.isNaN(lastScore)) return null;
-                      return (
-                        <Typography variant="body2">
-                          {formatDate(lastAt)} — {formatOneDecimal(lastScore)}/10
-                        </Typography>
-                      );
-                    })()}
+                    <InterviewCell
+                      userId={user.id}
+                      scoreSummary={user.scoreSummary}
+                      formatDate={formatDate}
+                    />
                   </TableCell>
                   <TableCell>
                     {user.userGroupIds.length === 0 ? (
