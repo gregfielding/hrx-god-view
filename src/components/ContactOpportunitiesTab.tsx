@@ -71,14 +71,12 @@ const ContactOpportunitiesTab: React.FC<ContactOpportunitiesTabProps> = ({ deals
     };
   };
   
-  // Get expected close date from qualification stage
+  // Get expected close date (deal.closeDate is canonical; fallback to qualification for legacy data)
   const getExpectedCloseDate = (deal: any) => {
-    if (!deal.stageData?.qualification?.expectedCloseDate) {
-      return null;
-    }
-    
-    const date = new Date(deal.stageData.qualification.expectedCloseDate);
-    return date;
+    const raw = deal.closeDate || deal.stageData?.qualification?.expectedCloseDate;
+    if (!raw) return null;
+    const date = new Date(raw);
+    return isNaN(date.getTime()) ? null : date;
   };
   
   return (

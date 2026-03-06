@@ -60,6 +60,7 @@ import SMSPrivacy from './pages/SMSPrivacy';
 import SignerPage from './pages/SignerPage';
 import Apply from './pages/Apply';
 import TenantCRM from './pages/TenantViews/TenantCRM';
+import PublicCRMView from './pages/PublicCRMView';
 import CompanyDetails from './pages/TenantViews/CompanyDetails';
 import ContactDetails from './pages/TenantViews/ContactDetails';
 import DealDetails from './pages/TenantViews/DealDetails';
@@ -373,6 +374,7 @@ function App() {
   const routes = (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/crm/public" element={<PublicCRMView />} />
       <Route path="/setup-password" element={<SetupPassword />} />
       <Route path="/invite/:token" element={<InviteTokenValidator />} />
       <Route path="/onboarding/profile" element={<OnboardingProfileForm />} />

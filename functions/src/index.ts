@@ -37,6 +37,7 @@ import { fetchCompanyNews } from './fetchCompanyNews';
 import { discoverCompanyLocations } from './discoverCompanyLocations';
 import { discoverCompanyUrls } from './discoverCompanyUrls';
 import { getSalespeople } from './getSalespeople';
+import { getPublicCrmView } from './getPublicCrmView';
 import { scrapeIndeedJobs } from './scrapeIndeedJobs';
 import { addJobTitle } from './addJobTitle';
 export {
@@ -11330,6 +11331,7 @@ export { discoverCompanyUrls };
 
 // User Management Functions
 export { getSalespeople };
+export { getPublicCrmView } from './getPublicCrmView';
 export { getSalespeopleForTenant } from './simpleGetSalespeopleForTenant';
 export { fixPendingUser } from './fixPendingUser';
 

@@ -122,7 +122,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
             alignItems: isStackedToolbar ? 'stretch' : 'center',
             gap: isStackedToolbar ? 1.5 : 2,
             minHeight: '48px',
-            mb: 1.5, // 12px spacing to divider
+            mb: showDivider ? 1.5 : 0, // space to divider when present; none when no divider
             width: '100%',
             overflow: 'visible',
           }}

@@ -244,15 +244,6 @@ function AccountSidebar({
                 <Typography variant="body2" fontWeight="medium">
                   {c.label}
                 </Typography>
-                <Button
-                  component={Link}
-                  to={`/recruiter/companies/${c.id}`}
-                  size="small"
-                  sx={{ ml: 'auto', minWidth: 'auto', fontSize: '0.7rem' }}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  View
-                </Button>
               </Box>
             ))}
           </Box>

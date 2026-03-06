@@ -20,11 +20,13 @@ import {
   Close as CloseIcon,
   Business as BusinessIcon,
 } from '@mui/icons-material';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 
 interface Location {
   id: string;
+  companyId: string;
+  companyName?: string;
   name: string;
   address?: string;
   city?: string;
@@ -38,8 +40,11 @@ interface ManageLocationDialogProps {
   onClose: () => void;
   tenantId: string;
   companyId: string;
+  /** When provided, load locations from all these companies (combines options) */
+  companyIds?: string[];
   currentLocationId?: string;
-  onLocationChange: (locationId: string | null) => void;
+  currentLocationCompanyId?: string;
+  onLocationChange: (locationId: string | null, companyId?: string) => void;
 }
 
 const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
@@ -47,19 +52,22 @@ const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
   onClose,
   tenantId,
   companyId,
+  companyIds: companyIdsProp,
   currentLocationId,
+  currentLocationCompanyId,
   onLocationChange,
 }) => {
   const [availableLocations, setAvailableLocations] = useState<Location[]>([]);
   const [selectedLocationId, setSelectedLocationId] = useState<string>('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // Load available locations from crm_locations collection
+  const companyIds = companyIdsProp?.length ? companyIdsProp : (companyId ? [companyId] : []);
+
   useEffect(() => {
-    if (!open || !tenantId || !companyId) {
-      console.log('ManageLocationDialog: Missing required props', { open, tenantId, companyId });
-      if (open && (!tenantId || !companyId)) {
+    if (!open || !tenantId || companyIds.length === 0) {
+      if (open && (!tenantId || companyIds.length === 0)) {
         setError('Missing tenant or company information');
       }
       return;
@@ -68,42 +76,44 @@ const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
     const loadAvailableLocations = async () => {
       setLoading(true);
       setError('');
-
+      const merged: Location[] = [];
       try {
-        console.log('Loading locations for tenant:', tenantId, 'and company:', companyId);
-        
-        // Query locations associated with the specific company
-        const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', companyId, 'locations');
-        const locationsQuery = query(locationsRef);
-        const locationsSnapshot = await getDocs(locationsQuery);
-        console.log('Company locations query results:', locationsSnapshot.size);
-        
-        const companyLocations: Location[] = [];
-        
-        locationsSnapshot.docs.forEach(doc => {
-          const locationData = doc.data();
-          companyLocations.push({
-            id: doc.id,
-            name: locationData.name || 'Unknown Location',
-            address: locationData.address || '',
-            city: locationData.city || '',
-            state: locationData.state || '',
-            zipCode: locationData.zipCode || '',
-            nickname: locationData.nickname || locationData.name || 'Unknown Location'
+        for (const cid of companyIds) {
+          const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', cid));
+          const companyName = companyDoc.exists() ? (companyDoc.data()?.companyName || companyDoc.data()?.name || '') : '';
+          const locationsRef = collection(db, 'tenants', tenantId, 'crm_companies', cid, 'locations');
+          const snap = await getDocs(locationsRef);
+          snap.docs.forEach((d) => {
+            const data = d.data();
+            merged.push({
+              id: d.id,
+              companyId: cid,
+              companyName,
+              name: data.name || 'Unknown Location',
+              address: data.address || '',
+              city: data.city || '',
+              state: data.state || '',
+              zipCode: data.zipCode || '',
+              nickname: data.nickname || data.name || 'Unknown Location',
+            });
           });
-        });
-        
-        console.log('Company locations found:', companyLocations.length);
-        console.log('Company locations:', companyLocations);
-        setAvailableLocations(companyLocations);
-        
-        // Set the current location as selected if it exists in the available locations
-        if (currentLocationId && companyLocations.some(loc => loc.id === currentLocationId)) {
-          setSelectedLocationId(currentLocationId);
+        }
+        setAvailableLocations(merged);
+        if (currentLocationId) {
+          const found = currentLocationCompanyId
+            ? merged.find((loc) => loc.id === currentLocationId && loc.companyId === currentLocationCompanyId)
+            : merged.find((loc) => loc.id === currentLocationId);
+          if (found) {
+            setSelectedLocationId(found.id);
+            setSelectedCompanyId(found.companyId);
+          } else {
+            setSelectedLocationId('');
+            setSelectedCompanyId('');
+          }
         } else {
           setSelectedLocationId('');
+          setSelectedCompanyId('');
         }
-        
       } catch (err: any) {
         console.error('Error loading available locations:', err);
         setError(`Failed to load available locations: ${err.message}`);
@@ -113,7 +123,7 @@ const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
     };
 
     loadAvailableLocations();
-  }, [open, tenantId, companyId]);
+  }, [open, tenantId, companyIds.join(','), currentLocationId, currentLocationCompanyId]);
 
   // Handle currentLocationId changes after locations are loaded
   useEffect(() => {
@@ -131,21 +141,29 @@ const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
   }, [currentLocationId, availableLocations]);
 
   const handleSaveLocation = () => {
-    onLocationChange(selectedLocationId || null);
+    onLocationChange(selectedLocationId || null, selectedCompanyId || undefined);
     onClose();
   };
 
   const handleClose = () => {
     setSelectedLocationId(currentLocationId || '');
+    setSelectedCompanyId('');
     setError('');
     onClose();
   };
 
   const getLocationDisplayName = (location: Location) => {
-    if (location.nickname && location.nickname !== location.name) {
-      return `${location.nickname} (${location.name})`;
-    }
-    return location.name;
+    const base = location.nickname && location.nickname !== location.name
+      ? `${location.nickname} (${location.name})`
+      : location.name;
+    return companyIds.length > 1 && location.companyName
+      ? `${location.companyName} – ${base}`
+      : base;
+  };
+
+  const handleSelectLocation = (loc: Location) => {
+    setSelectedLocationId(loc.id);
+    setSelectedCompanyId(loc.companyId);
   };
 
   const getLocationAddress = (location: Location) => {
@@ -189,15 +207,25 @@ const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
             <FormControl fullWidth>
               <InputLabel>Select Location</InputLabel>
               <Select
-                value={selectedLocationId}
-                onChange={(e) => setSelectedLocationId(e.target.value)}
+                value={selectedLocationId && selectedCompanyId ? `${selectedCompanyId}:${selectedLocationId}` : ''}
+                onChange={(e) => {
+                  const v = e.target.value as string;
+                  if (!v) {
+                    setSelectedLocationId('');
+                    setSelectedCompanyId('');
+                    return;
+                  }
+                  const [cid, lid] = v.split(':');
+                  const loc = availableLocations.find((l) => l.companyId === cid && l.id === lid);
+                  if (loc) handleSelectLocation(loc);
+                }}
                 label="Select Location"
               >
                 <MenuItem value="">
                   <em>No location selected</em>
                 </MenuItem>
                 {availableLocations.map((location) => (
-                  <MenuItem key={location.id} value={location.id}>
+                  <MenuItem key={`${location.companyId}:${location.id}`} value={`${location.companyId}:${location.id}`}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                         <BusinessIcon sx={{ fontSize: 16 }} />
@@ -216,7 +244,7 @@ const ManageLocationDialog: React.FC<ManageLocationDialogProps> = ({
           ) : (
             <Box sx={{ textAlign: 'center', py: 3, bgcolor: 'grey.50', borderRadius: 1 }}>
               <Typography variant="body2" color="text.secondary">
-                No locations available for this company
+                No locations available for {companyIds.length > 1 ? 'these companies' : 'this company'}
               </Typography>
             </Box>
           )}

@@ -1159,7 +1159,8 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
         
         
 
-        <FormControl fullWidth size="small" sx={{ mb: 3 }}>
+        {/* Decision Maker is now managed from the sidebar "Decision Maker" widget above Deal Contacts */}
+        {/* <FormControl fullWidth size="small" sx={{ mb: 3 }}>
           <InputLabel>{getFieldDef('decisionMaker')?.label || 'Decision Maker'}</InputLabel>
           <Select
             value={data.decisionMaker?.id || ''}
@@ -1183,7 +1184,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               No contacts associated with this deal yet. Add contacts first.
             </FormHelperText>
           )}
-        </FormControl>
+        </FormControl> */}
 
         <TextField
           label={getFieldDef('mustHave')?.label || 'Must Have Requirements'}
@@ -1377,17 +1378,6 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
           fullWidth
           size="small"
           sx={{ mb: 2 }}
-        />
-
-        <TextField
-          label={getFieldDef('expectedCloseDate')?.label || 'Expected Close Date'}
-          type="date"
-          value={data.expectedCloseDate || ''}
-          onChange={(e) => handleStageDataChange('qualification', 'expectedCloseDate', e.target.value)}
-          fullWidth
-          size="small"
-          sx={{ mb: 2 }}
-          helperText="When do you expect this deal to close?"
         />
 
         <Divider sx={{ my: 3 }} />
@@ -3371,7 +3361,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
             <Grid container spacing={2} sx={{ mb: 3 }}>
               <Grid item xs={12} md={6}>
                 <TextField
-                  label={getFieldDef('dateSigned')?.label || 'Date Signed'}
+                  label={getFieldDef('dateSigned')?.label || 'Close Date'}
                   type="date"
                   value={data.dateSigned || ''}
                   onChange={(e) => handleStageDataChange('closedWon', 'dateSigned', e.target.value)}

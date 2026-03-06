@@ -7,6 +7,7 @@ export interface StageColor {
   hex: string;
   description: string;
   materialColor?: string; // For MUI color system integration
+  textColor?: string; // Optional custom text color (else auto contrast)
 }
 
 export const CRM_STAGE_COLORS: Record<string, StageColor> = {
@@ -38,10 +39,18 @@ export const CRM_STAGE_COLORS: Record<string, StageColor> = {
     materialColor: "amber"
   },
   "Proposal Review": {
-    name: "Orange 400",
-    hex: "#FFA726",
+    name: "Light Gold",
+    hex: "#FFECB3",
     description: "Client reviewing proposal",
-    materialColor: "orange"
+    materialColor: "amber",
+    textColor: "#B45309"
+  },
+  "proposalReview": {
+    name: "Light Gold",
+    hex: "#FFECB3",
+    description: "Client reviewing proposal",
+    materialColor: "amber",
+    textColor: "#B45309"
   },
   "Negotiation": {
     name: "Deep Orange 600",
@@ -52,14 +61,28 @@ export const CRM_STAGE_COLORS: Record<string, StageColor> = {
   
   // ✅ Winning Stages – Shades of Green
   "Verbal Agreement": {
-    name: "Light Green 400",
-    hex: "#9CCC65",
+    name: "Light Green",
+    hex: "#C8E6C9",
     description: "Tentative success",
-    materialColor: "lightGreen"
+    materialColor: "lightGreen",
+    textColor: "#1B5E20"
+  },
+  "verbalAgreement": {
+    name: "Light Green",
+    hex: "#C8E6C9",
+    description: "Tentative success",
+    materialColor: "lightGreen",
+    textColor: "#1B5E20"
   },
   "Closed – Won": {
     name: "Green 800",
-    hex: "#2E7D32",
+    hex: "#1B5E20",
+    description: "Final success",
+    materialColor: "green"
+  },
+  "closedWon": {
+    name: "Green 900",
+    hex: "#1B5E20",
     description: "Final success",
     materialColor: "green"
   },
@@ -313,6 +336,8 @@ export const getStageColorHex = (stage: string): string => {
  * @returns HEX color string for text
  */
 export const getStageTextColor = (stage: string): string => {
+  const stageColor = getStageColor(stage);
+  if (stageColor?.textColor) return stageColor.textColor;
   return getTextContrastColor(getStageHexColor(stage));
 };
 

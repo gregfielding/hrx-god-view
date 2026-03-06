@@ -4541,6 +4541,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           jobOrderId={jobOrderId || ''}
           jobOrder={jobOrder}
           onJobOrderUpdated={fetchJobOrder}
+          connectedJobPostIds={(connectedJobPosts || []).map((p) => p.id).filter(Boolean)}
         />
       </TabPanel>
 

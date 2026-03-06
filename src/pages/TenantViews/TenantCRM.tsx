@@ -94,6 +94,7 @@ import {
   ContentCopy as ContentCopyIcon,
   StarBorder as StarBorderIcon,
   Archive as ArchiveIcon,
+  Note as NoteIcon,
 } from '@mui/icons-material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../firebase';
@@ -2054,25 +2055,6 @@ const TenantCRM: React.FC<{ standaloneTab?: TenantCRMStandaloneTab }> = ({ stand
                   placeholder={tabValue === 3 ? "Search archived opportunities..." : "Search opportunities..."}
                 />
               )}
-              <Button
-                variant="contained"
-                size="small"
-                startIcon={<FileDownloadIcon />}
-                onClick={() => dealsTabRef.current?.exportCsv()}
-                disabled={tabValue !== 1 && tabValue !== 3}
-                data-testid="crm-opportunities-export-btn"
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '6px',
-                  height: '40px',
-                  fontWeight: 500,
-                  fontSize: '14px',
-                  bgcolor: '#2E7D32',
-                  '&:hover': { bgcolor: '#1B5E20' },
-                }}
-              >
-                Export CSV
-              </Button>
               {tabValue === 1 && (
                 <Button
                   variant="contained"
@@ -4654,28 +4636,33 @@ const CompaniesTab: React.FC<{
     </Box>
   );
 };
-// Deals Tab Component
-  const DealsTab = forwardRef<{ exportCsv: () => void }, {
-  deals: any[];
-  allDeals: any[];
+// Deals Tab Component (props validated via TypeScript DealsTabProps)
+  /* eslint-disable react/prop-types */
+  interface DealsTabProps {
+    deals: any[];
+    allDeals: any[];
     companies: any[];
     allCompanies: any[];
     loadingAllCompanies: boolean;
-  contacts: any[];
-  pipelineStages: any[];
-  search: string;
-  onSearchChange: (value: string) => void;
-  onAddNew: () => void;
-  dealFilter: 'all' | 'my';
-  onDealFilterChange: (newFilter: 'all' | 'my') => void;
-  currentUser: any;
-  salesTeam: any[];
-  tenantId: string;
-  opportunityDialogOpen: boolean;
-  onOpportunityDialogOpenChange: (next: boolean) => void;
-  scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-  showArchived?: boolean;
-  }>(function DealsTab({ deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false }, ref) {
+    contacts: any[];
+    pipelineStages: any[];
+    search: string;
+    onSearchChange: (value: string) => void;
+    onAddNew: () => void;
+    dealFilter: 'all' | 'my';
+    onDealFilterChange: (newFilter: 'all' | 'my') => void;
+    currentUser: any;
+    salesTeam: any[];
+    tenantId: string;
+    opportunityDialogOpen: boolean;
+    onOpportunityDialogOpenChange: (next: boolean) => void;
+    scrollContainerRef: React.RefObject<HTMLDivElement | null>;
+    showArchived?: boolean;
+  }
+  const DealsTab = forwardRef<{ exportCsv: () => void }, DealsTabProps>(function DealsTab(
+    { deals, allDeals, companies, allCompanies, loadingAllCompanies, contacts, pipelineStages, search, onSearchChange, onAddNew, dealFilter, onDealFilterChange, currentUser, salesTeam, tenantId, opportunityDialogOpen, onOpportunityDialogOpenChange, scrollContainerRef, showArchived = false },
+    ref
+  ) {
   const navigate = useNavigate();
   const [showDealDialog, setShowDealDialog] = useState(false);
   const [editingDeal, setEditingDeal] = useState<any>(null);
@@ -4754,6 +4741,49 @@ const CompaniesTab: React.FC<{
   // Salesperson filter state
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
 
+  // Note modal state (most recent note for selected deal)
+  const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [noteModalDealName, setNoteModalDealName] = useState('');
+  const [noteModalContent, setNoteModalContent] = useState<string | null>(null);
+  const [noteModalTimestamp, setNoteModalTimestamp] = useState<Date | null>(null);
+  const [noteModalLoading, setNoteModalLoading] = useState(false);
+  const [noteModalSnackbar, setNoteModalSnackbar] = useState<string | null>(null);
+
+  const fetchLatestDealNote = useCallback(async (dealId: string): Promise<{ content: string; timestamp?: Date; authorName?: string } | null> => {
+    if (!tenantId) return null;
+    try {
+      const notesRef = collection(db, 'tenants', tenantId, 'deal_notes');
+      const nq = query(notesRef, where('entityId', '==', dealId), orderBy('timestamp', 'desc'), limit(1));
+      const snap = await getDocs(nq);
+      if (snap.empty) return null;
+      const d = snap.docs[0].data() as any;
+      return {
+        content: d.content || '',
+        timestamp: d.timestamp?.toDate?.() || (d.timestamp ? new Date(d.timestamp) : undefined),
+        authorName: d.authorName
+      };
+    } catch {
+      return null;
+    }
+  }, [tenantId]);
+
+  const handleNoteIconClick = useCallback(async (e: React.MouseEvent, deal: any) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (!deal?.id) return;
+    setNoteModalDealName(deal.name || 'Deal');
+    setNoteModalLoading(true);
+    const note = await fetchLatestDealNote(deal.id);
+    setNoteModalLoading(false);
+    if (note?.content != null && note.content !== '') {
+      setNoteModalContent(note.content);
+      setNoteModalTimestamp(note.timestamp || null);
+      setNoteModalOpen(true);
+    } else {
+      setNoteModalSnackbar('No notes for this deal');
+    }
+  }, [fetchLatestDealNote]);
+
   // Measure filters height (used to offset sticky table header only when scrolled)
   useEffect(() => {
     const update = () => setFiltersHeight(filtersRef.current?.offsetHeight ?? 0);
@@ -4787,37 +4817,6 @@ const CompaniesTab: React.FC<{
       getSalespersonKey(sp)
     );
   };
-
-  const handleExportOpportunitiesCsv = useCallback(() => {
-    const escape = (s: string) => '"' + String(s ?? '').replace(/"/g, '""') + '"';
-    const headers = ['Deal Name', 'Company', 'Stage', 'Value', 'Age', 'Status', 'Health', 'Close Date', 'Owner'];
-    const rows = filteredDeals.map((deal) => {
-      const age = getDealAge(deal?.createdAt);
-      const status = getDealStatus(deal);
-      const health = getDealHealth(deal);
-      return [
-        escape(deal.name ?? ''),
-        escape(getDealCompanyName(deal) ?? ''),
-        escape(deal.stage ?? ''),
-        escape(getDealEstimatedValue(deal) ?? ''),
-        escape(age ? `${age.days}d` : '-'),
-        escape(status?.label ?? ''),
-        escape((health as any)?.display?.label ?? (health as any)?.bucket ?? ''),
-        escape(getDealCloseDate(deal) ?? ''),
-        escape(getDealOwner(deal) ?? ''),
-      ].join(',');
-    });
-    const csv = [headers.join(','), ...rows].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `opportunities-${new Date().toISOString().slice(0, 10)}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [filteredDeals, getDealAge, getDealStatus, getDealHealth, getDealCompanyName, getDealEstimatedValue, getDealCloseDate, getDealOwner]);
-
-  useImperativeHandle(ref, () => ({ exportCsv: handleExportOpportunitiesCsv }), [handleExportOpportunitiesCsv]);
 
   // Helper function to get avatar background color - softer pastel palette
   const getAvatarColor = (name: string) => {
@@ -4947,21 +4946,27 @@ const CompaniesTab: React.FC<{
   };
 
   const handleExportOpportunitiesCsv = () => {
-    const headers = ['Deal Name', 'Company', 'Stage', 'Value', 'Age', 'Status', 'Health', 'Close Date', 'Owner'];
+    const headers = ['Deal Name', 'Company', 'Decision maker', 'Stage', 'Initial Value', 'Potential Value', 'Age', 'Status', 'Health', 'Expected Close', 'Expected Start', 'Actual Close', 'Owner'];
     const rows = filteredDeals.map((deal) => {
       const age = getDealAge(deal?.createdAt);
       const ageStr = age ? `${age.days}d` : '-';
       const status = getDealStatus(deal);
       const health = getDealHealth(deal);
+      const dm = getDealDecisionMakerDisplay(deal);
+      const dmCsv = dm.name ? (dm.title ? `${dm.name} (${dm.title})` : dm.name) : '';
       return [
         escapeCsv(deal.name ?? ''),
         escapeCsv(getDealCompanyName(deal) ?? ''),
+        escapeCsv(dmCsv),
         escapeCsv(deal.stage ?? ''),
-        escapeCsv(getDealEstimatedValue(deal)),
+        escapeCsv(getDealInitialValue(deal)),
+        escapeCsv(getDealPotentialValue(deal)),
         escapeCsv(ageStr),
         escapeCsv(status?.label ?? ''),
         escapeCsv(health?.bucket ?? String(health?.score ?? '')),
         escapeCsv(getDealCloseDate(deal)),
+        escapeCsv(getDealExpectedStart(deal)),
+        escapeCsv(getDealActualClose(deal)),
         escapeCsv(getDealOwner(deal) ?? ''),
       ];
     });
@@ -4974,6 +4979,8 @@ const CompaniesTab: React.FC<{
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  useImperativeHandle(ref, () => ({ exportCsv: handleExportOpportunitiesCsv }), [handleExportOpportunitiesCsv]);
 
   const getDealOwner = (deal: any) => {
     // Helper to resolve a display name from a salesperson object or id
@@ -5040,20 +5047,44 @@ const CompaniesTab: React.FC<{
   };
 
   const getDealCloseDate = (deal: any) => {
-    // First try to get the expected close date from qualification stage data
-    if (deal.stageData?.qualification?.expectedCloseDate) {
-      return new Date(deal.stageData.qualification.expectedCloseDate).toLocaleDateString();
-    }
-    
-    // Fallback to regular closeDate if no qualification date
-    if (deal.closeDate) {
-      return new Date(deal.closeDate).toLocaleDateString();
-    }
-    
-    return '-';
+    const raw = deal.closeDate || deal.stageData?.qualification?.expectedCloseDate;
+    if (!raw) return '-';
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return '-';
+    // Format with UTC date parts so date-only values (YYYY-MM-DD) display correctly in all timezones
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    const y = d.getUTCFullYear();
+    return `${m}/${day}/${y}`;
   };
 
+  const formatDateOnly = (raw: any) => {
+    if (!raw) return '-';
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return '-';
+    const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(d.getUTCDate()).padStart(2, '0');
+    const y = d.getUTCFullYear();
+    return `${m}/${day}/${y}`;
+  };
 
+  const getDealExpectedStart = (deal: any) => {
+    const raw = deal.stageData?.qualification?.expectedStartDate;
+    return formatDateOnly(raw);
+  };
+
+  const getDealActualClose = (deal: any) => {
+    const raw = deal.stageData?.closedWon?.dateSigned;
+    return formatDateOnly(raw);
+  };
+
+  const getDealDecisionMakerDisplay = (deal: any): { name: string; title: string | null } => {
+    const dm = deal.stageData?.qualification?.decisionMaker;
+    if (!dm) return { name: '', title: null };
+    const name = dm.fullName || `${dm.firstName || ''} ${dm.lastName || ''}`.trim() || dm.name || '';
+    const title = dm.title ? String(dm.title).trim() : null;
+    return { name, title: title || null };
+  };
 
   // Handle sorting
   const handleSort = (field: string) => {
@@ -5072,12 +5103,18 @@ const CompaniesTab: React.FC<{
         return deal.name?.toLowerCase() || '';
       case 'company':
         return getDealCompanyName(deal)?.toLowerCase() || '';
+      case 'decisionMaker':
+        return getDealDecisionMakerDisplay(deal).name.toLowerCase();
       case 'stage':
         return deal.stage?.toLowerCase() || '';
-      case 'value': {
-        const valueStr = getDealEstimatedValue(deal);
-        // Extract numeric value for sorting (remove $ and commas)
-        const numericValue = valueStr.replace(/[$,]/g, '').replace(/\s*-\s*.*/, '');
+      case 'initialValue': {
+        const valueStr = getDealInitialValue(deal);
+        const numericValue = valueStr.replace(/[$,]/g, '');
+        return parseFloat(numericValue) || 0;
+      }
+      case 'potentialValue': {
+        const valueStr = getDealPotentialValue(deal);
+        const numericValue = valueStr.replace(/[$,]/g, '');
         return parseFloat(numericValue) || 0;
       }
       case 'createdAt': {
@@ -5094,8 +5131,16 @@ const CompaniesTab: React.FC<{
         return health.score;
       }
       case 'closeDate': {
-        const closeDate = getDealCloseDate(deal);
-        return closeDate === '-' ? new Date(0) : new Date(closeDate);
+        const raw = deal.closeDate || deal.stageData?.qualification?.expectedCloseDate;
+        return !raw ? new Date(0) : new Date(raw);
+      }
+      case 'expectedStart': {
+        const raw = deal.stageData?.qualification?.expectedStartDate;
+        return !raw ? new Date(0) : new Date(raw);
+      }
+      case 'actualClose': {
+        const raw = deal.stageData?.closedWon?.dateSigned;
+        return !raw ? new Date(0) : new Date(raw);
       }
       case 'owner':
         return getDealOwner(deal)?.toLowerCase() || '';
@@ -5471,6 +5516,9 @@ const CompaniesTab: React.FC<{
                   Deal Name
                 </TableSortLabel>
               </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 56, minWidth: 56 }}>
+                Note
+              </TableCell>
               <TableCell sx={{ ...dealHeaderCellSx, width: 150, minWidth: 150 }}>
                 <TableSortLabel
                   active={sortField === 'company'}
@@ -5489,6 +5537,26 @@ const CompaniesTab: React.FC<{
                   }}
                 >
                   Company
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 140, minWidth: 140 }}>
+                <TableSortLabel
+                  active={sortField === 'decisionMaker'}
+                  direction={sortField === 'decisionMaker' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('decisionMaker')}
+                  sx={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'decisionMaker' ? 1 : 0.3,
+                    },
+                  }}
+                >
+                  Decision maker
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120 }}>
@@ -5511,11 +5579,11 @@ const CompaniesTab: React.FC<{
                   Stage
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120, textAlign: 'right' }}>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 110, minWidth: 110, textAlign: 'right' }}>
                 <TableSortLabel
-                  active={sortField === 'value'}
-                  direction={sortField === 'value' ? sortDirection : 'asc'}
-                  onClick={() => handleSort('value')}
+                  active={sortField === 'initialValue'}
+                  direction={sortField === 'initialValue' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('initialValue')}
                   sx={{ 
                     fontSize: '11px',
                     fontWeight: 500,
@@ -5524,11 +5592,31 @@ const CompaniesTab: React.FC<{
                     letterSpacing: '0.5px',
                     '& .MuiTableSortLabel-icon': {
                       fontSize: '1rem',
-                      opacity: sortField === 'value' ? 1 : 0.3,
+                      opacity: sortField === 'initialValue' ? 1 : 0.3,
                     },
                   }}
                 >
-                  Value
+                  Initial Value
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 110, minWidth: 110, textAlign: 'right' }}>
+                <TableSortLabel
+                  active={sortField === 'potentialValue'}
+                  direction={sortField === 'potentialValue' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('potentialValue')}
+                  sx={{ 
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'potentialValue' ? 1 : 0.3,
+                    },
+                  }}
+                >
+                  Potential Value
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
@@ -5608,7 +5696,47 @@ const CompaniesTab: React.FC<{
                     },
                   }}
                 >
-                  Close Date
+                  Expected Close
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120 }}>
+                <TableSortLabel
+                  active={sortField === 'expectedStart'}
+                  direction={sortField === 'expectedStart' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('expectedStart')}
+                  sx={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'expectedStart' ? 1 : 0.3,
+                    },
+                  }}
+                >
+                  Expected Start
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 120, minWidth: 120 }}>
+                <TableSortLabel
+                  active={sortField === 'actualClose'}
+                  direction={sortField === 'actualClose' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('actualClose')}
+                  sx={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'actualClose' ? 1 : 0.3,
+                    },
+                  }}
+                >
+                  Actual Close
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
@@ -5638,7 +5766,7 @@ const CompaniesTab: React.FC<{
             {filteredDeals.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={9}
+                  colSpan={14}
                   sx={{
                     py: 6,
                     textAlign: 'center',
@@ -5684,6 +5812,20 @@ const CompaniesTab: React.FC<{
                     {deal.name}
                   </Typography>
                 </TableCell>
+                <TableCell sx={{ px: 0.5, py: 0.75 }}>
+                  <Tooltip title="View most recent note">
+                    <span>
+                      <IconButton
+                        size="small"
+                        onClick={(e) => handleNoteIconClick(e, deal)}
+                        sx={{ color: 'primary.main' }}
+                        aria-label="View note"
+                      >
+                        <NoteIcon fontSize="small" />
+                      </IconButton>
+                    </span>
+                  </Tooltip>
+                </TableCell>
                 <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     <Avatar 
@@ -5717,6 +5859,26 @@ const CompaniesTab: React.FC<{
                   </Box>
                 </TableCell>
                 <TableCell sx={{ px: 1.5, py: 0.75 }}>
+                  {(() => {
+                    const dm = getDealDecisionMakerDisplay(deal);
+                    if (!dm.name) {
+                      return <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>—</Typography>;
+                    }
+                    return (
+                      <Box>
+                        <Typography variant="body2" color="#374151" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                          {dm.name}
+                        </Typography>
+                        {dm.title && (
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ fontSize: '0.75rem' }}>
+                            {dm.title}
+                          </Typography>
+                        )}
+                      </Box>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <StageChip 
                     stage={deal.stage} 
                     size="small" 
@@ -5730,7 +5892,17 @@ const CompaniesTab: React.FC<{
                     color="#374151"
                     sx={{ fontSize: '0.8125rem' }}
                   >
-                    {getDealEstimatedValue(deal)}
+                    {getDealInitialValue(deal)}
+                  </Typography>
+                </TableCell>
+                <TableCell sx={{ px: 1.5, py: 0.75, textAlign: 'right' }}>
+                  <Typography 
+                    variant="body2" 
+                    fontWeight={500}
+                    color="#374151"
+                    sx={{ fontSize: '0.8125rem' }}
+                  >
+                    {getDealPotentialValue(deal)}
                   </Typography>
                 </TableCell>
                 <TableCell sx={{ px: 1.5, py: 0.75 }}>
@@ -5792,6 +5964,16 @@ const CompaniesTab: React.FC<{
                 </TableCell>
                 <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {getDealExpectedStart(deal)}
+                  </Typography>
+                </TableCell>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
+                    {getDealActualClose(deal)}
+                  </Typography>
+                </TableCell>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
+                  <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>
                     {getDealOwner(deal)}
                   </Typography>
                 </TableCell>
@@ -5825,6 +6007,32 @@ const CompaniesTab: React.FC<{
           />
         </Box>
       )}
+
+      {/* Note modal – most recent note for selected deal */}
+      <Dialog open={noteModalOpen} onClose={() => setNoteModalOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Note – {noteModalDealName}</DialogTitle>
+        <DialogContent>
+          {noteModalTimestamp != null && (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+              {noteModalTimestamp.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+            </Typography>
+          )}
+          {noteModalContent != null && (
+            <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{noteModalContent}</Typography>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setNoteModalOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Snackbar
+        open={!!noteModalSnackbar}
+        autoHideDuration={3000}
+        onClose={() => setNoteModalSnackbar(null)}
+        message={noteModalSnackbar}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
 
       {/* Deal Dialog */}
       <Dialog open={showDealDialog} onClose={() => setShowDealDialog(false)} maxWidth="md" fullWidth>
@@ -6025,6 +6233,7 @@ const CompaniesTab: React.FC<{
     </Box>
   );
 });
+  /* eslint-enable react/prop-types */
 
 // Admin helper: run duplicate cleanup via callable
 const DuplicateCleanupButton: React.FC<{ tenantId: string }> = ({ tenantId }) => {
@@ -7279,6 +7488,50 @@ const getDealEstimatedValue = (deal: any) => {
   
   return '-';
 };
+
+const getDealInitialValue = (deal: any) => {
+  if (deal.stageData?.qualification) {
+    const qualData = deal.stageData.qualification;
+    const payRate = qualData.expectedAveragePayRate || 16;
+    const markup = qualData.expectedAverageMarkup || 40;
+    const timeline = qualData.staffPlacementTimeline;
+    if (timeline) {
+      const billRate = payRate * (1 + markup / 100);
+      const annualHoursPerEmployee = 2080;
+      const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+      const startingCount = timeline.starting || 0;
+      if (startingCount > 0) {
+        const minRevenue = annualRevenuePerEmployee * startingCount;
+        return `$${minRevenue.toLocaleString()}`;
+      }
+    }
+  }
+  if (deal.estimatedRevenue) {
+    return `$${Number(deal.estimatedRevenue).toLocaleString()}`;
+  }
+  return '-';
+};
+
+const getDealPotentialValue = (deal: any) => {
+  if (deal.stageData?.qualification) {
+    const qualData = deal.stageData.qualification;
+    const payRate = qualData.expectedAveragePayRate || 16;
+    const markup = qualData.expectedAverageMarkup || 40;
+    const timeline = qualData.staffPlacementTimeline;
+    if (timeline) {
+      const billRate = payRate * (1 + markup / 100);
+      const annualHoursPerEmployee = 2080;
+      const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+      const after180DaysCount = timeline.after180Days ?? timeline.after90Days ?? timeline.after30Days ?? timeline.starting ?? 0;
+      if (after180DaysCount > 0) {
+        const maxRevenue = annualRevenuePerEmployee * after180DaysCount;
+        return `$${maxRevenue.toLocaleString()}`;
+      }
+    }
+  }
+  return '-';
+};
+
 // Sales Dashboard Component
 const SalesDashboard: React.FC<{
   tenantId: string;

@@ -62,7 +62,7 @@ import {
   RocketLaunch as RocketLaunchIcon,
   ArrowBack as ArrowBackIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, collection, query, where, getDocs, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 
@@ -85,7 +85,9 @@ import LogActivityDialog from '../../components/LogActivityDialog';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import ManageSalespeopleDialog from '../../components/ManageSalespeopleDialog';
 import ManageContactsDialog from '../../components/ManageContactsDialog';
+import ManageDecisionMakerDialog from '../../components/ManageDecisionMakerDialog';
 import ManageLocationDialog from '../../components/ManageLocationDialog';
+import ManageCompaniesDialog, { CompanyOption } from '../../components/ManageCompaniesDialog';
 import GenerateJobOrderButton from '../../components/GenerateJobOrderButton';
 import PageHeader from '../../components/PageHeader';
 
@@ -120,8 +122,8 @@ interface DealData {
     timestamp: number;
   };
   associations?: {
-    companies?: string[];
-    locations?: string[];
+    companies?: Array<string | { id: string; isPrimary?: boolean }>;
+    locations?: Array<string | { id: string; companyId: string }>;
     contacts?: Array<string | {
       id: string;
       snapshot: {
@@ -244,7 +246,10 @@ const DealDetails: React.FC = () => {
   const [activatingDeal, setActivatingDeal] = useState(false);
   const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
   const [showManageContactsDialog, setShowManageContactsDialog] = useState(false);
+  const [showDecisionMakerDialog, setShowDecisionMakerDialog] = useState(false);
   const [showManageLocationDialog, setShowManageLocationDialog] = useState(false);
+  const [showManageCompaniesDialog, setShowManageCompaniesDialog] = useState(false);
+  const [associatedCompanies, setAssociatedCompanies] = useState<CompanyOption[]>([]);
   const [dealCoachKey, setDealCoachKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [tasksDashboardKey, setTasksDashboardKey] = useState<string>(`${dealId}-${Date.now()}`);
   const [loadingSalespeople, setLoadingSalespeople] = useState(false);
@@ -871,15 +876,11 @@ const DealDetails: React.FC = () => {
         
 
         
-        // Merge with existing salespeople data, preferring the new data with better names
+        // Only enrich existing (deal-associated) salespeople with better names; do not add others
         setAssociatedSalespeople(prevSalespeople => {
-          const existingIds = new Set(prevSalespeople.map(sp => sp.id));
-          const newSalespeople = mappedSalespeople.filter(sp => !existingIds.has(sp.id));
-          
-          // Update existing salespeople with better name data if available
           const updatedExisting = prevSalespeople.map(existing => {
             const betterData = mappedSalespeople.find(newSp => newSp.id === existing.id);
-            if (betterData && existing.fullName === 'Unknown Salesperson') {
+            if (betterData && (existing.fullName === 'Unknown Salesperson' || !existing.email)) {
               return {
                 ...existing,
                 fullName: betterData.displayName,
@@ -890,8 +891,7 @@ const DealDetails: React.FC = () => {
             }
             return existing;
           });
-          
-          return [...updatedExisting, ...newSalespeople];
+          return updatedExisting;
         });
       } else {
         setAssociatedSalespeople([]);
@@ -1095,70 +1095,94 @@ const DealDetails: React.FC = () => {
 
   const handleContactsChange = async (updatedContacts: any[]) => {
     if (!deal || !tenantId) return;
-    
+
+    const previousContacts = associatedContacts;
+    // Update the local state immediately for responsive UI
+    setAssociatedContacts(updatedContacts);
+
+    const currentAssociations = deal.associations || {};
+    const updatedContactIds = updatedContacts.map(c => c.id).filter(Boolean);
+    const updatedAssociations = {
+      ...currentAssociations,
+      contacts: updatedContacts.map(contact => ({
+        id: contact.id,
+        snapshot: {
+          fullName: contact.fullName ?? '',
+          firstName: contact.firstName ?? '',
+          lastName: contact.lastName ?? '',
+          email: contact.email ?? '',
+          phone: contact.phone ?? '',
+          title: contact.title ?? ''
+        }
+      }))
+    };
+
     try {
-      // Update the local state immediately for responsive UI
-      setAssociatedContacts(updatedContacts);
-      
-      // Prepare the associations update
-      const currentAssociations = deal.associations || {};
-      const updatedContactIds = Array.from(new Set(updatedContacts.map(c => c.id).filter(Boolean)));
-      const updatedAssociations = {
-        ...currentAssociations,
-        contacts: updatedContacts.map(contact => ({
-          id: contact.id,
-          snapshot: {
-            fullName: contact.fullName,
-            firstName: contact.firstName,
-            lastName: contact.lastName,
-            email: contact.email,
-            phone: contact.phone,
-            title: contact.title
-          }
-        }))
-      };
-      
-      // Update the deal document with new associations
+      setError('');
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         associations: updatedAssociations,
         contactIds: updatedContactIds,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp()
       });
-      
-      // Update local deal state
+
       setDeal(prev => prev ? { ...prev, associations: updatedAssociations, contactIds: updatedContactIds } : null);
-      
-      console.log('Contacts updated successfully');
-    } catch (error) {
-      console.error('Error updating contacts:', error);
-      // Revert local state if update fails
-      setAssociatedContacts(deal?.associations?.contacts || []);
+    } catch (err: any) {
+      console.error('Error updating contacts:', err);
+      setAssociatedContacts(previousContacts);
+      setDeal(prev => prev ? { ...prev, associations: currentAssociations } : null);
+      setError(err?.message || 'Failed to save contact changes. Please try again.');
     }
   };
 
-  const handleLocationChange = async (locationId: string | null) => {
+  const handleLocationChange = async (locationId: string | null, companyId?: string) => {
     if (!deal || !tenantId) return;
-    
     try {
-      // Prepare the associations update
       const currentAssociations = deal.associations || {};
+      const locationsPayload = locationId
+        ? companyId
+          ? [{ id: locationId, companyId }]
+          : [locationId]
+        : [];
       const updatedAssociations = {
         ...currentAssociations,
-        locations: locationId ? [locationId] : []
+        locations: locationsPayload,
       };
-      
-      // Update the deal document with new associations
       await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
         associations: updatedAssociations,
-        updatedAt: new Date()
+        updatedAt: serverTimestamp(),
       });
-      
-      // Update local deal state
-      setDeal(prev => prev ? { ...prev, associations: updatedAssociations } : null);
-      
-      console.log('Location updated successfully');
+      setDeal((prev) => (prev ? { ...prev, associations: updatedAssociations } : null));
     } catch (error) {
       console.error('Error updating location:', error);
+    }
+  };
+
+  const handleCompaniesChange = async (companies: CompanyOption[]) => {
+    if (!deal || !tenantId) return;
+    try {
+      const currentAssociations = deal.associations || {};
+      const companiesPayload = companies.map((c, i) => ({ id: c.id, isPrimary: i === 0 }));
+      const updatedAssociations = {
+        ...currentAssociations,
+        companies: companiesPayload,
+      };
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_deals', deal.id), {
+        associations: updatedAssociations,
+        updatedAt: serverTimestamp(),
+      });
+      setDeal((prev) => (prev ? { ...prev, associations: updatedAssociations } : null));
+      setAssociatedCompanies(companies);
+      const primary = companies[0];
+      if (primary) {
+        const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', primary.id));
+        if (companyDoc.exists()) {
+          setCompany({ id: companyDoc.id, ...companyDoc.data() });
+        }
+      } else {
+        setCompany(null);
+      }
+    } catch (err) {
+      console.error('Error updating companies:', err);
     }
   };
 
@@ -1620,14 +1644,33 @@ const DealDetails: React.FC = () => {
           setStageData({});
         }
 
-        // Load associated company using primary company id from associations
+        // Load all associated companies (deal can have multiple: end-client, MSP, etc.)
+        const companyIds = getDealCompanyIds(deal as any);
         const primaryCompanyId = getDealPrimaryCompanyId(deal as any);
-        if (primaryCompanyId) {
-          const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', primaryCompanyId));
-          if (companyDoc.exists()) {
-            const companyData = { id: companyDoc.id, ...companyDoc.data() } as any;
-            setCompany(companyData);
+        if (companyIds.length > 0) {
+          const companiesList: CompanyOption[] = [];
+          for (const cid of companyIds) {
+            const companyDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_companies', cid));
+            if (companyDoc.exists()) {
+              const data = companyDoc.data();
+              const name = data.companyName || data.name || data.displayName || '';
+              companiesList.push({
+                id: companyDoc.id,
+                companyName: name,
+                name,
+                industry: data.industry || data.sector || '',
+              });
+              if (companyDoc.id === primaryCompanyId) {
+                setCompany({ id: companyDoc.id, ...data });
+              }
+            }
           }
+          setAssociatedCompanies(companiesList);
+          if (!primaryCompanyId && companiesList.length > 0) {
+            setCompany({ id: companiesList[0].id, companyName: companiesList[0].companyName, name: companiesList[0].name });
+          }
+        } else {
+          setAssociatedCompanies([]);
         }
         
 
@@ -1679,23 +1722,19 @@ const DealDetails: React.FC = () => {
     }
   }, [deal, aiComponentsLoaded]);
 
-  // Load location data when needed
+  // Load location data when needed (supports locations as [id] or [{ id, companyId }])
   useEffect(() => {
     if (!deal || !company || locationData || loadingLocation) return;
-    
     const locations = (deal as any)?.associations?.locations || [];
     if (locations.length === 0) return;
-    
     const locationEntry = locations[0];
     const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+    const companyIdForLocation = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company.id;
     const locationName = typeof locationEntry === 'string' ? 'Unknown Location' : (locationEntry.snapshot?.name || locationEntry.name || 'Unknown Location');
     const locationNickname = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.nickname || locationEntry.nickname || '');
     const locationAddress = typeof locationEntry === 'string' ? '' : (locationEntry.snapshot?.address || locationEntry.address || '');
-    
-    // Only load if we have incomplete location data
     if ((!locationNickname || !locationAddress || locationName === 'Unknown Location') && locationId) {
-      console.log('🔍 Loading location data from database via useEffect...');
-      loadLocationData(locationId, company.id);
+      loadLocationData(locationId, companyIdForLocation);
     }
   }, [deal?.associations?.locations, company?.id, locationData, loadingLocation]);
 
@@ -1755,7 +1794,8 @@ const DealDetails: React.FC = () => {
     { label: 'Contracts', icon: <DescriptionIcon fontSize="small" />, index: 5 },
   ];
 
-  const DealSidebar = () => (
+  // Inline sidebar content (no inner component) so date pickers don't unmount on parent re-render
+  const dealSidebarContent = (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       {/* Recent Activity */}
       <Box sx={{ mb: 0 }}>
@@ -1779,6 +1819,135 @@ const DealDetails: React.FC = () => {
         </SectionCard>
       </Box>
 
+      {/* Important Dates */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard title="Important Dates">
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            {(() => {
+              const parseDate = (val: any): Date | null => {
+                if (!val) return null;
+                try {
+                  const d = val instanceof Date ? val : val?.toDate ? val.toDate() : new Date(val);
+                  return isNaN(d.getTime()) ? null : d;
+                } catch {
+                  return null;
+                }
+              };
+              const toInputValue = (val: any): string => {
+                const d = parseDate(val);
+                if (!d) return '';
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const day = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${day}`;
+              };
+              const created = parseDate((deal as any)?.createdAt);
+              const lastTouch = getLastTouchDate();
+              const closeDateVal = deal?.closeDate || stageData?.qualification?.expectedCloseDate;
+              const expectedCloseInput = closeDateVal ? (typeof closeDateVal === 'string' && closeDateVal.match(/^\d{4}-\d{2}-\d{2}$/) ? closeDateVal : toInputValue(closeDateVal)) : '';
+              const expectedStartVal = stageData?.qualification?.expectedStartDate;
+              const expectedStart = expectedStartVal ? (typeof expectedStartVal === 'string' ? expectedStartVal : toInputValue(expectedStartVal)) : '';
+              const dateSignedVal = stageData?.closedWon?.dateSigned;
+              const isClosedWithDate = (deal?.status === 'won' || deal?.stage === 'closedWon') && dateSignedVal;
+              const actualCloseDate = dateSignedVal ? parseDate(dateSignedVal) : null;
+              // Format date-only in UTC so "Actual close" matches Closing stage "Close Date" (no timezone shift)
+              const formatDateOnly = (d: Date): string => {
+                const y = d.getUTCFullYear();
+                const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+                const day = String(d.getUTCDate()).padStart(2, '0');
+                return `${m}/${day}/${y}`;
+              };
+              const handleExpectedStartChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+                const v = e.target.value;
+                handleStageDataChange({
+                  ...stageData,
+                  qualification: { ...stageData?.qualification, expectedStartDate: v || undefined },
+                });
+              };
+              const handleExpectedCloseChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+                const v = e.target.value;
+                handleDealUpdate('closeDate', v || '');
+              };
+              const rows: { label: string; date: Date | null }[] = [
+                { label: 'Created', date: created },
+                { label: 'Last touch', date: lastTouch },
+              ];
+              return (
+                <>
+                  {rows.map(({ label, date }) => (
+                    <Box
+                      key={label}
+                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
+                    >
+                      <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {label}
+                        </Typography>
+                        <Typography variant="body2" fontWeight="medium">
+                          {date ? date.toLocaleDateString() : '—'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  ))}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                    <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.25 }}>
+                        Expected close
+                      </Typography>
+                      <TextField
+                        type="date"
+                        size="small"
+                        fullWidth
+                        value={expectedCloseInput}
+                        onChange={handleExpectedCloseChange}
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ placeholder: '' }}
+                        sx={{ '& .MuiInputBase-input': { fontSize: '0.875rem', py: 0.75 } }}
+                      />
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}>
+                    <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.25 }}>
+                        Expected start date
+                      </Typography>
+                      <TextField
+                        type="date"
+                        size="small"
+                        fullWidth
+                        value={expectedStart}
+                        onChange={handleExpectedStartChange}
+                        InputLabelProps={{ shrink: true }}
+                        inputProps={{ placeholder: '' }}
+                        sx={{ '& .MuiInputBase-input': { fontSize: '0.875rem', py: 0.75 } }}
+                      />
+                    </Box>
+                  </Box>
+                  {isClosedWithDate && (
+                    <Box
+                      sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50' }}
+                    >
+                      <EventIcon sx={{ fontSize: 18, color: 'text.secondary' }} />
+                      <Box sx={{ flex: 1 }}>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          Actual close
+                        </Typography>
+                        <Typography variant="body2" fontWeight="medium">
+                          {actualCloseDate ? formatDateOnly(actualCloseDate) : '—'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                  )}
+                </>
+              );
+            })()}
+          </Box>
+        </SectionCard>
+      </Box>
+
       {/* Company Widget */}
       <Box sx={{ mb: 0 }}>
         <SectionCard
@@ -1787,9 +1956,7 @@ const DealDetails: React.FC = () => {
             <Button
               variant="outlined"
               size="small"
-              onClick={() => {
-                if (company) navigate(`/companies/${company.id}`);
-              }}
+              onClick={() => setShowManageCompaniesDialog(true)}
               sx={{
                 minWidth: 'auto',
                 px: 1,
@@ -1798,47 +1965,49 @@ const DealDetails: React.FC = () => {
                 textTransform: 'none',
               }}
             >
-              View
+              Edit
             </Button>
           }
         >
-          {company ? (
+          {associatedCompanies.length > 0 ? (
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Box
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  p: 1,
-                  borderRadius: 1,
-                  bgcolor: 'grey.50',
-                  cursor: 'pointer',
-                }}
-                onClick={() => navigate(`/companies/${company.id}`)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    navigate(`/companies/${company.id}`);
-                  }
-                }}
-              >
-                <Avatar
-                  src={company.logo || company.logoUrl || company.logo_url || company.avatar}
-                  sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
+              {associatedCompanies.map((comp) => (
+                <Box
+                  key={comp.id}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    p: 1,
+                    borderRadius: 1,
+                    bgcolor: 'grey.50',
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => navigate(`/companies/${comp.id}`)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      navigate(`/companies/${comp.id}`);
+                    }
+                  }}
                 >
-                  {(company.companyName || company.name || 'C').charAt(0).toUpperCase()}
-                </Avatar>
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="body2" fontWeight="medium">
-                    {company.companyName || company.name || 'Unknown Company'}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {company.industry || company.sector || 'No industry'}
-                  </Typography>
+                  <Avatar
+                    sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
+                  >
+                    {(comp.companyName || comp.name || 'C').charAt(0).toUpperCase()}
+                  </Avatar>
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="body2" fontWeight="medium">
+                      {comp.companyName || comp.name || 'Unknown Company'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {comp.industry || 'No industry'}
+                    </Typography>
+                  </Box>
                 </Box>
-              </Box>
+              ))}
             </Box>
           ) : (
             <Box sx={{ textAlign: 'center', py: 3 }}>
@@ -1906,6 +2075,75 @@ const DealDetails: React.FC = () => {
           ) : (
             <Box sx={{ textAlign: 'center', py: 3 }} />
           )}
+        </SectionCard>
+      </Box>
+
+      {/* Decision Maker Widget */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard
+          title="Decision Maker"
+          action={
+            <Button
+              variant="outlined"
+              size="small"
+              onClick={() => setShowDecisionMakerDialog(true)}
+              sx={{
+                minWidth: 'auto',
+                px: 1,
+                py: 0.5,
+                fontSize: '0.75rem',
+                textTransform: 'none',
+              }}
+            >
+              Edit
+            </Button>
+          }
+        >
+          {(() => {
+            const dm = stageData?.qualification?.decisionMaker;
+            if (!dm) {
+              return (
+                <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
+                  No decision maker selected
+                </Typography>
+              );
+            }
+            const name = dm.fullName || `${dm.firstName || ''} ${dm.lastName || ''}`.trim() || dm.name || 'Unknown';
+            return (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  p: 1,
+                  borderRadius: 1,
+                  bgcolor: 'grey.50',
+                  cursor: 'pointer',
+                }}
+                onClick={() => dm?.id && navigate(`/contacts/${dm.id}`)}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (dm?.id && (e.key === 'Enter' || e.key === ' ')) {
+                    e.preventDefault();
+                    navigate(`/contacts/${dm.id}`);
+                  }
+                }}
+              >
+                <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
+                  {(name || 'C').charAt(0).toUpperCase()}
+                </Avatar>
+                <Box sx={{ flex: 1 }}>
+                  <Typography variant="body2" fontWeight="medium">
+                    {name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {dm.title || 'No title'}
+                  </Typography>
+                </Box>
+              </Box>
+            );
+          })()}
         </SectionCard>
       </Box>
 
@@ -2047,8 +2285,9 @@ const DealDetails: React.FC = () => {
                         cursor: 'pointer',
                       }}
                       onClick={() => {
-                        if (company && locationId) {
-                          navigate(`/companies/${company.id}/locations/${locationId}`);
+                        const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
+                        if (cid && locationId) {
+                          navigate(`/companies/${cid}/locations/${locationId}`);
                         }
                       }}
                       role="button"
@@ -2056,8 +2295,9 @@ const DealDetails: React.FC = () => {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' || e.key === ' ') {
                           e.preventDefault();
-                          if (company && locationId) {
-                            navigate(`/companies/${company.id}/locations/${locationId}`);
+                          const cid = typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : company?.id;
+                          if (cid && locationId) {
+                            navigate(`/companies/${cid}/locations/${locationId}`);
                           }
                         }
                       }}
@@ -2341,7 +2581,6 @@ const DealDetails: React.FC = () => {
                     const range = calculateExpectedRevenueRange();
                     const qual = stageData?.qualification || {};
                     const markup = typeof qual.expectedAverageMarkup === 'number' ? qual.expectedAverageMarkup : null;
-                    const probability = (deal as any)?.probability ?? qual.probability ?? null;
                     const fallbackEstimatedRevenue =
                       typeof (deal as any)?.estimatedRevenue === 'number' && (deal as any).estimatedRevenue > 0
                         ? Number((deal as any).estimatedRevenue)
@@ -2392,15 +2631,6 @@ const DealDetails: React.FC = () => {
                             {markup != null ? `${markup}%` : '—'}
                           </Typography>
                         </Box>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
-                            Probability:
-                          </Typography>
-                          <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.85)', fontWeight: 600 }}>
-                            {probability != null ? `${Number(probability)}%` : '—'}
-                          </Typography>
-                        </Box>
-
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                           <TimelineIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)' }} />
                           <Typography variant="body2" sx={{ fontSize: '14px', color: 'rgba(0,0,0,0.55)', fontWeight: 500 }}>
@@ -2662,7 +2892,7 @@ const DealDetails: React.FC = () => {
           </Grid>
 
           <Grid item xs={12} md={3}>
-            <DealSidebar />
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
@@ -2704,7 +2934,7 @@ const DealDetails: React.FC = () => {
             )}
           </Grid>
           <Grid item xs={12} md={3}>
-            <DealSidebar />
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
@@ -2720,7 +2950,7 @@ const DealDetails: React.FC = () => {
             />
           </Grid>
           <Grid item xs={12} md={3}>
-            <DealSidebar />
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
@@ -2731,7 +2961,7 @@ const DealDetails: React.FC = () => {
             <DealActivityTab deal={deal} tenantId={tenantId} />
           </Grid>
           <Grid item xs={12} md={3}>
-            <DealSidebar />
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
@@ -2854,7 +3084,7 @@ const DealDetails: React.FC = () => {
                     After 180 Days: {stageData?.qualification?.staffPlacementTimeline?.after180Days || 'Not specified'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Expected Close: {stageData?.qualification?.expectedCloseDate || 'Not specified'}
+                    Expected Close: {deal?.closeDate ? (() => { const d = new Date(deal.closeDate); return isNaN(d.getTime()) ? deal.closeDate : d.toLocaleDateString(); })() : (stageData?.qualification?.expectedCloseDate || 'Not specified')}
                   </Typography>
                 </Box>
               </Grid>
@@ -2870,7 +3100,7 @@ const DealDetails: React.FC = () => {
         </Card>
           </Grid>
           <Grid item xs={12} md={3}>
-            <DealSidebar />
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
@@ -2881,7 +3111,7 @@ const DealDetails: React.FC = () => {
             <ContractsTab deal={deal} tenantId={tenantId} stageData={stageData} />
           </Grid>
           <Grid item xs={12} md={3}>
-            <DealSidebar />
+            {dealSidebarContent}
           </Grid>
         </Grid>
       </TabPanel>
@@ -3107,6 +3337,15 @@ const DealDetails: React.FC = () => {
         onSalespeopleChange={handleSalespeopleChange}
       />
 
+      {/* Manage Companies Dialog */}
+      <ManageCompaniesDialog
+        open={showManageCompaniesDialog}
+        onClose={() => setShowManageCompaniesDialog(false)}
+        tenantId={tenantId}
+        currentCompanies={associatedCompanies}
+        onCompaniesChange={handleCompaniesChange}
+      />
+
       {/* Manage Contacts Dialog */}
       <ManageContactsDialog
         open={showManageContactsDialog}
@@ -3115,13 +3354,29 @@ const DealDetails: React.FC = () => {
         currentContacts={associatedContacts}
         onContactsChange={handleContactsChange}
         dealCompanyId={getDealPrimaryCompanyId(deal)}
+        dealCompanyIds={getDealCompanyIds(deal)}
+      />
+
+      {/* Manage Decision Maker Dialog */}
+      <ManageDecisionMakerDialog
+        open={showDecisionMakerDialog}
+        onClose={() => setShowDecisionMakerDialog(false)}
+        dealContacts={associatedContacts}
+        currentDecisionMaker={stageData?.qualification?.decisionMaker || null}
+        onSave={(contact) => {
+          handleStageDataChange({
+            ...stageData,
+            qualification: { ...stageData?.qualification, decisionMaker: contact || undefined },
+          });
+        }}
       />
 
       {/* Manage Location Dialog */}
       {(() => {
-        const companyId = getDealPrimaryCompanyId(deal);
-        if (!companyId) {
-          console.log('ManageLocationDialog: No company associated with deal, skipping dialog');
+        const companyIds = getDealCompanyIds(deal);
+        const primaryCompanyId = getDealPrimaryCompanyId(deal);
+        if (companyIds.length === 0) {
+          console.log('ManageLocationDialog: No companies associated with deal, skipping dialog');
           return null;
         }
         
@@ -3130,12 +3385,21 @@ const DealDetails: React.FC = () => {
             open={showManageLocationDialog}
             onClose={() => setShowManageLocationDialog(false)}
             tenantId={tenantId}
-            companyId={companyId}
+            companyId={primaryCompanyId || companyIds[0]}
+            companyIds={companyIds}
             currentLocationId={(() => {
               const locations = (deal as any)?.associations?.locations || [];
               if (locations.length > 0) {
                 const locationEntry = locations[0];
                 return typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+              }
+              return undefined;
+            })()}
+            currentLocationCompanyId={(() => {
+              const locations = (deal as any)?.associations?.locations || [];
+              if (locations.length > 0) {
+                const locationEntry = locations[0];
+                return typeof locationEntry === 'object' && locationEntry?.companyId ? locationEntry.companyId : undefined;
               }
               return undefined;
             })()}

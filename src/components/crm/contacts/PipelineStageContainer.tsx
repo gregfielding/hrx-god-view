@@ -70,6 +70,9 @@ export const PipelineStageContainer: React.FC<PipelineStageContainerProps> = ({
 
   if (stage === 'contact') return null;
 
+  // Hide lead box from contact page for now (per product request)
+  if (stage === 'lead') return null;
+
   const handleConvertToLead = () => setConvertConfirmOpen(true);
   const handleConvertConfirm = async () => {
     await onUpdate({ pipelineStage: 'lead' });
@@ -105,51 +108,7 @@ export const PipelineStageContainer: React.FC<PipelineStageContainerProps> = ({
         </>
       )}
 
-      {stage === 'lead' && (
-        <>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mb: 2 }}>
-            <TextField
-              label="Timing"
-              placeholder="Expected start?"
-              value={leadTiming}
-              onChange={(e) => setLeadTiming(e.target.value)}
-              onBlur={() => onUpdate({ leadTiming })}
-              size="small"
-              sx={{ minWidth: 160 }}
-            />
-            <TextField
-              label="Volume"
-              placeholder="Rough volume?"
-              value={leadVolume}
-              onChange={(e) => setLeadVolume(e.target.value)}
-              onBlur={() => onUpdate({ leadVolume })}
-              size="small"
-              sx={{ minWidth: 160 }}
-            />
-          </Box>
-          <TextField
-            fullWidth
-            label="Lead notes"
-            placeholder="Conditions, blockers, etc."
-            multiline
-            minRows={2}
-            value={leadNotes}
-            onChange={(e) => setLeadNotes(e.target.value)}
-            onBlur={() => onUpdate({ leadNotes })}
-            sx={{ mb: 2 }}
-          />
-          {onCreateOpportunity && (
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={<OpportunityIcon />}
-              onClick={() => onCreateOpportunity(contact)}
-            >
-              Create an Opportunity
-            </Button>
-          )}
-        </>
-      )}
+      {/* Lead stage UI hidden for now (stage === 'lead' returns null above) */}
 
       <Dialog open={convertConfirmOpen} onClose={() => setConvertConfirmOpen(false)}>
         <DialogTitle>Convert to Lead?</DialogTitle>

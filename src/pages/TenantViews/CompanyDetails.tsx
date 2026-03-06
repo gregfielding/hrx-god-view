@@ -1281,161 +1281,140 @@ const CompanyDetails: React.FC = () => {
           </Box>
         }
         filters={
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              variant={tabValue === 0 ? 'contained' : 'text'}
-              onClick={() => setTabValue(0)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 0 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              backgroundColor: '#F9FAFB',
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              '&::-webkit-scrollbar': { height: '6px' },
+              '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+              <Button
+                variant={tabValue === 0 ? 'contained' : 'text'}
+                onClick={() => setTabValue(0)}
+                startIcon={<DashboardIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<DashboardIcon fontSize="small" />}
-            >
-              Overview
-            </Button>
-            <Button
-              variant={tabValue === 1 ? 'contained' : 'text'}
-              onClick={() => setTabValue(1)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 1 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 0 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Overview
+              </Button>
+              <Button
+                variant={tabValue === 1 ? 'contained' : 'text'}
+                onClick={() => setTabValue(1)}
+                startIcon={<PlaceIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<PlaceIcon fontSize="small" />}
-            >
-              Locations {locations.length > 0 && `(${locations.length})`}
-            </Button>
-            <Button
-              variant={tabValue === 2 ? 'contained' : 'text'}
-              onClick={() => setTabValue(2)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 2 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 1 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Locations {locations.length > 0 && `(${locations.length})`}
+              </Button>
+              <Button
+                variant={tabValue === 2 ? 'contained' : 'text'}
+                onClick={() => setTabValue(2)}
+                startIcon={<PersonIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<PersonIcon fontSize="small" />}
-            >
-              Contacts {contacts.length > 0 && `(${contacts.length})`}
-            </Button>
-            <Button
-              variant={tabValue === 3 ? 'contained' : 'text'}
-              onClick={() => setTabValue(3)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 3 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 2 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Contacts {contacts.length > 0 && `(${contacts.length})`}
+              </Button>
+              <Button
+                variant={tabValue === 3 ? 'contained' : 'text'}
+                onClick={() => setTabValue(3)}
+                startIcon={<OpportunitiesIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<OpportunitiesIcon fontSize="small" />}
-            >
-              Opportunities {deals.length > 0 && `(${deals.length})`}
-            </Button>
-            <Button
-              variant={tabValue === 4 ? 'contained' : 'text'}
-              onClick={() => setTabValue(4)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 4 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 3 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Opportunities {deals.length > 0 && `(${deals.length})`}
+              </Button>
+              <Button
+                variant={tabValue === 4 ? 'contained' : 'text'}
+                onClick={() => setTabValue(4)}
+                startIcon={<TimelineIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<TimelineIcon fontSize="small" />}
-            >
-              Activity
-            </Button>
-            <Button
-              variant={tabValue === 5 ? 'contained' : 'text'}
-              onClick={() => setTabValue(5)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 5 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 4 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Activity
+              </Button>
+              <Button
+                variant={tabValue === 5 ? 'contained' : 'text'}
+                onClick={() => setTabValue(5)}
+                startIcon={<NotesIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<NotesIcon fontSize="small" />}
-            >
-              Notes {notesCount > 0 && `(${notesCount})`}
-            </Button>
-            <Button
-              variant={tabValue === (company.centralizedVendorProcess ? 9 : 8) ? 'contained' : 'text'}
-              onClick={() => setTabValue(company.centralizedVendorProcess ? 9 : 8)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === (company.centralizedVendorProcess ? 9 : 8) ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 5 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Notes {notesCount > 0 && `(${notesCount})`}
+              </Button>
+              <Button
+                variant={tabValue === (company.centralizedVendorProcess ? 9 : 8) ? 'contained' : 'text'}
+                onClick={() => setTabValue(company.centralizedVendorProcess ? 9 : 8)}
+                startIcon={<PersonSearchIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<PersonSearchIcon fontSize="small" />}
-            >
-              Find Contacts
-            </Button>
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === (company.centralizedVendorProcess ? 9 : 8) ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Find Contacts
+              </Button>
+            </Box>
           </Box>
         }
         rightActions={
@@ -1482,6 +1461,7 @@ const CompanyDetails: React.FC = () => {
             </Tooltip>
           </Box>
         }
+        showDivider={false}
       />
 
       {/* Collapsible Company Context Drawer */}
@@ -1518,7 +1498,7 @@ const CompanyDetails: React.FC = () => {
         </Box>
       </Collapse>
 
-      {/* Tab Content Area (standard: scroll + 16px bottom padding) */}
+      {/* Tab Content Area (no top padding: tabs sit directly above content) */}
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', px: { xs: 2, md: 3 }, pb: 2 }}>
         {/* Tab Panels */}
       {tabValue === 0 && (
@@ -7411,23 +7391,12 @@ const OpportunitiesTab: React.FC<{ deals: any[]; company: any; locations: any[] 
     };
   };
   
-  // Get expected close date from qualification stage
+  // Get expected close date (deal.closeDate is canonical; fallback to qualification for legacy data)
   const getExpectedCloseDate = (deal: any) => {
-    if (!deal.stageData?.qualification?.expectedCloseDate) {
-      return null;
-    }
-    
-    // Debug logging to see what date we're getting
-    console.log('Deal close date debug:', {
-      dealId: deal.id,
-      dealName: deal.name,
-      expectedCloseDate: deal.stageData.qualification.expectedCloseDate,
-      closeDate: deal.closeDate,
-      stageData: deal.stageData?.qualification
-    });
-    
-    const date = new Date(deal.stageData.qualification.expectedCloseDate);
-    return date;
+    const raw = deal.closeDate || deal.stageData?.qualification?.expectedCloseDate;
+    if (!raw) return null;
+    const date = new Date(raw);
+    return isNaN(date.getTime()) ? null : date;
   };
   
   // Load locations if not provided

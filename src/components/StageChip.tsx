@@ -15,7 +15,7 @@ import {
   Block as BlockIcon
 } from '@mui/icons-material';
 
-import { getStageChipProps, getStageColor, getTextContrastColor, getStageHexColor } from '../utils/crmStageColors';
+import { getStageChipProps, getStageColor, getStageHexColor, getStageTextColor, getTextContrastColor } from '../utils/crmStageColors';
 
 interface StageChipProps extends Omit<ChipProps, 'label' | 'color'> {
   stage: string;
@@ -70,7 +70,7 @@ const StageChip: React.FC<StageChipProps> = ({
         ...getStageChipProps(stage),
         style: {
           backgroundColor: getStageHexColor(stage),
-          color: getTextContrastColor(getStageHexColor(stage)),
+          color: getStageTextColor(stage),
           fontWeight: 600
         },
         size,

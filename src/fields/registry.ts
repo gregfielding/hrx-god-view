@@ -156,7 +156,7 @@ export const FieldRegistry: Registry = {
 
   // Closed Won
   closingStatus: { id: 'closingStatus', label: 'Closing Status', type: 'select', usedBy: ['Both'], stage: 'closedWon', path: 'closedWon.status' },
-  dateSigned: { id: 'dateSigned', label: 'Date Signed', type: 'date', usedBy: ['Both'], stage: 'closedWon', path: 'closedWon.dateSigned' },
+  dateSigned: { id: 'dateSigned', label: 'Close Date', type: 'date', usedBy: ['Both'], stage: 'closedWon', path: 'closedWon.dateSigned' },
   expirationDate: { id: 'expirationDate', label: 'Expiration Date', type: 'date', usedBy: ['Both'], stage: 'closedWon', path: 'closedWon.expirationDate' },
   rateSheetOnFile: { id: 'rateSheetOnFile', label: 'Rate Sheet On File', type: 'boolean', usedBy: ['Both'], stage: 'closedWon', path: 'closedWon.rateSheetOnFile' },
   msaSigned: { id: 'msaSigned', label: 'MSA Signed', type: 'boolean', usedBy: ['Both'], stage: 'closedWon', path: 'closedWon.msaSigned' },

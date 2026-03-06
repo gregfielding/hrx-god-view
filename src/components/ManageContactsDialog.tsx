@@ -46,6 +46,8 @@ interface ManageContactsDialogProps {
   currentContacts: Contact[];
   onContactsChange: (contacts: Contact[]) => void;
   dealCompanyId?: string;
+  /** When provided, load contacts from all these companies (combined). Max 10 for Firestore "in". */
+  dealCompanyIds?: string[];
 }
 
 const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
@@ -55,7 +57,11 @@ const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
   currentContacts,
   onContactsChange,
   dealCompanyId,
+  dealCompanyIds,
 }) => {
+  const companyIdsToUse = (dealCompanyIds && dealCompanyIds.length > 0)
+    ? dealCompanyIds.slice(0, 10)
+    : (dealCompanyId ? [dealCompanyId] : []);
   const [availableContacts, setAvailableContacts] = useState<Contact[]>([]);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [loading, setLoading] = useState(false);
@@ -70,72 +76,37 @@ const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
       setError('');
 
       try {
-        console.log('Loading contacts for tenant:', tenantId, 'and company:', dealCompanyId);
-        
-        if (!dealCompanyId) {
-          console.log('No company ID provided, showing all contacts');
-          // If no company ID, show all contacts (fallback)
-          const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-          const contactsQuery = query(contactsRef);
-          const contactsSnapshot = await getDocs(contactsQuery);
-          
-          const allContacts: Contact[] = [];
-          contactsSnapshot.docs.forEach(doc => {
-            const contactData = doc.data();
-            const displayName = contactData.firstName && contactData.lastName ? 
-                               `${contactData.firstName} ${contactData.lastName}` :
-                               contactData.fullName || 
-                               contactData.name || 
-                               contactData.email?.split('@')[0] || 
-                               'Unknown Contact';
-            
-            allContacts.push({
-              id: doc.id,
-              fullName: displayName,
-              firstName: contactData.firstName || '',
-              lastName: contactData.lastName || '',
-              email: contactData.email || '',
-              phone: contactData.phone || '',
-              title: contactData.title || ''
-            });
-          });
-          
-          setAvailableContacts(allContacts);
-          return;
-        }
-
-        // Query contacts associated with the specific company
         const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-        const contactsQuery = query(contactsRef, where('companyId', '==', dealCompanyId));
-        const contactsSnapshot = await getDocs(contactsQuery);
-        console.log('Company contacts query results:', contactsSnapshot.size);
-        
-        const companyContacts: Contact[] = [];
-        
-        contactsSnapshot.docs.forEach(doc => {
-          const contactData = doc.data();
-          const displayName = contactData.firstName && contactData.lastName ? 
-                             `${contactData.firstName} ${contactData.lastName}` :
-                             contactData.fullName || 
-                             contactData.name || 
-                             contactData.email?.split('@')[0] || 
-                             'Unknown Contact';
-          
-          companyContacts.push({
-            id: doc.id,
+        const byId = new Map<string, Contact>();
+        const toContact = (d: { id: string; data: () => Record<string, any> }) => {
+          const contactData = d.data();
+          const displayName = contactData?.firstName && contactData?.lastName
+            ? `${contactData.firstName} ${contactData.lastName}`
+            : contactData?.fullName || contactData?.name || contactData?.email?.split('@')[0] || 'Unknown Contact';
+          return {
+            id: d.id,
             fullName: displayName,
-            firstName: contactData.firstName || '',
-            lastName: contactData.lastName || '',
-            email: contactData.email || '',
-            phone: contactData.phone || '',
-            title: contactData.title || ''
-          });
-        });
-        
-        console.log('Company contacts found:', companyContacts.length);
-        console.log('Company contacts:', companyContacts);
-        setAvailableContacts(companyContacts);
-        
+            firstName: contactData?.firstName || '',
+            lastName: contactData?.lastName || '',
+            email: contactData?.email || '',
+            phone: contactData?.phone || '',
+            title: contactData?.title || '',
+          };
+        };
+
+        if (companyIdsToUse.length === 0) {
+          const snap = await getDocs(contactsRef);
+          snap.docs.forEach((d) => byId.set(d.id, toContact(d)));
+        } else if (companyIdsToUse.length === 1) {
+          const q = query(contactsRef, where('companyId', '==', companyIdsToUse[0]));
+          const snap = await getDocs(q);
+          snap.docs.forEach((d) => byId.set(d.id, toContact(d)));
+        } else {
+          const q = query(contactsRef, where('companyId', 'in', companyIdsToUse));
+          const snap = await getDocs(q);
+          snap.docs.forEach((d) => byId.set(d.id, toContact(d)));
+        }
+        setAvailableContacts(Array.from(byId.values()));
       } catch (err: any) {
         console.error('Error loading available contacts:', err);
         setError('Failed to load available contacts');
@@ -145,7 +116,7 @@ const ManageContactsDialog: React.FC<ManageContactsDialogProps> = ({
     };
 
     loadAvailableContacts();
-  }, [open, tenantId, dealCompanyId]);
+  }, [open, tenantId, companyIdsToUse.join(',')]);
 
   // Filter available contacts to exclude current ones
   const availableToAdd = availableContacts.filter(contact => {

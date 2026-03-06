@@ -72,6 +72,8 @@ interface PlacementsTabProps {
   jobOrderId: string;
   jobOrder: JobOrder | null;
   onJobOrderUpdated?: () => void;
+  /** Connected job post IDs (from Jobs Board) so we load the same applicants as the Applications tab */
+  connectedJobPostIds?: string[];
 }
 
 interface Shift {
@@ -130,6 +132,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   jobOrderId,
   jobOrder,
   onJobOrderUpdated,
+  connectedJobPostIds = [],
 }) => {
   // Only present in hrx-god-view workspace build (Assign All + Export + Preview Email)
   if (typeof console !== 'undefined' && console.log) {
@@ -270,6 +273,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const pendingPlacementAddsRef = useRef<Set<string>>(new Set());
   // Track optimistically cancelled assignments so UI updates immediately before Firestore propagates
   const [pendingAssignmentCancels, setPendingAssignmentCancels] = useState<Set<string>>(new Set());
+  // For Career: user IDs placed or assigned on any shift of this job (so labor pool excludes them)
+  const [allShiftsPlacedOrAssignedUserIds, setAllShiftsPlacedOrAssignedUserIds] = useState<Set<string>>(new Set());
 
   // Load user groups for workforce dropdown
   useEffect(() => {
@@ -508,40 +513,40 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
         const loadApplicationDocs = async (): Promise<Array<{ id: string; data: any }>> => {
           const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+          const docMap = new Map<string, { id: string; data: any }>();
+
+          // 1) Applications linked by jobOrderId (same as Applications tab)
           const byOrderSnap = await getDocs(
             query(applicationsRef, where('jobOrderId', '==', jobOrderId)),
           );
-          let docs = byOrderSnap.docs;
+          byOrderSnap.docs.forEach((d) => docMap.set(d.id, { id: d.id, data: d.data() }));
 
-          // Phase 2 / career: applications nested under job order
-          if (docs.length === 0) {
+          // 2) Phase 2 / career: applications nested under job order
+          if (docMap.size === 0) {
             const nestedRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications');
             const nestedSnap = await getDocs(nestedRef);
-            docs = nestedSnap.docs;
+            nestedSnap.docs.forEach((d) => docMap.set(d.id, { id: d.id, data: d.data() }));
           }
 
-          if (docs.length === 0) {
+          // 3) Applications by connected job post IDs (same as Applications tab – jobId/postId = post id)
+          let jobPostIdsToUse: string[] =
+            connectedJobPostIds.length > 0
+              ? connectedJobPostIds.slice(0, 10)
+              : [];
+          if (jobPostIdsToUse.length === 0) {
             const jobPostingsSnap = await getDocs(
               query(collection(db, 'tenants', tenantId, 'job_postings'), where('jobOrderId', '==', jobOrderId)),
             );
-            const jobPostIds = jobPostingsSnap.docs.map((d) => d.id).filter(Boolean).slice(0, 10);
-
-            if (jobPostIds.length > 0) {
-              const byJobIdSnap = await getDocs(
-                query(applicationsRef, where('jobId', 'in', jobPostIds)),
-              );
-              docs = byJobIdSnap.docs;
-
-              if (docs.length === 0) {
-                const byPostIdSnap = await getDocs(
-                  query(applicationsRef, where('postId', 'in', jobPostIds)),
-                );
-                docs = byPostIdSnap.docs;
-              }
-            }
+            jobPostIdsToUse = jobPostingsSnap.docs.map((d) => d.id).filter(Boolean).slice(0, 10);
+          }
+          if (jobPostIdsToUse.length > 0) {
+            const byJobIdSnap = await getDocs(query(applicationsRef, where('jobId', 'in', jobPostIdsToUse)));
+            byJobIdSnap.docs.forEach((d) => docMap.set(d.id, { id: d.id, data: d.data() }));
+            const byPostIdSnap = await getDocs(query(applicationsRef, where('postId', 'in', jobPostIdsToUse)));
+            byPostIdSnap.docs.forEach((d) => docMap.set(d.id, { id: d.id, data: d.data() }));
           }
 
-          return docs.map((d) => ({ id: d.id, data: d.data() }));
+          return Array.from(docMap.values());
         };
 
         // Career applicants are not shift-specific: show all in the labor pool regardless of selected shift.
@@ -666,7 +671,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadWorkforce();
-  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, jobOrder]);
+  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, jobOrder, connectedJobPostIds]);
 
   // Real-time assignment status map for the selected shift.
   useEffect(() => {
@@ -770,6 +775,71 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
     return () => unsubscribe();
   }, [tenantId, selectedShiftId]);
+
+  // For Career jobs: listen to placements + assignments across all shifts so labor pool can exclude anyone already placed
+  const allShiftsPlacedOrAssignedRef = useRef<Map<string, Set<string>>>(new Map());
+  useEffect(() => {
+    if (!tenantId || shifts.length === 0) {
+      setAllShiftsPlacedOrAssignedUserIds(new Set());
+      allShiftsPlacedOrAssignedRef.current = new Map();
+      return;
+    }
+    const shiftIds = shifts.map((s) => s.id);
+    const placementsRef = collection(db, 'tenants', tenantId, 'placements');
+    const assignmentsRef = collection(db, 'tenants', tenantId, 'assignments');
+    const chunkSize = 10;
+    const unsubs: Array<() => void> = [];
+
+    const mergeAndSet = () => {
+      const combined = new Set<string>();
+      allShiftsPlacedOrAssignedRef.current.forEach((s) => s.forEach((id) => combined.add(id)));
+      setAllShiftsPlacedOrAssignedUserIds(combined);
+    };
+
+    for (let i = 0; i < shiftIds.length; i += chunkSize) {
+      const chunk = shiftIds.slice(i, i + chunkSize);
+      const placeKey = `placements-${i}`;
+      const placeQ = query(placementsRef, where('shiftId', 'in', chunk));
+      unsubs.push(
+        onSnapshot(
+          placeQ,
+          (snap) => {
+            const ids = new Set<string>();
+            snap.docs.forEach((d) => {
+              const uid = String((d.data() as { userId?: string })?.userId || '');
+              if (uid) ids.add(uid);
+            });
+            allShiftsPlacedOrAssignedRef.current.set(placeKey, ids);
+            mergeAndSet();
+          },
+          (err) => console.warn('Placements (all shifts) onSnapshot error:', err),
+        ),
+      );
+      const assignKey = `assignments-${i}`;
+      const assignQ = query(assignmentsRef, where('shiftId', 'in', chunk));
+      unsubs.push(
+        onSnapshot(
+          assignQ,
+          (snap) => {
+            const ids = new Set<string>();
+            snap.docs.forEach((d) => {
+              const data = d.data() as { userId?: string; candidateId?: string };
+              const uid = String(data?.userId || data?.candidateId || '');
+              if (uid) ids.add(uid);
+            });
+            allShiftsPlacedOrAssignedRef.current.set(assignKey, ids);
+            mergeAndSet();
+          },
+          (err) => console.warn('Assignments (all shifts) onSnapshot error:', err),
+        ),
+      );
+    }
+
+    return () => {
+      unsubs.forEach((u) => u());
+      allShiftsPlacedOrAssignedRef.current = new Map();
+    };
+  }, [tenantId, shifts]);
 
   // Assignments column shows all workers for this shift (placements + assignments), independent of Workforce selection
   const assignedUserIds = useMemo(() => {
@@ -1119,10 +1189,16 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setAssignAllBusy(false);
     }
   };
-  // Worker Pool: current workforce selection minus anyone already in Assignments (so they don't appear in both)
+  // Worker Pool: current workforce minus anyone already placed/assigned.
+  // Career: exclude anyone placed/assigned on any shift of this job. Gig/other: exclude only for the selected shift.
+  const jobTypeForPool = String((jobOrder as any)?.jobType || '').toLowerCase();
+  const isCareerForPool = jobTypeForPool === 'career';
+  const poolExcludeIds = isCareerForPool && (safeSelectedWorkforce === 'applicants' || safeSelectedWorkforce === 'candidates')
+    ? allShiftsPlacedOrAssignedUserIds
+    : assignedUserIds;
   const availableWorkers = useMemo(
-    () => workers.filter((w) => !assignedUserIds.has(w.id)),
-    [workers, assignedUserIds],
+    () => workers.filter((w) => !poolExcludeIds.has(w.id)),
+    [workers, poolExcludeIds],
   );
   const staffingTarget = useMemo(() => {
     if (!selectedShift) return null;
@@ -1996,7 +2072,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     <Alert severity="info" sx={{ py: 2 }}>
                       Select a group above to view its members.
                     </Alert>
-                  ) : !selectedShiftId ? (
+                  ) : !selectedShiftId && !(String((jobOrder as any)?.jobType || '').toLowerCase() === 'career' && (safeSelectedWorkforce === 'applicants' || safeSelectedWorkforce === 'candidates')) ? (
                     <Alert severity="info" sx={{ py: 2 }}>
                       Select a shift to view worker pool.
                     </Alert>

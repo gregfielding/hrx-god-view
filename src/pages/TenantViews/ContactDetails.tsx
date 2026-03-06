@@ -72,7 +72,7 @@ import {
   Person as PersonIcon,
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, query, where, orderBy, limit, onSnapshot, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
@@ -95,6 +95,8 @@ import LogActivityDialog from '../../components/LogActivityDialog';
 import AddNoteDialog from '../../components/AddNoteDialog';
 import { logger } from '../../utils/logger';
 import ContactHeader from '../../components/ContactHeader';
+import ManageContactCompanyDialog from '../../components/ManageContactCompanyDialog';
+import ManageContactLocationsDialog from '../../components/ManageContactLocationsDialog';
 import { useFavorites } from '../../hooks/useFavorites';
 import { BreadcrumbNav } from '../../components/BreadcrumbNav';
 import MessageDrawer, { MessageRecipient } from '../../components/MessageDrawer';
@@ -250,7 +252,7 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`contact-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
+      {value === index && <Box sx={{ pt: 0, px: { xs: 2, md: 3 }, pb: 2 }}>{children}</Box>}
     </div>
   );
 }
@@ -302,7 +304,6 @@ const ContactDetails: React.FC = () => {
   // Company and location are managed via associations; no local pickers
   const [companyLocations, setCompanyLocations] = useState<any[]>([]);
   const [selectedLocations, setSelectedLocations] = useState<any[]>([]);
-  const [locationDropdownValue, setLocationDropdownValue] = useState<any>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [fixingAssociations, setFixingAssociations] = useState(false);
@@ -320,6 +321,8 @@ const ContactDetails: React.FC = () => {
   const [allCompanies, setAllCompanies] = useState<any[]>([]);
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [suggestedCompanies, setSuggestedCompanies] = useState<any[]>([]);
+  const [showManageCompanyDialog, setShowManageCompanyDialog] = useState(false);
+  const [showManageWorkLocationsDialog, setShowManageWorkLocationsDialog] = useState(false);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   
@@ -634,49 +637,80 @@ const ContactDetails: React.FC = () => {
       
       const result = await associationService.getEntityAssociations('contact', contactId);
       
-      // Fallback: Query deals that reference this contact
-      // Check both contactIds (flat array) and associations.contacts (array of objects)
+      // Normalize stored id to string (handles string, number, or Firestore ref with .id)
+      const toId = (v: any): string => {
+        if (v == null) return '';
+        if (typeof v === 'string') return v;
+        if (typeof v === 'number') return String(v);
+        if (typeof v === 'object' && v?.id != null) return String(v.id);
+        return String(v);
+      };
+      const cid = String(contactId);
+      const dealHasContact = (deal: any) => {
+        if (Array.isArray(deal.contactIds) && deal.contactIds.some((id: any) => toId(id) === cid)) return true;
+        if (deal.associations?.contacts?.some((c: any) => toId(typeof c === 'string' ? c : c?.id) === cid)) return true;
+        return false;
+      };
+
+      // Fallback: Query deals that reference this contact. Run each query in its own try/catch
+      // so one failure (e.g. missing Firestore index for contactIds) doesn't skip the batch scan.
       let fallbackDeals: any[] = [];
+
+      // Query 1: contactIds array-contains (may fail if index missing)
       try {
-        // Query 1: Check contactIds array (flat array of IDs)
-        const dealsQuery = query(
+        const q1 = query(
           collection(db, 'tenants', tenantId, 'crm_deals'),
           where('contactIds', 'array-contains', contactId)
         );
-        const dealsSnapshot = await getDocs(dealsQuery);
-        fallbackDeals = dealsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        
-        // Query 2: For deals that might only have associations.contacts (objects),
-        // query by the contact's company and filter client-side
+        const snap1 = await getDocs(q1);
+        fallbackDeals = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
+      } catch (e1) {
+        console.warn('Contact opportunities: contactIds query failed (index?), using batch fallback', e1);
+      }
+
+      // Query 2: Deals by contact's company
+      let contactCompanyId: string | undefined;
+      try {
         const contactDoc = await getDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId));
         if (contactDoc.exists()) {
           const contactData = contactDoc.data();
-          const companyId = contactData?.companyId || contactData?.associations?.companies?.[0];
-          
-          if (companyId) {
-            const companyDealsQuery = query(
+          const rawCompany = contactData?.companyId ?? contactData?.associations?.companies?.[0];
+          contactCompanyId = typeof rawCompany === 'string' ? rawCompany : (rawCompany?.id ?? undefined);
+          if (contactCompanyId) {
+            const q2 = query(
               collection(db, 'tenants', tenantId, 'crm_deals'),
-              where('companyId', '==', companyId)
+              where('companyId', '==', contactCompanyId)
             );
-            const companyDealsSnapshot = await getDocs(companyDealsQuery);
-            const companyDeals = companyDealsSnapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-            
-            // Filter to only deals that have this contact in associations.contacts
-            const matchingDeals = companyDeals.filter((deal: any) => {
-              if (deal.contactIds?.includes(contactId)) return true;
-              if (deal.associations?.contacts) {
-                return deal.associations.contacts.some((c: any) => 
-                  (typeof c === 'string' ? c : c?.id) === contactId
-                );
-              }
-              return false;
-            });
-            
-            fallbackDeals = [...fallbackDeals, ...matchingDeals];
+            const snap2 = await getDocs(q2);
+            const companyDeals = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
+            const matching = companyDeals.filter(dealHasContact);
+            fallbackDeals = [...fallbackDeals, ...matching.filter(d => !fallbackDeals.some(f => f.id === d.id))];
           }
         }
-      } catch (fallbackErr) {
-        console.warn('Fallback deals query failed:', fallbackErr);
+      } catch (e2) {
+        console.warn('Contact opportunities: company deals query failed', e2);
+      }
+
+      // Query 3: Batch scan – always run so we find deals even without contactIds index or companyId on deal
+      try {
+        const batchQuery = query(
+          collection(db, 'tenants', tenantId, 'crm_deals'),
+          limit(500)
+        );
+        const batchSnap = await getDocs(batchQuery);
+        const batchDeals = batchSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        const byContact = batchDeals.filter((deal: any) => {
+          if (!dealHasContact(deal)) return false;
+          if (fallbackDeals.some((d: any) => d.id === deal.id)) return false;
+          return true;
+        });
+        fallbackDeals = [...fallbackDeals, ...byContact];
+        if (batchDeals.length > 0 && process.env.NODE_ENV === 'development') {
+          const withContact = batchDeals.filter(dealHasContact);
+          console.log('Contact opportunities: batch scanned', batchDeals.length, 'deals,', withContact.length, 'have this contact, total fallback', fallbackDeals.length);
+        }
+      } catch (e3) {
+        console.warn('Contact opportunities: batch deals query failed', e3);
       }
       
       // Merge fallback deals with existing deals
@@ -825,6 +859,33 @@ const ContactDetails: React.FC = () => {
     }
   };
 
+  const handleCompanySaveFromModal = async (companyId: string | null) => {
+    if (companyId) {
+      await handleCompanyAssociation(companyId);
+    } else {
+      if (!contactId || !tenantId || !user?.uid) return;
+      try {
+        const currentAssociations = contact?.associations || {};
+        const updatedAssociations = { ...currentAssociations, companies: [] };
+        await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), {
+          companyId: null,
+          companyName: '',
+          associations: updatedAssociations,
+          updatedAt: new Date(),
+        });
+        setContact((prev) => (prev ? { ...prev, companyId: undefined, companyName: '', associations: updatedAssociations } : null));
+        setCompany(null);
+        setCompanyLocations([]);
+        setSelectedLocations([]);
+        showToast('Company association removed', 'success');
+        await loadAssociations();
+      } catch (error) {
+        console.error('Error clearing company association:', error);
+        showToast('Failed to remove company association', 'error');
+      }
+    }
+  };
+
   // (Removed) Duplicate Recent Activity widget under Contact Details (now shown in right column)
 
   // Handle location association update (now supports multiple locations)
@@ -956,31 +1017,11 @@ const ContactDetails: React.FC = () => {
       };
       
       await loadLastActivity();
-      
-      // Set up real-time listener for email_logs to refresh Recent Activity
-      const emailsRef = collection(db, 'tenants', tenantId, 'email_logs');
-      const emailsQuery = query(
-        emailsRef,
-        where('contactId', '==', contactId),
-        orderBy('timestamp', 'desc'),
-        limit(1)
-      );
-      
-      const unsubscribeEmails = onSnapshot(emailsQuery, async () => {
-        // Refresh last activity when new emails are logged
-        await loadLastActivity();
-      }, (err) => {
-        console.warn('Error listening to email_logs:', err);
-      });
-      
-      // Store unsubscribe function for cleanup
-      return () => {
-        unsubscribeEmails();
-      };
 
-      // Removed legacy company picker load (associations are the source of truth)
-      
-      // Load associations
+      // Email log real-time updates are handled by the separate useEffect below (contactId/tenantId).
+      // Do not return here or loadAssociations() would never run.
+
+      // Load associations (deals/opportunities, etc.) so the Opportunities widget shows correctly
       await loadAssociations();
 
     } catch (err) {
@@ -1298,31 +1339,42 @@ const ContactDetails: React.FC = () => {
       // Clean undefined values from the processed value (especially important for Apollo enrichment data)
       processedValue = removeUndefinedValues(processedValue);
 
-      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), { 
+      // Firestore doesn't allow undefined; for booleans (e.g. isActive) always write true/false
+      if (field === 'isActive') {
+        processedValue = processedValue === true || processedValue === 'true';
+      }
+
+      const updatePayload: Record<string, any> = {
         [field]: processedValue,
-        updatedAt: new Date()
-      });
-      
-      // Log the activity locally for diagnostics
-      await logger.aiEvent({
-        eventType: 'contact.field_updated',
-        actionType: 'contact_updated',
-        targetType: 'contact',
-        targetId: contactId,
-        tenantId,
-        userId: user.uid,
-        contextType: 'contact_management',
-        aiRelevant: true,
-        urgencyScore: 6,
-        reason: `Updated ${field}: ${processedValue}`,
-        metadata: { field, value: processedValue }
-      });
-      
+        updatedAt: serverTimestamp()
+      };
+
+      await updateDoc(doc(db, 'tenants', tenantId, 'crm_contacts', contactId), updatePayload);
+
+      // Log the activity (don't let logging failure mark the contact update as failed)
+      try {
+        await logger.aiEvent({
+          eventType: 'contact.field_updated',
+          actionType: 'contact_updated',
+          targetType: 'contact',
+          targetId: contactId,
+          tenantId,
+          userId: user.uid,
+          contextType: 'contact_management',
+          aiRelevant: true,
+          urgencyScore: 6,
+          reason: `Updated ${field}: ${processedValue}`,
+          metadata: { field, value: processedValue }
+        });
+      } catch (logErr) {
+        console.warn('Contact update logging failed:', logErr);
+      }
+
       // Update local state
       setContact(prev => prev ? { ...prev, [field]: processedValue } : null);
+      setError(''); // clear any previous error
       setAiSuccess('Contact updated successfully!');
-      
-      // Clear success message after 3 seconds
+
       setTimeout(() => setAiSuccess(null), 3000);
     } catch (err) {
       console.error('Error updating contact:', err);
@@ -1360,28 +1412,32 @@ const ContactDetails: React.FC = () => {
     navigate(`/crm?tab=1&new=1&${params.toString()}`);
   };
 
-  // Utility function to remove undefined values from objects (Firestore doesn't allow undefined)
-  const removeUndefinedValues = (obj: any): any => {
-    if (obj === null || obj === undefined) {
-      return null;
-    }
-    
+  // Utility function to remove undefined values from objects (Firestore doesn't allow undefined).
+  // Primitives and Dates are returned as-is; avoids circular reference stack overflow.
+  const removeUndefinedValues = (obj: any, _seen?: WeakSet<object>): any => {
+    if (obj === null || obj === undefined) return null;
+    // Primitives and Date: return as-is (no recursion)
+    const t = typeof obj;
+    if (t !== 'object') return obj;
+    if (obj instanceof Date) return obj;
+
+    const seen = _seen ?? new WeakSet<object>();
+    if (seen.has(obj)) return null; // break circular reference
+    seen.add(obj);
+
     if (Array.isArray(obj)) {
-      return obj.map(item => removeUndefinedValues(item)).filter(item => item !== null);
+      const out = obj.map((item) => removeUndefinedValues(item, seen)).filter((item) => item !== null);
+      return out;
     }
-    
-    if (typeof obj === 'object') {
-      const cleaned: any = {};
-      for (const [key, value] of Object.entries(obj)) {
-        const cleanedValue = removeUndefinedValues(value);
-        if (cleanedValue !== null) {
-          cleaned[key] = cleanedValue;
-        }
+
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = removeUndefinedValues(value, seen);
+      if (cleanedValue !== null) {
+        cleaned[key] = cleanedValue;
       }
-      return cleaned;
     }
-    
-    return obj;
+    return cleaned;
   };
 
   const ensureUrlProtocol = (url: string): string => {
@@ -2460,97 +2516,95 @@ const ContactDetails: React.FC = () => {
           </Box>
         }
         filters={
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button
-              variant={tabValue === 0 ? 'contained' : 'text'}
-              onClick={() => setTabValue(0)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 0 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              backgroundColor: '#F9FAFB',
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              '&::-webkit-scrollbar': { height: '6px' },
+              '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+              <Button
+                variant={tabValue === 0 ? 'contained' : 'text'}
+                onClick={() => setTabValue(0)}
+                startIcon={<DashboardIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<DashboardIcon fontSize="small" />}
-            >
-              Overview
-            </Button>
-            <Button
-              variant={tabValue === 1 ? 'contained' : 'text'}
-              onClick={() => setTabValue(1)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 1 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 0 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Overview
+              </Button>
+              <Button
+                variant={tabValue === 1 ? 'contained' : 'text'}
+                onClick={() => setTabValue(1)}
+                startIcon={<AddTaskIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<AddTaskIcon fontSize="small" />}
-            >
-              Tasks
-            </Button>
-            <Button
-              variant={tabValue === 2 ? 'contained' : 'text'}
-              onClick={() => setTabValue(2)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 2 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 1 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Tasks
+              </Button>
+              <Button
+                variant={tabValue === 2 ? 'contained' : 'text'}
+                onClick={() => setTabValue(2)}
+                startIcon={<NotesIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<NotesIcon fontSize="small" />}
-            >
-              Notes
-            </Button>
-            <Button
-              variant={tabValue === 3 ? 'contained' : 'text'}
-              onClick={() => setTabValue(3)}
-              sx={{
-                borderRadius: '999px',
-                fontSize: '14px',
-                px: 1.5,
-                py: 0.75,
-                ...(tabValue === 3 ? {
-                  bgcolor: '#0057B8',
-                  color: 'white',
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 2 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Notes
+              </Button>
+              <Button
+                variant={tabValue === 3 ? 'contained' : 'text'}
+                onClick={() => setTabValue(3)}
+                startIcon={<TimelineIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
                   fontWeight: 500,
-                } : {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                  color: 'rgba(0, 0, 0, 0.7)',
-                  fontWeight: 400,
-                }),
-              }}
-              startIcon={<TimelineIcon fontSize="small" />}
-            >
-              Activity
-            </Button>
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 3 ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } } : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Activity
+              </Button>
+            </Box>
           </Box>
         }
+        showDivider={false}
         rightActions={
           <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
             <Button
@@ -2862,100 +2916,6 @@ const ContactDetails: React.FC = () => {
                       InputProps={{ startAdornment: <EmailIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} /> }}
                     />
                     
-                    {/* Company Association */}
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Company Association
-                      </Typography>
-                      
-                      {/* Current Company Display */}
-                      {contact.companyName && (
-                        <Box sx={{ mb: 2, p: 1.5, bgcolor: 'primary.50', borderRadius: 1, border: '1px solid', borderColor: 'primary.200' }}>
-                          <Typography variant="body2" fontWeight="medium" color="primary.main">
-                            Currently Associated: {contact.companyName}
-                          </Typography>
-                          {contact.companyId && (
-                            <Typography variant="caption" color="text.secondary">
-                              Company ID: {contact.companyId}
-                            </Typography>
-                          )}
-                        </Box>
-                      )}
-                      
-                      {/* Company Autocomplete */}
-                      <Autocomplete
-                        options={allCompanies}
-                        getOptionLabel={(option) => option.companyName || option.name || ''}
-                        value={allCompanies.find(c => c.id === contact.companyId) || null}
-                        onChange={(event, newValue) => {
-                          if (newValue) {
-                            handleCompanyAssociation(newValue.id);
-                          }
-                        }}
-                        loading={loadingCompanies}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label="Associate with Company"
-                            placeholder="Search companies..."
-                            size="small"
-                            InputProps={{
-                              ...params.InputProps,
-                              startAdornment: <BusinessIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
-                              endAdornment: (
-                                <>
-                                  {loadingCompanies ? <CircularProgress color="inherit" size={20} /> : null}
-                                  {params.InputProps.endAdornment}
-                                </>
-                              ),
-                            }}
-                          />
-                        )}
-                        renderOption={(props, option) => (
-                          <Box component="li" {...props}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <BusinessIcon fontSize="small" color="action" />
-                              <Typography variant="body2">
-                                {option.companyName || option.name}
-                              </Typography>
-                              {option.industry && (
-                                <Chip label={option.industry} size="small" variant="outlined" />
-                              )}
-                            </Box>
-                          </Box>
-                        )}
-                      />
-                      
-                      {/* Email Domain Suggestions */}
-                      {suggestedCompanies.length > 0 && contact.email && contact.email.includes('@') && (
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                            Suggested companies based on email domain ({contact.email.split('@')[1]}):
-                          </Typography>
-                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                            {suggestedCompanies.map((company) => (
-                              <Button
-                                key={company.id}
-                                variant="outlined"
-                                size="small"
-                                onClick={() => handleCompanyAssociation(company.id)}
-                                sx={{ justifyContent: 'flex-start', textAlign: 'left' }}
-                                startIcon={<BusinessIcon fontSize="small" />}
-                              >
-                                <Box>
-                                  <Typography variant="body2" fontWeight="medium">
-                                    {company.companyName || company.name}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    {company.industry || 'No industry'}
-                                  </Typography>
-                                </Box>
-                              </Button>
-                            ))}
-                          </Box>
-                        </Box>
-                      )}
-                    </Box>
                     <TextField
                       label="Phone"
                       defaultValue={formatPhoneNumber(contact.phone || contact.workPhone || '')}
@@ -3123,108 +3083,6 @@ const ContactDetails: React.FC = () => {
                       fullWidth
                       size="small"
                     />
-
-                    <Box>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        Work Locations
-                      </Typography>
-                      
-                      {/* Add Location Dropdown */}
-                      <Autocomplete
-                        options={companyLocations.filter(loc => !selectedLocations.some(selected => selected.id === loc.id))}
-                        getOptionLabel={(option) => option.nickname || option.name || option.title || 'Unknown Location'}
-                        value={locationDropdownValue}
-                        onChange={(event, newValue) => {
-                          if (newValue) {
-                            const newLocations = [...selectedLocations, newValue];
-                            setSelectedLocations(newLocations);
-                            handleLocationAssociationUpdate(newLocations);
-                            // Clear the dropdown
-                            setLocationDropdownValue(null);
-                          }
-                        }}
-                        disabled={companyLocations.length === 0}
-                        renderInput={(params) => (
-                          <TextField
-                            {...params}
-                            label={selectedLocations.length > 0 ? "Add another location" : "Add work location"}
-                            placeholder="Select a location to add..."
-                            size="small"
-                            InputProps={{
-                              ...params.InputProps,
-                              startAdornment: <LocationIcon sx={{ fontSize: 16, mr: 1, color: 'text.secondary' }} />,
-                            }}
-                          />
-                        )}
-                        renderOption={(props, option) => (
-                          <Box component="li" {...props}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <LocationIcon fontSize="small" color="action" />
-                              <Typography variant="body2">
-                                {option.nickname || option.name || option.title || 'Unknown Location'}
-                              </Typography>
-                              {option.code && (
-                                <Chip label={option.code} size="small" variant="outlined" />
-                              )}
-                            </Box>
-                          </Box>
-                        )}
-                      />
-                      
-                      {/* Current Locations Table */}
-                      {selectedLocations.length > 0 && (
-                        <TableContainer 
-                          component={Paper} 
-                          variant="outlined" 
-                          sx={{ mt: 2, maxHeight: 200, overflowX: 'auto' }}
-                        >
-                          <Table size="small">
-                            <TableHead>
-                              <TableRow>
-                                <TableCell>Location</TableCell>
-                                <TableCell align="right">Actions</TableCell>
-                              </TableRow>
-                            </TableHead>
-                            <TableBody>
-                              {selectedLocations.map((location) => (
-                                <TableRow key={location.id}>
-                                  <TableCell>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                      <LocationIcon fontSize="small" color="action" />
-                                      <Typography variant="body2">
-                                        {location.nickname || location.name || location.title || 'Unknown Location'}
-                                      </Typography>
-                                      {location.code && (
-                                        <Chip label={location.code} size="small" variant="outlined" />
-                                      )}
-                                    </Box>
-                                  </TableCell>
-                                  <TableCell align="right">
-                                    <IconButton
-                                      size="small"
-                                      onClick={() => {
-                                        const newLocations = selectedLocations.filter(loc => loc.id !== location.id);
-                                        setSelectedLocations(newLocations);
-                                        handleLocationAssociationUpdate(newLocations);
-                                      }}
-                                      color="error"
-                                    >
-                                      <DeleteIcon fontSize="small" />
-                                    </IconButton>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </TableContainer>
-                      )}
-                      
-                      {selectedLocations.length === 0 && (
-                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                          No work locations assigned. Use the dropdown above to add locations.
-                        </Typography>
-                      )}
-                    </Box>
 
                     {/* Contact Address Information */}
                     {selectedLocations.length > 0 ? (
@@ -3860,6 +3718,170 @@ const ContactDetails: React.FC = () => {
                   )}
                 </CardContent>
               </Card>
+
+              {/* Company */}
+              <Card>
+                <CardHeader
+                  title="Company"
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<EditIcon fontSize="small" />}
+                      onClick={() => setShowManageCompanyDialog(true)}
+                      sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+                    >
+                      Edit
+                    </Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {contact?.companyName ? (
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 1,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: 'grey.50',
+                        cursor: contact?.companyId ? 'pointer' : undefined,
+                        '&:hover': contact?.companyId ? { bgcolor: 'grey.100' } : undefined,
+                      }}
+                      onClick={() => contact?.companyId && navigate(`/companies/${contact.companyId}`)}
+                      role={contact?.companyId ? 'button' : undefined}
+                      tabIndex={contact?.companyId ? 0 : undefined}
+                      onKeyDown={(e) => {
+                        if (contact?.companyId && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          navigate(`/companies/${contact.companyId}`);
+                        }
+                      }}
+                    >
+                      <Avatar
+                        sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}
+                      >
+                        {(contact.companyName || 'C').charAt(0).toUpperCase()}
+                      </Avatar>
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight="medium" color="text.primary">
+                          {contact.companyName}
+                        </Typography>
+                        {contact.companyId && (
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {contact.companyId}
+                          </Typography>
+                        )}
+                      </Box>
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No company associated
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Work Locations */}
+              <Card>
+                <CardHeader
+                  title="Work Locations"
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+                  action={
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={<EditIcon fontSize="small" />}
+                      onClick={() => setShowManageWorkLocationsDialog(true)}
+                      sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+                    >
+                      Edit
+                    </Button>
+                  }
+                />
+                <CardContent sx={{ p: 2 }}>
+                  {selectedLocations.length > 0 ? (
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                      {selectedLocations.map((location) => {
+                        const companyId = contact?.companyId;
+                        const isClickable = !!(companyId && location.id);
+                        return (
+                          <Box
+                            key={location.id}
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 1,
+                              p: 1,
+                              borderRadius: 1,
+                              bgcolor: 'grey.50',
+                              cursor: isClickable ? 'pointer' : undefined,
+                              '&:hover': isClickable ? { bgcolor: 'grey.100' } : undefined,
+                            }}
+                            onClick={() => isClickable && navigate(`/companies/${companyId}/locations/${location.id}`)}
+                            role={isClickable ? 'button' : undefined}
+                            tabIndex={isClickable ? 0 : undefined}
+                            onKeyDown={(e) => {
+                              if (isClickable && (e.key === 'Enter' || e.key === ' ')) {
+                                e.preventDefault();
+                                navigate(`/companies/${companyId}/locations/${location.id}`);
+                              }
+                            }}
+                          >
+                            <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem', bgcolor: 'primary.main' }}>
+                              <LocationIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="body2" fontWeight="medium" noWrap>
+                                {location.nickname || location.name || location.title || 'Unknown Location'}
+                              </Typography>
+                              {location.code && (
+                                <Typography variant="caption" color="text.secondary" display="block">
+                                  {location.code}
+                                </Typography>
+                              )}
+                            </Box>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      No work locations assigned
+                    </Typography>
+                  )}
+                </CardContent>
+              </Card>
+
+              <ManageContactCompanyDialog
+                open={showManageCompanyDialog}
+                onClose={() => setShowManageCompanyDialog(false)}
+                currentCompany={
+                  contact?.companyId
+                    ? {
+                        id: contact.companyId,
+                        companyName: contact.companyName,
+                        name: contact.companyName,
+                      }
+                    : null
+                }
+                allCompanies={allCompanies}
+                loadingCompanies={loadingCompanies}
+                suggestedCompanies={suggestedCompanies}
+                contactEmail={contact?.email}
+                onSave={handleCompanySaveFromModal}
+              />
+              <ManageContactLocationsDialog
+                open={showManageWorkLocationsDialog}
+                onClose={() => setShowManageWorkLocationsDialog(false)}
+                companyLocations={companyLocations}
+                selectedLocations={selectedLocations}
+                onSave={(locations) => {
+                  setSelectedLocations(locations);
+                  handleLocationAssociationUpdate(locations);
+                }}
+              />
 
               {/* Opportunities */}
               <Card>
