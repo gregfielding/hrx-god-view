@@ -283,7 +283,7 @@ const RecruiterCompanies: React.FC = () => {
   };
 
   const handleViewCompany = (company: any) => {
-    navigate(`/recruiter/companies/${company.id}`);
+    navigate(`/companies/${company.id}`);
   };
 
   const handleAddNew = () => {

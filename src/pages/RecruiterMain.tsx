@@ -14,8 +14,8 @@ const RecruiterMain: React.FC = () => {
     if (location.pathname === '/recruiter' || location.pathname === '/recruiter/') return 0;
     if (location.pathname.startsWith('/recruiter/job-orders')) return 1;
     if (location.pathname.startsWith('/recruiter/users') || location.pathname.startsWith('/users')) return 2;
-    if (location.pathname.startsWith('/recruiter/companies')) return 3;
-    if (location.pathname.startsWith('/recruiter/contacts')) return 4;
+    if (location.pathname.startsWith('/companies')) return 3;
+    if (location.pathname.startsWith('/contacts')) return 4;
     if (location.pathname.startsWith('/recruiter/user-groups')) return 5;
     if (location.pathname.startsWith('/recruiter/jobs-board')) return 6;
     if (location.pathname.startsWith('/recruiter/reports')) return 7;
@@ -29,8 +29,8 @@ const RecruiterMain: React.FC = () => {
       '/recruiter',
       '/recruiter/job-orders',
       '/recruiter/users',
-      '/recruiter/companies',
-      '/recruiter/contacts',
+      '/companies',
+      '/contacts',
       '/recruiter/user-groups',
       '/recruiter/jobs-board',
       '/recruiter/reports',

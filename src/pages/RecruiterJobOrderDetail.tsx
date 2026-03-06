@@ -3858,10 +3858,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
                                     {(jobOrder?.companyId || company?.id) ? (
                                       <MUILink
-                                        href={`/recruiter/companies/${jobOrder?.companyId || company?.id}`}
+                                        href={`/companies/${jobOrder?.companyId || company?.id}`}
                                         onClick={(e) => {
                                           e.preventDefault();
-                                          navigate(`/recruiter/companies/${jobOrder?.companyId || company?.id}`);
+                                          navigate(`/companies/${jobOrder?.companyId || company?.id}`);
                                         }}
                                         color="primary"
                                         underline="hover"
@@ -3889,10 +3889,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
                                     {jobOrder.worksiteId && company?.id ? (
                                       <MUILink
-                                        href={`/recruiter/companies/${company.id}?tab=locations`}
+                                        href={`/companies/${company.id}?tab=locations`}
                                         onClick={(e) => {
                                           e.preventDefault();
-                                          navigate(`/recruiter/companies/${company.id}?tab=locations`);
+                                          navigate(`/companies/${company.id}?tab=locations`);
                                         }}
                                         color="primary"
                                         underline="hover"
@@ -4067,7 +4067,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   size="small"
                   onClick={() => {
                     if (company) {
-                      navigate(`/recruiter/companies/${company.id}`);
+                      navigate(`/companies/${company.id}`);
                     }
                   }}
                   sx={{ 
@@ -4085,13 +4085,13 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Box
                       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/recruiter/companies/${company.id}`)}
+                      onClick={() => navigate(`/companies/${company.id}`)}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => { 
                         if (e.key === 'Enter' || e.key === ' ') { 
                           e.preventDefault(); 
-                          navigate(`/recruiter/companies/${company.id}`);
+                          navigate(`/companies/${company.id}`);
                         } 
                       }}
                     >
@@ -4241,10 +4241,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                       <Box
                         key={contact.id}
                         sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                        onClick={() => navigate(`/recruiter/contacts/${contact.id}`)}
+                        onClick={() => navigate(`/contacts/${contact.id}`)}
                         role="button"
                         tabIndex={0}
-                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/contacts/${contact.id}`); } }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
                       >
                         <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                           {contact.fullName?.charAt(0) || contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
@@ -4310,7 +4310,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                           onClick={() => {
                             const companyId = company?.id || jobOrder?.companyId;
                             if (companyId && displayLocationId) {
-                              navigate(`/recruiter/companies/${companyId}/locations/${displayLocationId}`);
+                              navigate(`/companies/${companyId}/locations/${displayLocationId}`);
                             }
                           }}
                           role="button"
@@ -4320,7 +4320,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                               e.preventDefault(); 
                               const companyId = company?.id || jobOrder?.companyId;
                               if (companyId && displayLocationId) {
-                                navigate(`/recruiter/companies/${companyId}/locations/${displayLocationId}`);
+                                navigate(`/companies/${companyId}/locations/${displayLocationId}`);
                               }
                             } 
                           }}

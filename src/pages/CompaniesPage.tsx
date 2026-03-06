@@ -559,10 +559,55 @@ const CompaniesPage: React.FC = () => {
     return deals.filter((deal: any) => {
       const dealCompanyIds = [
         deal.companyId,
-        ...(deal.companies || []).map((c: any) => typeof c === 'string' ? c : c?.id).filter(Boolean)
+        ...(deal.associations?.companies || deal.companies || []).map((c: any) => (typeof c === 'string' ? c : c?.id)).filter(Boolean)
       ].filter(Boolean);
       return dealCompanyIds.includes(companyId);
     });
+  };
+
+  /** Numeric initial value from deal (stageData.qualification or estimatedRevenue), same logic as CRM table. */
+  const getDealInitialValueNum = (deal: any): number => {
+    if (deal?.stageData?.qualification) {
+      const q = deal.stageData.qualification;
+      const payRate = q.expectedAveragePayRate ?? 16;
+      const markup = q.expectedAverageMarkup ?? 40;
+      const timeline = q.staffPlacementTimeline;
+      if (timeline && (timeline.starting ?? 0) > 0) {
+        const billRate = payRate * (1 + markup / 100);
+        const annualHoursPerEmployee = 2080;
+        const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+        return annualRevenuePerEmployee * (timeline.starting || 0);
+      }
+    }
+    if (deal?.estimatedRevenue != null && deal.estimatedRevenue !== '') {
+      const n = Number(deal.estimatedRevenue);
+      if (!Number.isNaN(n)) return n;
+    }
+    return 0;
+  };
+
+  /** Numeric potential value from deal (stageData.qualification or estimatedRevenue), same logic as CRM table. */
+  const getDealPotentialValueNum = (deal: any): number => {
+    if (deal?.stageData?.qualification) {
+      const q = deal.stageData.qualification;
+      const payRate = q.expectedAveragePayRate ?? 16;
+      const markup = q.expectedAverageMarkup ?? 40;
+      const timeline = q.staffPlacementTimeline;
+      if (timeline) {
+        const after180 = timeline.after180Days ?? timeline.after90Days ?? timeline.after30Days ?? timeline.starting ?? 0;
+        if (after180 > 0) {
+          const billRate = payRate * (1 + markup / 100);
+          const annualHoursPerEmployee = 2080;
+          const annualRevenuePerEmployee = billRate * annualHoursPerEmployee;
+          return annualRevenuePerEmployee * after180;
+        }
+      }
+    }
+    if (deal?.estimatedRevenue != null && deal.estimatedRevenue !== '') {
+      const n = Number(deal.estimatedRevenue);
+      if (!Number.isNaN(n)) return n;
+    }
+    return 0;
   };
 
   const getSalespersonName = (salespersonId: string) => {
@@ -571,35 +616,33 @@ const CompaniesPage: React.FC = () => {
   };
 
   const getCompanyPipelineValue = (company: any) => {
-    if (company.pipelineValue) {
-      return {
-        totalLow: company.pipelineValue.low || 0,
-        totalHigh: company.pipelineValue.high || 0,
-        dealCount: company.pipelineValue.dealCount || 0
-      };
-    }
-    
     const companyDeals = getCompanyDeals(company.id);
-    const pipelineDeals = companyDeals.filter(deal => 
-      deal.status !== 'closed' && deal.status !== 'lost' && deal.expectedAnnualRevenueRange
-    );
-    
+    // Pipeline = open or closed/won deals only (exclude lost, canceled)
+    const pipelineDeals = companyDeals.filter((deal: any) => {
+      const status = (deal.status ?? 'open').toLowerCase();
+      return status !== 'lost' && status !== 'canceled';
+    });
+
+    if (pipelineDeals.length === 0) {
+      // No pipeline deals: use stored totals if present, otherwise zeros
+      if (company.pipelineValue && (company.pipelineValue.dealCount > 0 || company.pipelineValue.low > 0 || company.pipelineValue.high > 0)) {
+        return {
+          totalLow: company.pipelineValue.low || 0,
+          totalHigh: company.pipelineValue.high || 0,
+          dealCount: company.pipelineValue.dealCount || 0
+        };
+      }
+      return { totalLow: 0, totalHigh: 0, dealCount: 0 };
+    }
+
+    // Sum initial values (low) and potential values (high) across all pipeline deals
     let totalLow = 0;
     let totalHigh = 0;
-    
-    pipelineDeals.forEach(deal => {
-      const range = deal.expectedAnnualRevenueRange;
-      if (range && typeof range === 'string') {
-        const match = range.match(/\$([\d,]+)\s*-\s*\$([\d,]+)/);
-        if (match) {
-          const low = parseInt(match[1].replace(/,/g, ''));
-          const high = parseInt(match[2].replace(/,/g, ''));
-          totalLow += low;
-          totalHigh += high;
-        }
-      }
+    pipelineDeals.forEach((deal: any) => {
+      totalLow += getDealInitialValueNum(deal);
+      totalHigh += getDealPotentialValueNum(deal);
     });
-    
+
     return { totalLow, totalHigh, dealCount: pipelineDeals.length };
   };
 

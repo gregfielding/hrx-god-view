@@ -397,21 +397,21 @@ const LinkForActivity: React.FC<{ it: LocationActivityItem; tenantId: string; co
   let href: string | null = null;
   let label = 'Open';
   if (it.type === 'deal_stage' && it.metadata?.dealId) {
-    href = `/recruiter/companies/${companyId}?tab=3`;
+    href = `/companies/${companyId}?tab=3`;
     label = 'View Deal';
   } else if (it.type === 'email') {
     const dealId = it.metadata?.dealId;
     const contactId = Array.isArray(it.metadata?.contacts) ? it.metadata.contacts[0] : it.metadata?.contactId;
     if (dealId) {
-      href = `/recruiter/companies/${companyId}?tab=3`;
+      href = `/companies/${companyId}?tab=3`;
       label = 'View Deal';
     } else if (contactId) {
-      href = `/recruiter/contacts/${contactId}`;
+      href = `/contacts/${contactId}`;
       label = 'View Contact';
     }
   }
   if (!href) {
-    href = `/recruiter/companies/${companyId}`;
+    href = `/companies/${companyId}`;
     label = 'View Company';
   }
   return (
@@ -935,7 +935,7 @@ const RecruiterLocationDetails: React.FC = () => {
     try {
       const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', companyId!, 'locations', locationId!);
       await deleteDoc(locationRef);
-      navigate(`/recruiter/companies/${companyId}?tab=1`);
+      navigate(`/companies/${companyId}?tab=1`);
     } catch (err: any) {
       console.error('Error deleting location:', err);
       setError(err.message || 'Failed to delete location');
@@ -968,18 +968,18 @@ const RecruiterLocationDetails: React.FC = () => {
     const sourceTab = currentUrl.searchParams.get('sourceTab');
     
     if (sourceTab) {
-      navigate(`/recruiter/companies/${companyId}?tab=${sourceTab}`);
+      navigate(`/companies/${companyId}?tab=${sourceTab}`);
       return;
     }
     
     // Fallback: check referrer for tab information
     const referrer = document.referrer;
-    if (referrer.includes('/recruiter/companies/') && referrer.includes('tab=')) {
+    if (referrer.includes('/companies/') && referrer.includes('tab=')) {
       try {
         const referrerUrl = new URL(referrer);
         const tab = referrerUrl.searchParams.get('tab');
         if (tab) {
-          navigate(`/recruiter/companies/${companyId}?tab=${tab}`);
+          navigate(`/companies/${companyId}?tab=${tab}`);
           return;
         }
       } catch (err) {
@@ -988,7 +988,7 @@ const RecruiterLocationDetails: React.FC = () => {
     }
     
     // Default to locations tab (tab=1) since this is a location details page
-    navigate(`/recruiter/companies/${companyId}?tab=1`);
+    navigate(`/companies/${companyId}?tab=1`);
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
@@ -1044,8 +1044,8 @@ const RecruiterLocationDetails: React.FC = () => {
         <BreadcrumbNav
           items={[
             { label: 'Recruiter', href: '/recruiter' },
-            { label: 'Companies', onClick: () => navigate('/recruiter/companies') },
-            { label: company?.companyName || company?.name || 'Company', href: `/recruiter/companies/${companyId}` },
+            { label: 'Companies', onClick: () => navigate('/companies') },
+            { label: company?.companyName || company?.name || 'Company', href: `/companies/${companyId}` },
             { label: location.name },
           ]}
         />
@@ -1447,13 +1447,13 @@ const RecruiterLocationDetails: React.FC = () => {
                               bgcolor: 'grey.50', 
                               cursor: 'pointer' 
                             }}
-                            onClick={() => navigate(`/recruiter/companies/${companyId}?tab=3`)}
+                            onClick={() => navigate(`/companies/${companyId}?tab=3`)}
                             role="button"
                             tabIndex={0}
                             onKeyDown={(e) => { 
                               if (e.key === 'Enter' || e.key === ' ') { 
                                 e.preventDefault(); 
-                                navigate(`/recruiter/companies/${companyId}?tab=3`); 
+                                navigate(`/companies/${companyId}?tab=3`); 
                               } 
                             }}
                           >
@@ -1490,10 +1490,10 @@ const RecruiterLocationDetails: React.FC = () => {
                         <Box
                           key={c.id}
                           sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                          onClick={() => navigate(`/recruiter/contacts/${c.id}`)}
+                          onClick={() => navigate(`/contacts/${c.id}`)}
                           role="button"
                           tabIndex={0}
-                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/contacts/${c.id}`); } }}
+                          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${c.id}`); } }}
                         >
                           <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                             {c.firstName?.charAt(0) || c.name?.charAt(0) || 'C'}

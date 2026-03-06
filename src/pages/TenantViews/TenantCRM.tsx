@@ -4767,6 +4767,48 @@ const CompaniesTab: React.FC<{
     }
   }, [tenantId]);
 
+  const fetchLatestDealNotesMap = useCallback(async (dealIds: string[]): Promise<Map<string, string>> => {
+    const notesByDealId = new Map<string, { content: string; timestampMs: number }>();
+    if (!tenantId || dealIds.length === 0) return new Map<string, string>();
+
+    try {
+      const notesRef = collection(db, 'tenants', tenantId, 'deal_notes');
+      const uniqueIds = Array.from(new Set(dealIds.filter(Boolean)));
+
+      for (let i = 0; i < uniqueIds.length; i += 10) {
+        const batch = uniqueIds.slice(i, i + 10);
+        if (batch.length === 0) continue;
+
+        const nq = query(notesRef, where('entityId', 'in', batch));
+        const snap = await getDocs(nq);
+
+        snap.docs.forEach((docSnap) => {
+          const d = docSnap.data() as any;
+          const entityId = d.entityId as string | undefined;
+          if (!entityId) return;
+
+          const timestampMs =
+            d.timestamp?.toDate?.()?.getTime?.() ??
+            (d.timestamp ? new Date(d.timestamp).getTime() : 0);
+
+          const existing = notesByDealId.get(entityId);
+          if (!existing || timestampMs > existing.timestampMs) {
+            notesByDealId.set(entityId, {
+              content: d.content || '',
+              timestampMs: Number.isFinite(timestampMs) ? timestampMs : 0,
+            });
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('Failed to fetch latest deal notes for CSV export', err);
+    }
+
+    return new Map<string, string>(
+      Array.from(notesByDealId.entries()).map(([dealId, note]) => [dealId, note.content || ''])
+    );
+  }, [tenantId]);
+
   const handleNoteIconClick = useCallback(async (e: React.MouseEvent, deal: any) => {
     e.stopPropagation();
     e.preventDefault();
@@ -4945,8 +4987,9 @@ const CompaniesTab: React.FC<{
     return /[",\n\r]/.test(s) ? `"${s}"` : s;
   };
 
-  const handleExportOpportunitiesCsv = () => {
-    const headers = ['Deal Name', 'Company', 'Decision maker', 'Stage', 'Initial Value', 'Potential Value', 'Age', 'Status', 'Health', 'Expected Close', 'Expected Start', 'Actual Close', 'Owner'];
+  const handleExportOpportunitiesCsv = async () => {
+    const latestNotesByDealId = await fetchLatestDealNotesMap(filteredDeals.map((deal) => deal?.id).filter(Boolean));
+    const headers = ['Deal Name', 'Note', 'Company', 'Decision maker', 'Stage', 'Initial Value', 'Potential Value', 'Age', 'Status', 'Health', 'Expected Close', 'Expected Start', 'Actual Close', 'Owner'];
     const rows = filteredDeals.map((deal) => {
       const age = getDealAge(deal?.createdAt);
       const ageStr = age ? `${age.days}d` : '-';
@@ -4954,8 +4997,10 @@ const CompaniesTab: React.FC<{
       const health = getDealHealth(deal);
       const dm = getDealDecisionMakerDisplay(deal);
       const dmCsv = dm.name ? (dm.title ? `${dm.name} (${dm.title})` : dm.name) : '';
+      const latestNote = latestNotesByDealId.get(deal.id) ?? '';
       return [
         escapeCsv(deal.name ?? ''),
+        escapeCsv(latestNote),
         escapeCsv(getDealCompanyName(deal) ?? ''),
         escapeCsv(dmCsv),
         escapeCsv(deal.stage ?? ''),
@@ -4980,7 +5025,7 @@ const CompaniesTab: React.FC<{
     URL.revokeObjectURL(url);
   };
 
-  useImperativeHandle(ref, () => ({ exportCsv: handleExportOpportunitiesCsv }), [handleExportOpportunitiesCsv]);
+  useImperativeHandle(ref, () => ({ exportCsv: () => { void handleExportOpportunitiesCsv(); } }), [handleExportOpportunitiesCsv]);
 
   const getDealOwner = (deal: any) => {
     // Helper to resolve a display name from a salesperson object or id

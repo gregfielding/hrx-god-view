@@ -991,7 +991,7 @@ const RecruiterContactDetails: React.FC = () => {
         <Alert severity="error" sx={{ mb: 2 }}>
           {error || 'Contact not found'}
         </Alert>
-        <Button onClick={() => navigate('/recruiter/contacts')} sx={{ mt: 2 }} startIcon={<ArrowBackIcon />}>
+        <Button onClick={() => navigate('/contacts')} sx={{ mt: 2 }} startIcon={<ArrowBackIcon />}>
           Back to Contacts
         </Button>
       </Box>
@@ -1081,7 +1081,7 @@ const RecruiterContactDetails: React.FC = () => {
                       }}
                       onClick={() => {
                         const id = company?.id || contact.companyId;
-                        if (id) navigate(`/recruiter/companies/${id}`);
+                        if (id) navigate(`/companies/${id}`);
                       }}
                     >
                       {company?.companyName || company?.name || contact.companyName || 'Company'}
@@ -1105,7 +1105,7 @@ const RecruiterContactDetails: React.FC = () => {
                               '&:hover': company?.id ? { textDecoration: 'underline' } : undefined,
                             }}
                             onClick={() => {
-                              if (company?.id) navigate(`/recruiter/companies/${company.id}/locations/${loc.id}`);
+                              if (company?.id) navigate(`/companies/${company.id}/locations/${loc.id}`);
                             }}
                           >
                             {loc.nickname || loc.name || loc.title || 'Location'}
@@ -1299,7 +1299,7 @@ const RecruiterContactDetails: React.FC = () => {
             <Button
               variant="outlined"
               startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/recruiter/contacts')}
+              onClick={() => navigate('/contacts')}
               sx={{
                 textTransform: 'none',
                 borderRadius: '24px',
@@ -1895,10 +1895,10 @@ const RecruiterContactDetails: React.FC = () => {
                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
                                     {contact.companyId ? (
                                       <MUILink
-                                        href={`/recruiter/companies/${contact.companyId}`}
+                                        href={`/companies/${contact.companyId}`}
                                         onClick={(e) => {
                                           e.preventDefault();
-                                          navigate(`/recruiter/companies/${contact.companyId}`);
+                                          navigate(`/companies/${contact.companyId}`);
                                         }}
                                         color="primary"
                                         underline="hover"
@@ -2212,7 +2212,7 @@ const RecruiterContactDetails: React.FC = () => {
                           bgcolor: 'grey.100'
                         }
                       }}
-                      onClick={() => navigate(`/recruiter/companies/${company.id}`)}
+                      onClick={() => navigate(`/companies/${company.id}`)}
                     >
                       <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                         <BusinessIcon sx={{ fontSize: 16 }} />
@@ -2255,7 +2255,7 @@ const RecruiterContactDetails: React.FC = () => {
                       }}
                       onClick={() => {
                         if (company?.id) {
-                          navigate(`/recruiter/companies/${company.id}/locations/${location.id}`);
+                          navigate(`/companies/${company.id}/locations/${location.id}`);
                         }
                       }}
                     >

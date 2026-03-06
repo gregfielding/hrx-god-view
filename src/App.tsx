@@ -146,12 +146,9 @@ import InviteUsersPage from './pages/InviteUsersPage';
 import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
 import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
-import RecruiterCompanies from './pages/RecruiterCompanies';
-import RecruiterCompanyDetails from './pages/RecruiterCompanyDetails';
 import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
-import RecruiterLocationDetails from './pages/RecruiterLocationDetails';
 import NewJobOrder from './pages/NewJobOrder';
 import RecruiterUserGroups from './pages/RecruiterUserGroups';
 import RecruiterUserGroupDetails from './pages/RecruiterUserGroupDetails';
@@ -204,6 +201,26 @@ function CrmCompaniesRedirect() {
   const rest = (params as any)['*'] as string | undefined;
   const suffix = rest ? `/${rest}` : '';
   const target = `/companies${suffix}${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
+}
+
+/** Redirect /recruiter/companies/... to canonical /companies/... */
+function RecruiterCompaniesRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  const target = `/companies${suffix}${location.search}${location.hash}`;
+  return <Navigate to={target} replace />;
+}
+
+/** Redirect /recruiter/contacts/... to canonical /contacts/... */
+function RecruiterContactsRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  const target = `/contacts${suffix}${location.search}${location.hash}`;
   return <Navigate to={target} replace />;
 }
 
@@ -1070,12 +1087,10 @@ function App() {
           <Route path="users/:uid" element={<UsersRedirect />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
           <Route path="smartgroups" element={<Navigate to="/users/smart-groups" replace />} />
-          {/* Steer list pages to canonical routes */}
-          <Route path="companies" element={<Navigate to="/companies" replace />} />
-          <Route path="companies/:companyId" element={<RecruiterCompanyDetails />} />
-          <Route path="companies/:companyId/locations/:locationId" element={<RecruiterLocationDetails />} />
-          <Route path="contacts" element={<Navigate to="/contacts" replace />} />
-          <Route path="contacts/:contactId" element={<RecruiterContactDetails />} />
+          {/* Redirect all recruiter/companies/... to canonical /companies/... */}
+          <Route path="companies/*" element={<RecruiterCompaniesRedirect />} />
+          {/* Redirect all recruiter/contacts/... to canonical /contacts/... */}
+          <Route path="contacts/*" element={<RecruiterContactsRedirect />} />
           {/* User Groups moved to main menu; keep recruiter routes as redirects */}
           <Route path="user-groups" element={<Navigate to="/usergroups" replace />} />
           <Route path="user-groups/:groupId" element={<RecruiterUserGroupsRedirect />} />

@@ -782,7 +782,7 @@ const RecruiterCompanyDetails: React.FC = () => {
       await deleteDoc(companyRef);
       
       // Navigate back to companies list
-      navigate('/recruiter/companies');
+      navigate('/companies');
     } catch (err: any) {
       console.error('Error deleting company:', err);
       setError('Failed to delete company. Please try again.');
@@ -865,7 +865,7 @@ const RecruiterCompanyDetails: React.FC = () => {
         <Alert severity="error">
           {error || 'Company not found'}
         </Alert>
-        <Button onClick={() => navigate('/recruiter/companies')} sx={{ mt: 2 }}>
+        <Button onClick={() => navigate('/companies')} sx={{ mt: 2 }}>
           Back to Companies
         </Button>
       </Box>
@@ -1090,7 +1090,7 @@ const RecruiterCompanyDetails: React.FC = () => {
               <Button
                 variant="outlined"
                 startIcon={<ArrowBackIcon />}
-                onClick={() => navigate('/recruiter/companies')}
+                onClick={() => navigate('/companies')}
                 sx={{
                   textTransform: 'none',
                   borderRadius: '24px',
@@ -2339,10 +2339,10 @@ const CompanyDashboardTab: React.FC<{
                     <Box
                       key={contact.id}
                       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/recruiter/contacts/${contact.id}`)}
+                      onClick={() => navigate(`/contacts/${contact.id}`)}
                       role="button"
                       tabIndex={0}
-                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/recruiter/contacts/${contact.id}`); } }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navigate(`/contacts/${contact.id}`); } }}
                     >
                       <Avatar sx={{ width: 32, height: 32, fontSize: '0.875rem' }}>
                         {contact.firstName?.charAt(0) || contact.name?.charAt(0) || 'C'}
@@ -3126,7 +3126,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; locations: any[
                 {filteredLocations.map((location, index) => (
                     <TableRow 
                       key={location.id}
-                      onClick={() => navigate(`/recruiter/companies/${company.id}/locations/${location.id}`)}
+                      onClick={() => navigate(`/companies/${company.id}/locations/${location.id}`)}
                       sx={{
                         height: '48px',
                         cursor: 'pointer',
@@ -3595,7 +3595,7 @@ const ContactsTab: React.FC<{ contacts: any[]; company: any; locations: any[] }>
                 return (
                   <TableRow 
                     key={contact.id}
-                    onClick={() => navigate(`/recruiter/contacts/${contact.id}`)}
+                    onClick={() => navigate(`/contacts/${contact.id}`)}
                     sx={{
                       height: '48px',
                       cursor: 'pointer',

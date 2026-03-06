@@ -236,7 +236,7 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/recruiter/companies/${c.id}`)}
+                onClick={() => navigate(`/companies/${c.id}`)}
                 role="button"
                 tabIndex={0}
               >
@@ -311,7 +311,7 @@ function AccountSidebar({
                         bgcolor: 'grey.50',
                         cursor: 'pointer',
                       }}
-                      onClick={() => navigate(`/recruiter/companies/${loc.companyId}/locations/${loc.locationId}`)}
+                      onClick={() => navigate(`/companies/${loc.companyId}/locations/${loc.locationId}`)}
                       role="button"
                       tabIndex={0}
                     >
@@ -324,7 +324,7 @@ function AccountSidebar({
                       )}
                       <Button
                         component={Link}
-                        to={`/recruiter/companies/${loc.companyId}/locations/${loc.locationId}`}
+                        to={`/companies/${loc.companyId}/locations/${loc.locationId}`}
                         size="small"
                         sx={{ ml: 'auto', minWidth: 'auto', fontSize: '0.7rem' }}
                         onClick={(e) => e.stopPropagation()}
@@ -384,7 +384,7 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/recruiter/contacts/${c.id}`)}
+                onClick={() => navigate(`/contacts/${c.id}`)}
                 role="button"
                 tabIndex={0}
               >
@@ -392,7 +392,7 @@ function AccountSidebar({
                 <Typography variant="body2">{c.label}</Typography>
                 <Button
                   component={Link}
-                  to={`/recruiter/contacts/${c.id}`}
+                  to={`/contacts/${c.id}`}
                   size="small"
                   sx={{ ml: 'auto', minWidth: 'auto', fontSize: '0.7rem' }}
                   onClick={(e) => e.stopPropagation()}
@@ -1122,19 +1122,19 @@ const RecruiterAccountDetails: React.FC = () => {
       key: `company-${c.id}`,
       label: c.label,
       icon: <BusinessIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
-      to: `/recruiter/companies/${c.id}`,
+      to: `/companies/${c.id}`,
     })),
     ...associatedLocations.map((loc) => ({
       key: `location-${loc.companyId}-${loc.locationId}`,
       label: loc.label,
       icon: <LocationOnIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
-      to: `/recruiter/companies/${loc.companyId}/locations/${loc.locationId}`,
+      to: `/companies/${loc.companyId}/locations/${loc.locationId}`,
     })),
     ...associatedContacts.map((c) => ({
       key: `contact-${c.id}`,
       label: c.label,
       icon: <PersonIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
-      to: `/recruiter/contacts/${c.id}`,
+      to: `/contacts/${c.id}`,
     })),
     ...associatedJobOrders.map((j) => ({
       key: `joborder-${j.id}`,
