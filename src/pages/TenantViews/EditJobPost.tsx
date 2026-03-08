@@ -42,7 +42,7 @@ const EditJobPost: React.FC = () => {
   const location = useLocation();
   
   // Check if we're accessing from the recruiter module
-  const isFromRecruiter = location.pathname.includes('/recruiter/jobs-board');
+  const isFromRecruiter = location.pathname.includes('/jobs/jobs-board');
   
   const [post, setPost] = useState<JobsBoardPost | null>(null);
   const [loading, setLoading] = useState(true);
@@ -327,7 +327,7 @@ const EditJobPost: React.FC = () => {
       
       // Navigate back to jobs board
       if (isFromRecruiter) {
-        navigate('/recruiter/jobs-board');
+        navigate('/jobs/jobs-board');
       } else {
         navigate('/jobs-dashboard');
       }
@@ -342,7 +342,7 @@ const EditJobPost: React.FC = () => {
 
   const handleCancel = () => {
     if (isFromRecruiter) {
-      navigate('/recruiter/jobs-board');
+      navigate('/jobs/jobs-board');
     } else {
       navigate('/jobs-dashboard');
     }

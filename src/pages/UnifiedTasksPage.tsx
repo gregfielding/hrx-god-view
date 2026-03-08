@@ -214,7 +214,7 @@ const UnifiedTasksPage: React.FC = () => {
       } catch {
         // ignore
       }
-      navigate(`/recruiter/job-orders/${jobOrderId}`);
+      navigate(`/jobs/job-orders/${jobOrderId}`);
       return;
     }
 

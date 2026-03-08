@@ -12,12 +12,12 @@ const RecruiterMain: React.FC = () => {
   // Determine active tab based on current path
   const getActiveTab = () => {
     if (location.pathname === '/recruiter' || location.pathname === '/recruiter/') return 0;
-    if (location.pathname.startsWith('/recruiter/job-orders')) return 1;
+    if (location.pathname.startsWith('/jobs/job-orders')) return 1;
     if (location.pathname.startsWith('/recruiter/users') || location.pathname.startsWith('/users')) return 2;
     if (location.pathname.startsWith('/companies')) return 3;
     if (location.pathname.startsWith('/contacts')) return 4;
     if (location.pathname.startsWith('/recruiter/user-groups')) return 5;
-    if (location.pathname.startsWith('/recruiter/jobs-board')) return 6;
+    if (location.pathname.startsWith('/jobs/jobs-board')) return 6;
     if (location.pathname.startsWith('/recruiter/reports')) return 7;
     return 0;
   };
@@ -27,12 +27,12 @@ const RecruiterMain: React.FC = () => {
   const handleTabChange = (newValue: number) => {
     const paths = [
       '/recruiter',
-      '/recruiter/job-orders',
+      '/jobs/job-orders',
       '/recruiter/users',
       '/companies',
       '/contacts',
       '/recruiter/user-groups',
-      '/recruiter/jobs-board',
+      '/jobs/jobs-board',
       '/recruiter/reports',
     ];
     navigate(paths[newValue]);

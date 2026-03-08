@@ -612,7 +612,19 @@ const CompaniesPage: React.FC = () => {
 
   const getSalespersonName = (salespersonId: string) => {
     const salesperson = salesTeam.find(sp => sp.id === salespersonId || sp.uid === salespersonId);
-    return salesperson ? (salesperson.name || salesperson.displayName || salesperson.email) : salespersonId;
+    if (salesperson) {
+      const full = [salesperson.firstName, salesperson.lastName].filter(Boolean).join(' ').trim();
+      return salesperson.name || salesperson.displayName || full || salesperson.email || '';
+    }
+
+    // Avoid leaking Firebase-style UIDs into the UI when we couldn't resolve a user record.
+    const looksLikeUid =
+      !!salespersonId &&
+      salespersonId.length > 20 &&
+      !salespersonId.includes('@') &&
+      !salespersonId.includes(' ');
+
+    return looksLikeUid ? '' : salespersonId;
   };
 
   const getCompanyPipelineValue = (company: any) => {
@@ -661,12 +673,25 @@ const CompaniesPage: React.FC = () => {
       if (typeof sp === 'string') {
         addName(getSalespersonName(sp));
       } else if (sp && typeof sp === 'object') {
+        const snapshot = sp.snapshot || {};
         const full = [sp.firstName, sp.lastName].filter(Boolean).join(' ').trim();
-        addName(sp.name || sp.displayName || full || sp.email || getSalespersonName(sp.id));
+        const snapshotFull = [snapshot.firstName, snapshot.lastName].filter(Boolean).join(' ').trim();
+        addName(
+          sp.name ||
+          sp.displayName ||
+          snapshot.displayName ||
+          snapshot.name ||
+          full ||
+          snapshotFull ||
+          sp.email ||
+          snapshot.email ||
+          getSalespersonName(sp.id)
+        );
       }
     });
     if (names.length === 0) {
       addName(company.salesOwnerName);
+      addName(company.accountOwnerName);
       if (company.salesOwnerId) addName(getSalespersonName(company.salesOwnerId));
       if (company.accountOwnerId) addName(getSalespersonName(company.accountOwnerId));
       addName(company.accountOwner);

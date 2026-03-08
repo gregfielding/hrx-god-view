@@ -134,6 +134,7 @@ import WorkerAssignments from './pages/WorkerAssignments';
 import FlexSettings from './pages/FlexSettings';
 import RecruiterSettings from './pages/RecruiterSettings';
 import RecruiterDashboard from './pages/RecruiterDashboard';
+import AccountsDashboard from './pages/AccountsDashboard';
 import RecruiterMain from './pages/RecruiterMain';
 import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterAccounts from './pages/RecruiterAccounts';
@@ -192,7 +193,25 @@ function RecruiterUserGroupsRedirect() {
 
 function RecruiterAccountDetailsRedirect() {
   const { accountId } = useParams();
-  return <Navigate to={accountId ? `/accounts/${accountId}` : '/recruiter/accounts'} replace />;
+  return <Navigate to={accountId ? `/accounts/${accountId}` : '/accounts'} replace />;
+}
+
+function RecruiterAccountsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/accounts${location.search}${location.hash}`} replace />;
+}
+
+function RecruiterMyAccountsRedirect() {
+  const location = useLocation();
+  return <Navigate to={`/accounts/my${location.search}${location.hash}`} replace />;
+}
+
+function JobsRedirect() {
+  const params = useParams();
+  const location = useLocation();
+  const rest = (params as any)['*'] as string | undefined;
+  const suffix = rest ? `/${rest}` : '';
+  return <Navigate to={`/jobs${suffix}${location.search}${location.hash}`} replace />;
 }
 
 function CrmCompaniesRedirect() {
@@ -585,6 +604,20 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="accounts"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <AccountsDashboard />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<RecruiterAccounts />} />
+          <Route path="my" element={<RecruiterAccounts onlyMyAccounts />} />
+        </Route>
+        <Route path="my-accounts" element={<Navigate to="/accounts/my" replace />} />
         <Route
           path="accounts/:accountId"
           element={
@@ -1076,13 +1109,11 @@ function App() {
             </RecruiterAccessGuard>
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/recruiter/accounts" replace />} />
-          <Route path="accounts" element={<RecruiterAccounts />} />
-          <Route path="my-accounts" element={<RecruiterAccounts onlyMyAccounts />} />
-          <Route path="job-orders" element={<RecruiterJobOrders />} />
-          <Route path="my-orders" element={<RecruiterJobOrders />} />
-          <Route path="job-orders/new" element={<NewJobOrder />} />
-          <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
+          <Route index element={<Navigate to="/jobs/job-orders" replace />} />
+          <Route path="accounts" element={<RecruiterAccountsRedirect />} />
+          <Route path="my-accounts" element={<RecruiterMyAccountsRedirect />} />
+          <Route path="job-orders/*" element={<JobsRedirect />} />
+          <Route path="my-orders" element={<Navigate to="/jobs/my-orders" replace />} />
           <Route path="users" element={<Navigate to="/users" replace />} />
           <Route path="users/:uid" element={<UsersRedirect />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
@@ -1094,6 +1125,21 @@ function App() {
           {/* User Groups moved to main menu; keep recruiter routes as redirects */}
           <Route path="user-groups" element={<Navigate to="/usergroups" replace />} />
           <Route path="user-groups/:groupId" element={<RecruiterUserGroupsRedirect />} />
+          <Route path="jobs-board/*" element={<JobsRedirect />} />
+          <Route path="reports" element={<Navigate to="/jobs/reports" replace />} />
+        </Route>
+        <Route path="jobs" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <RecruiterAccessGuard>
+              <RecruiterDashboard />
+            </RecruiterAccessGuard>
+          </ProtectedRoute>
+        }>
+          <Route index element={<Navigate to="/jobs/job-orders" replace />} />
+          <Route path="job-orders" element={<RecruiterJobOrders />} />
+          <Route path="my-orders" element={<RecruiterJobOrders />} />
+          <Route path="job-orders/new" element={<NewJobOrder />} />
+          <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
           <Route path="jobs-board" element={
             <JobsBoardAccessGuard>
               <JobsBoard />

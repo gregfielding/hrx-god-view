@@ -249,7 +249,7 @@ export const MentionHoverCard: React.FC<MentionHoverCardProps> = ({
       case 'deal':
         return `/crm/deals/${mention.id}`;
       case 'job':
-        return `/recruiter/job-orders/${mention.id}`;
+        return `/jobs/job-orders/${mention.id}`;
       case 'candidate':
         return `/recruiter/candidates/${mention.id}`;
       case 'location':

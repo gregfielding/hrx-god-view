@@ -267,7 +267,7 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
                   }}
                   onClick={() => {
                     // Navigate to recruiter backend job board posting
-                    navigate(`/recruiter/jobs-board/edit/${app.jobId}`);
+                    navigate(`/jobs/jobs-board/edit/${app.jobId}`);
                   }}
                 >
                   <TableCell>

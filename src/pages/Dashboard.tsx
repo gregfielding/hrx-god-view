@@ -27,6 +27,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { DASHBOARD_WIDGET } from '../utils/dashboardWidgetTokens';
 import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
+import MissingHomeAddressAlert from '../components/MissingHomeAddressAlert';
 
 const Dashboard: React.FC = () => {
   const { user, activeTenant, securityLevel, currentClaimsSecurityLevel } = useAuth();
@@ -173,7 +174,7 @@ const Dashboard: React.FC = () => {
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 0.5, mb: '12px' }}>
               {(
               [
-                { label: 'My Job Orders', onClick: () => navigate('/recruiter/my-orders'), kind: 'candidates' as const },
+                { label: 'My Job Orders', onClick: () => navigate('/jobs/my-orders'), kind: 'candidates' as const },
                 { label: 'My Tasks', onClick: () => navigate('/tasks'), kind: 'tasks' as const },
                 { label: 'My Calendar', onClick: () => navigate('/calendar'), kind: 'crm' as const },
                 { label: 'Users', onClick: () => navigate('/recruiter/users'), kind: 'candidates' as const },
@@ -215,6 +216,10 @@ const Dashboard: React.FC = () => {
         }
         showDivider={false}
       />
+
+      <Box sx={{ px: { xs: 2, md: 3 }, pt: 2 }}>
+        <MissingHomeAddressAlert />
+      </Box>
 
       <Box sx={{ 
         flex: 1, 

@@ -11,7 +11,7 @@ import {
   getCityKeysForMetro,
   getMergedMetroOptions,
 } from '../data/metroSubareaSchema';
-import { geocodeAddress } from '../utils/geocodeAddress';
+import { getCityMetadata } from '../data/metroMaster';
 import { calculateDistance } from '../utils/locationUtils';
 import type { CustomMetrosMap } from '../hooks/useSmartGroupSettings';
 
@@ -31,6 +31,50 @@ export interface SavedSmartGroupFilters {
 }
 
 const OTHER_METRO_VALUE = '__other__';
+
+function getUserResidenceData(userData: any) {
+  const addressInfo = userData?.addressInfo || {};
+  const address = userData?.address || {};
+  const addressCoords = address?.coordinates || {};
+  const addressInfoCoords = addressInfo?.coordinates || {};
+
+  const city = addressInfo.city ?? address.city ?? userData?.city ?? '';
+  const state = addressInfo.state ?? address.state ?? userData?.state ?? '';
+  const lat =
+    addressInfo.homeLat ??
+    address.homeLat ??
+    addressInfoCoords.lat ??
+    addressInfoCoords.latitude ??
+    addressCoords.lat ??
+    addressCoords.latitude ??
+    userData?.homeLat ??
+    null;
+  const lng =
+    addressInfo.homeLng ??
+    address.homeLng ??
+    addressInfoCoords.lng ??
+    addressInfoCoords.longitude ??
+    addressCoords.lng ??
+    addressCoords.longitude ??
+    userData?.homeLng ??
+    null;
+
+  if (typeof lat === 'number' && typeof lng === 'number') {
+    return { city, state, lat, lng };
+  }
+
+  if (city && state) {
+    const cityKey = getGeoHierarchy({ city, state }).cityKey;
+    const cityMeta = getCityMetadata(cityKey);
+    const fallbackLat = cityMeta?.coordinates?.lat ?? null;
+    const fallbackLng = cityMeta?.coordinates?.lng ?? null;
+    if (typeof fallbackLat === 'number' && typeof fallbackLng === 'number') {
+      return { city, state, lat: fallbackLat, lng: fallbackLng };
+    }
+  }
+
+  return { city, state, lat, lng };
+}
 
 export async function runSavedSmartGroupSearch(
   tenantId: string,
@@ -96,24 +140,14 @@ export async function runSavedSmartGroupSearch(
   if (filters.residenceSubMode === 'radius' && filters.radiusAddress?.trim()) {
     let geo: { lat: number; lng: number };
     
-    // Use saved coordinates if available, otherwise geocode
+    // Use saved coordinates from a selected place only.
     if (filters.radiusLat != null && filters.radiusLng != null && 
         typeof filters.radiusLat === 'number' && typeof filters.radiusLng === 'number' &&
         !isNaN(filters.radiusLat) && !isNaN(filters.radiusLng)) {
       geo = { lat: filters.radiusLat, lng: filters.radiusLng };
     } else {
-      // Fallback to geocoding if coordinates not saved (for backward compatibility)
-      try {
-        geo = await geocodeAddress(filters.radiusAddress.trim());
-      } catch (error: any) {
-        const address = filters.radiusAddress.trim();
-        const errorMsg = error?.message || 'Geocoding failed';
-        // Provide more helpful guidance for API key issues
-        if (errorMsg.includes('API request denied') || errorMsg.includes('API key')) {
-          throw new Error(`Geocoding failed for address "${address}": ${errorMsg}. To fix this, enable the Geocoding API in Google Cloud Console for your API key (REACT_APP_GOOGLE_MAPS_API_KEY), or edit this Smart Group to use a different location filter.`);
-        }
-        throw new Error(`Failed to geocode address "${address}": ${errorMsg}. Please check the address and try again, or edit the Smart Group to update the address.`);
-      }
+      const address = filters.radiusAddress.trim();
+      throw new Error(`Radius search for "${address}" is missing saved coordinates. Re-open the Smart Group, select the address from Google suggestions again, and save it.`);
     }
     const radiusMiles = filters.radiusMiles ?? 10;
     for (const uid of userIds) {
@@ -121,9 +155,9 @@ export async function runSavedSmartGroupSearch(
       const userSnap = await getDoc(userRef);
       if (!userSnap.exists()) continue;
       const userData = userSnap.data();
-      const addr = userData?.addressInfo || userData?.address || {};
-      const lat = addr.homeLat ?? addr.coordinates?.lat ?? userData?.homeLat;
-      const lng = addr.homeLng ?? addr.coordinates?.lng ?? userData?.homeLng;
+      const residence = getUserResidenceData(userData);
+      const lat = residence.lat;
+      const lng = residence.lng;
       if (typeof lat !== 'number' || typeof lng !== 'number') continue;
       if (calculateDistance(geo.lat, geo.lng, lat, lng) > radiusMiles) continue;
       const skills = Array.isArray(userData?.skills) ? userData.skills : [];
@@ -143,9 +177,9 @@ export async function runSavedSmartGroupSearch(
     const userSnap = await getDoc(userRef);
     if (!userSnap.exists()) continue;
     const userData = userSnap.data();
-    const addr = userData?.addressInfo || userData?.address || {};
-    const city = (addr.city ?? userData?.city ?? '').trim();
-    const state = (addr.state ?? userData?.state ?? '').trim();
+    const residence = getUserResidenceData(userData);
+    const city = String(residence.city || '').trim();
+    const state = String(residence.state || '').trim();
     if (!city && !state) continue;
     const hierarchy = getGeoHierarchy({ city, state });
     const matchMetro = !filters.metroFilter

@@ -4748,6 +4748,7 @@ const CompaniesTab: React.FC<{
   const [noteModalTimestamp, setNoteModalTimestamp] = useState<Date | null>(null);
   const [noteModalLoading, setNoteModalLoading] = useState(false);
   const [noteModalSnackbar, setNoteModalSnackbar] = useState<string | null>(null);
+  const [dealLocationDetailsMap, setDealLocationDetailsMap] = useState<Record<string, { name?: string; nickname?: string; city?: string; state?: string; address?: any; zipCode?: string; zip?: string }>>({});
 
   const fetchLatestDealNote = useCallback(async (dealId: string): Promise<{ content: string; timestamp?: Date; authorName?: string } | null> => {
     if (!tenantId) return null;
@@ -4973,6 +4974,44 @@ const CompaniesTab: React.FC<{
     return '-';
   };
 
+  const getDealLocationDisplay = (deal: any): { primary: string; secondary: string; fullAddress: string; sortValue: string; cacheKey: string | null } => {
+    const locations = (deal?.associations?.locations || []) as any[];
+    const locationEntry = locations[0] ?? (deal?.locationId ? { id: deal.locationId } : null);
+    if (!locationEntry) {
+      return { primary: '-', secondary: '', fullAddress: '', sortValue: '', cacheKey: null };
+    }
+
+    const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+    const companyId = typeof locationEntry === 'object'
+      ? (locationEntry.companyId || getDealPrimaryCompanyId(deal) || deal?.companyId || '')
+      : (getDealPrimaryCompanyId(deal) || deal?.companyId || '');
+    const cacheKey = locationId ? `${companyId || 'root'}:${locationId}` : null;
+    const snapshot = typeof locationEntry === 'object' ? (locationEntry.snapshot || locationEntry) : {};
+    const cached = cacheKey ? dealLocationDetailsMap[cacheKey] : undefined;
+
+    const primary = cached?.nickname || cached?.name || snapshot?.nickname || snapshot?.name || deal?.locationName || '-';
+    const city = cached?.city || snapshot?.city || snapshot?.address?.city || '';
+    const state = cached?.state || snapshot?.state || snapshot?.address?.state || '';
+    const secondary = [city, state].filter(Boolean).join(', ');
+    const address = cached?.address || snapshot?.address || {};
+    const line1 = typeof address === 'string' ? address : (address?.street || address?.line1 || address?.address || '');
+    const zip = cached?.zipCode || cached?.zip || snapshot?.zipCode || snapshot?.zip || address?.zipCode || address?.zip || '';
+    const addressParts = [
+      line1,
+      city,
+      [state, zip].filter(Boolean).join(' '),
+    ].filter(Boolean);
+    const fullAddress = addressParts.join(', ');
+
+    return {
+      primary,
+      secondary,
+      fullAddress,
+      sortValue: `${primary} ${secondary}`.trim().toLowerCase(),
+      cacheKey,
+    };
+  };
+
   const getUserDealsCount = () => {
     // Count deals that belong to the current user using unified association logic
     const userDeals = AssociationUtils.getUserAssociatedDeals(allDeals, currentUser?.uid);
@@ -4989,23 +5028,26 @@ const CompaniesTab: React.FC<{
 
   const handleExportOpportunitiesCsv = async () => {
     const latestNotesByDealId = await fetchLatestDealNotesMap(filteredDeals.map((deal) => deal?.id).filter(Boolean));
-    const headers = ['Deal Name', 'Note', 'Company', 'Decision maker', 'Stage', 'Initial Value', 'Potential Value', 'Age', 'Status', 'Health', 'Expected Close', 'Expected Start', 'Actual Close', 'Owner'];
+    const headers = ['Deal Name', 'Note', 'Company', 'Location', 'Decision maker', 'Stage', 'Initial Value', 'Potential Value', 'Markup %', 'Age', 'Status', 'Health', 'Expected Close', 'Expected Start', 'Actual Close', 'Owner'];
     const rows = filteredDeals.map((deal) => {
       const age = getDealAge(deal?.createdAt);
       const ageStr = age ? `${age.days}d` : '-';
       const status = getDealStatus(deal);
       const health = getDealHealth(deal);
       const dm = getDealDecisionMakerDisplay(deal);
+      const location = getDealLocationDisplay(deal);
       const dmCsv = dm.name ? (dm.title ? `${dm.name} (${dm.title})` : dm.name) : '';
       const latestNote = latestNotesByDealId.get(deal.id) ?? '';
       return [
         escapeCsv(deal.name ?? ''),
         escapeCsv(latestNote),
         escapeCsv(getDealCompanyName(deal) ?? ''),
+        escapeCsv(location.fullAddress ? `${location.primary} - ${location.fullAddress}` : (location.secondary ? `${location.primary} (${location.secondary})` : location.primary)),
         escapeCsv(dmCsv),
         escapeCsv(deal.stage ?? ''),
         escapeCsv(getDealInitialValue(deal)),
         escapeCsv(getDealPotentialValue(deal)),
+        escapeCsv(getDealMarkupPercent(deal)),
         escapeCsv(ageStr),
         escapeCsv(status?.label ?? ''),
         escapeCsv(health?.bucket ?? String(health?.score ?? '')),
@@ -5148,6 +5190,8 @@ const CompaniesTab: React.FC<{
         return deal.name?.toLowerCase() || '';
       case 'company':
         return getDealCompanyName(deal)?.toLowerCase() || '';
+      case 'location':
+        return getDealLocationDisplay(deal).sortValue;
       case 'decisionMaker':
         return getDealDecisionMakerDisplay(deal).name.toLowerCase();
       case 'stage':
@@ -5160,6 +5204,11 @@ const CompaniesTab: React.FC<{
       case 'potentialValue': {
         const valueStr = getDealPotentialValue(deal);
         const numericValue = valueStr.replace(/[$,]/g, '');
+        return parseFloat(numericValue) || 0;
+      }
+      case 'markupPercent': {
+        const valueStr = getDealMarkupPercent(deal);
+        const numericValue = valueStr.replace(/[%\s,]/g, '');
         return parseFloat(numericValue) || 0;
       }
       case 'createdAt': {
@@ -5271,6 +5320,81 @@ const CompaniesTab: React.FC<{
     
     return filtered;
   }, [deals, dealFilter, currentUser?.uid, search, sortField, sortDirection, selectedSalesperson, showArchived]);
+
+  useEffect(() => {
+    if (!tenantId || filteredDeals.length === 0) return;
+
+    const candidates = filteredDeals
+      .map((deal) => {
+        const locations = (deal?.associations?.locations || []) as any[];
+        const locationEntry = locations[0] ?? (deal?.locationId ? { id: deal.locationId } : null);
+        if (!locationEntry) return null;
+
+        const locationId = typeof locationEntry === 'string' ? locationEntry : locationEntry.id;
+        if (!locationId) return null;
+
+        const companyId = typeof locationEntry === 'object'
+          ? (locationEntry.companyId || getDealPrimaryCompanyId(deal) || deal?.companyId || '')
+          : (getDealPrimaryCompanyId(deal) || deal?.companyId || '');
+        const cacheKey = `${companyId || 'root'}:${locationId}`;
+        if (dealLocationDetailsMap[cacheKey]) return null;
+
+        const snapshot = typeof locationEntry === 'object' ? (locationEntry.snapshot || locationEntry) : {};
+        const hasEnoughData = (snapshot?.nickname || snapshot?.name || deal?.locationName) && (snapshot?.city || snapshot?.state || snapshot?.address?.city || snapshot?.address?.state);
+        if (hasEnoughData) return null;
+
+        return { cacheKey, companyId, locationId };
+      })
+      .filter(Boolean) as Array<{ cacheKey: string; companyId: string; locationId: string }>;
+
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+
+    void (async () => {
+      const updates: Record<string, { name?: string; nickname?: string; city?: string; state?: string; address?: any; zipCode?: string; zip?: string }> = {};
+
+      await Promise.all(
+        candidates.map(async ({ cacheKey, companyId, locationId }) => {
+          try {
+            let data: any = null;
+
+            if (companyId) {
+              const nestedRef = doc(db, `tenants/${tenantId}/crm_companies/${companyId}/locations/${locationId}`);
+              const nestedSnap = await getDoc(nestedRef);
+              if (nestedSnap.exists()) data = nestedSnap.data();
+            }
+
+            if (!data) {
+              const topRef = doc(db, `tenants/${tenantId}/crm_locations/${locationId}`);
+              const topSnap = await getDoc(topRef);
+              if (topSnap.exists()) data = topSnap.data();
+            }
+
+            if (data) {
+              updates[cacheKey] = {
+                name: data.name,
+                nickname: data.nickname,
+                city: data.city || data.address?.city,
+                state: data.state || data.address?.state,
+                address: data.address,
+                zipCode: data.zipCode || data.address?.zipCode,
+                zip: data.zip || data.address?.zip,
+              };
+            }
+          } catch {}
+        })
+      );
+
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setDealLocationDetailsMap((prev) => ({ ...prev, ...updates }));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, filteredDeals, dealLocationDetailsMap]);
 
   // Reset pagination when search/filters change (Inbox standard)
   useEffect(() => {
@@ -5584,6 +5708,26 @@ const CompaniesTab: React.FC<{
                   Company
                 </TableSortLabel>
               </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 170, minWidth: 170 }}>
+                <TableSortLabel
+                  active={sortField === 'location'}
+                  direction={sortField === 'location' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('location')}
+                  sx={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'location' ? 1 : 0.3,
+                    },
+                  }}
+                >
+                  Location
+                </TableSortLabel>
+              </TableCell>
               <TableCell sx={{ ...dealHeaderCellSx, width: 140, minWidth: 140 }}>
                 <TableSortLabel
                   active={sortField === 'decisionMaker'}
@@ -5662,6 +5806,26 @@ const CompaniesTab: React.FC<{
                   }}
                 >
                   Potential Value
+                </TableSortLabel>
+              </TableCell>
+              <TableCell sx={{ ...dealHeaderCellSx, width: 90, minWidth: 90, textAlign: 'right' }}>
+                <TableSortLabel
+                  active={sortField === 'markupPercent'}
+                  direction={sortField === 'markupPercent' ? sortDirection : 'asc'}
+                  onClick={() => handleSort('markupPercent')}
+                  sx={{
+                    fontSize: '11px',
+                    fontWeight: 500,
+                    color: 'rgba(0, 0, 0, 0.85)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px',
+                    '& .MuiTableSortLabel-icon': {
+                      fontSize: '1rem',
+                      opacity: sortField === 'markupPercent' ? 1 : 0.3,
+                    },
+                  }}
+                >
+                  Markup %
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ ...dealHeaderCellSx, width: 100, minWidth: 100 }}>
@@ -5811,7 +5975,7 @@ const CompaniesTab: React.FC<{
             {filteredDeals.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={14}
+                  colSpan={16}
                   sx={{
                     py: 6,
                     textAlign: 'center',
@@ -5905,6 +6069,26 @@ const CompaniesTab: React.FC<{
                 </TableCell>
                 <TableCell sx={{ px: 1.5, py: 0.75 }}>
                   {(() => {
+                    const location = getDealLocationDisplay(deal);
+                    if (!location.primary || location.primary === '-') {
+                      return <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>—</Typography>;
+                    }
+                    return (
+                      <Box>
+                        <Typography variant="body2" color="#374151" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                          {location.primary}
+                        </Typography>
+                        {location.secondary && (
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ fontSize: '0.75rem' }}>
+                            {location.secondary}
+                          </Typography>
+                        )}
+                      </Box>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell sx={{ px: 1.5, py: 0.75 }}>
+                  {(() => {
                     const dm = getDealDecisionMakerDisplay(deal);
                     if (!dm.name) {
                       return <Typography variant="body2" color="#6B7280" sx={{ fontSize: '0.875rem' }}>—</Typography>;
@@ -5948,6 +6132,16 @@ const CompaniesTab: React.FC<{
                     sx={{ fontSize: '0.8125rem' }}
                   >
                     {getDealPotentialValue(deal)}
+                  </Typography>
+                </TableCell>
+                <TableCell sx={{ px: 1.5, py: 0.75, textAlign: 'right' }}>
+                  <Typography
+                    variant="body2"
+                    fontWeight={500}
+                    color="#374151"
+                    sx={{ fontSize: '0.8125rem' }}
+                  >
+                    {getDealMarkupPercent(deal)}
                   </Typography>
                 </TableCell>
                 <TableCell sx={{ px: 1.5, py: 0.75 }}>
@@ -7575,6 +7769,14 @@ const getDealPotentialValue = (deal: any) => {
     }
   }
   return '-';
+};
+
+const getDealMarkupPercent = (deal: any) => {
+  const markup = deal?.stageData?.qualification?.expectedAverageMarkup;
+  if (markup == null || markup === '') return '-';
+  const n = Number(markup);
+  if (Number.isNaN(n)) return '-';
+  return `${n}%`;
 };
 
 // Sales Dashboard Component

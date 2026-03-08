@@ -1819,6 +1819,109 @@ const DealDetails: React.FC = () => {
         </SectionCard>
       </Box>
 
+      {/* Financials */}
+      <Box sx={{ mb: 0 }}>
+        <SectionCard title="Financials">
+          {(() => {
+            const qual = stageData?.qualification || deal?.stageData?.qualification || {};
+            const timeline = qual?.staffPlacementTimeline || {};
+            const setQualificationValue = (nextQualification: any) => {
+              void handleStageDataChange({
+                ...stageData,
+                qualification: nextQualification,
+              });
+            };
+
+            const handleTimelineChange = (key: 'starting' | 'after30Days' | 'after90Days' | 'after180Days', rawValue: string) => {
+              const nextValue = rawValue === '' ? undefined : parseInt(rawValue, 10);
+              setQualificationValue({
+                ...qual,
+                staffPlacementTimeline: {
+                  ...timeline,
+                  [key]: Number.isNaN(nextValue as number) ? undefined : nextValue,
+                },
+              });
+            };
+
+            const handleNumericQualificationChange = (key: 'expectedAveragePayRate' | 'expectedAverageMarkup', rawValue: string) => {
+              const nextValue = rawValue === '' ? undefined : parseFloat(rawValue);
+              setQualificationValue({
+                ...qual,
+                [key]: Number.isNaN(nextValue as number) ? undefined : nextValue,
+              });
+            };
+
+            return (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Update the expected staffing ramp, pay rate, and markup directly from the sidebar.
+                </Typography>
+
+                <Box sx={{ p: 1.25, borderRadius: 1, bgcolor: 'grey.50' }}>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    Staff placement timeline
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1 }}>
+                    <TextField
+                      label="Initial order"
+                      type="number"
+                      size="small"
+                      value={timeline?.starting ?? ''}
+                      onChange={(e) => handleTimelineChange('starting', e.target.value)}
+                    />
+                    <TextField
+                      label="Potential after 30 days"
+                      type="number"
+                      size="small"
+                      value={timeline?.after30Days ?? ''}
+                      onChange={(e) => handleTimelineChange('after30Days', e.target.value)}
+                    />
+                    <TextField
+                      label="Potential after 90 days"
+                      type="number"
+                      size="small"
+                      value={timeline?.after90Days ?? ''}
+                      onChange={(e) => handleTimelineChange('after90Days', e.target.value)}
+                    />
+                    <TextField
+                      label="Potential after 180 days"
+                      type="number"
+                      size="small"
+                      value={timeline?.after180Days ?? ''}
+                      onChange={(e) => handleTimelineChange('after180Days', e.target.value)}
+                    />
+                  </Box>
+                </Box>
+
+                <Box sx={{ p: 1.25, borderRadius: 1, bgcolor: 'grey.50' }}>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    Pricing assumptions
+                  </Typography>
+                  <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 1 }}>
+                    <TextField
+                      label="Expected average pay rate"
+                      type="number"
+                      size="small"
+                      value={qual?.expectedAveragePayRate ?? ''}
+                      onChange={(e) => handleNumericQualificationChange('expectedAveragePayRate', e.target.value)}
+                      InputProps={{ startAdornment: <Typography sx={{ mr: 1, color: 'text.secondary' }}>$</Typography> }}
+                    />
+                    <TextField
+                      label="Expected average markup"
+                      type="number"
+                      size="small"
+                      value={qual?.expectedAverageMarkup ?? ''}
+                      onChange={(e) => handleNumericQualificationChange('expectedAverageMarkup', e.target.value)}
+                      InputProps={{ endAdornment: <Typography sx={{ ml: 1, color: 'text.secondary' }}>%</Typography> }}
+                    />
+                  </Box>
+                </Box>
+              </Box>
+            );
+          })()}
+        </SectionCard>
+      </Box>
+
       {/* Important Dates */}
       <Box sx={{ mb: 0 }}>
         <SectionCard title="Important Dates">

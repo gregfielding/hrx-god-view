@@ -61,6 +61,27 @@ function getDealCompanyLogo(deal: any): string | null {
   );
 }
 
+function getDealLocationDisplay(deal: any): { primary: string; secondary: string; fullAddress: string; sortValue: string } {
+  const primary = deal?.publicPrimaryLocation;
+  const assoc = deal?.associations?.locations?.[0];
+  const snapshot = typeof assoc === 'object' ? (assoc.snapshot || assoc) : {};
+  const name =
+    primary?.nickname ||
+    primary?.name ||
+    snapshot?.nickname ||
+    snapshot?.name ||
+    deal?.locationName ||
+    '—';
+  const city = primary?.city || primary?.address?.city || snapshot?.city || snapshot?.address?.city || '';
+  const state = primary?.state || primary?.address?.state || snapshot?.state || snapshot?.address?.state || '';
+  const secondary = [city, state].filter(Boolean).join(', ');
+  const address = primary?.address || snapshot?.address || {};
+  const line1 = typeof address === 'string' ? address : (address?.street || address?.line1 || address?.address || '');
+  const zip = primary?.zipCode || primary?.zip || snapshot?.zipCode || snapshot?.zip || address?.zipCode || address?.zip || '';
+  const fullAddress = [line1, city, [state, zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return { primary: name, secondary, fullAddress, sortValue: `${name} ${secondary}`.trim().toLowerCase() };
+}
+
 function getAvatarColor(name: string) {
   const colors = ['#F3F4F6', '#FEF3C7', '#DBEAFE', '#D1FAE5', '#FCE7F3', '#EDE9FE', '#FEE2E2', '#FEF5E7'];
   const index = (name || 'A').charCodeAt(0) % colors.length;
@@ -125,6 +146,14 @@ function getDealPotentialValue(deal: any): string {
     }
   }
   return '—';
+}
+
+function getDealMarkupPercent(deal: any): string {
+  const markup = deal?.stageData?.qualification?.expectedAverageMarkup;
+  if (markup == null || markup === '') return '—';
+  const n = Number(markup);
+  if (Number.isNaN(n)) return '—';
+  return `${n}%`;
 }
 
 function getDealCloseDate(deal: any): string {
@@ -199,6 +228,7 @@ export default function PublicCRMView() {
     switch (field) {
       case 'name': return deal.name?.toLowerCase() || '';
       case 'company': return getDealCompanyName(deal)?.toLowerCase() || '';
+      case 'location': return getDealLocationDisplay(deal).sortValue;
       case 'decisionMaker': return getDealDecisionMakerDisplay(deal).name.toLowerCase();
       case 'stage': return deal.stage?.toLowerCase() || '';
       case 'initialValue': {
@@ -209,6 +239,11 @@ export default function PublicCRMView() {
       case 'potentialValue': {
         const s = getDealPotentialValue(deal);
         const n = parseFloat(s.replace(/[$,]/g, ''));
+        return Number.isNaN(n) ? 0 : n;
+      }
+      case 'markupPercent': {
+        const s = getDealMarkupPercent(deal);
+        const n = parseFloat(s.replace(/[%\s,]/g, ''));
         return Number.isNaN(n) ? 0 : n;
       }
       case 'createdAt': {
@@ -270,6 +305,10 @@ export default function PublicCRMView() {
       'Deal Name': deal.name ?? '—',
       Note: deal?.latestNote?.content || '',
       Company: getDealCompanyName(deal),
+      Location: (() => {
+        const location = getDealLocationDisplay(deal);
+        return location.fullAddress ? `${location.primary} - ${location.fullAddress}` : (location.secondary ? `${location.primary} (${location.secondary})` : location.primary);
+      })(),
       'Decision Maker': (() => {
         const dm = getDealDecisionMakerDisplay(deal);
         if (!dm.name) return '—';
@@ -278,6 +317,7 @@ export default function PublicCRMView() {
       Stage: deal.stage ?? '—',
       'Initial Value': getDealInitialValue(deal),
       'Potential Value': getDealPotentialValue(deal),
+      'Markup %': getDealMarkupPercent(deal),
       Age: calculateDealAge(deal?.createdAt)?.days ?? '—',
       Status: getDealStatus(deal).label,
       Health: calculateDealHealth(deal).display.label,
@@ -384,6 +424,11 @@ export default function PublicCRMView() {
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={dealHeaderCellSx}>
+                    <TableSortLabel active={sortField === 'location'} direction={sortField === 'location' ? sortDirection : 'asc'} onClick={() => handleSort('location')}>
+                      Location
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={dealHeaderCellSx}>
                     <TableSortLabel active={sortField === 'decisionMaker'} direction={sortField === 'decisionMaker' ? sortDirection : 'asc'} onClick={() => handleSort('decisionMaker')}>
                       Decision maker
                     </TableSortLabel>
@@ -401,6 +446,11 @@ export default function PublicCRMView() {
                   <TableCell sx={{ ...dealHeaderCellSx, textAlign: 'right' }}>
                     <TableSortLabel active={sortField === 'potentialValue'} direction={sortField === 'potentialValue' ? sortDirection : 'asc'} onClick={() => handleSort('potentialValue')}>
                       Potential Value
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={{ ...dealHeaderCellSx, textAlign: 'right' }}>
+                    <TableSortLabel active={sortField === 'markupPercent'} direction={sortField === 'markupPercent' ? sortDirection : 'asc'} onClick={() => handleSort('markupPercent')}>
+                      Markup %
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={dealHeaderCellSx}>
@@ -443,7 +493,7 @@ export default function PublicCRMView() {
               <TableBody>
                 {sortedDeals.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={14} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                    <TableCell colSpan={16} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
                       No opportunities
                     </TableCell>
                   </TableRow>
@@ -491,6 +541,20 @@ export default function PublicCRMView() {
                           </Box>
                         </TableCell>
                         <TableCell>
+                          {(() => {
+                            const location = getDealLocationDisplay(deal);
+                            if (!location.primary || location.primary === '—') return '—';
+                            return (
+                              <>
+                                <Typography variant="body2" sx={{ fontWeight: 500 }}>{location.primary}</Typography>
+                                {location.secondary && (
+                                  <Typography variant="caption" color="text.secondary" display="block">{location.secondary}</Typography>
+                                )}
+                              </>
+                            );
+                          })()}
+                        </TableCell>
+                        <TableCell>
                           {dm.name ? (
                             <>
                               <Typography variant="body2" sx={{ fontWeight: 500 }}>{dm.name}</Typography>
@@ -507,6 +571,7 @@ export default function PublicCRMView() {
                         </TableCell>
                         <TableCell align="right" sx={{ fontWeight: 500 }}>{getDealInitialValue(deal)}</TableCell>
                         <TableCell align="right" sx={{ fontWeight: 500 }}>{getDealPotentialValue(deal)}</TableCell>
+                        <TableCell align="right" sx={{ fontWeight: 500 }}>{getDealMarkupPercent(deal)}</TableCell>
                         <TableCell>
                           {ageResult ? (
                             <DealAgeChip ageDays={ageResult.days} createdAt={ageResult.date} showEmoji variant="compact" />

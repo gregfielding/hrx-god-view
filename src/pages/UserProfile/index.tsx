@@ -30,6 +30,7 @@ import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboard
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
 import FavoriteButton from '../../components/FavoriteButton';
 import { useFavorites } from '../../hooks/useFavorites';
+import MissingHomeAddressAlert from '../../components/MissingHomeAddressAlert';
 
 import { toChipLabel } from '../../utils/chipLabel';
 import ProfileOverview from './components/ProfileOverview';
@@ -68,6 +69,7 @@ const UserProfilePage = () => {
   const effectiveTenantId = tenantId || authTenantId || activeTenant?.id;
   const { distribution: scoringDistribution } = useScoringDistribution(effectiveTenantId ?? undefined);
   const [searchParams] = useSearchParams();
+  const shouldAutoOpenHomeAddress = searchParams.get('editHomeAddress') === '1';
   const navigate = useNavigate();
   const { isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -2129,7 +2131,16 @@ const UserProfilePage = () => {
             if (!label || !availableTabLabels.includes(label)) return null;
             switch (label) {
               case 'Overview':
-                return <ProfileOverview uid={uid} onTabChange={(tab: string) => handleTabChange({} as React.SyntheticEvent, tab)} />;
+                return (
+                  <Box sx={{ px: { xs: 2, md: 3 }, pt: 2 }}>
+                    {user?.uid === uid && <MissingHomeAddressAlert compact />}
+                    <ProfileOverview
+                      uid={uid}
+                      onTabChange={(tab: string) => handleTabChange({} as React.SyntheticEvent, tab)}
+                      autoOpenHomeAddress={shouldAutoOpenHomeAddress}
+                    />
+                  </Box>
+                );
               case 'Interview':
                 return <InterviewTab uid={uid} />;
               case 'Score':

@@ -22,8 +22,6 @@ import FavoritesFilter from '../components/FavoritesFilter';
 import { useAuth } from '../contexts/AuthContext';
 
 export type RecruiterTab =
-  | 'accounts'
-  | 'my-accounts'
   | 'job-orders'
   | 'my-orders'
   | 'jobs-board'
@@ -44,19 +42,17 @@ const RecruiterDashboard: React.FC = () => {
   const theme = useTheme();
 
   const normalizedPath = location.pathname.replace(/\/+$/, '');
-  const pathParts = normalizedPath.split('/').filter(Boolean); // e.g. ['recruiter', 'job-orders', ':id?']
-  const isTopLevelTabRoute = pathParts.length === 2; // '/recruiter/<tab>'
+  const pathParts = normalizedPath.split('/').filter(Boolean); // e.g. ['jobs', 'job-orders', ':id?']
+  const isTopLevelTabRoute = pathParts.length === 2; // '/jobs/<tab>'
 
-  // Get active tab from URL or default to 'accounts'
+  // Get active tab from URL or default to 'job-orders'
   const getActiveTab = (): RecruiterTab => {
     const path = location.pathname;
-    if (path.includes('/my-accounts')) return 'my-accounts';
-    if (path.includes('/accounts') && !path.includes('/job')) return 'accounts';
     if (path.includes('/my-orders')) return 'my-orders';
     if (path.includes('/job-orders')) return 'job-orders';
     if (path.includes('/jobs-board')) return 'jobs-board';
     if (path.includes('/reports')) return 'reports';
-    return 'accounts';
+    return 'job-orders';
   };
 
   const [activeTab, setActiveTab] = useState<RecruiterTab>(getActiveTab());
@@ -76,16 +72,10 @@ const RecruiterDashboard: React.FC = () => {
 
   const handleTabChange = (tab: RecruiterTab) => {
     setActiveTab(tab);
-    if (tab === 'job-orders') {
-      navigate('/recruiter/job-orders');
-    } else {
-      navigate(`/recruiter/${tab}`);
-    }
+    navigate(tab === 'job-orders' ? '/jobs/job-orders' : `/jobs/${tab}`);
   };
 
   const tabs = [
-    { id: 'accounts' as RecruiterTab, label: 'Accounts', icon: <BusinessIcon fontSize="small" /> },
-    { id: 'my-accounts' as RecruiterTab, label: 'My Accounts', icon: <PersonIcon fontSize="small" /> },
     { id: 'job-orders' as RecruiterTab, label: 'Job Orders', icon: <WorkIcon fontSize="small" /> },
     { id: 'my-orders' as RecruiterTab, label: 'My Job Orders', icon: <PersonIcon fontSize="small" /> },
     { id: 'jobs-board' as RecruiterTab, label: 'Jobs Board', icon: <AssignmentIcon fontSize="small" /> },
@@ -95,7 +85,7 @@ const RecruiterDashboard: React.FC = () => {
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {isTopLevelTabRoute && (
         <PageHeader
-          title="Recruiter"
+          title="Jobs"
           subtitle="Manage job orders and job posts"
           filters={
             <Box display="flex" gap={0.5}>
@@ -130,57 +120,7 @@ const RecruiterDashboard: React.FC = () => {
             </Box>
           }
           rightActions={
-            activeTab === 'accounts' || activeTab === 'my-accounts'
-              ? (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                <FavoritesFilter
-                  favoriteType="accounts"
-                  showFavoritesOnly={showFavoritesOnly}
-                  onToggle={setShowFavoritesOnly}
-                  showText={false}
-                  size="small"
-                  sx={{
-                    minWidth: '36px',
-                    width: '36px',
-                    height: '36px',
-                    borderRadius: '50%',
-                    '&:hover': {
-                      backgroundColor: showFavoritesOnly ? 'primary.dark' : 'action.hover',
-                    },
-                  }}
-                />
-                <InboxSearchBar
-                  value={search}
-                  onChange={setSearch}
-                  onSearch={setSearch}
-                  placeholder="Search accounts..."
-                />
-                <Button
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                  onClick={() => navigate(`${location.pathname}?new=1`)}
-                  sx={{
-                    textTransform: 'none',
-                    borderRadius: '24px',
-                    px: 2.5,
-                    py: 1,
-                    height: '40px',
-                    fontWeight: 500,
-                    fontSize: '14px',
-                    bgcolor: '#0057B8',
-                    boxShadow: '0 2px 8px rgba(0, 87, 184, 0.25)',
-                    '&:hover': {
-                      bgcolor: '#004a9f',
-                      boxShadow: '0 4px 12px rgba(0, 87, 184, 0.35)',
-                    },
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  Add Account
-                </Button>
-              </Box>
-                )
-              : activeTab === 'job-orders' || activeTab === 'my-orders' || activeTab === 'jobs-board'
+            activeTab === 'job-orders' || activeTab === 'my-orders' || activeTab === 'jobs-board'
                 ? (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                 <FavoritesFilter
@@ -217,7 +157,7 @@ const RecruiterDashboard: React.FC = () => {
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}
-                    onClick={() => navigate('/recruiter/job-orders/new')}
+                    onClick={() => navigate('/jobs/job-orders/new')}
                     sx={{
                       textTransform: 'none',
                       borderRadius: '24px',
@@ -242,7 +182,7 @@ const RecruiterDashboard: React.FC = () => {
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}
-                    onClick={() => navigate('/recruiter/jobs-board?new=1')}
+                    onClick={() => navigate('/jobs/jobs-board?new=1')}
                     sx={{
                       textTransform: 'none',
                       borderRadius: '24px',

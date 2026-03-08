@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { toChipLabel } from '../../../utils/chipLabel';
 import {
   Box,
@@ -72,9 +72,10 @@ import { EverifyComplianceCard } from './EverifyComplianceCard';
 type Props = {
   uid: string;
   onTabChange?: (tab: string) => void;
+  autoOpenHomeAddress?: boolean;
 };
 
-const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
+const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddress = false }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const sectionSpacing = isMobile ? 2 : 3;
@@ -223,6 +224,15 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange }) => {
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [isEditingBasicIdentity, setIsEditingBasicIdentity] = useState(false);
   const [isEditingHomeAddress, setIsEditingHomeAddress] = useState(false);
+  const homeAddressRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!autoOpenHomeAddress) return;
+    setIsEditingHomeAddress(true);
+    setTimeout(() => {
+      homeAddressRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 50);
+  }, [autoOpenHomeAddress]);
+
   const [workEligibilityData, setWorkEligibilityData] = useState({
     workAuthorized: false,
     requireSponsorship: false,
@@ -907,7 +917,7 @@ const transportOptions: Array<{
         <Grid container spacing={sectionSpacing}>
           {/* 🧍 Basic Identity Section */}
           <Grid item xs={12}>
-            <Card variant="outlined" sx={{ p: cardPadding }}>
+            <Card id="home-address" ref={homeAddressRef} variant="outlined" sx={{ p: cardPadding }}>
               <CardHeader 
                 title={
                   <Box sx={{ display: 'flex', alignItems: 'center' }}>

@@ -18,6 +18,7 @@ import {
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import BusinessIcon from '@mui/icons-material/Business';
+import AccountBalanceIcon from '@mui/icons-material/AccountBalance';
 import PeopleIcon from '@mui/icons-material/People';
 import AppsIcon from '@mui/icons-material/Apps';
 import GroupWorkIcon from '@mui/icons-material/GroupWork';
@@ -178,14 +179,19 @@ const Layout: React.FC = function Layout() {
       return 'Companies';
     }
 
+    // Accounts list routes
+    if (pathname === '/accounts' || pathname.startsWith('/accounts/my')) {
+      return 'Accounts';
+    }
+
     // Account detail
     if (pathname.startsWith('/accounts/')) {
       return 'Account Details';
     }
     
     // Jobs Board routes
-    if (pathname.includes('/recruiter/jobs-board')) {
-      return 'Recruiter';
+    if (pathname.includes('/jobs/jobs-board') || pathname.includes('/recruiter/jobs-board')) {
+      return 'Jobs';
     }
     if (pathname.includes('/jobs-board') || pathname.includes('/jobs-dashboard')) {
       return 'Jobs Board';
@@ -236,8 +242,8 @@ const Layout: React.FC = function Layout() {
     }
     
     // Recruiter routes
-    if (pathname.includes('/recruiter')) {
-      return 'Recruiter';
+    if (pathname.includes('/jobs') || pathname.includes('/recruiter')) {
+      return 'Jobs';
     }
     
     // Dashboard routes
@@ -903,9 +909,11 @@ const Layout: React.FC = function Layout() {
       'Agencies': <GroupWorkIcon />,
       'Tenants': <BusinessIcon />,
       'Team Access': <RecordVoiceOverIcon />,
-      'Recruiter': <RecordVoiceOverIcon />,
+      'Recruiter': <WorkIcon />,
+      'Jobs': <WorkIcon />,
       'Workforce': <PeopleIcon />,
       'Users': <GroupsIcon />,
+      'Accounts': <AccountBalanceIcon />,
       'Contacts': <PersonIcon />,
       'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,
@@ -925,7 +933,7 @@ const Layout: React.FC = function Layout() {
       'Performance': <SettingsIcon />,
       'Reviews': <SettingsIcon />,
       'Check-ins': <NotificationsIcon />,
-      'Messages': <NotificationsIcon />,
+      'Messages': <ChatIcon />,
       'Inbox': <InboxIcon />,
       'Text Messages': <SmsIcon />,
       'Tasks': <DoneAllIcon />,

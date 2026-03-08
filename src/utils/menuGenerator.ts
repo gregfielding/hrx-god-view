@@ -164,6 +164,12 @@ export async function generateMenuItems(
       // Show for security levels 5+ (Recruiter/Manager/Admin/Worker types)
       ...((effectiveSecurityLevel && ['5', '6', '7'].includes(effectiveSecurityLevel)) ? [
         {
+          text: 'Accounts',
+          to: '/accounts',
+          icon: 'business',
+          requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[],
+        },
+        {
           text: 'Contacts',
           to: '/contacts',
           icon: 'contacts',
@@ -227,10 +233,10 @@ export async function generateMenuItems(
           requiredRoles: ['Applicant', 'Worker', 'Staff'] as ClaimsRole[],
         }
       ] : []),
-      // Recruiter (role-gated; no module gate)
+      // Jobs (role-gated; no module gate)
       ...([{
-        text: 'Recruiter',
-        to: '/recruiter',
+        text: 'Jobs',
+        to: '/jobs',
         icon: 'people',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
       }]),

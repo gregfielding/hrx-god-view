@@ -468,7 +468,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
 
   const handleViewJobOrder = () => {
     if (selectedJobOrder) {
-      navigate(`/recruiter/job-orders/${selectedJobOrder.id}`);
+      navigate(`/jobs/job-orders/${selectedJobOrder.id}`);
     }
     handleMenuClose();
   };
@@ -476,7 +476,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
 
   const handleCopyLink = async () => {
     if (selectedJobOrder) {
-      const link = `${window.location.origin}/recruiter/job-orders/${selectedJobOrder.id}`;
+      const link = `${window.location.origin}/jobs/job-orders/${selectedJobOrder.id}`;
       try {
         await navigator.clipboard.writeText(link);
         // TODO: Show success toast
@@ -787,7 +787,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                   <TableRow 
                     key={jobOrder.id} 
                     hover 
-                    onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
+                    onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
                     sx={{ 
                       cursor: 'pointer',
                       backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',

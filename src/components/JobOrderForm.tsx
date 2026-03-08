@@ -1430,7 +1430,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       } else {
         // Default behavior: redirect after delay
         setTimeout(() => {
-          navigate('/recruiter/job-orders');
+          navigate('/jobs/job-orders');
         }, 1500);
       }
       
@@ -1446,7 +1446,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     if (onCancel) {
       onCancel();
     } else {
-      navigate('/recruiter/job-orders');
+      navigate('/jobs/job-orders');
     }
   };
 

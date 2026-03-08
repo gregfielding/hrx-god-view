@@ -771,7 +771,7 @@ const TaskDetailsDialog: React.FC<TaskDetailsDialogProps> = ({
                             label={jobOrderName ? `Job Order: ${jobOrderName}` : 'Job Order'}
                             size="small"
                             clickable
-                            onClick={() => openHref(`/recruiter/job-orders/${jobOrderId}`)}
+                            onClick={() => openHref(`/jobs/job-orders/${jobOrderId}`)}
                           />
                         </Tooltip>
                       )}

@@ -1160,7 +1160,7 @@ const RecruiterContactDetails: React.FC = () => {
                               fontWeight: 600,
                               '&:hover': { textDecoration: 'underline' },
                             }}
-                            onClick={() => navigate(`/recruiter/job-orders/${jo.id}`)}
+                            onClick={() => navigate(`/jobs/job-orders/${jo.id}`)}
                           >
                             {jo.jobOrderName || jo.jobTitle || 'Job Order'}
                           </Typography>
@@ -2445,7 +2445,7 @@ const RecruiterContactDetails: React.FC = () => {
                                   bgcolor: 'grey.100'
                                 }
                               }}
-                              onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
+                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
                             >
                               <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                                 <WorkIcon sx={{ fontSize: 16 }} />

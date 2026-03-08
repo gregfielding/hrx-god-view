@@ -3729,7 +3729,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
             <Button
               variant="outlined"
               startIcon={<ArrowBackIcon />}
-              onClick={() => navigate('/recruiter/job-orders')}
+              onClick={() => navigate('/jobs/job-orders')}
                     sx={{
                 textTransform: 'none',
                 borderRadius: '24px',

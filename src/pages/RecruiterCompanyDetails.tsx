@@ -2295,13 +2295,13 @@ const CompanyDashboardTab: React.FC<{
                               bgcolor: 'grey.100'
                             }
                           }}
-                          onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
+                          onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
                           role="button"
                           tabIndex={0}
                           onKeyDown={(e) => { 
                             if (e.key === 'Enter' || e.key === ' ') { 
                               e.preventDefault(); 
-                              navigate(`/recruiter/job-orders/${jobOrder.id}`); 
+                              navigate(`/jobs/job-orders/${jobOrder.id}`); 
                             } 
                           }}
                         >

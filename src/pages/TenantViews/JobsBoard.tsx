@@ -55,7 +55,7 @@ const JobsBoard: React.FC = () => {
   const location = useLocation();
   
   // Check if we're accessing from the recruiter module
-  const isFromRecruiter = location.pathname.includes('/recruiter/jobs-board');
+  const isFromRecruiter = location.pathname.includes('/jobs/jobs-board');
   
   const [posts, setPosts] = useState<JobsBoardPost[]>([]);
   const [filteredJobs, setFilteredJobs] = useState<JobsBoardPost[]>([]);
@@ -245,7 +245,7 @@ const JobsBoard: React.FC = () => {
 
   const handleRowClick = (post: JobsBoardPost) => {
     if (isFromRecruiter) {
-      navigate(`/recruiter/jobs-board/edit/${post.id}`);
+      navigate(`/jobs/jobs-board/edit/${post.id}`);
     } else {
       navigate(`/jobs-dashboard/edit/${post.id}`);
     }

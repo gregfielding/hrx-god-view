@@ -64,9 +64,9 @@ import {
   formatGeoLabel,
   getGeoHierarchy,
 } from '../data/metroSubareaSchema';
-import { getMetroDisplayLabel } from '../data/metroMaster';
+import { getCityMetadata, getMetroDisplayLabel } from '../data/metroMaster';
 import { Autocomplete as GooglePlacesAutocomplete } from '@react-google-maps/api';
-import { geocodeAddress, getGeocodingErrorMessage } from '../utils/geocodeAddress';
+import { getGeocodingErrorMessage } from '../utils/geocodeAddress';
 import { calculateDistance } from '../utils/locationUtils';
 import { useSmartGroupSettings } from '../hooks/useSmartGroupSettings';
 import { usePageCache } from '../hooks/usePageCache';
@@ -146,6 +146,50 @@ interface ResidenceRow {
   certifications?: string[];
   scoreSummary?: { aiScore?: number; interviewAvg?: number; interviewCount?: number; interviewLastAt?: any; interviewLastScore10?: number };
   securityLevel?: string;
+}
+
+function getUserResidenceData(userData: any) {
+  const addressInfo = userData?.addressInfo || {};
+  const address = userData?.address || {};
+  const addressCoords = address?.coordinates || {};
+  const addressInfoCoords = addressInfo?.coordinates || {};
+
+  const city = addressInfo.city ?? address.city ?? userData?.city ?? '';
+  const state = addressInfo.state ?? address.state ?? userData?.state ?? '';
+  const lat =
+    addressInfo.homeLat ??
+    address.homeLat ??
+    addressInfoCoords.lat ??
+    addressInfoCoords.latitude ??
+    addressCoords.lat ??
+    addressCoords.latitude ??
+    userData?.homeLat ??
+    null;
+  const lng =
+    addressInfo.homeLng ??
+    address.homeLng ??
+    addressInfoCoords.lng ??
+    addressInfoCoords.longitude ??
+    addressCoords.lng ??
+    addressCoords.longitude ??
+    userData?.homeLng ??
+    null;
+
+  if (typeof lat === 'number' && typeof lng === 'number') {
+    return { city, state, lat, lng };
+  }
+
+  if (city && state) {
+    const cityKey = getGeoHierarchy({ city, state }).cityKey;
+    const cityMeta = getCityMetadata(cityKey);
+    const fallbackLat = cityMeta?.coordinates?.lat ?? null;
+    const fallbackLng = cityMeta?.coordinates?.lng ?? null;
+    if (typeof fallbackLat === 'number' && typeof fallbackLng === 'number') {
+      return { city, state, lat: fallbackLat, lng: fallbackLng };
+    }
+  }
+
+  return { city, state, lat, lng };
 }
 
 export interface SmartGroupsPageProps {
@@ -411,18 +455,9 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
           centerLng = radiusLng;
           console.log('[Smart Groups] Using stored coordinates from place selection:', { centerLat, centerLng });
         } else if (radiusAddress.trim()) {
-          console.log('[Smart Groups] Geocoding address (no place selected):', radiusAddress.trim());
-          try {
-            const geo = await geocodeAddress(radiusAddress.trim());
-            centerLat = geo.lat;
-            centerLng = geo.lng;
-            console.log('[Smart Groups] Geocoded successfully:', { lat: centerLat, lng: centerLng });
-          } catch (geocodeErr: any) {
-            console.warn('[Smart Groups] Geocoding error:', geocodeErr?.message ?? geocodeErr);
-            setError(getGeocodingErrorMessage(geocodeErr, { hasAutocomplete: true }));
-            setLoading(false);
-            return;
-          }
+          setError('Select an address from the Google suggestions list before building a radius search.');
+          setLoading(false);
+          return;
         } else {
           setError('Enter or select an address for radius search');
           setLoading(false);
@@ -432,15 +467,15 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         for (const docSnap of userDocs) {
           const uid = docSnap.id;
           const userData = docSnap.data();
-          const addr = userData?.addressInfo || userData?.address || {};
-          const lat = addr.homeLat ?? addr.coordinates?.lat ?? userData?.homeLat;
-          const lng = addr.homeLng ?? addr.coordinates?.lng ?? userData?.homeLng;
+          const residence = getUserResidenceData(userData);
+          const lat = residence.lat;
+          const lng = residence.lng;
           if (typeof lat !== 'number' || typeof lng !== 'number') continue;
           const distance = calculateDistance(centerLat, centerLng, lat, lng);
           if (distance > radiusMiles) continue;
           const userName = [userData?.firstName, userData?.lastName].filter(Boolean).join(' ') || uid;
-          const city = addr.city ?? userData?.city ?? '';
-          const state = addr.state ?? userData?.state ?? '';
+          const city = residence.city;
+          const state = residence.state;
           const skills = Array.isArray(userData?.skills) ? userData.skills : [];
           const certifications = Array.isArray(userData?.certifications)
             ? (userData.certifications as any[]).map((c: any) => (typeof c === 'string' ? c : c?.name || '')).filter(Boolean)
@@ -474,9 +509,9 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         for (const docSnap of userDocs) {
           const uid = docSnap.id;
           const userData = docSnap.data();
-          const addr = userData?.addressInfo || userData?.address || {};
-          const city = (addr.city ?? userData?.city ?? '').trim();
-          const state = (addr.state ?? userData?.state ?? '').trim();
+          const residence = getUserResidenceData(userData);
+          const city = String(residence.city || '').trim();
+          const state = String(residence.state || '').trim();
           if (!city && !state) continue;
           const hierarchy = getGeoHierarchy({ city, state });
           const matchMetro = !metroFilter
@@ -560,6 +595,14 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
       setSelectedIds(new Set());
       setSelectAllResults(false);
       if (filterMode === 'residence') {
+        if (
+          residenceSubMode === 'radius' &&
+          radiusAddress.trim() &&
+          (radiusLat == null || radiusLng == null)
+        ) {
+          // Don't geocode partial manual input on every keystroke. Wait for place selection or explicit Build.
+          return;
+        }
         // Residence mode: filters are applied during data loading, so reload
         loadResidenceData();
       }

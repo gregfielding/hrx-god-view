@@ -4070,7 +4070,7 @@ const ContactDetails: React.FC = () => {
                                   bgcolor: 'grey.100'
                                 }
                               }}
-                              onClick={() => navigate(`/recruiter/job-orders/${jobOrder.id}`)}
+                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
                             >
                               <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem', bgcolor: 'primary.main' }}>
                                 <WorkIcon sx={{ fontSize: 16 }} />

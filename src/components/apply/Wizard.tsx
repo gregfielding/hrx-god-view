@@ -72,6 +72,7 @@ type WizardProps = {
   tenantName?: string;
   jobId?: string;
   uid: string | null;
+  signupGroupId?: string | null;
 };
 
 type DraftApplication = {
@@ -144,7 +145,7 @@ const detectDefaultLanguage = (): 'en' | 'es' => {
   return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
 };
 
-const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid }) => {
+const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
@@ -928,6 +929,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
               source: 'public_jobs_board',
+              signupSource: signupGroupId ? 'apply_group_landing' : 'apply_landing',
+              signupGroupId: signupGroupId || null,
               profileComplete: false,
               onboarded: false,
               role: 'Tenant',
@@ -2029,6 +2032,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           });
 
           const groupIdsToAdd: string[] = [];
+          if (signupGroupId && signupGroupId.trim()) {
+            groupIdsToAdd.push(signupGroupId.trim());
+          }
           if (
             posting?.autoAddToUserGroups &&
             Array.isArray(posting.autoAddToUserGroups) &&

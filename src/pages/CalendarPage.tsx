@@ -578,14 +578,14 @@ const CalendarPage: React.FC = () => {
           // But actually, jobOrderId might contain dashes, so we need a better approach
           // Use colorId which we stored with the jobOrderId
           if (event.colorId) {
-            navigate(`/recruiter/job-orders/${event.colorId}`);
+            navigate(`/jobs/job-orders/${event.colorId}`);
             return;
           }
         }
       } else if (event.id.startsWith('gig-job-order-')) {
         // Legacy: old job order events
         const jobOrderId = event.id.replace('gig-job-order-', '');
-        navigate(`/recruiter/job-orders/${jobOrderId}`);
+        navigate(`/jobs/job-orders/${jobOrderId}`);
         return;
       }
     }

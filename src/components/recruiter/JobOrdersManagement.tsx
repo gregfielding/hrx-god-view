@@ -137,7 +137,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
     if (onViewJobOrder) {
       onViewJobOrder(jobOrderId);
     } else {
-      navigate(`/recruiter/job-orders/${jobOrderId}`);
+      navigate(`/jobs/job-orders/${jobOrderId}`);
     }
   };
 

@@ -17,7 +17,7 @@ const NewJobOrder: React.FC = () => {
     },
     {
       label: 'Job Orders',
-      href: '/recruiter/job-orders'
+      href: '/jobs/job-orders'
     },
     {
       label: 'New Job Order'

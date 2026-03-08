@@ -21,6 +21,16 @@ import {
   Avatar,
   Grid,
   Autocomplete,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Divider,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
+  ListItemSecondaryAction,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -34,6 +44,9 @@ import {
   GroupWork as GroupWorkIcon,
   Sell as SellIcon,
   Badge as BadgeIcon,
+  Close as CloseIcon,
+  Delete as DeleteIcon,
+  Add as AddIcon,
 } from '@mui/icons-material';
 import {
   doc,
@@ -89,6 +102,166 @@ const SectionCard: React.FC<{
   </Card>
 );
 
+type ManageDialogOption = {
+  id: string;
+  label: string;
+  secondary?: string;
+  icon?: React.ReactNode;
+  group?: string;
+};
+
+const ManageAssociationDialog: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  currentItems: ManageDialogOption[];
+  availableOptions: ManageDialogOption[];
+  selectionLabel: string;
+  selectionPlaceholder?: string;
+  onAdd: (item: ManageDialogOption) => void;
+  onRemove: (id: string) => void;
+  groupBy?: (option: ManageDialogOption) => string;
+}> = ({
+  open,
+  onClose,
+  title,
+  currentItems,
+  availableOptions,
+  selectionLabel,
+  selectionPlaceholder,
+  onAdd,
+  onRemove,
+  groupBy,
+}) => {
+  const [selectedOption, setSelectedOption] = useState<ManageDialogOption | null>(null);
+
+  useEffect(() => {
+    if (!open) setSelectedOption(null);
+  }, [open]);
+
+  const availableToAdd = availableOptions.filter((option) => !currentItems.some((item) => item.id === option.id));
+
+  return (
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
+      <DialogTitle>
+        <Box display="flex" alignItems="center" justifyContent="space-between">
+          <Typography variant="h6">{title}</Typography>
+          <IconButton onClick={onClose}>
+            <CloseIcon />
+          </IconButton>
+        </Box>
+      </DialogTitle>
+      <DialogContent>
+        <Box sx={{ pt: 1 }}>
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2 }}>
+              Current {title} ({currentItems.length})
+            </Typography>
+            {currentItems.length > 0 ? (
+              <List sx={{ bgcolor: 'grey.50', borderRadius: 1 }}>
+                {currentItems.map((item) => (
+                  <ListItem key={item.id} sx={{ py: 1 }}>
+                    <ListItemAvatar>
+                      {item.icon ? (
+                        <Avatar sx={{ width: 40, height: 40, bgcolor: 'grey.100', color: 'text.primary' }}>
+                          {item.icon}
+                        </Avatar>
+                      ) : (
+                        <Avatar sx={{ width: 40, height: 40, fontSize: '1rem' }}>
+                          {item.label?.charAt(0) || '?'}
+                        </Avatar>
+                      )}
+                    </ListItemAvatar>
+                    <ListItemText primary={item.label} secondary={item.secondary} />
+                    <ListItemSecondaryAction>
+                      <IconButton edge="end" onClick={() => onRemove(item.id)} color="error">
+                        <DeleteIcon />
+                      </IconButton>
+                    </ListItemSecondaryAction>
+                  </ListItem>
+                ))}
+              </List>
+            ) : (
+              <Box sx={{ textAlign: 'center', py: 3, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  No items added yet
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          <Divider sx={{ my: 2 }} />
+
+          <Box>
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2 }}>
+              Add {title}
+            </Typography>
+            {availableToAdd.length > 0 ? (
+              <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
+                <Autocomplete
+                  fullWidth
+                  options={availableToAdd}
+                  groupBy={groupBy}
+                  value={selectedOption}
+                  onChange={(_, newValue) => setSelectedOption(newValue)}
+                  getOptionLabel={(option) => [option.label, option.secondary].filter(Boolean).join(' · ') || 'Unknown'}
+                  renderInput={(params) => (
+                    <TextField
+                      {...params}
+                      label={selectionLabel}
+                      placeholder={selectionPlaceholder}
+                    />
+                  )}
+                  renderOption={(props, option) => (
+                    <li {...props}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        {option.icon ? option.icon : <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>{option.label?.charAt(0) || '?'}</Avatar>}
+                        <Box>
+                          <Typography variant="body2">{option.label}</Typography>
+                          {option.secondary && (
+                            <Typography variant="caption" color="text.secondary">
+                              {option.secondary}
+                            </Typography>
+                          )}
+                        </Box>
+                      </Box>
+                    </li>
+                  )}
+                />
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => {
+                    if (selectedOption) {
+                      onAdd(selectedOption);
+                      setSelectedOption(null);
+                    }
+                  }}
+                  disabled={!selectedOption}
+                  sx={{ textTransform: 'none', borderRadius: 999, minWidth: 110 }}
+                >
+                  Add
+                </Button>
+              </Box>
+            ) : (
+              <Box sx={{ textAlign: 'center', py: 3, bgcolor: 'grey.50', borderRadius: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  No additional options available to add
+                </Typography>
+              </Box>
+            )}
+          </Box>
+        </Box>
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose} variant="outlined" sx={{ textTransform: 'none', borderRadius: 999 }}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
 interface TabPanelProps {
   children?: React.ReactNode;
   index: number;
@@ -105,7 +278,7 @@ function TabPanel(props: TabPanelProps) {
       aria-labelledby={`account-tab-${index}`}
       {...other}
     >
-      {value === index && <Box sx={{ p: 2 }}>{children}</Box>}
+      {value === index && <Box sx={{ px: 2, pb: 2 }}>{children}</Box>}
     </div>
   );
 }
@@ -125,6 +298,7 @@ interface AccountSidebarProps {
   recruitersOptions: PersonOption[];
   optionsLoading: boolean;
   saving: boolean;
+  visibleSections?: Array<'activity' | 'company' | 'location' | 'contacts' | 'jobOrders' | 'deals' | 'salespeople' | 'recruiters' | 'laborPool' | 'jobsBoard'>;
 }
 
 function AccountSidebar({
@@ -142,7 +316,17 @@ function AccountSidebar({
   recruitersOptions,
   optionsLoading,
   saving,
+  visibleSections = ['activity', 'company', 'location', 'contacts', 'jobOrders', 'deals', 'salespeople', 'recruiters', 'laborPool'],
 }: AccountSidebarProps) {
+  const [manageCompaniesOpen, setManageCompaniesOpen] = useState(false);
+  const [manageLocationsOpen, setManageLocationsOpen] = useState(false);
+  const [manageContactsOpen, setManageContactsOpen] = useState(false);
+  const [manageJobOrdersOpen, setManageJobOrdersOpen] = useState(false);
+  const [manageDealsOpen, setManageDealsOpen] = useState(false);
+  const [manageSalespeopleOpen, setManageSalespeopleOpen] = useState(false);
+  const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
+  const [manageLaborPoolOpen, setManageLaborPoolOpen] = useState(false);
+
   const assoc = account.associations ?? {};
   const companyIds = assoc.companyIds ?? [];
   const locations = assoc.locations ?? [];
@@ -175,15 +359,64 @@ function AccountSidebar({
   );
   const selectedSalespeople = salespeopleOptions.filter((p) => salespersonIds.includes(p.id));
   const selectedRecruiters = recruitersOptions.filter((p) => recruiterIds.includes(p.id));
+  const showSection = (section: AccountSidebarProps['visibleSections'][number]) => visibleSections.includes(section);
+
+  const companyItems: ManageDialogOption[] = selectedCompanies.map((c) => ({ id: c.id, label: c.label, icon: <BusinessIcon fontSize="small" /> }));
+  const companyOptions: ManageDialogOption[] = companies.map((c) => ({ id: c.id, label: c.label, icon: <BusinessIcon fontSize="small" /> }));
+  const locationItems: ManageDialogOption[] = selectedLocations.map((loc) => {
+    const company = companies.find((c) => c.id === loc.companyId);
+    return {
+      id: `${loc.companyId}:${loc.locationId}`,
+      label: loc.label,
+      secondary: company?.label,
+      icon: <LocationOnIcon fontSize="small" />,
+    };
+  });
+  const locationOptions: ManageDialogOption[] = allLocationOptions.map((loc) => {
+    const company = companies.find((c) => c.id === loc.companyId);
+    return {
+      id: `${loc.companyId}:${loc.locationId}`,
+      label: loc.label,
+      secondary: company?.label,
+      icon: <LocationOnIcon fontSize="small" />,
+    };
+  });
+  const contactItems: ManageDialogOption[] = selectedContactsInScope.map((c) => ({ id: c.id, label: c.label, icon: <PersonIcon fontSize="small" /> }));
+  const contactOptions: ManageDialogOption[] = contactsInSelectedCompanies.map((c) => ({ id: c.id, label: c.label, icon: <PersonIcon fontSize="small" /> }));
+  const jobOrderItems: ManageDialogOption[] = selectedJobOrders.map((j) => ({ id: j.id, label: j.label, icon: <WorkIcon fontSize="small" /> }));
+  const jobOrderOptions: ManageDialogOption[] = jobOrders.map((j) => ({ id: j.id, label: j.label, icon: <WorkIcon fontSize="small" /> }));
+  const dealItems: ManageDialogOption[] = selectedDealsInScope.map((d) => ({ id: d.id, label: d.label, icon: <AttachMoneyIcon fontSize="small" /> }));
+  const dealOptions: ManageDialogOption[] = dealsInSelectedCompanies.map((d) => ({ id: d.id, label: d.label, icon: <AttachMoneyIcon fontSize="small" /> }));
+  const salespersonItems: ManageDialogOption[] = selectedSalespeople.map((p) => ({ id: p.id, label: p.label, icon: <SellIcon fontSize="small" /> }));
+  const salespersonOptionsMapped: ManageDialogOption[] = salespeopleOptions.map((p) => ({ id: p.id, label: p.label, icon: <SellIcon fontSize="small" /> }));
+  const recruiterItems: ManageDialogOption[] = selectedRecruiters.map((p) => ({ id: p.id, label: p.label, icon: <BadgeIcon fontSize="small" /> }));
+  const recruiterOptionsMapped: ManageDialogOption[] = recruitersOptions.map((p) => ({ id: p.id, label: p.label, icon: <BadgeIcon fontSize="small" /> }));
+  const laborPoolItems: ManageDialogOption[] = selectedLaborPool.map((o) => ({
+    id: `${o.type}:${o.id}`,
+    label: o.label,
+    secondary: o.type === 'userGroup' ? 'User Group' : 'Smart Group',
+    icon: <GroupWorkIcon fontSize="small" />,
+    group: o.type === 'userGroup' ? 'User Groups' : 'Smart Groups',
+  }));
+  const laborPoolOptionsMapped: ManageDialogOption[] = laborPoolOptions.map((o) => ({
+    id: `${o.type}:${o.id}`,
+    label: o.label,
+    secondary: o.type === 'userGroup' ? 'User Group' : 'Smart Group',
+    icon: <GroupWorkIcon fontSize="small" />,
+    group: o.type === 'userGroup' ? 'User Groups' : 'Smart Groups',
+  }));
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {showSection('activity') && (
       <SectionCard title="Recent Activity">
         <Typography variant="body2" color="text.secondary">
           No recent activity. Activities will appear here as they occur.
         </Typography>
       </SectionCard>
+      )}
 
+      {showSection('company') && (
       <SectionCard
         title="Company"
         titleHref="/companies"
@@ -191,38 +424,14 @@ function AccountSidebar({
           <Button
             variant="outlined"
             size="small"
-            onClick={() => {}}
+            onClick={() => setManageCompaniesOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
           </Button>
         }
       >
-        <Autocomplete
-          multiple
-          size="small"
-          options={companies}
-          value={selectedCompanies}
-          getOptionLabel={(o) => o.label}
-          isOptionEqualToValue={(a, b) => a.id === b.id}
-          onChange={(_e, v) => updateAccountAssociations({ companyIds: v.map((c) => c.id) })}
-          disabled={saving}
-          filterOptions={(options, { inputValue }) => {
-            const q = (inputValue || '').trim().toLowerCase();
-            if (!q) return options;
-            return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-          }}
-          renderInput={(params) => <TextField {...params} placeholder="Search companies..." />}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <BusinessIcon fontSize="small" />
-                {option.label}
-              </Box>
-            </li>
-          )}
-        />
-        {selectedCompanies.length > 0 && (
+        {selectedCompanies.length > 0 ? (
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedCompanies.map((c) => (
               <Box
@@ -247,9 +456,15 @@ function AccountSidebar({
               </Box>
             ))}
           </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No companies linked yet.
+          </Typography>
         )}
       </SectionCard>
+      )}
 
+      {showSection('location') && (
       <SectionCard
         title="Worksite / Location"
         titleHref="/companies"
@@ -257,6 +472,7 @@ function AccountSidebar({
           <Button
             variant="outlined"
             size="small"
+            onClick={() => setManageLocationsOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
@@ -269,32 +485,6 @@ function AccountSidebar({
           </Typography>
         ) : (
           <>
-            <Autocomplete
-              multiple
-              size="small"
-              options={allLocationOptions}
-              value={selectedLocations}
-              getOptionLabel={(o) => o.label}
-              isOptionEqualToValue={(a, b) => a.companyId === b.companyId && a.locationId === b.locationId}
-              onChange={(_e, v) =>
-                updateAccountAssociations({
-                  locations: v.map((loc) => ({ companyId: loc.companyId, locationId: loc.locationId })),
-                })
-              }
-              disabled={saving}
-              filterOptions={(options, { inputValue }) => {
-                const q = (inputValue || '').trim().toLowerCase();
-                if (!q) return options;
-                return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-              }}
-              renderInput={(params) => <TextField {...params} placeholder="Search locations..." />}
-              renderOption={(props, option) => (
-                <li {...props} key={`${option.companyId}-${option.locationId}`}>
-                  <LocationOnIcon fontSize="small" sx={{ mr: 0.5 }} />
-                  {option.label}
-                </li>
-              )}
-            />
             {selectedLocations.length > 0 && (
               <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                 {selectedLocations.map((loc) => {
@@ -339,7 +529,9 @@ function AccountSidebar({
           </>
         )}
       </SectionCard>
+      )}
 
+      {showSection('contacts') && (
       <SectionCard
         title="Company Contacts"
         titleHref="/contacts"
@@ -347,7 +539,7 @@ function AccountSidebar({
           <Button
             variant="outlined"
             size="small"
-            onClick={() => {}}
+            onClick={() => setManageContactsOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
@@ -359,17 +551,6 @@ function AccountSidebar({
             Select at least one company to add contacts.
           </Typography>
         )}
-        <Autocomplete
-          multiple
-          size="small"
-          options={contactsInSelectedCompanies}
-          value={selectedContactsInScope}
-          getOptionLabel={(o) => o.label}
-          isOptionEqualToValue={(a, b) => a.id === b.id}
-          onChange={(_e, v) => updateAccountAssociations({ contactIds: v.map((c) => c.id) })}
-          disabled={saving || companyIds.length === 0}
-          renderInput={(params) => <TextField {...params} placeholder="Search contacts..." />}
-        />
         {selectedContactsInScope.length > 0 && (
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedContactsInScope.map((c) => (
@@ -404,42 +585,23 @@ function AccountSidebar({
           </Box>
         )}
       </SectionCard>
+      )}
 
+      {showSection('jobOrders') && (
       <SectionCard
         title="Job Order(s)"
-        titleHref="/recruiter/job-orders"
+        titleHref="/jobs/job-orders"
         action={
           <Button
             variant="outlined"
             size="small"
+            onClick={() => setManageJobOrdersOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
           </Button>
         }
       >
-        <Autocomplete
-          multiple
-          size="small"
-          options={jobOrders}
-          value={selectedJobOrders}
-          getOptionLabel={(o) => o.label}
-          isOptionEqualToValue={(a, b) => a.id === b.id}
-          onChange={(_e, v) => updateAccountAssociations({ jobOrderIds: v.map((j) => j.id) })}
-          disabled={saving}
-          filterOptions={(options, { inputValue }) => {
-            const q = (inputValue || '').trim().toLowerCase();
-            if (!q) return options;
-            return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-          }}
-          renderInput={(params) => <TextField {...params} placeholder="Search job orders..." />}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              <WorkIcon fontSize="small" sx={{ mr: 0.5 }} />
-              {option.label}
-            </li>
-          )}
-        />
         {selectedJobOrders.length > 0 && (
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedJobOrders.map((j) => (
@@ -454,7 +616,7 @@ function AccountSidebar({
                   bgcolor: 'grey.50',
                   cursor: 'pointer',
                 }}
-                onClick={() => navigate(`/recruiter/job-orders/${j.id}`)}
+                onClick={() => navigate(`/jobs/job-orders/${j.id}`)}
                 role="button"
                 tabIndex={0}
               >
@@ -462,7 +624,7 @@ function AccountSidebar({
                 <Typography variant="body2">{j.label}</Typography>
                 <Button
                   component={Link}
-                  to={`/recruiter/job-orders/${j.id}`}
+                  to={`/jobs/job-orders/${j.id}`}
                   size="small"
                   sx={{ ml: 'auto', minWidth: 'auto', fontSize: '0.7rem' }}
                   onClick={(e) => e.stopPropagation()}
@@ -474,7 +636,9 @@ function AccountSidebar({
           </Box>
         )}
       </SectionCard>
+      )}
 
+      {showSection('deals') && (
       <SectionCard
         title="Deal"
         titleHref="/crm"
@@ -482,6 +646,7 @@ function AccountSidebar({
           <Button
             variant="outlined"
             size="small"
+            onClick={() => setManageDealsOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
@@ -494,28 +659,6 @@ function AccountSidebar({
           </Typography>
         ) : (
           <>
-            <Autocomplete
-              multiple
-              size="small"
-              options={dealsInSelectedCompanies}
-              value={selectedDealsInScope}
-              getOptionLabel={(o) => o.label}
-              isOptionEqualToValue={(a, b) => a.id === b.id}
-              onChange={(_e, v) => updateAccountAssociations({ dealIds: v.map((d) => d.id) })}
-              disabled={saving}
-              filterOptions={(options, { inputValue }) => {
-                const q = (inputValue || '').trim().toLowerCase();
-                if (!q) return options;
-                return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-              }}
-              renderInput={(params) => <TextField {...params} placeholder="Search deals..." />}
-              renderOption={(props, option) => (
-                <li {...props} key={option.id}>
-                  <AttachMoneyIcon fontSize="small" sx={{ mr: 0.5 }} />
-                  {option.label}
-                </li>
-              )}
-            />
             {selectedDealsInScope.length > 0 && (
               <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedDealsInScope.map((d) => (
@@ -552,7 +695,9 @@ function AccountSidebar({
           </>
         )}
       </SectionCard>
+      )}
 
+      {showSection('salespeople') && (
       <SectionCard
         title="Assigned Salesperson(s)"
         titleHref="/users"
@@ -560,34 +705,13 @@ function AccountSidebar({
           <Button
             variant="outlined"
             size="small"
+            onClick={() => setManageSalespeopleOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
           </Button>
         }
       >
-        <Autocomplete
-          multiple
-          size="small"
-          options={salespeopleOptions}
-          value={selectedSalespeople}
-          getOptionLabel={(o) => o.label}
-          isOptionEqualToValue={(a, b) => a.id === b.id}
-          onChange={(_e, v) => updateAccountAssociations({ salespersonIds: v.map((p) => p.id) })}
-          disabled={saving}
-          filterOptions={(options, { inputValue }) => {
-            const q = (inputValue || '').trim().toLowerCase();
-            if (!q) return options;
-            return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-          }}
-          renderInput={(params) => <TextField {...params} placeholder="Search salespeople..." />}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              <SellIcon fontSize="small" sx={{ mr: 0.5 }} />
-              {option.label}
-            </li>
-          )}
-        />
         {selectedSalespeople.length > 0 && (
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedSalespeople.map((p) => (
@@ -622,42 +746,23 @@ function AccountSidebar({
           </Box>
         )}
       </SectionCard>
+      )}
 
+      {showSection('recruiters') && (
       <SectionCard
         title="Assigned Recruiter(s)"
-        titleHref="/recruiter/accounts"
+        titleHref="/jobs/job-orders"
         action={
           <Button
             variant="outlined"
             size="small"
+            onClick={() => setManageRecruitersOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
           </Button>
         }
       >
-        <Autocomplete
-          multiple
-          size="small"
-          options={recruitersOptions}
-          value={selectedRecruiters}
-          getOptionLabel={(o) => o.label}
-          isOptionEqualToValue={(a, b) => a.id === b.id}
-          onChange={(_e, v) => updateAccountAssociations({ recruiterIds: v.map((p) => p.id) })}
-          disabled={saving}
-          filterOptions={(options, { inputValue }) => {
-            const q = (inputValue || '').trim().toLowerCase();
-            if (!q) return options;
-            return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-          }}
-          renderInput={(params) => <TextField {...params} placeholder="Search recruiters..." />}
-          renderOption={(props, option) => (
-            <li {...props} key={option.id}>
-              <BadgeIcon fontSize="small" sx={{ mr: 0.5 }} />
-              {option.label}
-            </li>
-          )}
-        />
         {selectedRecruiters.length > 0 && (
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedRecruiters.map((p) => (
@@ -692,7 +797,9 @@ function AccountSidebar({
           </Box>
         )}
       </SectionCard>
+      )}
 
+      {showSection('laborPool') && (
       <SectionCard
         title="Labor Pool"
         titleHref="/users/user-groups"
@@ -700,41 +807,13 @@ function AccountSidebar({
           <Button
             variant="outlined"
             size="small"
+            onClick={() => setManageLaborPoolOpen(true)}
             sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
           >
             Edit
           </Button>
         }
       >
-        <Autocomplete
-          multiple
-          size="small"
-          options={laborPoolOptions}
-          value={selectedLaborPool}
-          groupBy={(o) => (o.type === 'userGroup' ? 'User Groups' : 'Smart Groups')}
-          getOptionLabel={(o) => `${o.label} (${o.type === 'userGroup' ? 'User Group' : 'Smart Group'})`}
-          isOptionEqualToValue={(a, b) => a.id === b.id && a.type === b.type}
-          onChange={(_e, v) => {
-            updateAccountAssociations({
-              userGroupIds: v.filter((o) => o.type === 'userGroup').map((o) => o.id),
-              savedSmartGroupIds: v.filter((o) => o.type === 'savedSmartGroup').map((o) => o.id),
-            });
-          }}
-          disabled={saving}
-          filterOptions={(options, { inputValue }) => {
-            const q = (inputValue || '').trim().toLowerCase();
-            if (!q) return options;
-            return options.filter((o) => (o.label || '').toLowerCase().includes(q));
-          }}
-          renderInput={(params) => <TextField {...params} placeholder="Search user groups & smart groups..." />}
-          renderOption={(props, option) => (
-            <li {...props} key={`${option.type}-${option.id}`}>
-              <GroupWorkIcon fontSize="small" sx={{ mr: 0.5 }} />
-              {option.label}
-              <Chip size="small" label={option.type === 'userGroup' ? 'User Group' : 'Smart Group'} sx={{ ml: 0.5 }} />
-            </li>
-          )}
-        />
         {selectedLaborPool.length > 0 && (
           <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
             {selectedLaborPool.map((o) => (
@@ -757,6 +836,120 @@ function AccountSidebar({
           </Box>
         )}
       </SectionCard>
+      )}
+
+      {showSection('jobsBoard') && (
+        <SectionCard title="Jobs Board" titleHref="/jobs/jobs-board">
+          <Typography variant="body2" color="text.secondary">
+            Jobs Board associations will surface here. Use the selected companies and locations on this account to manage related job posts.
+          </Typography>
+        </SectionCard>
+      )}
+
+      <ManageAssociationDialog
+        open={manageCompaniesOpen}
+        onClose={() => setManageCompaniesOpen(false)}
+        title="Companies"
+        currentItems={companyItems}
+        availableOptions={companyOptions}
+        selectionLabel="Select Company"
+        selectionPlaceholder="Search companies..."
+        onAdd={(item) => updateAccountAssociations({ companyIds: [...companyIds, item.id] })}
+        onRemove={(id) => updateAccountAssociations({ companyIds: companyIds.filter((companyId) => companyId !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageLocationsOpen}
+        onClose={() => setManageLocationsOpen(false)}
+        title="Locations"
+        currentItems={locationItems}
+        availableOptions={locationOptions}
+        selectionLabel="Select Location"
+        selectionPlaceholder="Search locations..."
+        onAdd={(item) => {
+          const [companyId, locationId] = item.id.split(':');
+          updateAccountAssociations({ locations: [...locations, { companyId, locationId }] });
+        }}
+        onRemove={(id) => updateAccountAssociations({ locations: locations.filter((loc) => `${loc.companyId}:${loc.locationId}` !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageContactsOpen}
+        onClose={() => setManageContactsOpen(false)}
+        title="Contacts"
+        currentItems={contactItems}
+        availableOptions={contactOptions}
+        selectionLabel="Select Contact"
+        selectionPlaceholder="Search contacts..."
+        onAdd={(item) => updateAccountAssociations({ contactIds: [...contactIds, item.id] })}
+        onRemove={(id) => updateAccountAssociations({ contactIds: contactIds.filter((contactId) => contactId !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageJobOrdersOpen}
+        onClose={() => setManageJobOrdersOpen(false)}
+        title="Job Orders"
+        currentItems={jobOrderItems}
+        availableOptions={jobOrderOptions}
+        selectionLabel="Select Job Order"
+        selectionPlaceholder="Search job orders..."
+        onAdd={(item) => updateAccountAssociations({ jobOrderIds: [...jobOrderIds, item.id] })}
+        onRemove={(id) => updateAccountAssociations({ jobOrderIds: jobOrderIds.filter((jobOrderId) => jobOrderId !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageDealsOpen}
+        onClose={() => setManageDealsOpen(false)}
+        title="Deals"
+        currentItems={dealItems}
+        availableOptions={dealOptions}
+        selectionLabel="Select Deal"
+        selectionPlaceholder="Search deals..."
+        onAdd={(item) => updateAccountAssociations({ dealIds: [...dealIds, item.id] })}
+        onRemove={(id) => updateAccountAssociations({ dealIds: dealIds.filter((dealId) => dealId !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageSalespeopleOpen}
+        onClose={() => setManageSalespeopleOpen(false)}
+        title="Salespeople"
+        currentItems={salespersonItems}
+        availableOptions={salespersonOptionsMapped}
+        selectionLabel="Select Salesperson"
+        selectionPlaceholder="Search salespeople..."
+        onAdd={(item) => updateAccountAssociations({ salespersonIds: [...salespersonIds, item.id] })}
+        onRemove={(id) => updateAccountAssociations({ salespersonIds: salespersonIds.filter((salespersonId) => salespersonId !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageRecruitersOpen}
+        onClose={() => setManageRecruitersOpen(false)}
+        title="Recruiters"
+        currentItems={recruiterItems}
+        availableOptions={recruiterOptionsMapped}
+        selectionLabel="Select Recruiter"
+        selectionPlaceholder="Search recruiters..."
+        onAdd={(item) => updateAccountAssociations({ recruiterIds: [...recruiterIds, item.id] })}
+        onRemove={(id) => updateAccountAssociations({ recruiterIds: recruiterIds.filter((recruiterId) => recruiterId !== id) })}
+      />
+      <ManageAssociationDialog
+        open={manageLaborPoolOpen}
+        onClose={() => setManageLaborPoolOpen(false)}
+        title="Labor Pool"
+        currentItems={laborPoolItems}
+        availableOptions={laborPoolOptionsMapped}
+        selectionLabel="Select Labor Pool"
+        selectionPlaceholder="Search user groups or smart groups..."
+        groupBy={(option) => option.group || 'Other'}
+        onAdd={(item) => {
+          const [type, id] = item.id.split(':');
+          updateAccountAssociations({
+            userGroupIds: type === 'userGroup' ? [...userGroupIds, id] : userGroupIds,
+            savedSmartGroupIds: type === 'savedSmartGroup' ? [...savedSmartGroupIds, id] : savedSmartGroupIds,
+          });
+        }}
+        onRemove={(id) => {
+          const [type, itemId] = id.split(':');
+          updateAccountAssociations({
+            userGroupIds: type === 'userGroup' ? userGroupIds.filter((groupId) => groupId !== itemId) : userGroupIds,
+            savedSmartGroupIds: type === 'savedSmartGroup' ? savedSmartGroupIds.filter((groupId) => groupId !== itemId) : savedSmartGroupIds,
+          });
+        }}
+      />
     </Box>
   );
 }
@@ -1140,7 +1333,7 @@ const RecruiterAccountDetails: React.FC = () => {
       key: `joborder-${j.id}`,
       label: j.label,
       icon: <WorkIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
-      to: `/recruiter/job-orders/${j.id}`,
+      to: `/jobs/job-orders/${j.id}`,
     })),
     ...associatedDeals.map((d) => ({
       key: `deal-${d.id}`,
@@ -1180,30 +1373,47 @@ const RecruiterAccountDetails: React.FC = () => {
               {initial}
             </Avatar>
             <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-                <Typography
-                  variant="h6"
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, width: '100%' }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, flex: 1 }}>
+                  <Typography
+                    variant="h6"
+                    sx={{
+                      fontSize: { xs: '20px', md: '24px' },
+                      fontWeight: 600,
+                      lineHeight: 1.2,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                      minWidth: 0,
+                    }}
+                  >
+                    {displayName}
+                  </Typography>
+                  {account.id && (
+                    <FavoriteButton
+                      itemId={account.id}
+                      favoriteType="accounts"
+                      isFavorite={isFavorite}
+                      toggleFavorite={toggleFavorite}
+                      size="small"
+                    />
+                  )}
+                </Box>
+                <Button
+                  variant="outlined"
+                  startIcon={<ArrowBackIcon />}
+                  onClick={() => navigate('/accounts')}
                   sx={{
-                    fontSize: { xs: '20px', md: '24px' },
-                    fontWeight: 600,
-                    lineHeight: 1.2,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
+                    textTransform: 'none',
+                    borderRadius: '24px',
+                    height: '40px',
+                    px: 2,
                     whiteSpace: 'nowrap',
-                    minWidth: 0,
+                    flexShrink: 0,
                   }}
                 >
-                  {displayName}
-                </Typography>
-                {account.id && (
-                  <FavoriteButton
-                    itemId={account.id}
-                    favoriteType="accounts"
-                    isFavorite={isFavorite}
-                    toggleFavorite={toggleFavorite}
-                    size="small"
-                  />
-                )}
+                  Back
+                </Button>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.75, flexWrap: 'wrap' }}>
                 <Chip
@@ -1244,47 +1454,139 @@ const RecruiterAccountDetails: React.FC = () => {
           </Box>
         }
         filters={
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
-            <Button
-              onClick={() => setTabValue(0)}
-              variant="text"
-              startIcon={<DashboardIcon fontSize="small" />}
-              sx={{
-                textTransform: 'none',
-                borderRadius: '999px',
-                fontSize: '14px',
-                fontWeight: tabValue === 0 ? 500 : 400,
-                color: tabValue === 0 ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                bgcolor: tabValue === 0 ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                px: 1.5,
-                py: 0.75,
-                minWidth: 'auto',
-                whiteSpace: 'nowrap',
-                '&:hover': {
-                  bgcolor: tabValue === 0 ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
-                },
-              }}
-            >
-              Overview
-            </Button>
-          </Box>
-        }
-        rightActions={
-          <Button
-            variant="outlined"
-            startIcon={<ArrowBackIcon />}
-            onClick={() => navigate('/recruiter/accounts')}
+          <Box
             sx={{
-              textTransform: 'none',
-              borderRadius: '24px',
-              height: '40px',
-              px: 2,
-              whiteSpace: 'nowrap',
+              px: 1.5,
+              py: 1.25,
+              backgroundColor: '#F9FAFB',
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              '&::-webkit-scrollbar': { height: '6px' },
+              '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
             }}
           >
-            Back
-          </Button>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+              <Button
+                variant={tabValue === 0 ? 'contained' : 'text'}
+                onClick={() => setTabValue(0)}
+                startIcon={<BusinessIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 0
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Company Details
+              </Button>
+              <Button
+                variant={tabValue === 1 ? 'contained' : 'text'}
+                onClick={() => setTabValue(1)}
+                startIcon={<AttachMoneyIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 1
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Pricing
+              </Button>
+              <Button
+                variant={tabValue === 2 ? 'contained' : 'text'}
+                onClick={() => setTabValue(2)}
+                startIcon={<WorkIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 2
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Job Orders
+              </Button>
+              <Button
+                variant={tabValue === 3 ? 'contained' : 'text'}
+                onClick={() => setTabValue(3)}
+                startIcon={<BadgeIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 3
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Jobs Board
+              </Button>
+              <Button
+                variant={tabValue === 4 ? 'contained' : 'text'}
+                onClick={() => setTabValue(4)}
+                startIcon={<GroupWorkIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 4
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Labor Pool
+              </Button>
+              <Button
+                variant={tabValue === 5 ? 'contained' : 'text'}
+                onClick={() => setTabValue(5)}
+                startIcon={<DashboardIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 5
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Activity
+              </Button>
+            </Box>
+          </Box>
         }
+        showDivider={false}
       />
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
@@ -1376,6 +1678,172 @@ const RecruiterAccountDetails: React.FC = () => {
                 recruitersOptions={recruitersOptions}
                 optionsLoading={optionsLoading}
                 saving={saving}
+                visibleSections={['company', 'location', 'contacts']}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={1}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Card>
+                <CardHeader title="Pricing" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                <CardContent sx={{ pt: 0 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Use linked CRM deals and assigned internal owners to track the pricing context for this account.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={['deals', 'salespeople', 'recruiters']}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={2}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Card>
+                <CardHeader title="Job Orders" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                <CardContent sx={{ pt: 0 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Manage the job orders connected to this account.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={['jobOrders']}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={3}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Card>
+                <CardHeader title="Jobs Board" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                <CardContent sx={{ pt: 0 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    View and manage job post relationships for this account.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={['jobsBoard']}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={4}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Card>
+                <CardHeader title="Labor Pool" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                <CardContent sx={{ pt: 0 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Attach user groups and smart groups that define the labor pool for this account.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={['laborPool']}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={5}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Card>
+                <CardHeader title="Activity" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                <CardContent sx={{ pt: 0 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    Review recent activity related to this account.
+                  </Typography>
+                </CardContent>
+              </Card>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={['activity']}
               />
             </Grid>
           </Grid>
