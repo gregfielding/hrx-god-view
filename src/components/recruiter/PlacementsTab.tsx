@@ -356,7 +356,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     loadConfirmedApplications();
   }, [tenantId, selectedShiftId]);
 
-  // Load all upcoming shifts (from today forward)
+  // Load all shifts for this job order
   useEffect(() => {
     const loadShifts = async () => {
       if (!tenantId || !jobOrderId) {
@@ -368,10 +368,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       setLoading(true);
       setError(null);
       try {
-        // Today's date in recruiter's local timezone (YYYY-MM-DD) for consistent "from today" filter
-        const today = new Date();
-        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-        
         // Load job order to get pay rate information (using canonical path)
         const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
         const jobOrderSnap = await getDoc(jobOrderRef);
@@ -403,24 +399,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         // Query all shifts for this job order
         // For gig jobs, shifts are in tenants/{tenantId}/job_orders/{jobOrderId}/shifts
         const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
-        const [shiftsSnap, assignmentsSnap, placementsSnap] = await Promise.all([
-          getDocs(shiftsRef),
-          getDocs(query(collection(db, 'tenants', tenantId, 'assignments'), where('jobOrderId', '==', jobOrderId))),
-          getDocs(query(collection(db, 'tenants', tenantId, 'placements'), where('jobOrderId', '==', jobOrderId))),
-        ]);
+        const shiftsSnap = await getDocs(shiftsRef);
         
-        // Collect shiftIds that have placements or assignments (active shifts — show even if date is past)
-        const activeShiftIds = new Set<string>();
-        assignmentsSnap.docs.forEach((d) => {
-          const sid = (d.data() as { shiftId?: string })?.shiftId;
-          if (sid) activeShiftIds.add(sid);
-        });
-        placementsSnap.docs.forEach((d) => {
-          const sid = (d.data() as { shiftId?: string })?.shiftId;
-          if (sid) activeShiftIds.add(sid);
-        });
-        
-        // Filter shifts from today forward and enrich with pay rate
+        // Enrich all shifts with pay rate
         const allShifts = shiftsSnap.docs.map(doc => {
           const shiftData: any = {
             id: doc.id,
@@ -437,26 +418,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           
           return shiftData;
         });
-        
-        // Filter: include shifts from today forward OR shifts that have placements/assignments (active).
-        // Use local-timezone calendar day so "today" and shift dates are consistent.
-        const upcomingShifts = allShifts.filter(shift => {
-          const isActive = activeShiftIds.has(shift.id);
-          if (isActive) return true; // Always show shifts with placements or assignments
-          const shiftDateStr = getCalendarDayLocal(shift.shiftDate);
-          if (!shiftDateStr) return false;
-          return shiftDateStr >= todayStr;
-        }).sort((a, b) => {
+
+        const sortedShifts = allShifts.sort((a, b) => {
           const dateA = getCalendarDayLocal(a.shiftDate);
           const dateB = getCalendarDayLocal(b.shiftDate);
           return dateA.localeCompare(dateB);
         });
+
+        setShifts(sortedShifts);
         
-        setShifts(upcomingShifts);
-        
-        // Reset selected shift if it's not in the new list
-        if (selectedShiftId && !upcomingShifts.find(s => s.id === selectedShiftId)) {
-          setSelectedShiftId('');
+        // Keep an existing valid selection; otherwise default to the first available shift
+        if (sortedShifts.length === 0) {
+          if (selectedShiftId) setSelectedShiftId('');
+        } else if (selectedShiftId && !sortedShifts.find(s => s.id === selectedShiftId)) {
+          setSelectedShiftId(sortedShifts[0].id);
+        } else if (!selectedShiftId) {
+          setSelectedShiftId(sortedShifts[0].id);
         }
       } catch (err: any) {
         console.error('Error loading shifts:', err);

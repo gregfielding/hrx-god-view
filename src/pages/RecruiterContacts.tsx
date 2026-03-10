@@ -151,7 +151,7 @@ const RecruiterContacts: React.FC = () => {
       companyFilter: 'all',
       roleFilter: 'all',
       statusFilter: 'all',
-      pipelineFilter: 'all',
+      pipelineFilter: 'contact',
       stateFilter: 'all',
       sortField: 'fullName',
       sortDirection: 'asc',
@@ -202,7 +202,11 @@ const RecruiterContacts: React.FC = () => {
   const [companyFilter, setCompanyFilter] = useState<string>(cacheState.companyFilter || 'all');
   const [roleFilter, setRoleFilter] = useState<string>(cacheState.roleFilter || 'all');
   const [statusFilter, setStatusFilter] = useState<string>(cacheState.statusFilter || 'all');
-  const [pipelineFilter, setPipelineFilter] = useState<string>(cacheState.pipelineFilter || 'all');
+  const [pipelineFilter, setPipelineFilter] = useState<string>(
+    cacheState.pipelineFilter === 'prospect' || cacheState.pipelineFilter === 'lead'
+      ? cacheState.pipelineFilter
+      : 'contact'
+  );
   const [stateFilter, setStateFilter] = useState<string>(() => {
     const raw = cacheState.stateFilter || 'all';
     if (raw === 'all') return 'all';
@@ -745,13 +749,11 @@ const RecruiterContacts: React.FC = () => {
       filtered = filtered.filter(contact => contact.status === statusFilter);
     }
     
-    // Apply pipeline stage filter (Contact / Prospect / Lead)
-    if (pipelineFilter !== 'all') {
-      filtered = filtered.filter(contact => {
-        const stage = contact.pipelineStage ?? 'contact';
-        return stage === pipelineFilter;
-      });
-    }
+    // Apply pipeline stage tab filter (Contact / Prospect / Lead)
+    filtered = filtered.filter(contact => {
+      const stage = contact.pipelineStage ?? 'contact';
+      return stage === pipelineFilter;
+    });
     
     // Apply state filter (requires loading company data)
     if (stateFilter !== 'all') {
@@ -1041,6 +1043,66 @@ const RecruiterContacts: React.FC = () => {
           flexDirection: 'column',
         }}
       >
+        <Box
+          sx={{
+            px: { xs: 2, md: 3 },
+            pt: 0,
+            pb: 2,
+          }}
+        >
+          <Box
+            sx={{
+              px: 1.5,
+              py: 1.25,
+              backgroundColor: '#F9FAFB',
+              borderRadius: 2,
+              border: '1px solid #EAEEF4',
+              overflowX: 'auto',
+              overflowY: 'hidden',
+              '&::-webkit-scrollbar': { height: '6px' },
+              '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+              '&::-webkit-scrollbar-thumb': {
+                background: 'rgba(0, 0, 0, 0.15)',
+                borderRadius: '4px',
+                '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+              },
+              scrollbarWidth: 'thin',
+              scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+            }}
+          >
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
+              {[
+                { value: 'contact', label: 'Contacts' },
+                { value: 'prospect', label: 'Prospects' },
+                { value: 'lead', label: 'Leads' },
+              ].map((tab) => (
+                <Button
+                  key={tab.value}
+                  variant={pipelineFilter === tab.value ? 'contained' : 'text'}
+                  onClick={() => {
+                    setPipelineFilter(tab.value);
+                    setPage(0);
+                    updateCache({ pipelineFilter: tab.value });
+                  }}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(pipelineFilter === tab.value
+                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                  }}
+                >
+                  {tab.label}
+                </Button>
+              ))}
+            </Box>
+          </Box>
+        </Box>
+
         {/* Filter & Toolbar Area */}
         <Box
           ref={filtersRef}
@@ -1156,37 +1218,6 @@ const RecruiterContacts: React.FC = () => {
               <MenuItem value="all">All Status</MenuItem>
               <MenuItem value="active">Active</MenuItem>
               <MenuItem value="inactive">Inactive</MenuItem>
-            </Select>
-          </FormControl>
-
-          {/* Pipeline Filter (Contact / Prospect / Lead) */}
-          <FormControl size="small" sx={{ minWidth: 140, height: 36 }}>
-            <InputLabel sx={{ fontSize: '0.875rem' }}>Pipeline</InputLabel>
-            <Select
-              value={pipelineFilter}
-              onChange={(e) => {
-                const newFilter = String(e.target.value);
-                setPipelineFilter(newFilter);
-                updateCache({ pipelineFilter: newFilter });
-              }}
-              label="Pipeline"
-              sx={{
-                height: 36,
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                fontSize: '0.875rem',
-                '& .MuiOutlinedInput-notchedOutline': {
-                  borderColor: '#E5E7EB',
-                },
-                '&:hover .MuiOutlinedInput-notchedOutline': {
-                  borderColor: '#D1D5DB',
-                },
-              }}
-            >
-              <MenuItem value="all">All Pipeline</MenuItem>
-              <MenuItem value="contact">Contact</MenuItem>
-              <MenuItem value="prospect">Prospect</MenuItem>
-              <MenuItem value="lead">Lead</MenuItem>
             </Select>
           </FormControl>
 
