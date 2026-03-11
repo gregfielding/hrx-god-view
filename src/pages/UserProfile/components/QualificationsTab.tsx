@@ -82,6 +82,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
           <BioStep 
             value={bioData} 
             onChange={handleBioChange}
+            titleOverride="Bio"
           />
         </CardContent>
       </Card>
@@ -125,7 +126,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
         profileUid={uid}
       />
 
-      <ShiftPreferencesCard uid={uid} />
+      <ShiftPreferencesCard uid={uid} titleOverride="Preferred Shift" />
     </Box>
   );
 };

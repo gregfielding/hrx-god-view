@@ -64,7 +64,7 @@ import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
-  const { user, securityLevel, role, tenantId: authTenantId, activeTenant } = useAuth();
+  const { user, securityLevel, currentClaimsSecurityLevel, role, tenantId: authTenantId, activeTenant } = useAuth();
   const [tenantId, setCustomerId] = useState<string | null>(null);
   const effectiveTenantId = tenantId || authTenantId || activeTenant?.id;
   const { distribution: scoringDistribution } = useScoringDistribution(effectiveTenantId ?? undefined);
@@ -152,6 +152,8 @@ const UserProfilePage = () => {
   const [pendingRecordAvatarSrc, setPendingRecordAvatarSrc] = useState<string | null>(null);
   const [recordHeaderAvatarBusy, setRecordHeaderAvatarBusy] = useState(false);
   const recordHeaderFileInputRef = useRef<HTMLInputElement>(null);
+  const [profileUpdateReminderLastSentAt, setProfileUpdateReminderLastSentAt] = useState<Date | null>(null);
+  const [sendingProfileUpdateReminder, setSendingProfileUpdateReminder] = useState(false);
 
   const canEditRecordAvatar = !!uid && (user?.uid === uid || (typeof securityLevel === 'string' && parseInt(securityLevel, 10) >= 4));
   const handleRecordHeaderAvatarClick = useCallback(() => {
@@ -193,6 +195,26 @@ const UserProfilePage = () => {
   }, [uid]);
 
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
+  const canSendProfileUpdateReminder = (() => {
+    const level = Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
+    return level >= 5 && level <= 7 && !!uid && !!phone;
+  })();
+
+  const handleSendProfileUpdateReminder = async () => {
+    if (!uid || !effectiveTenantIdForMessaging) return;
+    setSendingProfileUpdateReminder(true);
+    try {
+      const fn = httpsCallable(functions, 'sendProfileUpdateReminder');
+      const result = await fn({ uid, tenantId: effectiveTenantIdForMessaging });
+      const data = (result as any)?.data || {};
+      setProfileUpdateReminderLastSentAt(data?.sentAt ? new Date(data.sentAt) : new Date());
+      setActivityLogRefreshKey((k) => k + 1);
+    } catch (error) {
+      console.error('Failed to send profile update reminder:', error);
+    } finally {
+      setSendingProfileUpdateReminder(false);
+    }
+  };
 
   // Determine if viewer has Gmail connected (for conditional Email icon behavior)
   useEffect(() => {
@@ -229,11 +251,19 @@ const UserProfilePage = () => {
     };
   }, [user?.uid]);
 
-  // Determine if viewer has a recruiter SMS sender (Twilio number assignment)
+  // Determine if viewer can use in-app SMS compose.
+  // Internal users (security 5-7) can always use the shared Twilio sender.
+  // Others require a recruiter number assignment.
   useEffect(() => {
     let mounted = true;
 
     const checkSmsSender = async () => {
+      const effectiveSecurityLevel = Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
+      if (effectiveSecurityLevel >= 5 && effectiveSecurityLevel <= 7) {
+        if (mounted) setViewerHasSmsSender(true);
+        return;
+      }
+
       if (!user?.uid || !effectiveTenantIdForMessaging) {
         if (mounted) setViewerHasSmsSender(false);
         return;
@@ -256,7 +286,7 @@ const UserProfilePage = () => {
     return () => {
       mounted = false;
     };
-  }, [user?.uid, effectiveTenantIdForMessaging]);
+  }, [user?.uid, effectiveTenantIdForMessaging, currentClaimsSecurityLevel, securityLevel]);
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
@@ -389,6 +419,7 @@ const UserProfilePage = () => {
           setJobTitle(tenantData.jobTitle || data.jobTitle || data.primaryJobTitle || '');
           setPhone(data.phone || '');
           setEmail(data.email || '');
+          setProfileUpdateReminderLastSentAt(data.profileUpdateReminderLastSentAt?.toDate?.() || null);
           // City/State: prefer explicit top-level fields, then addressInfo (single source of truth in ProfileOverview),
           // then legacy address object fallbacks.
           setCity(data.city || data.addressInfo?.city || data.address?.city || '');
@@ -1349,7 +1380,7 @@ const UserProfilePage = () => {
           onCallNow={phone ? () => {
             window.location.href = `tel:${phone.replace(/\D/g, '')}`;
           } : undefined}
-          onMessageApplicant={() => setMessageDrawerOpen(true)}
+          onMessageApplicant={() => setSmsComposeOpen(true)}
           onViewTimeline={() => {
             setTabValue('Activity Log');
           }}
@@ -1483,7 +1514,8 @@ const UserProfilePage = () => {
                       </Stack>
                     </Box>
                     {/* Line 2: Contact Action Icons Row */}
-                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" sx={{ mb: 1 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 1 }}>
+                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
                   {phone && (
                     <>
                       <Tooltip title={`Call ${phone}`}>
@@ -1708,7 +1740,35 @@ const UserProfilePage = () => {
                       </IconButton>
                     </Tooltip>
                   )}
+                    {canSendProfileUpdateReminder && (
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={handleSendProfileUpdateReminder}
+                        disabled={sendingProfileUpdateReminder}
+                        sx={{
+                          textTransform: 'none',
+                          borderRadius: '999px',
+                          fontWeight: 500,
+                          minWidth: 'auto',
+                          px: 1.25,
+                          py: 0.25,
+                          ml: 0.5,
+                          height: 28,
+                          fontSize: '0.7rem',
+                          lineHeight: 1,
+                        }}
+                      >
+                        {sendingProfileUpdateReminder ? 'Sending...' : 'Profile Update Reminder'}
+                      </Button>
+                    )}
                     </Stack>
+                    {profileUpdateReminderLastSentAt && (
+                      <Typography variant="caption" color="text.secondary">
+                        Reminder Sent: {profileUpdateReminderLastSentAt.toLocaleString()}
+                      </Typography>
+                    )}
+                    </Box>
                     {/* Line 3: Metadata subtitle */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
                       {(city || state) && (

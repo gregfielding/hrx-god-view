@@ -131,6 +131,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
   const [draftId, setDraftId] = useState<string | undefined>(undefined);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const prevOpenRef = useRef(false); // Track previous open state to detect when drawer first opens
+  const hideChannelSelector =
+    bulkSystemMode ||
+    !!defaultBody ||
+    !!(defaultChannels && defaultChannels.length === 1);
 
   // Create auto-save function for drafts
   const autoSaveDraft = useMemo(
@@ -1177,8 +1181,8 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
               </FormControl>
             ) : null}
             
-            {/* Channel Selector - Hide when email-only (compose, reply, forward from inbox) or bulk mode */}
-            {!bulkSystemMode && !defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && (
+            {/* Channel Selector - Hide when a single channel is forced or in bulk mode */}
+            {!hideChannelSelector && (
               <FormControl component="fieldset">
                 <FormLabel component="legend">Channels</FormLabel>
                 <FormGroup row sx={{ mt: 1 }}>
@@ -1211,7 +1215,7 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
             )}
 
             {/* Only show divider if Channels section is visible */}
-            {!bulkSystemMode && !defaultBody && !(defaultChannels?.length === 1 && defaultChannels[0] === 'email') && <Divider />}
+            {!hideChannelSelector && <Divider />}
 
             {/* Recipients - read-only in bulk mode */}
             {bulkSystemMode ? (

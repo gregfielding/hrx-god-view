@@ -279,6 +279,40 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     fontWeight: 600,
   };
 
+  useEffect(() => {
+    let mounted = true;
+
+    const checkSmsAccess = async () => {
+      if (!effectiveTenantId || !user?.uid) {
+        if (mounted) setHasTwilioNumber(false);
+        return;
+      }
+
+      const level = Number.parseInt(String(viewerSecurityLevel || '0'), 10) || 0;
+      if (level >= 5 && level <= 7) {
+        if (mounted) setHasTwilioNumber(true);
+        return;
+      }
+
+      try {
+        const recruiterNumberDoc = await getDoc(
+          doc(db, 'tenants', effectiveTenantId, 'recruiterNumbers', user.uid)
+        );
+        const hasNumber =
+          recruiterNumberDoc.exists() &&
+          !!(recruiterNumberDoc.data()?.twilioNumber || recruiterNumberDoc.data()?.useMainNumber);
+        if (mounted) setHasTwilioNumber(!!hasNumber);
+      } catch {
+        if (mounted) setHasTwilioNumber(false);
+      }
+    };
+
+    checkSmsAccess();
+    return () => {
+      mounted = false;
+    };
+  }, [effectiveTenantId, user?.uid, viewerSecurityLevel]);
+
   // Load notes count
   useEffect(() => {
     const loadNotesCount = async () => {

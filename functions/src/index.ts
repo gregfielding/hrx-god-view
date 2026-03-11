@@ -205,6 +205,8 @@ export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
 export { backfillMetroMasterFromLocations, backfillMetroMasterFromLocationsHttp };
 export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
+export { deleteUserCompletely } from './deleteUserCompletely';
+export { sendProfileUpdateReminder } from './sendProfileUpdateReminder';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
 export {
   everifyCreateCase,

@@ -7,6 +7,7 @@ import { useT } from '../../../i18n';
 
 type Props = {
   uid: string;
+  titleOverride?: string;
 };
 
 const baseShiftOptions = [
@@ -29,7 +30,7 @@ const shiftOptionKeys: Record<string, string> = {
   'Flexible': 'profile.shiftFlexible',
 };
 
-const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
+const ShiftPreferencesCard: React.FC<Props> = ({ uid, titleOverride }) => {
   const t = useT();
   const [selectedShifts, setSelectedShifts] = useState<string[]>([]);
   const shiftLabel = (name: string) => t(shiftOptionKeys[name] || name);
@@ -73,7 +74,7 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid }) => {
       <CardContent sx={{ p: { xs: 2, md: 3 } }}>
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-            ⏰ {t('profile.shiftPreferences')}
+            ⏰ {titleOverride || t('profile.shiftPreferences')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
             {t('profile.shiftPreferencesSubtext')}

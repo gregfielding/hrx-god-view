@@ -9,6 +9,7 @@ import {
   FormControlLabel,
   Switch,
   Box,
+  Autocomplete,
 } from '@mui/material';
 import { RecruiterAccountFormData } from '../../types/recruiter/account';
 
@@ -16,11 +17,13 @@ export interface AddAccountModalProps {
   open: boolean;
   onClose: () => void;
   onSubmit: (data: RecruiterAccountFormData) => Promise<void>;
+  accountOptions?: Array<{ id: string; label: string }>;
 }
 
-const AddAccountModal: React.FC<AddAccountModalProps> = ({ open, onClose, onSubmit }) => {
+const AddAccountModal: React.FC<AddAccountModalProps> = ({ open, onClose, onSubmit, accountOptions = [] }) => {
   const [name, setName] = useState('');
   const [active, setActive] = useState(true);
+  const [parentAccountId, setParentAccountId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,6 +31,7 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ open, onClose, onSubm
     if (!submitting) {
       setName('');
       setActive(true);
+      setParentAccountId('');
       setError(null);
       onClose();
     }
@@ -42,7 +46,7 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ open, onClose, onSubm
     setError(null);
     setSubmitting(true);
     try {
-      await onSubmit({ name: trimmed, active });
+      await onSubmit({ name: trimmed, active, parentAccountId: parentAccountId || null });
       handleClose();
     } catch (err: any) {
       setError(err?.message || 'Failed to create account.');
@@ -66,6 +70,21 @@ const AddAccountModal: React.FC<AddAccountModalProps> = ({ open, onClose, onSubm
             error={!!error}
             helperText={error}
             placeholder="e.g. Acme Corp"
+          />
+          <Autocomplete
+            options={accountOptions}
+            value={accountOptions.find((option) => option.id === parentAccountId) || null}
+            onChange={(_, newValue) => setParentAccountId(newValue?.id || '')}
+            getOptionLabel={(option) => option.label}
+            isOptionEqualToValue={(option, value) => option.id === value.id}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Parent Account"
+                placeholder="Optional"
+                helperText="Use this when creating a child account under a national or regional parent."
+              />
+            )}
           />
           <FormControlLabel
             control={

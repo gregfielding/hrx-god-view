@@ -27,6 +27,8 @@ export interface RecruiterAccount {
   id?: string;
   name: string;
   active: boolean;
+  parentAccountId?: string | null;
+  childAccountIds?: string[];
   createdAt?: any; // Firestore Timestamp or serverTimestamp
   updatedAt?: any;
   createdBy?: string;
@@ -37,4 +39,5 @@ export interface RecruiterAccount {
 export interface RecruiterAccountFormData {
   name: string;
   active: boolean;
+  parentAccountId?: string | null;
 }

@@ -121,7 +121,7 @@ export const getPublicCrmView = onCall({ cors: true }, async (request) => {
         const assocLocations = ((deal.associations as { locations?: Array<string | { id?: string; companyId?: string }> } | undefined)?.locations || []);
         const normalized = assocLocations
           .map((loc) => (typeof loc === 'string' ? { id: loc, companyId: primaryCompanyId || undefined } : { id: loc?.id, companyId: loc?.companyId || primaryCompanyId || undefined }))
-          .filter((loc): loc is { id: string; companyId?: string } => Boolean(loc.id));
+          .filter((loc) => Boolean(loc.id)) as Array<{ id: string; companyId?: string }>;
         if (normalized.length > 0) {
           return normalized.map((loc) => [`${loc.companyId || 'root'}:${loc.id}`, loc] as const);
         }

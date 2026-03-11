@@ -16,6 +16,8 @@ type Props = {
   value: any;
   onChange: (v: any) => void;
   jobPosting?: any;
+  titleOverride?: string;
+  subtitleOverride?: string;
 };
 
 const sampleBios = [
@@ -24,7 +26,7 @@ const sampleBios = [
   "I'm dependable, I work hard, and I'm looking for a place where I can grow."
 ];
 
-const BioStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
+const BioStep: React.FC<Props> = ({ value, onChange, jobPosting, titleOverride, subtitleOverride }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
@@ -63,10 +65,10 @@ const BioStep: React.FC<Props> = ({ value, onChange, jobPosting }) => {
     <Box>
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          ✍️ {t('profile.tellUsAboutYourself')}
+          ✍️ {titleOverride || t('profile.tellUsAboutYourself')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          {t('profile.bioOptional')}
+          {subtitleOverride || t('profile.bioOptional')}
         </Typography>
 
         <Alert 

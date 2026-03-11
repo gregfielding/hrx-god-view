@@ -335,9 +335,10 @@ async function shouldUseChannel(
         return { allowed: false, reason: `SMS disabled for message type ${context.messageTypeId}` };
       }
       
-      // Check if phone is verified
-      if (!userData.phoneE164 || !userData.phoneVerified) {
-        return { allowed: false, reason: 'Phone number not verified' };
+      // Require a phone number, but do not require phone verification for internal/direct SMS.
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
       }
     }
     

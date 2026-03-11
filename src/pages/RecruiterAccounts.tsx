@@ -27,13 +27,13 @@ import {
 } from '@mui/material';
 import { Business as BusinessIcon, Add as AddIcon, Star, StarBorder } from '@mui/icons-material';
 import { useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
-import { collection, query, orderBy, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
-import type { RecruiterAccount } from '../types/recruiter/account';
+import type { RecruiterAccount, RecruiterAccountFormData } from '../types/recruiter/account';
 import AddAccountModal from '../components/recruiter/AddAccountModal';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
@@ -74,6 +74,8 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
           id: d.id,
           name: data.name ?? '',
           active: data.active !== false,
+          parentAccountId: data.parentAccountId ?? null,
+          childAccountIds: Array.isArray(data.childAccountIds) ? data.childAccountIds : [],
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
           createdBy: data.createdBy,
@@ -104,16 +106,26 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
     setPage(0);
   }, [headerSearch, headerShowFavoritesOnly, statusFilter, sortField, sortDirection]);
 
-  const handleAddAccount = async (data: { name: string; active: boolean }) => {
+  const handleAddAccount = async (data: RecruiterAccountFormData) => {
     if (!tenantId || !user?.uid) return;
     const ref = collection(db, p.recruiterAccounts(tenantId));
-    await addDoc(ref, {
+    const docRef = await addDoc(ref, {
       name: data.name.trim(),
       active: data.active,
+      parentAccountId: data.parentAccountId || null,
+      childAccountIds: [],
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       createdBy: user.uid,
+      updatedBy: user.uid,
     });
+    if (data.parentAccountId) {
+      await updateDoc(doc(db, p.recruiterAccount(tenantId, data.parentAccountId)), {
+        childAccountIds: arrayUnion(docRef.id),
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      });
+    }
     await fetchAccounts();
   };
 
@@ -460,6 +472,7 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
         open={addModalOpen}
         onClose={() => setAddModalOpen(false)}
         onSubmit={handleAddAccount}
+        accountOptions={accounts.map((account) => ({ id: account.id || '', label: account.name || 'Unnamed Account' })).filter((option) => option.id)}
       />
     </Box>
   );

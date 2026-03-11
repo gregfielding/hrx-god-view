@@ -53,6 +53,8 @@ import {
   getDoc,
   updateDoc,
   serverTimestamp,
+  arrayUnion,
+  arrayRemove,
   collection,
   getDocs,
   query,
@@ -296,9 +298,14 @@ interface AccountSidebarProps {
   laborPoolOptions: LaborPoolOption[];
   salespeopleOptions: PersonOption[];
   recruitersOptions: PersonOption[];
+  accountOptions: AccountOption[];
+  parentAccount: AccountOption | null;
+  childAccounts: AccountOption[];
+  onParentAccountChange: (parentAccountId: string | null) => Promise<void>;
+  onChildAccountsChange: (childAccountIds: string[]) => Promise<void>;
   optionsLoading: boolean;
   saving: boolean;
-  visibleSections?: Array<'activity' | 'company' | 'location' | 'contacts' | 'jobOrders' | 'deals' | 'salespeople' | 'recruiters' | 'laborPool' | 'jobsBoard'>;
+  visibleSections?: Array<'activity' | 'company' | 'parentAccount' | 'childAccounts' | 'location' | 'contacts' | 'jobOrders' | 'deals' | 'salespeople' | 'recruiters' | 'laborPool' | 'jobsBoard'>;
 }
 
 function AccountSidebar({
@@ -314,9 +321,14 @@ function AccountSidebar({
   laborPoolOptions,
   salespeopleOptions,
   recruitersOptions,
+  accountOptions,
+  parentAccount,
+  childAccounts,
+  onParentAccountChange,
+  onChildAccountsChange,
   optionsLoading,
   saving,
-  visibleSections = ['activity', 'company', 'location', 'contacts', 'jobOrders', 'deals', 'salespeople', 'recruiters', 'laborPool'],
+  visibleSections = ['activity', 'company', 'parentAccount', 'childAccounts', 'location', 'contacts', 'jobOrders', 'deals', 'salespeople', 'recruiters', 'laborPool'],
 }: AccountSidebarProps) {
   const [manageCompaniesOpen, setManageCompaniesOpen] = useState(false);
   const [manageLocationsOpen, setManageLocationsOpen] = useState(false);
@@ -326,6 +338,8 @@ function AccountSidebar({
   const [manageSalespeopleOpen, setManageSalespeopleOpen] = useState(false);
   const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
   const [manageLaborPoolOpen, setManageLaborPoolOpen] = useState(false);
+  const [manageParentAccountOpen, setManageParentAccountOpen] = useState(false);
+  const [manageChildAccountsOpen, setManageChildAccountsOpen] = useState(false);
 
   const assoc = account.associations ?? {};
   const companyIds = assoc.companyIds ?? [];
@@ -363,6 +377,10 @@ function AccountSidebar({
 
   const companyItems: ManageDialogOption[] = selectedCompanies.map((c) => ({ id: c.id, label: c.label, icon: <BusinessIcon fontSize="small" /> }));
   const companyOptions: ManageDialogOption[] = companies.map((c) => ({ id: c.id, label: c.label, icon: <BusinessIcon fontSize="small" /> }));
+  const parentAccountItems: ManageDialogOption[] = parentAccount ? [{ id: parentAccount.id, label: parentAccount.label, icon: <BusinessIcon fontSize="small" /> }] : [];
+  const parentAccountOptions: ManageDialogOption[] = accountOptions.map((a) => ({ id: a.id, label: a.label, icon: <BusinessIcon fontSize="small" /> }));
+  const childAccountItems: ManageDialogOption[] = childAccounts.map((a) => ({ id: a.id, label: a.label, icon: <BusinessIcon fontSize="small" /> }));
+  const childAccountOptions: ManageDialogOption[] = accountOptions.map((a) => ({ id: a.id, label: a.label, icon: <BusinessIcon fontSize="small" /> }));
   const locationItems: ManageDialogOption[] = selectedLocations.map((loc) => {
     const company = companies.find((c) => c.id === loc.companyId);
     return {
@@ -459,6 +477,77 @@ function AccountSidebar({
         ) : (
           <Typography variant="body2" color="text.secondary">
             No companies linked yet.
+          </Typography>
+        )}
+      </SectionCard>
+      )}
+
+      {showSection('parentAccount') && (
+      <SectionCard
+        title="Parent Account"
+        titleHref="/accounts"
+        action={
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => setManageParentAccountOpen(true)}
+            sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+          >
+            Edit
+          </Button>
+        }
+      >
+        {parentAccount ? (
+          <Box
+            sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+            onClick={() => navigate(`/accounts/${parentAccount.id}`)}
+            role="button"
+            tabIndex={0}
+          >
+            <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{parentAccount.label.charAt(0)}</Avatar>
+            <Typography variant="body2" fontWeight="medium">{parentAccount.label}</Typography>
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No parent account linked.
+          </Typography>
+        )}
+      </SectionCard>
+      )}
+
+      {showSection('childAccounts') && (
+      <SectionCard
+        title="Child Accounts"
+        titleHref="/accounts"
+        action={
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => setManageChildAccountsOpen(true)}
+            sx={{ minWidth: 'auto', px: 1, py: 0.5, fontSize: '0.75rem', textTransform: 'none' }}
+          >
+            Edit
+          </Button>
+        }
+      >
+        {childAccounts.length > 0 ? (
+          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            {childAccounts.map((a) => (
+              <Box
+                key={a.id}
+                sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
+                onClick={() => navigate(`/accounts/${a.id}`)}
+                role="button"
+                tabIndex={0}
+              >
+                <Avatar sx={{ width: 28, height: 28, fontSize: '0.75rem' }}>{a.label.charAt(0)}</Avatar>
+                <Typography variant="body2" fontWeight="medium">{a.label}</Typography>
+              </Box>
+            ))}
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary">
+            No child accounts linked.
           </Typography>
         )}
       </SectionCard>
@@ -847,6 +936,28 @@ function AccountSidebar({
       )}
 
       <ManageAssociationDialog
+        open={manageParentAccountOpen}
+        onClose={() => setManageParentAccountOpen(false)}
+        title="Parent Account"
+        currentItems={parentAccountItems}
+        availableOptions={parentAccountOptions}
+        selectionLabel="Select Parent Account"
+        selectionPlaceholder="Search accounts..."
+        onAdd={(item) => { void onParentAccountChange(item.id); }}
+        onRemove={() => { void onParentAccountChange(null); }}
+      />
+      <ManageAssociationDialog
+        open={manageChildAccountsOpen}
+        onClose={() => setManageChildAccountsOpen(false)}
+        title="Child Accounts"
+        currentItems={childAccountItems}
+        availableOptions={childAccountOptions}
+        selectionLabel="Select Child Account"
+        selectionPlaceholder="Search accounts..."
+        onAdd={(item) => { void onChildAccountsChange(Array.from(new Set([...childAccounts.map((a) => a.id), item.id]))); }}
+        onRemove={(id) => { void onChildAccountsChange(childAccounts.map((a) => a.id).filter((childId) => childId !== id)); }}
+      />
+      <ManageAssociationDialog
         open={manageCompaniesOpen}
         onClose={() => setManageCompaniesOpen(false)}
         title="Companies"
@@ -961,6 +1072,7 @@ type JobOrderOption = { id: string; label: string };
 type DealOption = { id: string; label: string; companyIds?: string[] };
 type LaborPoolOption = { id: string; label: string; type: 'userGroup' | 'savedSmartGroup' };
 type PersonOption = { id: string; label: string };
+type AccountOption = { id: string; label: string };
 
 const RecruiterAccountDetails: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
@@ -984,6 +1096,7 @@ const RecruiterAccountDetails: React.FC = () => {
   const [laborPoolOptions, setLaborPoolOptions] = useState<LaborPoolOption[]>([]);
   const [salespeopleOptions, setSalespeopleOptions] = useState<PersonOption[]>([]);
   const [recruitersOptions, setRecruitersOptions] = useState<PersonOption[]>([]);
+  const [accountOptions, setAccountOptions] = useState<AccountOption[]>([]);
   const [optionsLoading, setOptionsLoading] = useState(false);
 
   const isMountedRef = useRef(true);
@@ -1007,6 +1120,7 @@ const RecruiterAccountDetails: React.FC = () => {
     try {
       const [
         companiesSnap,
+        accountsSnap,
         contactsSnap,
         jobOrdersSnap,
         dealsSnap,
@@ -1015,6 +1129,7 @@ const RecruiterAccountDetails: React.FC = () => {
         usersSnap,
       ] = await Promise.all([
         getDocs(query(collection(db, 'tenants', tenantId, 'crm_companies'), orderBy('companyName', 'asc'))),
+        getDocs(query(collection(db, p.recruiterAccounts(tenantId)), orderBy('name', 'asc'))),
         getDocs(collection(db, 'tenants', tenantId, 'crm_contacts')),
         getDocs(query(collection(db, p.jobOrders(tenantId)), orderBy('createdAt', 'desc'))),
         getDocs(query(collection(db, 'tenants', tenantId, 'crm_deals'), orderBy('createdAt', 'desc'))),
@@ -1041,6 +1156,13 @@ const RecruiterAccountDetails: React.FC = () => {
           const dta = d.data();
           const name = dta.companyName || dta.name || d.id;
           return { id: d.id, label: name, companyName: name };
+        })
+      );
+      setAccountOptions(
+        accountsSnap.docs.map((d) => {
+          const dta = d.data();
+          const name = dta.name || d.id;
+          return { id: d.id, label: name };
         })
       );
       setContacts(
@@ -1179,6 +1301,8 @@ const RecruiterAccountDetails: React.FC = () => {
         id: snap.id,
         name: data?.name ?? '',
         active: data?.active !== false,
+        parentAccountId: data?.parentAccountId ?? null,
+        childAccountIds: Array.isArray(data?.childAccountIds) ? data.childAccountIds : [],
         createdAt: data?.createdAt,
         updatedAt: data?.updatedAt,
         createdBy: data?.createdBy,
@@ -1244,6 +1368,98 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
+  const updateParentAccountRelationship = async (nextParentAccountId: string | null) => {
+    if (!accountId || !tenantId || !account) return;
+    const oldParentAccountId = account.parentAccountId || null;
+    if (oldParentAccountId === nextParentAccountId) return;
+    if (nextParentAccountId === accountId) return;
+
+    setSaving(true);
+    try {
+      const accountRef = doc(db, p.recruiterAccount(tenantId, accountId));
+      await updateDoc(accountRef, {
+        parentAccountId: nextParentAccountId,
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid ?? null,
+      });
+
+      if (oldParentAccountId) {
+        await updateDoc(doc(db, p.recruiterAccount(tenantId, oldParentAccountId)), {
+          childAccountIds: arrayRemove(accountId),
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        });
+      }
+
+      if (nextParentAccountId) {
+        await updateDoc(doc(db, p.recruiterAccount(tenantId, nextParentAccountId)), {
+          childAccountIds: arrayUnion(accountId),
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        });
+      }
+
+      setAccount((prev) => (prev ? { ...prev, parentAccountId: nextParentAccountId } : prev));
+      await loadOptions();
+    } catch (err) {
+      console.error('RecruiterAccountDetails: update parent account error', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateChildAccountRelationships = async (nextChildAccountIds: string[]) => {
+    if (!accountId || !tenantId || !account) return;
+    const sanitizedNext = Array.from(new Set(nextChildAccountIds.filter((id) => id && id !== accountId)));
+    const prevChildAccountIds = Array.isArray(account.childAccountIds) ? account.childAccountIds : [];
+    const removed = prevChildAccountIds.filter((id) => !sanitizedNext.includes(id));
+    const added = sanitizedNext.filter((id) => !prevChildAccountIds.includes(id));
+
+    setSaving(true);
+    try {
+      for (const childId of removed) {
+        await updateDoc(doc(db, p.recruiterAccount(tenantId, childId)), {
+          parentAccountId: null,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        });
+      }
+
+      for (const childId of added) {
+        const childRef = doc(db, p.recruiterAccount(tenantId, childId));
+        const childSnap = await getDoc(childRef);
+        const existingParentId = childSnap.exists() ? ((childSnap.data() as any)?.parentAccountId || null) : null;
+
+        if (existingParentId && existingParentId !== accountId) {
+          await updateDoc(doc(db, p.recruiterAccount(tenantId, existingParentId)), {
+            childAccountIds: arrayRemove(childId),
+            updatedAt: serverTimestamp(),
+            updatedBy: user?.uid ?? null,
+          });
+        }
+
+        await updateDoc(childRef, {
+          parentAccountId: accountId,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.uid ?? null,
+        });
+      }
+
+      await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+        childAccountIds: sanitizedNext,
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid ?? null,
+      });
+
+      setAccount((prev) => (prev ? { ...prev, childAccountIds: sanitizedNext } : prev));
+      await loadOptions();
+    } catch (err) {
+      console.error('RecruiterAccountDetails: update child accounts error', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading && !account) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320, p: 3 }}>
@@ -1300,6 +1516,11 @@ const RecruiterAccountDetails: React.FC = () => {
   const associatedRecruiters = recruiterIds
     .map((id) => recruitersOptions.find((p) => p.id === id))
     .filter(Boolean) as PersonOption[];
+  const parentAccount =
+    account.parentAccountId ? accountOptions.find((a) => a.id === account.parentAccountId) || null : null;
+  const childAccounts = (account.childAccountIds || [])
+    .map((id) => accountOptions.find((a) => a.id === id))
+    .filter(Boolean) as AccountOption[];
 
   const hasHeaderAssociations =
     associatedCompanies.length > 0 ||
@@ -1308,7 +1529,9 @@ const RecruiterAccountDetails: React.FC = () => {
     associatedJobOrders.length > 0 ||
     associatedDeals.length > 0 ||
     associatedSalespeople.length > 0 ||
-    associatedRecruiters.length > 0;
+    associatedRecruiters.length > 0 ||
+    !!parentAccount ||
+    childAccounts.length > 0;
 
   const headerAssociationItems = [
     ...associatedCompanies.map((c) => ({
@@ -1352,6 +1575,18 @@ const RecruiterAccountDetails: React.FC = () => {
       label: p.label,
       icon: <BadgeIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
       to: `/users/${p.id}`,
+    })),
+    ...(parentAccount ? [{
+      key: `parent-account-${parentAccount.id}`,
+      label: parentAccount.label,
+      icon: <BusinessIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
+      to: `/accounts/${parentAccount.id}`,
+    }] : []),
+    ...childAccounts.map((a) => ({
+      key: `child-account-${a.id}`,
+      label: a.label,
+      icon: <BusinessIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
+      to: `/accounts/${a.id}`,
     })),
   ];
 
@@ -1676,9 +1911,14 @@ const RecruiterAccountDetails: React.FC = () => {
                 laborPoolOptions={laborPoolOptions}
                 salespeopleOptions={salespeopleOptions}
                 recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
                 optionsLoading={optionsLoading}
                 saving={saving}
-                visibleSections={['company', 'location', 'contacts']}
+                visibleSections={['company', 'parentAccount', 'childAccounts', 'location', 'contacts']}
               />
             </Grid>
           </Grid>
@@ -1709,6 +1949,11 @@ const RecruiterAccountDetails: React.FC = () => {
                 laborPoolOptions={laborPoolOptions}
                 salespeopleOptions={salespeopleOptions}
                 recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
                 optionsLoading={optionsLoading}
                 saving={saving}
                 visibleSections={['deals', 'salespeople', 'recruiters']}
@@ -1742,6 +1987,11 @@ const RecruiterAccountDetails: React.FC = () => {
                 laborPoolOptions={laborPoolOptions}
                 salespeopleOptions={salespeopleOptions}
                 recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
                 optionsLoading={optionsLoading}
                 saving={saving}
                 visibleSections={['jobOrders']}
@@ -1775,6 +2025,11 @@ const RecruiterAccountDetails: React.FC = () => {
                 laborPoolOptions={laborPoolOptions}
                 salespeopleOptions={salespeopleOptions}
                 recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
                 optionsLoading={optionsLoading}
                 saving={saving}
                 visibleSections={['jobsBoard']}
@@ -1808,6 +2063,11 @@ const RecruiterAccountDetails: React.FC = () => {
                 laborPoolOptions={laborPoolOptions}
                 salespeopleOptions={salespeopleOptions}
                 recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
                 optionsLoading={optionsLoading}
                 saving={saving}
                 visibleSections={['laborPool']}
@@ -1841,6 +2101,11 @@ const RecruiterAccountDetails: React.FC = () => {
                 laborPoolOptions={laborPoolOptions}
                 salespeopleOptions={salespeopleOptions}
                 recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
                 optionsLoading={optionsLoading}
                 saving={saving}
                 visibleSections={['activity']}

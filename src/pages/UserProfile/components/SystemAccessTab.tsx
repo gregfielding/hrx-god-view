@@ -18,16 +18,23 @@ import {
   FormGroup,
   Snackbar,
   Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from '@mui/material';
 import {
   Security as SecurityIcon,
   LocationOn as LocationIcon,
   Notifications as NotificationIcon,
   Save as SaveIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, onSnapshot } from 'firebase/firestore';
-import { sendPasswordResetEmail } from 'firebase/auth';
-import { db, auth } from '../../../firebase';
+import { sendPasswordResetEmail, signOut } from 'firebase/auth';
+import { httpsCallable } from 'firebase/functions';
+import { useNavigate } from 'react-router-dom';
+import { db, auth, functions } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import EmailSignatureTab from './EmailSignatureTab';
 
@@ -68,6 +75,7 @@ interface PrivacySettings {
 
 const SystemAccessTab: React.FC<Props> = ({ uid }) => {
   const { tenantId, activeTenant, user, securityLevel } = useAuth();
+  const navigate = useNavigate();
   const effectiveTenantId = activeTenant?.id || tenantId;
   
   const [systemAccess, setSystemAccess] = useState({
@@ -113,6 +121,9 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
   const [privacyMessage, setPrivacyMessage] = useState('');
   const [showPrivacyToast, setShowPrivacyToast] = useState(false);
   const [privacyLoading, setPrivacyLoading] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   useEffect(() => {
     if (effectiveTenantId) {
@@ -288,6 +299,12 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
     return false;
   };
 
+  const canDeleteUser = () => {
+    if (user?.uid === uid) return true;
+    const userLevel = parseInt(securityLevel || '0', 10);
+    return userLevel >= 6;
+  };
+
   const handleLocationSettingChange = (field: keyof PrivacySettings['locationSettings'], value: any) => {
     setPrivacySettings(prev => ({
       ...prev,
@@ -363,6 +380,30 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
 
   const hasSystemAccessChanges = JSON.stringify(systemAccess) !== JSON.stringify(originalAccess);
   const hasPrivacyChanges = JSON.stringify(privacySettings) !== JSON.stringify(originalPrivacySettings);
+
+  const handleDeleteUser = async () => {
+    if (!canDeleteUser()) return;
+    if (deleteConfirmText.trim().toUpperCase() !== 'DELETE') return;
+
+    setDeleteLoading(true);
+    try {
+      const fn = httpsCallable(functions, 'deleteUserCompletely');
+      await fn({ uid });
+      setDeleteDialogOpen(false);
+      if (user?.uid === uid) {
+        await signOut(auth);
+        navigate('/login', { replace: true });
+      } else {
+        navigate('/users', { replace: true });
+      }
+    } catch (error) {
+      console.error('Error deleting user completely:', error);
+      setPrivacyMessage('Failed to delete user. Please try again.');
+      setShowPrivacyToast(true);
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
 
   return (
     <Box sx={{ p: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -456,6 +497,19 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
             <Stack direction="row" justifyContent="flex-end" sx={{ mt: 3 }}>
               <Button variant="contained" onClick={handleSave}>
                 Save Changes
+              </Button>
+            </Stack>
+          )}
+          {canDeleteUser() && (
+            <Stack direction="row" justifyContent="flex-end" sx={{ mt: 2 }}>
+              <Button
+                variant="outlined"
+                color="error"
+                startIcon={<DeleteIcon />}
+                onClick={() => setDeleteDialogOpen(true)}
+                sx={{ textTransform: 'none' }}
+              >
+                Delete User
               </Button>
             </Stack>
           )}
@@ -755,6 +809,39 @@ const SystemAccessTab: React.FC<Props> = ({ uid }) => {
           {privacyMessage}
         </Alert>
       </Snackbar>
+
+      <Dialog open={deleteDialogOpen} onClose={() => !deleteLoading && setDeleteDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Delete User</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            This will permanently delete this user from Firestore and Firebase Auth.
+          </Alert>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            Type <strong>DELETE</strong> to confirm.
+          </Typography>
+          <TextField
+            fullWidth
+            value={deleteConfirmText}
+            onChange={(e) => setDeleteConfirmText(e.target.value)}
+            placeholder="DELETE"
+            disabled={deleteLoading}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteDialogOpen(false)} disabled={deleteLoading}>
+            Cancel
+          </Button>
+          <Button
+            color="error"
+            variant="contained"
+            startIcon={<DeleteIcon />}
+            disabled={deleteLoading || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
+            onClick={handleDeleteUser}
+          >
+            {deleteLoading ? 'Deleting...' : 'Delete User'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
