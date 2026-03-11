@@ -18,7 +18,7 @@ function getMaxSecurityLevel(userData: any): number {
   return levels.length > 0 ? Math.max(...levels) : 0;
 }
 
-export const sendProfileUpdateReminder = onCall(async (request) => {
+export const sendProfileUpdateReminder = onCall({ cors: true }, async (request) => {
   const actorUid = request.auth?.uid;
   const targetUid = String(request.data?.uid || '').trim();
   const tenantId = String(request.data?.tenantId || '').trim();
