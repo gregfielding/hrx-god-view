@@ -750,10 +750,13 @@ const RecruiterContacts: React.FC = () => {
     }
     
     // Apply pipeline stage tab filter (Contact / Prospect / Lead)
-    filtered = filtered.filter(contact => {
-      const stage = contact.pipelineStage ?? 'contact';
-      return stage === pipelineFilter;
-    });
+    // When searching, show results from ALL types so users can find anyone by name/email/company
+    if (!effectiveSearch) {
+      filtered = filtered.filter(contact => {
+        const stage = contact.pipelineStage ?? 'contact';
+        return stage === pipelineFilter;
+      });
+    }
     
     // Apply state filter (requires loading company data)
     if (stateFilter !== 'all') {

@@ -369,24 +369,30 @@ export const syncGmailEmails = onCall({
   timeoutSeconds: 540      // 9 minutes - allow time for processing large batches
 }, async (request) => {
   try {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Must be signed in to sync Gmail.');
+    }
     // Default to 1000 emails per sync
     const { userId, tenantId, maxResults = 1000 } = request.data;
 
     if (!userId || !tenantId) {
-      throw new Error('Missing required fields: userId, tenantId');
+      throw new HttpsError('invalid-argument', 'Missing required fields: userId, tenantId');
+    }
+    if (request.auth.uid !== userId) {
+      throw new HttpsError('permission-denied', 'Cannot sync Gmail for another user.');
     }
 
     // Get user's Gmail tokens
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-      throw new Error('User not found');
+      throw new HttpsError('not-found', 'User not found');
     }
 
     const userData = userDoc.data();
     const gmailTokens = userData?.gmailTokens;
 
     if (!gmailTokens?.access_token) {
-      throw new Error('Gmail not connected. Please authenticate first.');
+      throw new HttpsError('failed-precondition', 'Gmail not connected. Please authenticate first.');
     }
 
     // Set up Gmail API client
@@ -423,7 +429,8 @@ export const syncGmailEmails = onCall({
       
     } catch (profileError: any) {
       logger.error(`Gmail API access failed: ${profileError.message}`);
-      throw new Error(`Gmail API access failed: ${profileError.message}`);
+      const msg = getErrorMessage(profileError);
+      throw new HttpsError('failed-precondition', `Gmail API access failed: ${msg}`);
     }
     
     // Get recent messages - prioritize unread, then recent emails
@@ -813,6 +820,7 @@ export const syncGmailEmails = onCall({
     };
 
   } catch (error) {
+    if (error instanceof HttpsError) throw error;
     const message = getErrorMessage(error);
     console.error('Error syncing Gmail emails:', error);
     if (isGmailRateLimitError(error)) {
@@ -825,7 +833,7 @@ export const syncGmailEmails = onCall({
         message: `Gmail API is rate-limited. Please retry shortly. ${message}`.trim(),
       };
     }
-    throw new Error(`Failed to sync emails: ${message || 'Unknown error'}`);
+    throw new HttpsError('internal', `Failed to sync emails: ${message || 'Unknown error'}`);
   }
 });
 
