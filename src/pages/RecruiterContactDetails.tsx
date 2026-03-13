@@ -76,10 +76,12 @@ import CRMNotesTab from '../components/CRMNotesTab';
 import ContactActivityTab from '../components/ContactActivityTab';
 import { formatDateForDisplay } from '../utils/dateUtils';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { toSafeHref } from '../utils/urlUtils';
 import { useFavorites } from '../hooks/useFavorites';
 import AddNoteDialog from '../components/AddNoteDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
 import PageHeader from '../components/PageHeader';
+import SafeAvatar from '../components/SafeAvatar';
 import FavoriteButton from '../components/FavoriteButton';
 
 interface TabPanelProps {
@@ -1010,7 +1012,7 @@ const RecruiterContactDetails: React.FC = () => {
       <PageHeader
         title={
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
-            <Avatar
+            <SafeAvatar
               src={contact.avatar || undefined}
               alt={contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Contact'}
               sx={{
@@ -1029,7 +1031,7 @@ const RecruiterContactDetails: React.FC = () => {
                 .map((p: string) => p?.[0])
                 .join('')
                 .toUpperCase()}
-            </Avatar>
+            </SafeAvatar>
 
             <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
               {/* Line 1: Name + favorite */}
@@ -1191,14 +1193,14 @@ const RecruiterContactDetails: React.FC = () => {
                 )}
               </Box>
 
-              {/* Line 4: Social / contact icons */}
-              {(contact.linkedInUrl || contact.website) && (
+              {/* Line 4: Social / contact icons - use toSafeHref so phone numbers in website field don't become invalid links */}
+              {(toSafeHref(contact.linkedInUrl) || toSafeHref(contact.website)) && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
-                  {contact.website && (
+                  {toSafeHref(contact.website) && (
                     <IconButton
                       size="small"
                       component="a"
-                      href={String(contact.website).startsWith('http') ? contact.website : `https://${contact.website}`}
+                      href={toSafeHref(contact.website)}
                       target="_blank"
                       rel="noopener noreferrer"
                       sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
@@ -1207,11 +1209,11 @@ const RecruiterContactDetails: React.FC = () => {
                       <LanguageIcon fontSize="small" />
                     </IconButton>
                   )}
-                  {contact.linkedInUrl && (
+                  {toSafeHref(contact.linkedInUrl) && (
                     <IconButton
                       size="small"
                       component="a"
-                      href={String(contact.linkedInUrl).startsWith('http') ? contact.linkedInUrl : `https://${contact.linkedInUrl}`}
+                      href={toSafeHref(contact.linkedInUrl)}
                       target="_blank"
                       rel="noopener noreferrer"
                       sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
@@ -1992,15 +1994,15 @@ const RecruiterContactDetails: React.FC = () => {
                                 </Typography>
                               </Grid>
                             )}
-                            {(contact.linkedInUrl || contact.twitterUrl || contact.facebookUrl || contact.instagramUrl || contact.website) && (
+                            {(toSafeHref(contact.linkedInUrl) || toSafeHref(contact.twitterUrl) || toSafeHref(contact.facebookUrl) || toSafeHref(contact.instagramUrl) || toSafeHref(contact.website)) && (
                               <Grid item xs={12}>
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 1, display: 'block' }}>
                                   Social Profiles & Website
                                 </Typography>
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
-                                  {contact.linkedInUrl && (
+                                  {toSafeHref(contact.linkedInUrl) && (
                                     <MUILink
-                                      href={contact.linkedInUrl.startsWith('http') ? contact.linkedInUrl : `https://${contact.linkedInUrl}`}
+                                      href={toSafeHref(contact.linkedInUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -2011,9 +2013,9 @@ const RecruiterContactDetails: React.FC = () => {
                                       LinkedIn
                                     </MUILink>
                                   )}
-                                  {contact.twitterUrl && (
+                                  {toSafeHref(contact.twitterUrl) && (
                                     <MUILink
-                                      href={contact.twitterUrl.startsWith('http') ? contact.twitterUrl : `https://${contact.twitterUrl}`}
+                                      href={toSafeHref(contact.twitterUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -2024,9 +2026,9 @@ const RecruiterContactDetails: React.FC = () => {
                                       Twitter
                                     </MUILink>
                                   )}
-                                  {contact.facebookUrl && (
+                                  {toSafeHref(contact.facebookUrl) && (
                                     <MUILink
-                                      href={contact.facebookUrl.startsWith('http') ? contact.facebookUrl : `https://${contact.facebookUrl}`}
+                                      href={toSafeHref(contact.facebookUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -2037,9 +2039,9 @@ const RecruiterContactDetails: React.FC = () => {
                                       Facebook
                                     </MUILink>
                                   )}
-                                  {contact.instagramUrl && (
+                                  {toSafeHref(contact.instagramUrl) && (
                                     <MUILink
-                                      href={contact.instagramUrl.startsWith('http') ? contact.instagramUrl : `https://${contact.instagramUrl}`}
+                                      href={toSafeHref(contact.instagramUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -2050,9 +2052,9 @@ const RecruiterContactDetails: React.FC = () => {
                                       Instagram
                                     </MUILink>
                                   )}
-                                  {contact.website && (
+                                  {toSafeHref(contact.website) && (
                                     <MUILink
-                                      href={contact.website.startsWith('http') ? contact.website : `https://${contact.website}`}
+                                      href={toSafeHref(contact.website)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"

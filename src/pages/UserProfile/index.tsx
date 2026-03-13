@@ -26,6 +26,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore, calculateCompletenessScore } from '../../utils/applicantScoring';
 import { getScoreSummaryUpdateFromHiringScoreV1 } from '../../utils/scoreSummary';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
+import { toSafeHref } from '../../utils/urlUtils';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
 import { getTaskCompletionPercentage, initializeOnboardingTasks } from './utils/onboardingTasks';
 import FavoriteButton from '../../components/FavoriteButton';
@@ -1639,12 +1640,12 @@ const UserProfilePage = () => {
                       </IconButton>
                     </Tooltip>
                   )}
-                  {linkedinUrl && (
+                  {toSafeHref(linkedinUrl) && (
                     <Tooltip title="LinkedIn Profile">
                       <IconButton
                         size="small"
                         component="a"
-                        href={linkedinUrl.startsWith('http') ? linkedinUrl : `https://${linkedinUrl}`}
+                        href={toSafeHref(linkedinUrl)}
                         target="_blank"
                         rel="noopener noreferrer"
                         sx={{ 

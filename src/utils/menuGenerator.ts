@@ -240,6 +240,13 @@ export async function generateMenuItems(
         icon: 'people',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
       }]),
+      // Global Invoicing (sidebar): security level 7 only – all accounts, reporting, create invoices
+      ...([{
+        text: 'Invoicing',
+        to: '/invoicing',
+        icon: 'attach_money',
+        accessRoles: ['tenant_7'],
+      }]),
       // Sales CRM (role-gated; no module gate)
       ...([{
         text: 'Sales CRM',

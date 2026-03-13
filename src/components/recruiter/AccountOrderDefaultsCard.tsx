@@ -1,0 +1,289 @@
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  Box,
+  Typography,
+  Card,
+  CardContent,
+  CardHeader,
+  TextField,
+  Button,
+  IconButton,
+  Snackbar,
+  Alert,
+} from '@mui/material';
+import {
+  Description as DescriptionIcon,
+  Delete as DeleteIcon,
+  CloudUpload as UploadIcon,
+} from '@mui/icons-material';
+import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { format } from 'date-fns';
+
+import { db, storage } from '../../firebase';
+import { p } from '../../data/firestorePaths';
+import type { RecruiterAccount } from '../../types/recruiter/account';
+
+export interface AccountOrderDefaultsCardProps {
+  title: string;
+  fieldKey: string;
+  placeholder: string;
+  uploadPlaceholder: string;
+  account: RecruiterAccount | null;
+  accountId: string;
+  tenantId: string;
+  userId: string;
+  onRefresh: () => void | Promise<void>;
+}
+
+function instructionTextToString(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    const o = value as Record<string, unknown>;
+    if (typeof o.en === 'string') return o.en;
+    if (typeof o.instructions === 'string') return o.instructions;
+    if (typeof o.text === 'string') return o.text;
+    if (typeof o.text === 'object' && o.text !== null && typeof (o.text as Record<string, unknown>).en === 'string') {
+      return (o.text as Record<string, unknown>).en as string;
+    }
+    return '';
+  }
+  return '';
+}
+
+const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
+  title,
+  fieldKey,
+  placeholder,
+  uploadPlaceholder,
+  account,
+  accountId,
+  tenantId,
+  userId,
+  onRefresh,
+}) => {
+  const instructionData = account?.orderDefaults?.staffInstructions?.[fieldKey];
+  const inputId = `account-${fieldKey}-file-label`;
+  const rawValue = instructionData?.text ?? instructionData;
+  const initialText = instructionTextToString(rawValue);
+  const [localText, setLocalText] = useState(() => (typeof initialText === 'string' ? initialText : ''));
+  const [toast, setToast] = useState<{ open: boolean; message: string; severity: 'success' | 'error' } | null>(null);
+  const latestTextRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastSavedRef = useRef<string>(typeof initialText === 'string' ? initialText : '');
+
+  useEffect(() => {
+    const text = instructionTextToString(rawValue);
+    const safe = typeof text === 'string' ? text : '';
+    setLocalText(safe);
+    latestTextRef.current = safe;
+    lastSavedRef.current = safe;
+  }, [instructionData?.text, instructionData]);
+
+  useEffect(() => {
+    return () => flushPendingSave();
+  }, []);
+
+  const flushPendingSave = () => {
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = null;
+    }
+  };
+
+  const saveTextToFirestore = async (text: string) => {
+    if (text === lastSavedRef.current) return;
+    try {
+      await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+        [`orderDefaults.staffInstructions.${fieldKey}.text`]: text,
+        updatedAt: serverTimestamp(),
+      });
+      lastSavedRef.current = text;
+      setToast({ open: true, message: 'Saved', severity: 'success' });
+      await onRefresh();
+    } catch (error: any) {
+      console.error(`Error saving ${fieldKey} order defaults:`, error);
+      setToast({ open: true, message: `Failed to save: ${error?.message || 'Permission denied'}`, severity: 'error' });
+    }
+  };
+
+  const handleTextChange = (newText: string) => {
+    setLocalText(newText);
+    latestTextRef.current = newText;
+    flushPendingSave();
+    saveTimeoutRef.current = setTimeout(() => {
+      saveTimeoutRef.current = null;
+      saveTextToFirestore(newText);
+    }, 1000);
+  };
+
+  const handleBlur = () => {
+    flushPendingSave();
+    const textToSave = latestTextRef.current ?? localText;
+    saveTextToFirestore(textToSave);
+  };
+
+  return (
+    <Card>
+      <CardHeader title={title} titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }} />
+      <CardContent>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {placeholder && (
+            <TextField
+              fullWidth
+              multiline
+              rows={4}
+              label="Instructions"
+              placeholder={placeholder}
+              value={localText}
+              onChange={(e) => handleTextChange(e.target.value)}
+              onBlur={handleBlur}
+            />
+          )}
+
+          <Box>
+            <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 600 }}>
+              Attachments
+            </Typography>
+
+            {instructionData?.files && instructionData.files.length > 0 && (
+              <Box sx={{ mb: 2 }}>
+                {instructionData.files.map((file: any, index: number) => (
+                  <Box
+                    key={index}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      p: 1.5,
+                      mb: 1,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                      borderRadius: 1,
+                      bgcolor: 'grey.50',
+                    }}
+                  >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1 }}>
+                      <DescriptionIcon fontSize="small" color="primary" />
+                      <Box>
+                        <Typography variant="body2" fontWeight="medium">
+                          {file.label || file.name || 'Unnamed File'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {file.name} • Uploaded{' '}
+                          {file.uploadedAt ? format(new Date(file.uploadedAt), 'MMM dd, yyyy') : 'Unknown date'}
+                        </Typography>
+                      </Box>
+                    </Box>
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button size="small" variant="outlined" onClick={() => window.open(file.url, '_blank')}>
+                        View
+                      </Button>
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={async () => {
+                          if (window.confirm('Delete this file?')) {
+                            try {
+                              const updatedFiles = instructionData.files.filter((_: any, i: number) => i !== index);
+                              await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+                                [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
+                                updatedAt: serverTimestamp(),
+                              });
+                              await onRefresh();
+                            } catch (error) {
+                              console.error('Error deleting file:', error);
+                            }
+                          }
+                        }}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                ))}
+              </Box>
+            )}
+
+            <Box sx={{ p: 2, border: '2px dashed', borderColor: 'divider', borderRadius: 1 }}>
+              <Typography variant="body2" color="text.secondary" gutterBottom>
+                {uploadPlaceholder}
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 2, mt: 1, alignItems: 'flex-end' }}>
+                <TextField
+                  size="small"
+                  label="File Label"
+                  placeholder="e.g., Parking Map"
+                  sx={{ flex: 1 }}
+                  id={inputId}
+                />
+                <Button variant="contained" component="label" size="small" startIcon={<UploadIcon />}>
+                  Upload File
+                  <input
+                    type="file"
+                    hidden
+                    accept=".pdf,.png,.jpg,.jpeg,.gif"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+
+                      const labelInput = document.getElementById(inputId) as HTMLInputElement;
+                      const label = labelInput?.value?.trim() || file.name;
+
+                      try {
+                        if (!tenantId || !accountId) throw new Error('Missing tenantId or accountId');
+
+                        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+                        const storagePath = `tenants/${tenantId}/accounts/${accountId}/order_defaults/${fieldKey}/${Date.now()}_${safeName}`;
+                        const storageRef = ref(storage, storagePath);
+
+                        await uploadBytes(storageRef, file);
+                        const downloadURL = await getDownloadURL(storageRef);
+
+                        const newFile = {
+                          name: file.name,
+                          label,
+                          url: downloadURL,
+                          type: file.type,
+                          size: file.size,
+                          uploadedAt: new Date().toISOString(),
+                          uploadedBy: userId,
+                        };
+
+                        const currentFiles = instructionData?.files || [];
+                        await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+                          [`orderDefaults.staffInstructions.${fieldKey}.files`]: [...currentFiles, newFile],
+                          updatedAt: serverTimestamp(),
+                        });
+
+                        if (labelInput) labelInput.value = '';
+                        e.target.value = '';
+                        await onRefresh();
+                      } catch (error: any) {
+                        console.error(`Error uploading file to ${fieldKey}:`, error);
+                        alert(`Failed to upload file: ${error?.message || 'Unknown error'}`);
+                      }
+                    }}
+                  />
+                </Button>
+              </Box>
+            </Box>
+          </Box>
+        </Box>
+      </CardContent>
+      <Snackbar
+        open={!!toast?.open}
+        autoHideDuration={toast?.severity === 'error' ? 6000 : 3000}
+        onClose={() => setToast(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert severity={toast?.severity || 'info'} onClose={() => setToast(null)} sx={{ width: '100%' }}>
+          {toast?.message}
+        </Alert>
+      </Snackbar>
+    </Card>
+  );
+};
+
+export default AccountOrderDefaultsCard;

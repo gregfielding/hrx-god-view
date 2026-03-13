@@ -34,6 +34,7 @@ import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import type { RecruiterAccount, RecruiterAccountFormData } from '../types/recruiter/account';
+import { isAccountAssignedToUser } from '../utils/myAccounts';
 import AddAccountModal from '../components/recruiter/AddAccountModal';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
@@ -58,8 +59,24 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  type EntityOption = { id: string; name: string };
+  const [entityOptions, setEntityOptions] = useState<EntityOption[]>([]);
 
   const { isFavorite, toggleFavorite } = useFavorites('accounts');
+
+  useEffect(() => {
+    if (!tenantId) return;
+    getDocs(collection(db, 'tenants', tenantId, 'entities'))
+      .then((snap) => {
+        setEntityOptions(
+          snap.docs.map((d) => ({
+            id: d.id,
+            name: (d.data()?.name ?? d.data()?.label ?? d.id) as string,
+          }))
+        );
+      })
+      .catch(() => setEntityOptions([]));
+  }, [tenantId]);
 
   const fetchAccounts = useCallback(async () => {
     if (!tenantId) return;
@@ -70,16 +87,22 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
       const snap = await getDocs(q);
       const list: RecruiterAccount[] = snap.docs.map((d) => {
         const data = d.data();
+        const defaults = data.defaults;
+        const eVerify = defaults?.eVerify && typeof defaults.eVerify === 'object' ? defaults.eVerify : null;
         return {
           id: d.id,
           name: data.name ?? '',
           active: data.active !== false,
           parentAccountId: data.parentAccountId ?? null,
           childAccountIds: Array.isArray(data.childAccountIds) ? data.childAccountIds : [],
+          accountType: data.accountType ?? null,
+          hiringEntityId: data.hiringEntityId ?? null,
+          eVerifyRequired: eVerify ? !!eVerify.eVerifyRequired : false,
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
           createdBy: data.createdBy,
           updatedBy: data.updatedBy,
+          associations: data.associations ?? undefined,
         };
       });
       setAccounts(list);
@@ -130,7 +153,12 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
   };
 
   const filteredAccounts = useMemo(() => {
-    let list = accounts.filter((a) => {
+    let list = accounts;
+    // My Accounts: only accounts where current user is assigned salesperson or recruiter (app-wide rule)
+    if (onlyMyAccounts) {
+      list = list.filter((a) => isAccountAssignedToUser(a, user?.uid));
+    }
+    list = list.filter((a) => {
       if (statusFilter === 'active') return a.active;
       if (statusFilter === 'inactive') return !a.active;
       return true;
@@ -143,7 +171,7 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
       list = list.filter((a) => a.id && isFavorite(a.id));
     }
     return list;
-  }, [accounts, statusFilter, headerSearch, headerShowFavoritesOnly, isFavorite]);
+  }, [accounts, onlyMyAccounts, user?.uid, statusFilter, headerSearch, headerShowFavoritesOnly, isFavorite]);
 
   const sortedAccounts = useMemo(() => {
     return [...filteredAccounts].sort((a, b) => {
@@ -377,6 +405,60 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
                     >
                       STATUS
                     </TableCell>
+                    <TableCell
+                      sx={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 12,
+                        bgcolor: '#FFFFFF',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        color: '#374151',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        py: 1.75,
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      ACCOUNT TYPE
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 12,
+                        bgcolor: '#FFFFFF',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        color: '#374151',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        py: 1.75,
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      E-VERIFY
+                    </TableCell>
+                    <TableCell
+                      sx={{
+                        position: 'sticky',
+                        top: 0,
+                        zIndex: 12,
+                        bgcolor: '#FFFFFF',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        color: '#374151',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        py: 1.75,
+                        borderBottom: '1px solid',
+                        borderColor: 'divider',
+                      }}
+                    >
+                      HIRING ENTITY
+                    </TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -448,6 +530,42 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
                           variant={account.active ? 'filled' : 'outlined'}
                           sx={{ fontWeight: 500 }}
                         />
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          py: 1.5,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                          fontSize: '0.875rem',
+                        }}
+                      >
+                        {account.accountType === 'national'
+                          ? 'National'
+                          : account.accountType === 'child'
+                            ? 'Child'
+                            : 'Standalone'}
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          py: 1.5,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                          fontSize: '0.875rem',
+                        }}
+                      >
+                        {account.eVerifyRequired ? 'Yes' : 'No'}
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          py: 1.5,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                          fontSize: '0.875rem',
+                        }}
+                      >
+                        {account.hiringEntityId
+                          ? (entityOptions.find((e) => e.id === account.hiringEntityId)?.name ?? '—')
+                          : '—'}
                       </TableCell>
                     </TableRow>
                   ))}

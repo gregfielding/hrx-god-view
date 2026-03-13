@@ -77,6 +77,7 @@ import PageHeader from '../../components/PageHeader';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import { useFavorites } from '../../hooks/useFavorites';
 import FavoriteButton from '../../components/FavoriteButton';
+import { toSafeHref } from '../../utils/urlUtils';
 
 interface LocationData {
   id: string;
@@ -1208,15 +1209,11 @@ const LocationDetails: React.FC = () => {
                       <NoteIcon sx={{ fontSize: 20 }} />
                     </IconButton>
                   </Tooltip>
-                  {!!company?.website && (
+                  {!!toSafeHref(company?.website) && (
                     <Tooltip title="Visit website">
                       <IconButton
                         size="small"
-                        onClick={() => {
-                          const raw = String(company.website || '');
-                          const url = raw.startsWith('http://') || raw.startsWith('https://') ? raw : `https://${raw}`;
-                          window.open(url, '_blank');
-                        }}
+                        onClick={() => window.open(toSafeHref(company?.website), '_blank')}
                         sx={{
                           p: 1,
                           color: 'primary.main',

@@ -3,7 +3,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react';
-import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
+import { collection, documentId, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { CalendarEvent } from '../types/calendar';
 import { eachDayOfInterval, format, isValid, parse, parseISO } from 'date-fns';
@@ -69,6 +69,8 @@ interface UseGigJobOrdersCalendarOptions {
   timeMin: Date;
   timeMax: Date;
   enabled?: boolean;
+  /** When set, only fetch shifts for these job order IDs (e.g. account + child account job orders). Omit to fetch all gig job orders. */
+  jobOrderIds?: string[];
 }
 
 interface UseGigJobOrdersCalendarReturn {
@@ -243,10 +245,13 @@ export function useGigJobOrdersCalendar({
   timeMin,
   timeMax,
   enabled = true,
+  jobOrderIds,
 }: UseGigJobOrdersCalendarOptions): UseGigJobOrdersCalendarReturn {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+
+  const filterByAccount = !!(jobOrderIds && jobOrderIds.length > 0);
 
   useEffect(() => {
     if (!enabled || !tenantId) {
@@ -254,11 +259,14 @@ export function useGigJobOrdersCalendar({
       setLoading(false);
       return;
     }
+    if (filterByAccount && (!jobOrderIds || jobOrderIds.length === 0)) {
+      setEvents([]);
+      setLoading(false);
+      return;
+    }
 
-    // Check if we should disable this feature due to previous Firestore errors
-    // This prevents cascading failures
     const errorKey = `firestore_error_${tenantId}`;
-    const hasRecentError = sessionStorage.getItem(errorKey);
+    const hasRecentError = !filterByAccount && sessionStorage.getItem(errorKey);
     if (hasRecentError) {
       console.warn('Gig Job Orders calendar disabled due to previous Firestore errors');
       setEvents([]);
@@ -274,38 +282,39 @@ export function useGigJobOrdersCalendar({
       setError(null);
 
       try {
-        // Step 1: Get all Gig job orders
         const jobOrdersRef = collection(db, 'tenants', tenantId, 'job_orders');
-        const gigQuery = query(
-          jobOrdersRef,
-          where('jobType', '==', 'gig')
-        );
+        let jobOrders: any[];
 
-        let jobOrdersSnapshot;
-        try {
-          jobOrdersSnapshot = await getDocs(gigQuery);
-        } catch (err: any) {
-          // Catch Firestore internal errors at the top level
-          if (err?.message?.includes('INTERNAL ASSERTION') || 
-              err?.message?.includes('Unexpected state')) {
-            console.warn('Firestore internal error when fetching job orders, returning empty events');
-            if (!cancelled) {
-              setEvents([]);
-              setLoading(false);
-            }
-            return;
+        if (filterByAccount && jobOrderIds!.length > 0) {
+          jobOrders = [];
+          for (let i = 0; i < jobOrderIds!.length; i += 30) {
+            if (cancelled) return;
+            const batch = jobOrderIds!.slice(i, i + 30);
+            const q = query(jobOrdersRef, where(documentId(), 'in', batch));
+            const snap = await getDocs(q);
+            snap.docs.forEach((d) => jobOrders.push({ id: d.id, ...d.data() }));
           }
-          throw err;
+        } else {
+          const gigQuery = query(jobOrdersRef, where('jobType', '==', 'gig'));
+          let jobOrdersSnapshot;
+          try {
+            jobOrdersSnapshot = await getDocs(gigQuery);
+          } catch (err: any) {
+            if (err?.message?.includes('INTERNAL ASSERTION') || err?.message?.includes('Unexpected state')) {
+              console.warn('Firestore internal error when fetching job orders, returning empty events');
+              if (!cancelled) {
+                setEvents([]);
+                setLoading(false);
+              }
+              return;
+            }
+            throw err;
+          }
+          if (cancelled) return;
+          jobOrders = jobOrdersSnapshot.docs.map((d) => ({ id: d.id, ...d.data() })) as any[];
         }
-        
-        if (cancelled) return;
 
-        const jobOrders = jobOrdersSnapshot.docs.map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as any[];
-
-        // Step 2: For each job order, fetch its shifts
+        // For each job order, fetch its shifts
         // Use fully sequential processing (one at a time) to avoid Firestore internal assertion errors
         // This is slower but much more reliable
         const allShifts: Array<{ shift: any; jobOrder: any }> = [];
@@ -512,7 +521,7 @@ export function useGigJobOrdersCalendar({
     return () => {
       cancelled = true;
     };
-  }, [tenantId, timeMin, timeMax, enabled]);
+  }, [tenantId, timeMin, timeMax, enabled, jobOrderIds]);
 
   return {
     events,

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, useSearchParams, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
 
@@ -17,6 +17,7 @@ import UserProfile from './pages/UserProfile';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { canAccessAccountInvoicingTab, canAccessGlobalInvoicing } from './utils/invoicingAccessControl';
 import { AssociationsCacheProvider } from './contexts/AssociationsCacheContext';
 import { CRMCacheProvider } from './contexts/CRMCacheContext';
 import { SalespeopleProvider } from './contexts/SalespeopleContext';
@@ -148,6 +149,7 @@ import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
 import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
 import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
+import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
@@ -302,6 +304,38 @@ function RecruiterAccessGuard({ children }: { children: React.ReactNode }) {
         <Typography variant="body1" color="text.secondary">You don't have permission to access this page.</Typography>
       </Box>
     );
+  }
+  return <>{children}</>;
+}
+
+/**
+ * Route-level guard for Account → Invoicing tab.
+ * Account Invoicing tab is available to security levels 5, 6, and 7.
+ * If the URL has ?tab=invoicing and the user is not 5/6/7, redirect to tab=overview.
+ */
+function InvoicingTabGuard({ children }: { children: React.ReactNode }) {
+  const [searchParams] = useSearchParams();
+  const location = useLocation();
+  const { currentClaimsSecurityLevel, securityLevel } = useAuth();
+  const tab = searchParams.get('tab');
+  const canAccess = canAccessAccountInvoicingTab(currentClaimsSecurityLevel ?? securityLevel);
+
+  if (tab === 'invoicing' && !canAccess) {
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.set('tab', 'overview');
+    const to = `${location.pathname}?${nextParams.toString()}`;
+    return <Navigate to={to} replace />;
+  }
+
+  return <>{children}</>;
+}
+
+/** Guard for /invoicing: only security level 7 can access (global invoicing across all accounts). */
+function GlobalInvoicingGuard({ children }: { children: React.ReactNode }) {
+  const { currentClaimsSecurityLevel, securityLevel } = useAuth();
+  const canAccess = canAccessGlobalInvoicing(currentClaimsSecurityLevel ?? securityLevel);
+  if (!canAccess) {
+    return <Navigate to="/accounts" replace />;
   }
   return <>{children}</>;
 }
@@ -619,11 +653,25 @@ function App() {
         </Route>
         <Route path="my-accounts" element={<Navigate to="/accounts/my" replace />} />
         <Route
+          path="invoicing"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <GlobalInvoicingGuard>
+                  <GlobalInvoicingPage />
+                </GlobalInvoicingGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="accounts/:accountId"
           element={
             <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
-                <RecruiterAccountDetails />
+                <InvoicingTabGuard>
+                  <RecruiterAccountDetails />
+                </InvoicingTabGuard>
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

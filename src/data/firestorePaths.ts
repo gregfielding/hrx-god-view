@@ -49,6 +49,25 @@ export const p = {
    */
   recruiterAccounts: (tid: string) => `tenants/${tid}/accounts`,
   recruiterAccount: (tid: string, id: string) => `tenants/${tid}/accounts/${id}`,
+  /** Account file uploads (e.g. contracts) */
+  recruiterAccountUploads: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/uploads`,
+  recruiterAccountUpload: (tid: string, accountId: string, uploadId: string) => `tenants/${tid}/accounts/${accountId}/uploads/${uploadId}`,
+
+  /**
+   * QuickBooks Online integration (account-scoped cache and sync).
+   * Canonical account ID = Firestore document ID; QBO customerId stored on account.integrations.quickbooks.
+   */
+  recruiterAccountQuickbooks: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks`,
+  /** Single doc: current QBO customer snapshot for this account */
+  recruiterAccountQuickbooksCustomer: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/customer`,
+  recruiterAccountQuickbooksInvoices: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/invoices`,
+  recruiterAccountQuickbooksInvoice: (tid: string, accountId: string, invoiceId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/invoices/${invoiceId}`,
+  recruiterAccountQuickbooksPayments: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/payments`,
+  recruiterAccountQuickbooksPayment: (tid: string, accountId: string, paymentId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/payments/${paymentId}`,
+  recruiterAccountQuickbooksArSummary: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/arSummary`,
+  recruiterAccountQuickbooksArSummaryCurrent: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/arSummary/current`,
+  recruiterAccountQuickbooksSyncLogs: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/syncLogs`,
+  recruiterAccountQuickbooksSyncLog: (tid: string, accountId: string, logId: string) => `tenants/${tid}/accounts/${accountId}/quickbooks/syncLogs/${logId}`,
 
   /**
    * Job Orders (authoritative tenant-level collection)

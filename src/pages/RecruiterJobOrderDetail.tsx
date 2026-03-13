@@ -78,7 +78,7 @@ import {
   Email as EmailIcon,
   Sms as SmsIcon,
 } from '@mui/icons-material';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, type DocumentSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -2555,6 +2555,7 @@ const JobOrderJobsBoardTab: React.FC<{
 const RecruiterJobOrderDetail: React.FC = () => {
   const { jobOrderId } = useParams<{ jobOrderId: string }>();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user, tenantId } = useAuth();
   
   
@@ -2565,7 +2566,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [deal, setDeal] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   
-  // Persist active tab in localStorage
+  // Persist active tab in localStorage; URL ?tab=applications overrides and opens Applications tab (index 6)
   const getStoredTab = () => {
     if (!jobOrderId) return 0;
     try {
@@ -2581,18 +2582,27 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [recruiterUsers, setRecruiterUsers] = useState<Array<{id: string; displayName: string; email?: string}>>([]);
   
-  // Reload stored tab when jobOrderId changes
+  // Reload stored tab when jobOrderId or URL tab param changes; ?tab=applications opens Applications tab
   useEffect(() => {
-    if (jobOrderId) {
+    if (!jobOrderId) return;
+    const tabParam = searchParams.get('tab');
+    if (tabParam === 'applications') {
+      setActiveTab(6);
       try {
-        const stored = localStorage.getItem(`recruiter_job_order_tab_${jobOrderId}`);
-        const storedTab = stored ? parseInt(stored, 10) : 1;
-        setActiveTab(storedTab);
+        localStorage.setItem(`recruiter_job_order_tab_${jobOrderId}`, '6');
       } catch {
-        setActiveTab(1);
+        // ignore
       }
+      return;
     }
-  }, [jobOrderId]);
+    try {
+      const stored = localStorage.getItem(`recruiter_job_order_tab_${jobOrderId}`);
+      const storedTab = stored ? parseInt(stored, 10) : 1;
+      setActiveTab(storedTab);
+    } catch {
+      setActiveTab(1);
+    }
+  }, [jobOrderId, searchParams]);
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);

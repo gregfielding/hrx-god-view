@@ -36,6 +36,7 @@ import { doc, updateDoc, getDoc } from 'firebase/firestore';
 import { db, storage, functions } from '../firebase';
 import { httpsCallable } from 'firebase/functions';
 import FavoriteButton from './FavoriteButton';
+import SafeAvatar from './SafeAvatar';
 import MessageDrawer, { MessageRecipient } from './MessageDrawer';
 import { useAuth } from '../contexts/AuthContext';
 import ImageCropDialog from './common/ImageCropDialog';
@@ -437,7 +438,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
         {/* Avatar */}
         {onAvatarUpload && (
           <Box sx={{ position: 'relative' }}>
-            <Avatar
+            <SafeAvatar
               src={contact.avatar}
               alt={getDisplayName()}
               sx={{ 
@@ -449,7 +450,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
               }}
             >
               {getInitials()}
-            </Avatar>
+            </SafeAvatar>
             
             {/* Avatar Upload/Delete Buttons */}
             <Box sx={{ 
@@ -519,7 +520,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
 
         {/* Avatar without upload functionality (mobile) */}
         {!onAvatarUpload && (
-          <Avatar
+          <SafeAvatar
             src={contact.avatar}
             alt={getDisplayName()}
             sx={{ 
@@ -531,7 +532,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
             }}
           >
             {getInitials()}
-          </Avatar>
+          </SafeAvatar>
         )}
 
         {/* Action Buttons - Mobile (smaller, horizontal) */}
@@ -609,7 +610,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
               onMouseEnter={() => setAvatarHover(true)}
               onMouseLeave={() => setAvatarHover(false)}
             >
-              <Avatar
+              <SafeAvatar
                 src={contact.avatar}
                 alt={getDisplayName()}
                 sx={{ 
@@ -624,7 +625,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
                 }}
               >
                 {getInitials()}
-              </Avatar>
+              </SafeAvatar>
               
               {/* Avatar Upload/Delete Buttons */}
               <Box sx={{ 
@@ -696,7 +697,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
 
           {/* Avatar without upload functionality */}
           {!onAvatarUpload && (
-            <Avatar
+            <SafeAvatar
               src={contact.avatar}
               alt={getDisplayName()}
               sx={{ 
@@ -711,7 +712,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
               }}
             >
               {getInitials()}
-            </Avatar>
+            </SafeAvatar>
           )}
 
           {/* Contact Information */}

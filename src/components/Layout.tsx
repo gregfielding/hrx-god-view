@@ -49,6 +49,7 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SellIcon from '@mui/icons-material/Sell';
+import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
 import LanguageIcon from '@mui/icons-material/Language';
@@ -914,6 +915,7 @@ const Layout: React.FC = function Layout() {
       'Workforce': <PeopleIcon />,
       'Users': <GroupsIcon />,
       'Accounts': <AccountBalanceIcon />,
+      'Invoicing': <AttachMoneyIcon />,
       'Contacts': <PersonIcon />,
       'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,

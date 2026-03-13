@@ -81,6 +81,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import CRMNotesTab from '../../components/CRMNotesTab';
 import SimpleAssociationsCard from '../../components/SimpleAssociationsCard';
 import ActivityLogTab from '../../components/ActivityLogTab';
+import SafeAvatar from '../../components/SafeAvatar';
 import { getLastContactActivity, type UnifiedActivityItem } from '../../utils/activityService';
 import TasksDashboard from '../../components/TasksDashboard';
 import AppointmentsDashboard from '../../components/AppointmentsDashboard';
@@ -110,6 +111,7 @@ import { PipelineStageContainer } from '../../components/crm/contacts/PipelineSt
 import { PIPELINE_STAGES, PIPELINE_STAGE_LABELS, type PipelineStage } from '../../types/CRM';
 import { formatPhoneNumber } from '../../utils/formatPhone';
 import { toChipLabel } from '../../utils/chipLabel';
+import { toSafeHref } from '../../utils/urlUtils';
 
 interface ContactData {
   id: string;
@@ -1968,7 +1970,7 @@ const ContactDetails: React.FC = () => {
           <Box>
             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
               {/* Avatar - 108px × 108px */}
-              <Avatar
+              <SafeAvatar
                 src={contact.avatar || undefined}
                 sx={{
                   width: 108,
@@ -1979,8 +1981,8 @@ const ContactDetails: React.FC = () => {
                   flexShrink: 0,
                 }}
               >
-                {!contact.avatar && getContactInitials()}
-              </Avatar>
+                {getContactInitials()}
+              </SafeAvatar>
               
               {/* Three-line content area - matches avatar height */}
               <Box sx={{ 
@@ -3571,15 +3573,15 @@ const ContactDetails: React.FC = () => {
                                 </Typography>
                               </Grid>
                             )}
-                            {(contact.linkedInUrl || contact.twitterUrl || contact.facebookUrl || contact.instagramUrl || contact.website) && (
+                            {(toSafeHref(contact.linkedInUrl) || toSafeHref(contact.twitterUrl) || toSafeHref(contact.facebookUrl) || toSafeHref(contact.instagramUrl) || toSafeHref(contact.website)) && (
                               <Grid item xs={12}>
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500, mb: 1, display: 'block' }}>
                                   Social Profiles & Website
                                 </Typography>
                                 <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}>
-                                  {contact.linkedInUrl && (
+                                  {toSafeHref(contact.linkedInUrl) && (
                                     <MUILink
-                                      href={contact.linkedInUrl.startsWith('http') ? contact.linkedInUrl : `https://${contact.linkedInUrl}`}
+                                      href={toSafeHref(contact.linkedInUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -3590,9 +3592,9 @@ const ContactDetails: React.FC = () => {
                                       LinkedIn
                                     </MUILink>
                                   )}
-                                  {contact.twitterUrl && (
+                                  {toSafeHref(contact.twitterUrl) && (
                                     <MUILink
-                                      href={contact.twitterUrl.startsWith('http') ? contact.twitterUrl : `https://${contact.twitterUrl}`}
+                                      href={toSafeHref(contact.twitterUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -3603,9 +3605,9 @@ const ContactDetails: React.FC = () => {
                                       Twitter
                                     </MUILink>
                                   )}
-                                  {contact.facebookUrl && (
+                                  {toSafeHref(contact.facebookUrl) && (
                                     <MUILink
-                                      href={contact.facebookUrl.startsWith('http') ? contact.facebookUrl : `https://${contact.facebookUrl}`}
+                                      href={toSafeHref(contact.facebookUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -3616,9 +3618,9 @@ const ContactDetails: React.FC = () => {
                                       Facebook
                                     </MUILink>
                                   )}
-                                  {contact.instagramUrl && (
+                                  {toSafeHref(contact.instagramUrl) && (
                                     <MUILink
-                                      href={contact.instagramUrl.startsWith('http') ? contact.instagramUrl : `https://${contact.instagramUrl}`}
+                                      href={toSafeHref(contact.instagramUrl)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
@@ -3629,9 +3631,9 @@ const ContactDetails: React.FC = () => {
                                       Instagram
                                     </MUILink>
                                   )}
-                                  {contact.website && (
+                                  {toSafeHref(contact.website) && (
                                     <MUILink
-                                      href={contact.website.startsWith('http') ? contact.website : `https://${contact.website}`}
+                                      href={toSafeHref(contact.website)}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"

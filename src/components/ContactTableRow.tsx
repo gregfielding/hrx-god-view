@@ -4,7 +4,6 @@ import {
   TableCell,
   Box,
   Typography,
-  Avatar,
   Chip,
   Checkbox,
 } from '@mui/material';
@@ -15,6 +14,7 @@ import {
   LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
 import FavoriteButton from './FavoriteButton';
+import SafeAvatar from './SafeAvatar';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
@@ -198,7 +198,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
       {columns.name && (
         <TableCell sx={{ pl: 2, pr: 2, py: 0.75 }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            <Avatar 
+            <SafeAvatar 
               src={contact.avatar || contact.logoUrl}
               sx={{ 
                 width: TABLE_AVATAR_SIZE, 
@@ -211,7 +211,7 @@ const ContactTableRow: React.FC<ContactTableRowProps> = ({
               }}
             >
               {getInitials(contact)}
-            </Avatar>
+            </SafeAvatar>
             <Typography 
               variant="body2" 
               fontWeight={600} 

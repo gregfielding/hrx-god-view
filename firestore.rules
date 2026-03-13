@@ -86,6 +86,12 @@ service cloud.firestore {
           (request.auth.token.roles != null && tenantId in request.auth.token.roles && request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager']) ||
           (isAssignedToTenant(tenantId) && hasRecruiterAccess())
         );
+        // Account file uploads (e.g. contracts)
+        match /uploads/{uploadId} {
+          allow read, create, update, delete: if request.auth != null && (
+            isHRX() || hasTenantRole(tenantId, request.auth.token.roles) || isAssignedToTenant(tenantId)
+          );
+        }
       }
       
       // Assignments subcollection - BULLETPROOF RULES

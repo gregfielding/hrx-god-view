@@ -3,8 +3,8 @@
  * Follows the same Record spec as Company/User/Deal: PageHeader, tabs, and 3rd column association widgets.
  */
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import React, { useEffect, useState, useCallback, useRef, useMemo } from 'react';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import {
   Box,
   Typography,
@@ -31,6 +31,24 @@ import {
   ListItemAvatar,
   ListItemText,
   ListItemSecondaryAction,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Checkbox,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TableSortLabel,
+  Paper,
+  Alert,
+  Stack,
+  InputAdornment,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -47,6 +65,16 @@ import {
   Close as CloseIcon,
   Delete as DeleteIcon,
   Add as AddIcon,
+  Upload as UploadIcon,
+  OpenInNew as OpenInNewIcon,
+  Search as SearchIcon,
+  Clear as ClearIcon,
+  AccountTree as AccountTreeIcon,
+  Settings as SettingsIcon,
+  Save as SaveIcon,
+  Description as DescriptionIcon,
+  CalendarMonth as CalendarIcon,
+  Receipt as ReceiptIcon,
 } from '@mui/icons-material';
 import {
   doc,
@@ -61,9 +89,12 @@ import {
   where,
   orderBy,
   limit,
+  deleteDoc,
+  setDoc,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import { getDealCompanyIds } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
 import { p } from '../data/firestorePaths';
@@ -72,9 +103,32 @@ import type {
   RecruiterAccountAssociations,
   AccountLocationRef,
 } from '../types/recruiter/account';
+import type { AccountPositionPricing } from '../types/recruiter/account';
 import PageHeader from '../components/PageHeader';
 import FavoriteButton from '../components/FavoriteButton';
+import InboxSearchBar from '../components/InboxSearchBar';
+import FavoritesFilter from '../components/FavoritesFilter';
+import StandardTablePagination from '../components/StandardTablePagination';
 import { useFavorites } from '../hooks/useFavorites';
+import { getJobOrderAge } from '../utils/dateUtils';
+import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
+import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
+import type { JobOrder } from '../types/Phase1Types';
+import jobTitlesData from '../data/onetJobTitles.json';
+import { JobsBoardService, type JobsBoardPost } from '../services/recruiter/jobsBoardService';
+import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CODES } from '../utils/unemploymentRates';
+import { canAccessAccountInvoicingTab } from '../utils/invoicingAccessControl';
+
+interface JobOrderWithDetails extends JobOrder {
+  companyName?: string;
+  locationName?: string;
+  worksiteCity?: string;
+  recruiterName?: string;
+  workersNeeded?: number;
+  headcountFilled?: number;
+  jobTitle?: string;
+}
 
 // SectionCard – same pattern as DealDetails 3rd column; optional titleHref for header link to list page
 const SectionCard: React.FC<{
@@ -135,13 +189,15 @@ const ManageAssociationDialog: React.FC<{
   onRemove,
   groupBy,
 }) => {
-  const [selectedOption, setSelectedOption] = useState<ManageDialogOption | null>(null);
+  const [selectedOption, setSelectedOption] = useState<{ id: string; label: string; secondary?: string } | null>(null);
 
   useEffect(() => {
     if (!open) setSelectedOption(null);
   }, [open]);
 
   const availableToAdd = availableOptions.filter((option) => !currentItems.some((item) => item.id === option.id));
+  // Autocomplete must receive serializable options only (no React elements) to avoid "Converting circular structure to JSON"
+  const serializableOptions = availableToAdd.map(({ id, label, secondary }) => ({ id, label, secondary }));
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
@@ -198,15 +254,16 @@ const ManageAssociationDialog: React.FC<{
             <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 2 }}>
               Add {title}
             </Typography>
-            {availableToAdd.length > 0 ? (
+            {serializableOptions.length > 0 ? (
               <Box sx={{ display: 'flex', gap: 2, alignItems: 'flex-end' }}>
                 <Autocomplete
                   fullWidth
-                  options={availableToAdd}
+                  options={serializableOptions}
                   groupBy={groupBy}
                   value={selectedOption}
                   onChange={(_, newValue) => setSelectedOption(newValue)}
                   getOptionLabel={(option) => [option.label, option.secondary].filter(Boolean).join(' · ') || 'Unknown'}
+                  isOptionEqualToValue={(opt, val) => opt.id === val?.id}
                   renderInput={(params) => (
                     <TextField
                       {...params}
@@ -214,21 +271,26 @@ const ManageAssociationDialog: React.FC<{
                       placeholder={selectionPlaceholder}
                     />
                   )}
-                  renderOption={(props, option) => (
-                    <li {...props}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        {option.icon ? option.icon : <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>{option.label?.charAt(0) || '?'}</Avatar>}
-                        <Box>
-                          <Typography variant="body2">{option.label}</Typography>
-                          {option.secondary && (
-                            <Typography variant="caption" color="text.secondary">
-                              {option.secondary}
-                            </Typography>
-                          )}
+                  getOptionKey={(option) => option.id}
+                  renderOption={(props, option) => {
+                    // key comes from MUI Autocomplete; omit from spread per React guidance
+                    const { key: _listKey, ...otherProps } = props; // eslint-disable-line react/prop-types
+                    return (
+                      <li key={option.id} {...otherProps}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                          <Avatar sx={{ width: 24, height: 24, fontSize: '0.75rem' }}>{option.label?.charAt(0) || '?'}</Avatar>
+                          <Box>
+                            <Typography variant="body2">{option.label}</Typography>
+                            {option.secondary && (
+                              <Typography variant="caption" color="text.secondary">
+                                {option.secondary}
+                              </Typography>
+                            )}
+                          </Box>
                         </Box>
-                      </Box>
-                    </li>
-                  )}
+                      </li>
+                    );
+                  }}
                 />
                 <Button
                   variant="contained"
@@ -1073,19 +1135,32 @@ type DealOption = { id: string; label: string; companyIds?: string[] };
 type LaborPoolOption = { id: string; label: string; type: 'userGroup' | 'savedSmartGroup' };
 type PersonOption = { id: string; label: string };
 type AccountOption = { id: string; label: string };
+type EntityOption = { id: string; name: string; entityCode: string; workerType: string };
+
+const ACCOUNT_TAB_SLUGS = ['overview', 'calendar', 'locations', 'children', 'pricing', 'job-orders', 'jobs-board', 'labor-pool', 'settings', 'invoicing', 'order-defaults', 'activity'] as const;
 
 const RecruiterAccountDetails: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
-  const { tenantId, user } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { tenantId, user, currentClaimsSecurityLevel, securityLevel } = useAuth();
+  const canAccessInvoicing = canAccessAccountInvoicingTab(currentClaimsSecurityLevel ?? securityLevel);
   const navigate = useNavigate();
   const { isFavorite, toggleFavorite } = useFavorites('accounts');
+
+  const tabFromUrl = useMemo(() => {
+    const tab = searchParams.get('tab');
+    const idx = ACCOUNT_TAB_SLUGS.indexOf(tab as any);
+    return idx >= 0 ? idx : 0;
+  }, [searchParams]);
 
   const [account, setAccount] = useState<RecruiterAccount | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [tabValue, setTabValue] = useState(0);
+  const [tabValue, setTabValue] = useState(tabFromUrl);
   const [isEditingDetails, setIsEditingDetails] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const isChildAccount = account?.accountType === 'child' || (account?.parentAccountId != null && account?.parentAccountId !== '');
 
   // Option lists for autocompletes
   const [companies, setCompanies] = useState<CompanyOption[]>([]);
@@ -1097,7 +1172,114 @@ const RecruiterAccountDetails: React.FC = () => {
   const [salespeopleOptions, setSalespeopleOptions] = useState<PersonOption[]>([]);
   const [recruitersOptions, setRecruitersOptions] = useState<PersonOption[]>([]);
   const [accountOptions, setAccountOptions] = useState<AccountOption[]>([]);
+  const [entityOptions, setEntityOptions] = useState<EntityOption[]>([]);
   const [optionsLoading, setOptionsLoading] = useState(false);
+
+  // Primary linked company logo for account avatar (first company in associations)
+  const [accountCompanyLogoUrl, setAccountCompanyLogoUrl] = useState<string | null>(null);
+
+  // Account file uploads (Overview tab)
+  type AccountUpload = { id: string; name: string; fileName: string; url: string; storagePath: string; createdAt: any };
+  const [accountUploads, setAccountUploads] = useState<AccountUpload[]>([]);
+  const [uploadLabel, setUploadLabel] = useState('');
+  const [uploading, setUploading] = useState(false);
+  const [uploadFileKey, setUploadFileKey] = useState(0);
+  const [deleteConfirmUploadId, setDeleteConfirmUploadId] = useState<string | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement>(null);
+
+  // Job Orders tab (filtered by account companies)
+  const [accountJobOrders, setAccountJobOrders] = useState<JobOrderWithDetails[]>([]);
+  const [accountJobOrdersLoading, setAccountJobOrdersLoading] = useState(false);
+  const [accountJobOrdersError, setAccountJobOrdersError] = useState<string | null>(null);
+  const [jobOrdersSearch, setJobOrdersSearch] = useState('');
+  const [jobOrdersShowFavoritesOnly, setJobOrdersShowFavoritesOnly] = useState(false);
+  const [jobOrdersStatusFilter, setJobOrdersStatusFilter] = useState('');
+  const [jobOrdersCompanyFilter, setJobOrdersCompanyFilter] = useState('all');
+  const [jobOrdersSortField, setJobOrdersSortField] = useState('jobOrderNumber');
+  const [jobOrdersSortDirection, setJobOrdersSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [jobOrdersPage, setJobOrdersPage] = useState(0);
+  const [jobOrdersRowsPerPage, setJobOrdersRowsPerPage] = useState(20);
+
+  const { isFavorite: isJobOrderFavorite, toggleFavorite: toggleJobOrderFavorite } = useFavorites('jobOrders');
+
+  // Jobs Board tab: posts for account's companies
+  const [accountJobPosts, setAccountJobPosts] = useState<JobsBoardPost[]>([]);
+  const [accountJobPostsLoading, setAccountJobPostsLoading] = useState(false);
+  const [jobPostsPage, setJobPostsPage] = useState(0);
+  const [jobPostsRowsPerPage, setJobPostsRowsPerPage] = useState(20);
+  const { isFavorite: isJobPostFavorite, toggleFavorite: toggleJobPostFavorite } = useFavorites('jobPosts');
+
+  // Locations tab: all locations for account's companies
+  type AccountLocationRow = {
+    id: string;
+    name?: string;
+    nickname?: string;
+    code?: string;
+    address?: string;
+    street?: string;
+    city?: string;
+    state?: string;
+    zipCode?: string;
+    type?: string;
+    division?: string;
+    contactCount?: number;
+    dealCount?: number;
+    companyId: string;
+    companyName: string;
+  };
+  const [accountLocationsList, setAccountLocationsList] = useState<AccountLocationRow[]>([]);
+  const [accountLocationsLoading, setAccountLocationsLoading] = useState(false);
+  const [locationsSearchQuery, setLocationsSearchQuery] = useState('');
+
+  // Children tab: visible if child accounts in widget or any account has this as parent
+  const [hasAnyAccountWithThisAsParent, setHasAnyAccountWithThisAsParent] = useState(false);
+  type ChildAccountRow = {
+    id: string;
+    name: string;
+    active: boolean;
+    accountType?: string | null;
+    eVerifyRequired?: boolean;
+    hiringEntityId?: string | null;
+  };
+  const [childAccountsList, setChildAccountsList] = useState<ChildAccountRow[]>([]);
+  const [childAccountsLoading, setChildAccountsLoading] = useState(false);
+  const [childrenSearchQuery, setChildrenSearchQuery] = useState('');
+
+  // First worksite's full details for Overview card (when account has a worksite linked)
+  type WorksiteDetails = { name?: string; nickname?: string; address?: string; street?: string; city?: string; state?: string; zipCode?: string; type?: string };
+  const [worksiteDetails, setWorksiteDetails] = useState<WorksiteDetails | null>(null);
+  const [worksiteDetailsLoading, setWorksiteDetailsLoading] = useState(false);
+
+  // Account defaults (Settings tab) – same shape as company defaults; can override company and trickle to job orders
+  const defaultRulesInitial = {
+    replacingExistingAgency: false,
+    rolloverExistingStaff: false,
+    timeclockSystem: '',
+    attendancePolicy: '',
+    noShowPolicy: '',
+    overtimePolicy: '',
+    callOffPolicy: '',
+    injuryHandlingPolicy: '',
+    disciplinePolicy: '',
+  };
+  const defaultBillingInitial = { poRequired: false, paymentTerms: '', invoiceDeliveryMethod: '', invoiceFrequency: '', sendInvoicesTo: [] as string[], billingNotes: '' };
+  const defaultEVerifyInitial = { eVerifyRequired: false };
+  const [defaultRules, setDefaultRules] = useState(defaultRulesInitial);
+  const [defaultBilling, setDefaultBilling] = useState(defaultBillingInitial);
+  const [defaultEVerify, setDefaultEVerify] = useState(defaultEVerifyInitial);
+  const [defaultsSaving, setDefaultsSaving] = useState(false);
+  /** When this account is a child, parent's E-Verify and Hiring Entity for display on Account Details card */
+  const [parentDefaults, setParentDefaults] = useState<{ eVerifyRequired: boolean; hiringEntityId: string | null } | null>(null);
+
+  // Pricing tab: national options + positions table
+  const [pricingSubAccountsManageOwn, setPricingSubAccountsManageOwn] = useState(false);
+  const [pricingFlatMarkupPercent, setPricingFlatMarkupPercent] = useState<number | ''>('');
+  const [pricingPositions, setPricingPositions] = useState<AccountPositionPricing[]>([]);
+  const [pricingSaving, setPricingSaving] = useState(false);
+  const [pricingSutaFutaState, setPricingSutaFutaState] = useState('');
+
+  // Invoicing tab: sub-view (scaffolding for QuickBooks integration)
+  const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
 
   const isMountedRef = useRef(true);
   useEffect(() => {
@@ -1107,11 +1289,112 @@ const RecruiterAccountDetails: React.FC = () => {
     };
   }, []);
 
+  // Keep tab in sync with URL (e.g. when user hits back)
+  useEffect(() => {
+    setTabValue(tabFromUrl);
+  }, [tabFromUrl]);
+
+  const setAccountTab = useCallback((index: number) => {
+    setTabValue(index);
+    setSearchParams({ tab: ACCOUNT_TAB_SLUGS[index] }, { replace: true });
+  }, [setSearchParams]);
+
   useEffect(() => {
     if (accountId && tenantId) {
       loadAccount();
     }
   }, [accountId, tenantId]);
+
+  // Check if any account has this account as parent (for Children tab visibility)
+  useEffect(() => {
+    if (!tenantId || !account?.id) {
+      setHasAnyAccountWithThisAsParent(false);
+      return;
+    }
+    let cancelled = false;
+    const ref = collection(db, p.recruiterAccounts(tenantId));
+    const q = query(ref, where('parentAccountId', '==', account.id), limit(1));
+    getDocs(q).then((snap) => {
+      if (!cancelled && isMountedRef.current) setHasAnyAccountWithThisAsParent(!snap.empty);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, account?.id]);
+
+  // Load parent account defaults when this account has a parent (for E-Verify + Hiring Entity display on Account Details card)
+  useEffect(() => {
+    const parentId = account?.parentAccountId;
+    if (!tenantId || !parentId) {
+      setParentDefaults(null);
+      return;
+    }
+    let cancelled = false;
+    const parentRef = doc(db, p.recruiterAccount(tenantId, parentId));
+    getDoc(parentRef).then((snap) => {
+      if (cancelled || !isMountedRef.current) return;
+      if (!snap.exists()) {
+        setParentDefaults(null);
+        return;
+      }
+      const d = snap.data();
+      const eVerify = d?.defaults?.eVerify;
+      const eVerifyRequired = eVerify && typeof eVerify === 'object' ? !!eVerify.eVerifyRequired : false;
+      const hiringEntityId = d?.hiringEntityId ?? null;
+      setParentDefaults({ eVerifyRequired, hiringEntityId });
+    }).catch(() => {
+      if (!cancelled && isMountedRef.current) setParentDefaults(null);
+    });
+    return () => { cancelled = true; };
+  }, [tenantId, account?.parentAccountId]);
+
+  // Default pricing SUTA/FUTA state from first worksite when available
+  useEffect(() => {
+    if (worksiteDetails?.state && !pricingSutaFutaState) {
+      setPricingSutaFutaState(normalizeStateCode(worksiteDetails.state) || '');
+    }
+  }, [worksiteDetails?.state, pricingSutaFutaState]);
+
+  // Load first worksite details for Overview "Worksite Location" card
+  useEffect(() => {
+    const locs = account?.associations?.locations;
+    if (!tenantId || !locs?.length) {
+      setWorksiteDetails(null);
+      return;
+    }
+    const first = locs[0] as { companyId: string; locationId: string };
+    let cancelled = false;
+    setWorksiteDetailsLoading(true);
+    const locRef = doc(collection(db, p.accountLocations(tenantId, first.companyId)), first.locationId);
+    getDoc(locRef)
+      .then((snap) => {
+        if (cancelled || !isMountedRef.current) return;
+        if (snap.exists()) {
+          const d = snap.data();
+          setWorksiteDetails({
+            name: d?.name,
+            nickname: d?.nickname,
+            address: d?.address,
+            street: d?.street,
+            city: d?.city,
+            state: d?.state,
+            zipCode: d?.zipCode,
+            type: d?.type,
+          });
+        } else {
+          setWorksiteDetails(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled && isMountedRef.current) setWorksiteDetails(null);
+      })
+      .finally(() => {
+        if (isMountedRef.current) setWorksiteDetailsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, account?.associations?.locations]);
 
   const loadOptions = useCallback(async () => {
     if (!tenantId) return;
@@ -1126,6 +1409,7 @@ const RecruiterAccountDetails: React.FC = () => {
         dealsSnap,
         userGroupsSnap,
         savedSmartSnap,
+        entitiesSnap,
         usersSnap,
       ] = await Promise.all([
         getDocs(query(collection(db, 'tenants', tenantId, 'crm_companies'), orderBy('companyName', 'asc'))),
@@ -1135,6 +1419,7 @@ const RecruiterAccountDetails: React.FC = () => {
         getDocs(query(collection(db, 'tenants', tenantId, 'crm_deals'), orderBy('createdAt', 'desc'))),
         getDocs(collection(db, 'tenants', tenantId, 'userGroups')),
         getDocs(collection(db, 'tenants', tenantId, 'savedSmartGroups')),
+        getDocs(collection(db, p.entities(tenantId))),
         // Tenant-scoped: users with this tenant as active, or with this tenant at security 5–7 (so salespeople aren’t missed by a global limit)
         Promise.all([
           getDocs(query(collection(db, 'users'), where('activeTenantId', '==', tenantId))),
@@ -1164,6 +1449,19 @@ const RecruiterAccountDetails: React.FC = () => {
           const name = dta.name || d.id;
           return { id: d.id, label: name };
         })
+      );
+      setEntityOptions(
+        entitiesSnap.docs
+          .map((d) => {
+            const dta = d.data() as any;
+            return {
+              id: d.id,
+              name: dta.name || d.id,
+              entityCode: dta.entityCode || '',
+              workerType: dta.workerType || '',
+            };
+          })
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
       );
       setContacts(
         contactsSnap.docs.map((d) => {
@@ -1281,6 +1579,101 @@ const RecruiterAccountDetails: React.FC = () => {
     if (ids.length > 0) loadLocationsForCompanies(ids);
   }, [account?.associations?.companyIds, loadLocationsForCompanies]);
 
+  // Load first linked company's logo for account avatar
+  useEffect(() => {
+    const firstCompanyId = account?.associations?.companyIds?.[0];
+    if (!tenantId || !firstCompanyId) {
+      setAccountCompanyLogoUrl(null);
+      return;
+    }
+    let cancelled = false;
+    const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', firstCompanyId);
+    getDoc(companyRef).then((snap) => {
+      if (cancelled || !isMountedRef.current) return;
+      const logo = snap.exists() ? (snap.data() as any)?.logo ?? null : null;
+      setAccountCompanyLogoUrl(logo || null);
+    }).catch(() => {
+      if (!cancelled && isMountedRef.current) setAccountCompanyLogoUrl(null);
+    });
+    return () => { cancelled = true; };
+  }, [tenantId, account?.associations?.companyIds]);
+
+  // Load account file uploads
+  const loadAccountUploads = useCallback(async () => {
+    if (!tenantId || !accountId) return;
+    const uploadsRef = collection(db, p.recruiterAccountUploads(tenantId, accountId));
+    const q = query(uploadsRef, orderBy('createdAt', 'desc'));
+    const snap = await getDocs(q);
+    const list = snap.docs.map((d) => {
+      const data = d.data();
+      return {
+        id: d.id,
+        name: data.name || '—',
+        fileName: data.fileName || '—',
+        url: data.url || '',
+        storagePath: data.storagePath || '',
+        createdAt: data.createdAt,
+      };
+    });
+    if (isMountedRef.current) setAccountUploads(list);
+  }, [tenantId, accountId]);
+
+  useEffect(() => {
+    if (accountId && tenantId) loadAccountUploads();
+  }, [accountId, tenantId, loadAccountUploads]);
+
+  const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !tenantId || !accountId || !user?.uid) return;
+    const name = (uploadLabel || 'Document').trim();
+    setUploading(true);
+    try {
+      const uploadsRef = collection(db, p.recruiterAccountUploads(tenantId, accountId));
+      const newRef = doc(uploadsRef);
+      const uploadId = newRef.id;
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `tenants/${tenantId}/accounts/${accountId}/uploads/${uploadId}/${safeName}`;
+      const storageRef = ref(storage, storagePath);
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      await setDoc(newRef, {
+        name,
+        fileName: file.name,
+        storagePath,
+        url,
+        createdAt: serverTimestamp(),
+        createdBy: user.uid,
+      });
+      await loadAccountUploads();
+      setUploadLabel('');
+      setUploadFileKey((k) => k + 1);
+      if (uploadInputRef.current) uploadInputRef.current.value = '';
+    } catch (err) {
+      console.error('Account upload error:', err);
+      if (isMountedRef.current) {
+        const msg = (err as Error)?.message || 'Upload failed';
+        alert(msg);
+      }
+    } finally {
+      if (isMountedRef.current) setUploading(false);
+    }
+  };
+
+  const handleDeleteUpload = async (uploadId: string) => {
+    const row = accountUploads.find((u) => u.id === uploadId);
+    if (!row || !tenantId || !accountId) return;
+    setDeleteConfirmUploadId(null);
+    try {
+      const storageRef = ref(storage, row.storagePath);
+      await deleteObject(storageRef);
+      await deleteDoc(doc(db, p.recruiterAccountUpload(tenantId, accountId, uploadId)));
+      await loadAccountUploads();
+    } catch (err) {
+      console.error('Delete upload error:', err);
+      if (isMountedRef.current) alert((err as Error)?.message || 'Delete failed');
+    }
+  };
+
   const loadAccount = async () => {
     if (!accountId || !tenantId) return;
     if (!isMountedRef.current) return;
@@ -1297,12 +1690,52 @@ const RecruiterAccountDetails: React.FC = () => {
       }
       const data = snap.data();
       const assoc = data?.associations;
+      let parentAccountId = data?.parentAccountId ?? null;
+
+      // Keep parent-child bidirectional: if another account lists this one as a child, we should show them as parent
+      try {
+        const accountsRef = collection(db, p.recruiterAccounts(tenantId));
+        const parentQuery = query(
+          accountsRef,
+          where('childAccountIds', 'array-contains', accountId)
+        );
+        const parentSnap = await getDocs(parentQuery);
+        if (!parentSnap.empty && parentSnap.docs.length === 1) {
+          const parentId = parentSnap.docs[0].id;
+          if (parentAccountId !== parentId) {
+            await updateDoc(ref, {
+              parentAccountId: parentId,
+              updatedAt: serverTimestamp(),
+              updatedBy: user?.uid ?? null,
+            });
+            parentAccountId = parentId;
+          }
+        }
+      } catch (syncErr) {
+        console.warn('RecruiterAccountDetails: parent sync on load', syncErr);
+      }
+
+      if (!isMountedRef.current) return;
+      const rawAccountType = data?.accountType ?? null;
+      const childAccountIdsArr = Array.isArray(data?.childAccountIds) ? data.childAccountIds : [];
+      const derivedAccountType =
+        rawAccountType != null && rawAccountType !== ''
+          ? rawAccountType
+          : parentAccountId
+            ? ('child' as const)
+            : childAccountIdsArr.length > 0
+              ? ('national' as const)
+              : ('standalone' as const);
+
+      const qb = data?.integrations?.quickbooks;
       setAccount({
         id: snap.id,
         name: data?.name ?? '',
         active: data?.active !== false,
-        parentAccountId: data?.parentAccountId ?? null,
-        childAccountIds: Array.isArray(data?.childAccountIds) ? data.childAccountIds : [],
+        accountType: derivedAccountType,
+        hiringEntityId: data?.hiringEntityId ?? null,
+        parentAccountId,
+        childAccountIds: childAccountIdsArr,
         createdAt: data?.createdAt,
         updatedAt: data?.updatedAt,
         createdBy: data?.createdBy,
@@ -1320,7 +1753,51 @@ const RecruiterAccountDetails: React.FC = () => {
               recruiterIds: assoc.recruiterIds ?? [],
             }
           : undefined,
+        integrations: qb != null ? { quickbooks: qb } : undefined,
       });
+
+      const d = data?.defaults;
+      if (d && typeof d === 'object') {
+        const r = d.rules;
+        if (r && typeof r === 'object') {
+          setDefaultRules({
+            replacingExistingAgency: !!r.replacingExistingAgency,
+            rolloverExistingStaff: !!r.rolloverExistingStaff,
+            timeclockSystem: r.timeclockSystem ?? '',
+            attendancePolicy: r.attendancePolicy ?? '',
+            noShowPolicy: r.noShowPolicy ?? '',
+            overtimePolicy: r.overtimePolicy ?? '',
+            callOffPolicy: r.callOffPolicy ?? '',
+            injuryHandlingPolicy: r.injuryHandlingPolicy ?? '',
+            disciplinePolicy: r.disciplinePolicy ?? '',
+          });
+        }
+        const b = d.billing;
+        if (b && typeof b === 'object') {
+          setDefaultBilling({
+            poRequired: !!b.poRequired,
+            paymentTerms: b.paymentTerms ?? '',
+            invoiceDeliveryMethod: b.invoiceDeliveryMethod ?? '',
+            invoiceFrequency: b.invoiceFrequency ?? '',
+            sendInvoicesTo: Array.isArray(b.sendInvoicesTo) ? b.sendInvoicesTo : [],
+            billingNotes: b.billingNotes ?? '',
+          });
+        }
+        const e = d.eVerify;
+        if (e && typeof e === 'object') {
+          setDefaultEVerify({ eVerifyRequired: !!e.eVerifyRequired });
+        }
+      }
+      const pr = data?.pricing;
+      if (pr && typeof pr === 'object') {
+        setPricingSubAccountsManageOwn(!!pr.subAccountsManageOwnPricing);
+        setPricingFlatMarkupPercent(pr.flatMarkupPercent != null && pr.flatMarkupPercent !== '' ? Number(pr.flatMarkupPercent) : '');
+        setPricingPositions(Array.isArray(pr.positions) ? pr.positions.map((p: any) => ({ ...p, id: p.id || `pos-${Math.random().toString(36).slice(2)}` })) : []);
+      } else {
+        setPricingSubAccountsManageOwn(false);
+        setPricingFlatMarkupPercent('');
+        setPricingPositions([]);
+      }
     } catch (err) {
       if (!isMountedRef.current) return;
       console.error('RecruiterAccountDetails: load error', err);
@@ -1331,9 +1808,396 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
+  const fetchAccountJobOrders = useCallback(async () => {
+    if (!tenantId || !account?.associations?.companyIds?.length) {
+      setAccountJobOrders([]);
+      return;
+    }
+    const companyIds = new Set(account.associations.companyIds);
+    setAccountJobOrdersLoading(true);
+    setAccountJobOrdersError(null);
+    try {
+      const baseRef = collection(db, p.jobOrders(tenantId));
+      const q = query(baseRef, orderBy('createdAt', 'desc'), limit(500));
+      const snap = await getDocs(q);
+      const docsToMap = snap.docs.filter((d) => {
+        const data = d.data();
+        const companyId = (data as any).companyId || (data as any).deal?.companyId;
+        return companyId && companyIds.has(companyId);
+      });
+      const newJobOrders: JobOrderWithDetails[] = await Promise.all(
+        docsToMap.map(async (jobOrderDoc) => {
+          const data = jobOrderDoc.data() as JobOrder;
+          const flatCompanyId = (data as any).companyId || (data as any).deal?.companyId;
+          const derivedJobTitle =
+            (data as any).jobTitle ||
+            (Array.isArray((data as any).gigPositions) && (data as any).gigPositions[0]?.jobTitle) ||
+            undefined;
+          let companyName = 'Unknown Company';
+          if (flatCompanyId) {
+            try {
+              const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId);
+              const companySnap = await getDoc(companyRef);
+              if (companySnap.exists()) {
+                const companyData = companySnap.data() as any;
+                companyName = companyData.companyName || companyData.name || 'Unknown Company';
+              }
+            } catch (_) {}
+          }
+          let locationName = 'No Location';
+          const flatWorksiteId = (data as any).worksiteId || (data as any).deal?.locationId;
+          const flatWorksiteName = (data as any).worksiteName || (data as any).deal?.locationName;
+          if (flatWorksiteName) {
+            locationName = flatWorksiteName;
+          } else if (flatWorksiteId && flatCompanyId) {
+            try {
+              const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', flatCompanyId, 'locations', flatWorksiteId);
+              const locationSnap = await getDoc(locationRef);
+              if (locationSnap.exists()) {
+                const locationData = locationSnap.data() as any;
+                locationName = locationData.nickname || locationData.name || 'Unknown Location';
+              }
+            } catch (_) {}
+          }
+          let recruiterName = 'Unassigned';
+          const assignedRecruiters = (data as any).assignedRecruiters || [];
+          if (Array.isArray(assignedRecruiters) && assignedRecruiters.length > 0) {
+            try {
+              const recruiterRef = doc(db, 'users', assignedRecruiters[0]);
+              const recruiterSnap = await getDoc(recruiterRef);
+              if (recruiterSnap.exists()) {
+                const recruiterData = recruiterSnap.data();
+                recruiterName = `${recruiterData.firstName || ''} ${recruiterData.lastName || ''}`.trim() || recruiterData.displayName || assignedRecruiters[0];
+                if (assignedRecruiters.length > 1) recruiterName += ` (+${assignedRecruiters.length - 1})`;
+              }
+            } catch (_) {
+              recruiterName = assignedRecruiters.length > 1 ? `${assignedRecruiters.length} recruiters` : 'Unassigned';
+            }
+          }
+          return {
+            ...data,
+            id: jobOrderDoc.id,
+            companyName,
+            locationName,
+            jobTitle: derivedJobTitle,
+            recruiterName,
+            workersNeeded: (data as any).workersNeeded ?? (data as any).openings ?? 0,
+            headcountFilled: (data as any).headcountFilled ?? (data as any).remainingOpenings ?? 0,
+          };
+        })
+      );
+      if (!isMountedRef.current) return;
+      setAccountJobOrders(newJobOrders);
+    } catch (err) {
+      if (!isMountedRef.current) return;
+      const errMsg = (err as Error)?.message || 'Failed to load job orders';
+      setAccountJobOrdersError(errMsg);
+      setAccountJobOrders([]);
+    } finally {
+      if (isMountedRef.current) setAccountJobOrdersLoading(false);
+    }
+  }, [tenantId, account?.associations?.companyIds]);
+
+  useEffect(() => {
+    if (tabValue === 5 && account?.associations?.companyIds?.length) {
+      fetchAccountJobOrders();
+    } else if (tabValue === 5 && !account?.associations?.companyIds?.length) {
+      setAccountJobOrders([]);
+      setAccountJobOrdersError(null);
+    }
+  }, [tabValue, account?.associations?.companyIds, fetchAccountJobOrders]);
+
+  const fetchAccountJobPosts = useCallback(async () => {
+    if (!tenantId || !account?.associations?.companyIds?.length) {
+      setAccountJobPosts([]);
+      return;
+    }
+    const companyIds = new Set(account.associations.companyIds);
+    setAccountJobPostsLoading(true);
+    try {
+      const jobsBoardService = JobsBoardService.getInstance();
+      const allPosts = await jobsBoardService.getAllPosts(tenantId);
+      const filtered = allPosts.filter((post) => post.companyId && companyIds.has(post.companyId));
+      if (!isMountedRef.current) return;
+      setAccountJobPosts(filtered);
+    } catch (err) {
+      if (isMountedRef.current) {
+        console.error('Account job posts load error:', err);
+        setAccountJobPosts([]);
+      }
+    } finally {
+      if (isMountedRef.current) setAccountJobPostsLoading(false);
+    }
+  }, [tenantId, account?.associations?.companyIds]);
+
+  useEffect(() => {
+    if (tabValue === 5 && account?.associations?.companyIds?.length) {
+      fetchAccountJobPosts();
+    } else if (tabValue === 5 && !account?.associations?.companyIds?.length) {
+      setAccountJobPosts([]);
+    }
+  }, [tabValue, account?.associations?.companyIds, fetchAccountJobPosts]);
+
+  const fetchAccountLocations = useCallback(async () => {
+    if (!tenantId || !account?.associations?.companyIds?.length) {
+      setAccountLocationsList([]);
+      return;
+    }
+    setAccountLocationsLoading(true);
+    try {
+      const companyIds = account.associations.companyIds;
+      const companyNames = new Map(companies.map((c) => [c.id, c.label ?? c.id]));
+      const all: AccountLocationRow[] = [];
+      for (const companyId of companyIds) {
+        const locRef = collection(db, p.accountLocations(tenantId, companyId));
+        const q = query(locRef, orderBy('createdAt', 'desc'));
+        const snapshot = await getDocs(q);
+        const companyName = companyNames.get(companyId) ?? '—';
+        snapshot.docs.forEach((d) => {
+          const data = d.data();
+          all.push({
+            id: d.id,
+            name: data.name,
+            nickname: data.nickname,
+            code: data.code,
+            address: data.address,
+            street: data.street,
+            city: data.city,
+            state: data.state,
+            zipCode: data.zipCode,
+            type: data.type,
+            division: data.division,
+            contactCount: data.contactCount ?? 0,
+            dealCount: data.dealCount ?? 0,
+            companyId,
+            companyName,
+          });
+        });
+      }
+      if (isMountedRef.current) setAccountLocationsList(all);
+    } catch (err) {
+      if (isMountedRef.current) {
+        console.error('Account locations load error:', err);
+        setAccountLocationsList([]);
+      }
+    } finally {
+      if (isMountedRef.current) setAccountLocationsLoading(false);
+    }
+  }, [tenantId, account?.associations?.companyIds, companies]);
+
+  // Only fetch full company locations for national/standalone accounts; child accounts show only their worksites
+  useEffect(() => {
+    if (tabValue === 2 && !isChildAccount && account?.associations?.companyIds?.length) {
+      fetchAccountLocations();
+    } else if (tabValue === 2 && (isChildAccount || !account?.associations?.companyIds?.length)) {
+      setAccountLocationsList([]);
+    }
+  }, [tabValue, isChildAccount, account?.associations?.companyIds, fetchAccountLocations]);
+
+  // Child accounts don't have a Locations tab; redirect to Overview if that tab is selected
+  useEffect(() => {
+    if (isChildAccount && tabValue === 2) {
+      setAccountTab(0);
+    }
+  }, [isChildAccount, tabValue, setAccountTab]);
+
+  // Invoicing tab is available to security levels 5, 6, 7; redirect others to Overview
+  useEffect(() => {
+    if (tabValue === 9 && !canAccessInvoicing) {
+      setAccountTab(0);
+    }
+  }, [tabValue, canAccessInvoicing, setAccountTab]);
+
+  const fetchChildAccounts = useCallback(async () => {
+    if (!tenantId || !account?.id) {
+      setChildAccountsList([]);
+      return;
+    }
+    setChildAccountsLoading(true);
+    try {
+      const ref = collection(db, p.recruiterAccounts(tenantId));
+      const q = query(ref, where('parentAccountId', '==', account.id), orderBy('name', 'asc'));
+      const snap = await getDocs(q);
+      const list: ChildAccountRow[] = snap.docs.map((d) => {
+        const data = d.data();
+        const defaults = data.defaults;
+        const eVerify = defaults?.eVerify && typeof defaults.eVerify === 'object' ? defaults.eVerify : null;
+        return {
+          id: d.id,
+          name: data.name ?? '',
+          active: data.active !== false,
+          accountType: data.accountType ?? null,
+          hiringEntityId: data.hiringEntityId ?? null,
+          eVerifyRequired: eVerify ? !!eVerify.eVerifyRequired : false,
+        };
+      });
+      if (isMountedRef.current) setChildAccountsList(list);
+    } catch (err) {
+      if (isMountedRef.current) {
+        console.error('Child accounts load error:', err);
+        setChildAccountsList([]);
+      }
+    } finally {
+      if (isMountedRef.current) setChildAccountsLoading(false);
+    }
+  }, [tenantId, account?.id]);
+
+  useEffect(() => {
+    if (tabValue === 2 && account?.id) {
+      fetchChildAccounts();
+    } else if (tabValue === 2 && !account?.id) {
+      setChildAccountsList([]);
+    }
+  }, [tabValue, account?.id, fetchChildAccounts]);
+
+  const filteredChildAccounts = useMemo(() => {
+    const q = (childrenSearchQuery || '').trim().toLowerCase();
+    if (!q) return childAccountsList;
+    return childAccountsList.filter((a) => (a.name || '').toLowerCase().includes(q));
+  }, [childAccountsList, childrenSearchQuery]);
+
+  const filteredAccountLocations = useMemo(() => {
+    const q = (locationsSearchQuery || '').trim().toLowerCase();
+    if (!q) return accountLocationsList;
+    return accountLocationsList.filter(
+      (loc) =>
+        (loc.name ?? '').toLowerCase().includes(q) ||
+        (loc.nickname ?? '').toLowerCase().includes(q) ||
+        (loc.code ?? '').toLowerCase().includes(q) ||
+        (loc.city ?? '').toLowerCase().includes(q) ||
+        (loc.state ?? '').toLowerCase().includes(q)
+    );
+  }, [accountLocationsList, locationsSearchQuery]);
+
+  const paginatedAccountJobPosts = useMemo(() => {
+    const start = jobPostsPage * jobPostsRowsPerPage;
+    return accountJobPosts.slice(start, start + jobPostsRowsPerPage);
+  }, [accountJobPosts, jobPostsPage, jobPostsRowsPerPage]);
+
+  const uniqueAccountJobOrderCompanies = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          accountJobOrders.map((jo) => jo.companyName).filter((name): name is string => !!name)
+        )
+      ).sort(),
+    [accountJobOrders]
+  );
+
+  const filteredAccountJobOrders = useMemo(() => {
+    let list = accountJobOrders;
+    if (jobOrdersSearch) {
+      const q = jobOrdersSearch.toLowerCase();
+      list = list.filter(
+        (jo) =>
+          (jo.jobOrderName && jo.jobOrderName.toLowerCase().includes(q)) ||
+          (jo.companyName && jo.companyName.toLowerCase().includes(q)) ||
+          (jo.locationName && jo.locationName.toLowerCase().includes(q)) ||
+          (jo.jobTitle && jo.jobTitle.toLowerCase().includes(q))
+      );
+    }
+    if (jobOrdersShowFavoritesOnly) {
+      list = list.filter((jo) => isJobOrderFavorite(jo.id));
+    }
+    if (jobOrdersStatusFilter) {
+      list = list.filter((jo) => jo.status?.toLowerCase() === jobOrdersStatusFilter.toLowerCase());
+    }
+    if (jobOrdersCompanyFilter !== 'all') {
+      list = list.filter((jo) => jo.companyName === jobOrdersCompanyFilter);
+    }
+    const dir = jobOrdersSortDirection === 'asc' ? 1 : -1;
+    list = [...list].sort((a, b) => {
+      if (jobOrdersSortField === 'jobOrderNumber') {
+        const aNum = Number((a as any).jobOrderNumber) || 0;
+        const bNum = Number((b as any).jobOrderNumber) || 0;
+        return dir * (aNum - bNum);
+      }
+      if (jobOrdersSortField === 'recruiterName') {
+        const na = (a.recruiterName || 'Unassigned').toLowerCase();
+        const nb = (b.recruiterName || 'Unassigned').toLowerCase();
+        return dir * na.localeCompare(nb);
+      }
+      if (jobOrdersSortField === 'createdAt') {
+        const aTime = (a as any).createdAt?.toDate?.()?.getTime?.() ?? (typeof (a as any).createdAt === 'number' ? (a as any).createdAt : 0);
+        const bTime = (b as any).createdAt?.toDate?.()?.getTime?.() ?? (typeof (b as any).createdAt === 'number' ? (b as any).createdAt : 0);
+        return dir * (aTime - bTime);
+      }
+      return 0;
+    });
+    return list;
+  }, [
+    accountJobOrders,
+    jobOrdersSearch,
+    jobOrdersShowFavoritesOnly,
+    jobOrdersStatusFilter,
+    jobOrdersCompanyFilter,
+    jobOrdersSortField,
+    jobOrdersSortDirection,
+    isJobOrderFavorite,
+  ]);
+
+  const paginatedAccountJobOrders = useMemo(() => {
+    const start = jobOrdersPage * jobOrdersRowsPerPage;
+    return filteredAccountJobOrders.slice(start, start + jobOrdersRowsPerPage);
+  }, [filteredAccountJobOrders, jobOrdersPage, jobOrdersRowsPerPage]);
+
+  const getJobOrderStatusColor = (status: string) => {
+    const s = status?.toLowerCase();
+    if (s === 'open') return 'success';
+    if (s === 'on-hold' || s === 'on hold' || s === 'onhold') return 'warning';
+    if (s === 'cancelled' || s === 'canceled') return 'error';
+    if (s === 'filled' || s === 'closed') return 'info';
+    if (s === 'completed' || s === 'finished') return 'default';
+    if (s === 'pending' || s === 'draft') return 'secondary';
+    return 'default';
+  };
+
+  const formatJobOrderNumber = (num: number) => String(num).padStart(4, '0');
+
   const updateAccountAssociations = async (partial: Partial<RecruiterAccountAssociations>) => {
     if (!accountId || !tenantId || !account) return;
-    const next = { ...account.associations, ...partial };
+    const next = { ...account.associations, ...partial } as RecruiterAccountAssociations;
+
+    // When removing companies: reassign any worksite refs from removed companies to the same-named location under a remaining company (e.g. Legends after acquisition).
+    if (partial.companyIds && Array.isArray(partial.companyIds)) {
+      const prevCompanyIds = account.associations?.companyIds ?? [];
+      const removedCompanyIds = new Set(prevCompanyIds.filter((id) => !partial.companyIds!.includes(id)));
+      const remainingCompanyIds = partial.companyIds;
+      const currentLocations = (next.locations ?? account.associations?.locations ?? []) as AccountLocationRef[];
+
+      if (removedCompanyIds.size > 0 && currentLocations.length > 0) {
+        const reassigned: AccountLocationRef[] = [];
+        const seen = new Set<string>();
+        for (const loc of currentLocations) {
+          if (!removedCompanyIds.has(loc.companyId)) {
+            const key = `${loc.companyId}:${loc.locationId}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              reassigned.push(loc);
+            }
+            continue;
+          }
+          const opts = locationsByCompany[loc.companyId] ?? [];
+          const opt = opts.find((o) => o.locationId === loc.locationId);
+          const name = (opt?.label ?? '').trim().toLowerCase();
+          if (!name) continue;
+          for (const cid of remainingCompanyIds) {
+            const candidateOpts = locationsByCompany[cid] ?? [];
+            const match = candidateOpts.find((o) => (o.label ?? '').trim().toLowerCase() === name);
+            if (match) {
+              const key = `${cid}:${match.locationId}`;
+              if (!seen.has(key)) {
+                seen.add(key);
+                reassigned.push({ companyId: cid, locationId: match.locationId });
+              }
+              break;
+            }
+          }
+        }
+        next.locations = reassigned;
+      }
+    }
+
     setSaving(true);
     try {
       const ref = doc(db, p.recruiterAccount(tenantId, accountId));
@@ -1365,6 +2229,60 @@ const RecruiterAccountDetails: React.FC = () => {
       console.error('RecruiterAccountDetails: update error', err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveAccountDefaults = async () => {
+    if (!accountId || !tenantId) return;
+    setDefaultsSaving(true);
+    try {
+      const ref = doc(db, p.recruiterAccount(tenantId, accountId));
+      await setDoc(ref, {
+        defaults: {
+          rules: { ...defaultRules },
+          eVerify: { ...defaultEVerify },
+          billing: { ...defaultBilling },
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid ?? null,
+      }, { merge: true });
+    } catch (err) {
+      console.error('RecruiterAccountDetails: save defaults error', err);
+    } finally {
+      setDefaultsSaving(false);
+    }
+  };
+
+  const savePricing = async () => {
+    if (!accountId || !tenantId) return;
+    setPricingSaving(true);
+    try {
+      const ref = doc(db, p.recruiterAccount(tenantId, accountId));
+      await updateDoc(ref, {
+        pricing: {
+          subAccountsManageOwnPricing: pricingSubAccountsManageOwn,
+          flatMarkupPercent: pricingFlatMarkupPercent === '' ? null : Number(pricingFlatMarkupPercent),
+          positions: pricingPositions.map(({ id, ...p }) => p),
+        },
+        updatedAt: serverTimestamp(),
+        updatedBy: user?.uid ?? null,
+      });
+      setAccount((prev) =>
+        prev
+          ? {
+              ...prev,
+              pricing: {
+                subAccountsManageOwnPricing: pricingSubAccountsManageOwn,
+                flatMarkupPercent: pricingFlatMarkupPercent === '' ? null : Number(pricingFlatMarkupPercent),
+                positions: pricingPositions,
+              },
+            }
+          : null
+      );
+    } catch (err) {
+      console.error('RecruiterAccountDetails: save pricing error', err);
+    } finally {
+      setPricingSaving(false);
     }
   };
 
@@ -1460,6 +2378,34 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
+  // Labor Pool tab: combined rows (must be before early returns to satisfy rules of hooks)
+  const laborPoolTableRows = useMemo(() => {
+    const assoc = account?.associations ?? {};
+    const uids = assoc.userGroupIds ?? [];
+    const sids = assoc.savedSmartGroupIds ?? [];
+    const jobOrderIds = assoc.jobOrderIds ?? [];
+    const associatedJobOrders = jobOrderIds
+      .map((id) => jobOrders.find((j) => j.id === id))
+      .filter(Boolean) as JobOrderOption[];
+    const groupRows: Array<{ kind: 'userGroup' | 'savedSmartGroup'; id: string; label: string; href: string }> = [
+      ...uids.map((id) => {
+        const o = laborPoolOptions.find((x) => x.type === 'userGroup' && x.id === id);
+        return { kind: 'userGroup' as const, id, label: o?.label ?? id, href: `/usergroups/${id}` };
+      }),
+      ...sids.map((id) => {
+        const o = laborPoolOptions.find((x) => x.type === 'savedSmartGroup' && x.id === id);
+        return { kind: 'savedSmartGroup' as const, id, label: o?.label ?? id, href: `/users/my-smart-groups/${id}` };
+      }),
+    ];
+    const applicantRows: Array<{ kind: 'jobOrderApplicants'; id: string; label: string; href: string }> = associatedJobOrders.map((j) => ({
+      kind: 'jobOrderApplicants' as const,
+      id: j.id,
+      label: `Applicants: ${j.label}`,
+      href: `/jobs/job-orders/${j.id}?tab=applications`,
+    }));
+    return [...groupRows, ...applicantRows];
+  }, [account?.associations, laborPoolOptions, jobOrders]);
+
   if (loading && !account) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 320, p: 3 }}>
@@ -1521,6 +2467,15 @@ const RecruiterAccountDetails: React.FC = () => {
   const childAccounts = (account.childAccountIds || [])
     .map((id) => accountOptions.find((a) => a.id === id))
     .filter(Boolean) as AccountOption[];
+  const showChildrenTab =
+    (account?.childAccountIds?.length ?? 0) > 0 || hasAnyAccountWithThisAsParent;
+  const billingEntityName = account.hiringEntityId
+    ? entityOptions.find((e) => e.id === account.hiringEntityId)?.name
+    : null;
+  // On Account Details card: show parent's E-Verify + Hiring Entity when this is a child and parent has them
+  const displayEVerify = isChildAccount && parentDefaults ? parentDefaults.eVerifyRequired : defaultEVerify.eVerifyRequired;
+  const displayHiringEntityId = isChildAccount && parentDefaults != null ? parentDefaults.hiringEntityId : (account.hiringEntityId ?? null);
+  const displayHiringEntityName = displayHiringEntityId ? (entityOptions.find((e) => e.id === displayHiringEntityId)?.name ?? '—') : '—';
 
   const hasHeaderAssociations =
     associatedCompanies.length > 0 ||
@@ -1596,10 +2551,11 @@ const RecruiterAccountDetails: React.FC = () => {
         title={
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
             <Avatar
+              src={accountCompanyLogoUrl || undefined}
               sx={{
                 width: 108,
                 height: 108,
-                bgcolor: 'primary.main',
+                bgcolor: accountCompanyLogoUrl ? 'transparent' : 'primary.main',
                 fontSize: '40px',
                 fontWeight: 700,
                 flexShrink: 0,
@@ -1634,6 +2590,27 @@ const RecruiterAccountDetails: React.FC = () => {
                     />
                   )}
                 </Box>
+                {tabValue === 5 && (
+                  <Button
+                    variant="contained"
+                    startIcon={<AddIcon />}
+                    onClick={() => navigate('/jobs/job-orders/new')}
+                    sx={{
+                      textTransform: 'none',
+                      borderRadius: '24px',
+                      height: '40px',
+                      px: 2.5,
+                      whiteSpace: 'nowrap',
+                      flexShrink: 0,
+                      fontWeight: 500,
+                      fontSize: '14px',
+                      bgcolor: '#0057B8',
+                      '&:hover': { bgcolor: '#004a9f' },
+                    }}
+                  >
+                    New Order
+                  </Button>
+                )}
                 <Button
                   variant="outlined"
                   startIcon={<ArrowBackIcon />}
@@ -1658,6 +2635,11 @@ const RecruiterAccountDetails: React.FC = () => {
                   variant={account.active ? 'filled' : 'outlined'}
                   sx={{ fontWeight: 500 }}
                 />
+                {billingEntityName && (
+                  <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                    Hiring Entity: {billingEntityName}
+                  </Typography>
+                )}
               </Box>
               {hasHeaderAssociations && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mt: 1, flexWrap: 'wrap' }}>
@@ -1712,7 +2694,7 @@ const RecruiterAccountDetails: React.FC = () => {
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'nowrap', minWidth: 'max-content' }}>
               <Button
                 variant={tabValue === 0 ? 'contained' : 'text'}
-                onClick={() => setTabValue(0)}
+                onClick={() => setAccountTab(0)}
                 startIcon={<BusinessIcon fontSize="small" />}
                 sx={{
                   borderRadius: '18px',
@@ -1726,12 +2708,12 @@ const RecruiterAccountDetails: React.FC = () => {
                     : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
-                Company Details
+                Overview
               </Button>
               <Button
                 variant={tabValue === 1 ? 'contained' : 'text'}
-                onClick={() => setTabValue(1)}
-                startIcon={<AttachMoneyIcon fontSize="small" />}
+                onClick={() => setAccountTab(1)}
+                startIcon={<CalendarIcon fontSize="small" />}
                 sx={{
                   borderRadius: '18px',
                   textTransform: 'none',
@@ -1744,48 +2726,52 @@ const RecruiterAccountDetails: React.FC = () => {
                     : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
-                Pricing
+                Calendar
               </Button>
-              <Button
-                variant={tabValue === 2 ? 'contained' : 'text'}
-                onClick={() => setTabValue(2)}
-                startIcon={<WorkIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 2
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
-              >
-                Job Orders
-              </Button>
-              <Button
-                variant={tabValue === 3 ? 'contained' : 'text'}
-                onClick={() => setTabValue(3)}
-                startIcon={<BadgeIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 3
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
-              >
-                Jobs Board
-              </Button>
+              {!isChildAccount && (
+                <Button
+                  variant={tabValue === 2 ? 'contained' : 'text'}
+                  onClick={() => setAccountTab(2)}
+                  startIcon={<LocationOnIcon fontSize="small" />}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(tabValue === 2
+                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                  }}
+                >
+                  Locations
+                </Button>
+              )}
+              {showChildrenTab && (
+                <Button
+                  variant={tabValue === 3 ? 'contained' : 'text'}
+                  onClick={() => setAccountTab(3)}
+                  startIcon={<AccountTreeIcon fontSize="small" />}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(tabValue === 3
+                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                  }}
+                >
+                  Children
+                </Button>
+              )}
               <Button
                 variant={tabValue === 4 ? 'contained' : 'text'}
-                onClick={() => setTabValue(4)}
-                startIcon={<GroupWorkIcon fontSize="small" />}
+                onClick={() => setAccountTab(4)}
+                startIcon={<AttachMoneyIcon fontSize="small" />}
                 sx={{
                   borderRadius: '18px',
                   textTransform: 'none',
@@ -1798,12 +2784,12 @@ const RecruiterAccountDetails: React.FC = () => {
                     : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
-                Labor Pool
+                Pricing
               </Button>
               <Button
                 variant={tabValue === 5 ? 'contained' : 'text'}
-                onClick={() => setTabValue(5)}
-                startIcon={<DashboardIcon fontSize="small" />}
+                onClick={() => setAccountTab(5)}
+                startIcon={<WorkIcon fontSize="small" />}
                 sx={{
                   borderRadius: '18px',
                   textTransform: 'none',
@@ -1816,15 +2802,147 @@ const RecruiterAccountDetails: React.FC = () => {
                     : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
                 }}
               >
+                Job Orders
+              </Button>
+              <Button
+                variant={tabValue === 6 ? 'contained' : 'text'}
+                onClick={() => setAccountTab(6)}
+                startIcon={<BadgeIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 6
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Jobs Board
+              </Button>
+              <Button
+                variant={tabValue === 7 ? 'contained' : 'text'}
+                onClick={() => setAccountTab(7)}
+                startIcon={<GroupWorkIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 7
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Labor Pool
+              </Button>
+              <Button
+                variant={tabValue === 8 ? 'contained' : 'text'}
+                onClick={() => setAccountTab(8)}
+                startIcon={<SettingsIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 8
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Settings
+              </Button>
+              {canAccessInvoicing && (
+                <Button
+                  variant={tabValue === 9 ? 'contained' : 'text'}
+                  onClick={() => setAccountTab(9)}
+                  startIcon={<ReceiptIcon fontSize="small" />}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(tabValue === 9
+                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                  }}
+                >
+                  Invoicing
+                </Button>
+              )}
+              <Button
+                variant={tabValue === 10 ? 'contained' : 'text'}
+                onClick={() => setAccountTab(10)}
+                startIcon={<DescriptionIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 10
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Order Defaults
+              </Button>
+              <Button
+                variant={tabValue === 11 ? 'contained' : 'text'}
+                onClick={() => setAccountTab(11)}
+                startIcon={<DashboardIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 11
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
                 Activity
               </Button>
             </Box>
           </Box>
         }
+        rightActions={
+          tabValue === 5 ? (
+            <Stack direction="row" alignItems="center" spacing={1.5} flexWrap="nowrap" sx={{ minWidth: 0 }}>
+              <FavoritesFilter
+                favoriteType="jobOrders"
+                showFavoritesOnly={jobOrdersShowFavoritesOnly}
+                onToggle={setJobOrdersShowFavoritesOnly}
+                showText={false}
+                size="small"
+                sx={{ flexShrink: 0, minWidth: 36, width: 36, height: 36, borderRadius: '50%' }}
+              />
+              <Box sx={{ minWidth: 0, flex: '1 1 200px', maxWidth: 420 }}>
+                <InboxSearchBar
+                  value={jobOrdersSearch}
+                  onChange={setJobOrdersSearch}
+                  onSearch={setJobOrdersSearch}
+                  placeholder="Search job orders..."
+                />
+              </Box>
+            </Stack>
+          ) : undefined
+        }
         showDivider={false}
       />
 
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
+      <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pt: 2, pb: 2 }}>
         <TabPanel value={tabValue} index={0}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
@@ -1856,6 +2974,35 @@ const RecruiterAccountDetails: React.FC = () => {
                         fullWidth
                         autoFocus
                       />
+                      <FormControl fullWidth size="small">
+                        <InputLabel>Account type</InputLabel>
+                        <Select
+                          label="Account type"
+                          value={account.accountType ?? 'standalone'}
+                          onChange={(e) => updateAccountField('accountType', e.target.value || null)}
+                          disabled={saving}
+                        >
+                          <MenuItem value="standalone">Standalone</MenuItem>
+                          <MenuItem value="national">National account</MenuItem>
+                          <MenuItem value="child">Child account (of a national)</MenuItem>
+                        </Select>
+                      </FormControl>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          E-Verify:
+                        </Typography>
+                        <Typography variant="body2">
+                          {displayEVerify ? 'Yes' : 'No'}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          Hiring Entity:
+                        </Typography>
+                        <Typography variant="body2">
+                          {displayHiringEntityName}
+                        </Typography>
+                      </Box>
                       <FormControlLabel
                         control={
                           <Switch
@@ -1877,6 +3024,34 @@ const RecruiterAccountDetails: React.FC = () => {
                       </Box>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <Typography variant="body2" color="text.secondary">
+                          Account type:
+                        </Typography>
+                        <Typography variant="body2">
+                          {account.accountType === 'national'
+                            ? 'National account'
+                            : account.accountType === 'child'
+                              ? 'Child account'
+                              : 'Standalone'}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          E-Verify:
+                        </Typography>
+                        <Typography variant="body2">
+                          {displayEVerify ? 'Yes' : 'No'}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          Hiring Entity:
+                        </Typography>
+                        <Typography variant="body2">
+                          {displayHiringEntityName}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Typography variant="body2" color="text.secondary">
                           Status:
                         </Typography>
                         <Chip
@@ -1893,6 +3068,161 @@ const RecruiterAccountDetails: React.FC = () => {
                       )}
                     </Box>
                   )}
+                </CardContent>
+              </Card>
+
+              {/* Worksite Location card - when account has a worksite linked */}
+              {worksiteDetailsLoading ? (
+                <Card sx={{ mt: 3 }}>
+                  <CardContent sx={{ py: 3 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                      <CircularProgress size={24} />
+                    </Box>
+                  </CardContent>
+                </Card>
+              ) : worksiteDetails ? (
+                <Card sx={{ mt: 3 }}>
+                  <CardHeader
+                    title="Worksite Location"
+                    titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
+                  />
+                  <CardContent sx={{ pt: 0, p: 2 }}>
+                    <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      Location Information
+                    </Typography>
+                    <Grid container spacing={2}>
+                      {(worksiteDetails.name || worksiteDetails.nickname) && (
+                        <Grid item xs={12}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <LocationOnIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Location Name
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                {worksiteDetails.name || worksiteDetails.nickname}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                      {(worksiteDetails.address || worksiteDetails.street || worksiteDetails.city || worksiteDetails.state || worksiteDetails.zipCode) && (
+                        <Grid item xs={12}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <LocationOnIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Address
+                              </Typography>
+                              <Typography variant="body2" sx={{ mt: 0.25 }}>
+                                {[worksiteDetails.address || worksiteDetails.street, worksiteDetails.city, worksiteDetails.state, worksiteDetails.zipCode]
+                                  .filter(Boolean)
+                                  .join(', ') || '—'}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                      {worksiteDetails.type && (
+                        <Grid item xs={12} sm={6}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                            <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                Type
+                              </Typography>
+                              <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                {worksiteDetails.type}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </CardContent>
+                </Card>
+              ) : null}
+
+              {/* File uploads card */}
+              <Card sx={{ mt: 3 }}>
+                <CardHeader
+                  title="File uploads"
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
+                />
+                <CardContent sx={{ pt: 0 }}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 2 }}>
+                      <TextField
+                        size="small"
+                        label="Name"
+                        placeholder="e.g. Contract"
+                        value={uploadLabel}
+                        onChange={(e) => setUploadLabel(e.target.value)}
+                        sx={{ minWidth: 180 }}
+                      />
+                      <input
+                        key={uploadFileKey}
+                        ref={uploadInputRef}
+                        type="file"
+                        accept="*/*"
+                        style={{ display: 'none' }}
+                        onChange={handleUploadFile}
+                      />
+                      <Button
+                        variant="outlined"
+                        component="span"
+                        startIcon={uploading ? <CircularProgress size={16} /> : <UploadIcon />}
+                        disabled={uploading}
+                        onClick={() => uploadInputRef.current?.click()}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        {uploading ? 'Uploading…' : 'Choose file'}
+                      </Button>
+                    </Box>
+                    {accountUploads.length === 0 ? (
+                      <Typography variant="body2" color="text.secondary">
+                        No uploads yet. Add a name (e.g. Contract) and choose a file to upload.
+                      </Typography>
+                    ) : (
+                      <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
+                              <TableCell sx={{ fontWeight: 600, width: 140 }} align="right">Actions</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {accountUploads.map((row) => (
+                              <TableRow key={row.id}>
+                                <TableCell>{row.name}</TableCell>
+                                <TableCell>{row.fileName}</TableCell>
+                                <TableCell align="right">
+                                  <IconButton
+                                    size="small"
+                                    title="Open in new tab"
+                                    onClick={() => window.open(row.url, '_blank')}
+                                    sx={{ color: 'text.secondary' }}
+                                  >
+                                    <OpenInNewIcon fontSize="small" />
+                                  </IconButton>
+                                  <IconButton
+                                    size="small"
+                                    title="Delete"
+                                    onClick={() => setDeleteConfirmUploadId(row.id)}
+                                    sx={{ color: 'error.main' }}
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    )}
+                  </Box>
                 </CardContent>
               </Card>
             </Grid>
@@ -1926,12 +3256,833 @@ const RecruiterAccountDetails: React.FC = () => {
         <TabPanel value={tabValue} index={1}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
-              <Card>
-                <CardHeader title="Pricing" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
-                <CardContent sx={{ pt: 0 }}>
+              <AccountCalendarTab tenantId={tenantId!} account={account} />
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={[]}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={2}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
+            {isChildAccount ? (
+              <>
+                <Typography variant="body2" color="text.secondary">
+                  Child accounts show only worksites linked to this account. Company locations are managed on the national account.
+                </Typography>
+                {associatedLocations.length === 0 ? (
                   <Typography variant="body2" color="text.secondary">
-                    Use linked CRM deals and assigned internal owners to track the pricing context for this account.
+                    No worksites linked. Use the Worksite / Location widget in the sidebar to link locations for this venue.
                   </Typography>
+                ) : (
+                  <TableContainer component={Paper} sx={{ border: '1px solid #E5E7EB', borderRadius: 1, maxWidth: 720 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                          <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Worksite</TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }}>Company</TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', py: 1.5 }} align="right">Action</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {associatedLocations.map((loc) => (
+                          <TableRow
+                            key={`${loc.companyId}-${loc.locationId}`}
+                            sx={{ '&:hover': { backgroundColor: '#F9FAFB' } }}
+                          >
+                            <TableCell sx={{ py: 1.25 }}>
+                              <Typography sx={{ fontWeight: 500, fontSize: '0.9375rem' }}>{loc.label}</Typography>
+                            </TableCell>
+                            <TableCell sx={{ py: 1.25 }}>
+                              <Typography sx={{ fontSize: '0.875rem', color: '#6B7280' }}>
+                                {companies.find((c) => c.id === loc.companyId)?.label ?? '—'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell sx={{ py: 1.25 }} align="right">
+                              <Button
+                                size="small"
+                                component={Link}
+                                to={`/companies/${loc.companyId}/locations/${loc.locationId}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                sx={{ textTransform: 'none', fontSize: '0.875rem' }}
+                              >
+                                View
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </>
+            ) : (
+              <>
+            <TextField
+              size="small"
+              placeholder="Search by name, code, city, or state…"
+              value={locationsSearchQuery}
+              onChange={(e) => setLocationsSearchQuery(e.target.value)}
+              sx={{ maxWidth: 400 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                  </InputAdornment>
+                ),
+                endAdornment: locationsSearchQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setLocationsSearchQuery('')} aria-label="Clear">
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              }}
+            />
+            {accountLocationsLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress size={32} />
+              </Box>
+            ) : !account?.associations?.companyIds?.length ? (
+              <Typography variant="body2" color="text.secondary">
+                Link at least one company to this account to see locations.
+              </Typography>
+            ) : filteredAccountLocations.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No locations found.
+              </Typography>
+            ) : (
+              <TableContainer component={Paper} sx={{ border: '1px solid #E5E7EB', borderRadius: 1 }}>
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow sx={{ backgroundColor: '#F9FAFB' }}>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Company
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Location Name
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Code
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Address
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Type
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Division
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Contacts
+                      </TableCell>
+                      <TableCell sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#374151', textTransform: 'uppercase', letterSpacing: '0.05em', borderBottom: '1px solid #E5E7EB', py: 1.5 }}>
+                        Deals
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {filteredAccountLocations.map((location) => (
+                      <TableRow
+                        key={`${location.companyId}-${location.id}`}
+                        onClick={() => navigate(`/companies/${location.companyId}/locations/${location.id}`)}
+                        sx={{
+                          cursor: 'pointer',
+                          '&:hover': { backgroundColor: '#F9FAFB' },
+                        }}
+                      >
+                        <TableCell sx={{ py: 1, px: 2 }}>
+                          <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}>
+                            {location.companyName}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1, px: 2 }}>
+                          <Typography sx={{ fontWeight: 600, color: '#111827', fontSize: '0.9375rem' }}>
+                            {location.name || location.nickname || 'Unnamed Location'}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          {location.code ? (
+                            <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500, fontFamily: 'monospace' }}>
+                              {location.code}
+                            </Typography>
+                          ) : (
+                            <Typography sx={{ fontSize: '0.875rem', color: '#9CA3AF' }}>-</Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ fontSize: '0.875rem', color: '#111827' }}>
+                            {location.address || location.street || '-'}
+                          </Typography>
+                          {(location.city || location.state || location.zipCode) && (
+                            <Typography sx={{ fontSize: '0.875rem', color: '#6B7280' }}>
+                              {[location.city, location.state, location.zipCode].filter(Boolean).join(', ')}
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Chip label={location.type || 'Unknown'} size="small" color="primary" sx={{ fontSize: '0.75rem', fontWeight: 500 }} />
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          {location.division ? (
+                            <Chip label={location.division} size="small" color="secondary" variant="outlined" sx={{ fontSize: '0.75rem', fontWeight: 500 }} />
+                          ) : (
+                            <Typography sx={{ fontSize: '0.875rem', color: '#9CA3AF' }}>-</Typography>
+                          )}
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}>
+                            {location.contactCount ?? 0}
+                          </Typography>
+                        </TableCell>
+                        <TableCell sx={{ py: 1 }}>
+                          <Typography sx={{ fontSize: '0.875rem', color: '#374151', fontWeight: 500 }}>
+                            {location.dealCount ?? 0}
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+              </>
+            )}
+          </Box>
+        </TabPanel>
+        <TabPanel value={tabValue} index={3}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
+            <TextField
+              size="small"
+              placeholder="Search child accounts…"
+              value={childrenSearchQuery}
+              onChange={(e) => setChildrenSearchQuery(e.target.value)}
+              sx={{ maxWidth: 400 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                  </InputAdornment>
+                ),
+                endAdornment: childrenSearchQuery ? (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => setChildrenSearchQuery('')} aria-label="Clear">
+                      <ClearIcon fontSize="small" />
+                    </IconButton>
+                  </InputAdornment>
+                ) : null,
+              }}
+            />
+            {childAccountsLoading && childAccountsList.length === 0 ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                <CircularProgress size={32} />
+              </Box>
+            ) : filteredChildAccounts.length === 0 ? (
+              <Typography variant="body2" color="text.secondary">
+                No child accounts to show.
+              </Typography>
+            ) : (
+              <TableContainer
+                component={Paper}
+                sx={{
+                  flex: 1,
+                  minHeight: 0,
+                  border: '1px solid #EAEEF4',
+                  borderRadius: 0,
+                  boxShadow: 'none',
+                  '&::-webkit-scrollbar': { width: '8px', height: '8px' },
+                  '&::-webkit-scrollbar-track': { background: 'rgba(0, 0, 0, 0.02)', borderRadius: '4px' },
+                  '&::-webkit-scrollbar-thumb': {
+                    background: 'rgba(0, 0, 0, 0.15)',
+                    borderRadius: '4px',
+                    '&:hover': { background: 'rgba(0, 0, 0, 0.25)' },
+                  },
+                  scrollbarWidth: 'thin',
+                  scrollbarColor: 'rgba(0, 0, 0, 0.15) rgba(0, 0, 0, 0.02)',
+                }}
+              >
+                <Table size="small" stickyHeader sx={{ width: '100%' }}>
+                  <TableHead sx={{ backgroundColor: '#FFFFFF' }}>
+                    <TableRow sx={{ backgroundColor: '#FFFFFF' }}>
+                      <TableCell
+                        align="center"
+                        sx={{
+                          width: 60,
+                          minWidth: 60,
+                          maxWidth: 60,
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 12,
+                          bgcolor: '#FFFFFF',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          py: 1.75,
+                          px: 1,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                        }}
+                      />
+                      <TableCell
+                        sx={{
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 12,
+                          bgcolor: '#FFFFFF',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          py: 1.75,
+                          pl: 2,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                        }}
+                      >
+                        ACCOUNT NAME
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 12,
+                          bgcolor: '#FFFFFF',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          py: 1.75,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                        }}
+                      >
+                        STATUS
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 12,
+                          bgcolor: '#FFFFFF',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          py: 1.75,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                        }}
+                      >
+                        ACCOUNT TYPE
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 12,
+                          bgcolor: '#FFFFFF',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          py: 1.75,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                        }}
+                      >
+                        E-VERIFY
+                      </TableCell>
+                      <TableCell
+                        sx={{
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 12,
+                          bgcolor: '#FFFFFF',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          color: '#374151',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.05em',
+                          py: 1.75,
+                          borderBottom: '1px solid',
+                          borderColor: 'divider',
+                        }}
+                      >
+                        HIRING ENTITY
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {filteredChildAccounts.map((child, index) => (
+                      <TableRow
+                        key={child.id}
+                        hover
+                        onClick={() => child.id && navigate(`/accounts/${child.id}`)}
+                        sx={{
+                          cursor: child.id ? 'pointer' : 'default',
+                          backgroundColor: index % 2 === 0 ? 'background.paper' : '#FAFAFA',
+                          '&:hover': { backgroundColor: 'action.hover' },
+                        }}
+                      >
+                        <TableCell
+                          align="center"
+                          sx={{
+                            width: 60,
+                            minWidth: 60,
+                            maxWidth: 60,
+                            py: 1.5,
+                            px: 1,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <FavoriteButton
+                            itemId={child.id}
+                            favoriteType="accounts"
+                            isFavorite={isFavorite}
+                            toggleFavorite={toggleFavorite}
+                            size="small"
+                            sx={{
+                              p: 0.25,
+                              color: isFavorite(child.id) ? '#0B63C5' : '#6B7280',
+                              '&:hover': { color: '#0B63C5', backgroundColor: 'rgba(11, 99, 197, 0.08)' },
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            py: 1.5,
+                            pl: 2,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                          }}
+                        >
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <BusinessIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                            <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                              {child.name || '—'}
+                            </Typography>
+                          </Box>
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            py: 1.5,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                          }}
+                        >
+                          <Chip
+                            label={child.active ? 'Active' : 'Inactive'}
+                            color={child.active ? 'success' : 'default'}
+                            size="small"
+                            variant={child.active ? 'filled' : 'outlined'}
+                            sx={{ fontWeight: 500 }}
+                          />
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            py: 1.5,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                            fontSize: '0.875rem',
+                          }}
+                        >
+                          {child.accountType === 'national'
+                            ? 'National'
+                            : child.accountType === 'child'
+                              ? 'Child'
+                              : 'Standalone'}
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            py: 1.5,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                            fontSize: '0.875rem',
+                          }}
+                        >
+                          {child.eVerifyRequired ? 'Yes' : 'No'}
+                        </TableCell>
+                        <TableCell
+                          sx={{
+                            py: 1.5,
+                            borderBottom: '1px solid',
+                            borderColor: 'divider',
+                            fontSize: '0.875rem',
+                          }}
+                        >
+                          {child.hiringEntityId
+                            ? (entityOptions.find((e) => e.id === child.hiringEntityId)?.name ?? '—')
+                            : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        </TabPanel>
+        <TabPanel value={tabValue} index={4}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Define how this account is billed: flat markup for all positions (e.g. Sodexo, Black Caviar) or job-title-specific pay and bill rates. Positions here are the only job titles available when creating job orders for this account.
+              </Typography>
+              {account.accountType === 'national' && (
+                <Card sx={{ mb: 3 }}>
+                  <CardHeader title="National account pricing" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
+                  <CardContent sx={{ pt: 0 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={pricingSubAccountsManageOwn}
+                          onChange={(e) => setPricingSubAccountsManageOwn(e.target.checked)}
+                        />
+                      }
+                      label="Sub-accounts manage their own pricing (e.g. Oakland Arena has specific bill rates per title; uncheck for a single flat markup across all sub-accounts)"
+                    />
+                    {!pricingSubAccountsManageOwn && (
+                      <Box sx={{ mt: 2 }}>
+                        <TextField
+                          size="small"
+                          type="number"
+                          label="Flat markup %"
+                          value={pricingFlatMarkupPercent}
+                          onChange={(e) => setPricingFlatMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))}
+                          inputProps={{ min: 0, step: 0.5 }}
+                          sx={{ width: 160 }}
+                          helperText="Applied to all job positions across all sub-accounts (e.g. 45 = 45% over pay rate)"
+                        />
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+              <Card>
+                <CardHeader
+                  title="Positions table"
+                  subheader="Job titles and rates for this account. At sub-account or standalone level, workers comp and (for C1 Workforce / C1 Select) SUTA/FUTA apply."
+                  titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
+                  action={
+                    <Button
+                      size="small"
+                      startIcon={<AddIcon />}
+                      onClick={() =>
+                        setPricingPositions((prev) => [
+                          ...prev,
+                          {
+                            id: `pos-${Date.now()}`,
+                            jobTitle: '',
+                            payRate: 0,
+                            markupPercent: null,
+                            billRate: 0,
+                            workersCompCode: '',
+                            workersCompRate: null,
+                            sutaRate: null,
+                            futaRate: null,
+                          },
+                        ])
+                      }
+                    >
+                      Add position
+                    </Button>
+                  }
+                />
+                <CardContent sx={{ pt: 0 }}>
+                  {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                      <FormControl size="small" sx={{ minWidth: 140 }}>
+                        <InputLabel>Worksite state</InputLabel>
+                        <Select
+                          value={pricingSutaFutaState || ''}
+                          onChange={(e) => setPricingSutaFutaState(e.target.value)}
+                          label="Worksite state"
+                        >
+                          <MenuItem value="">
+                            <em>Select state</em>
+                          </MenuItem>
+                          {US_STATE_CODES.map((code) => (
+                            <MenuItem key={code} value={code}>
+                              {code}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          const stateCode = pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state);
+                          if (!stateCode) return;
+                          const suta = getSutaRateByState(stateCode);
+                          const futa = getFutaRateByState(stateCode);
+                          setPricingPositions((prev) =>
+                            prev.map((row) => ({
+                              ...row,
+                              sutaRate: suta ?? row.sutaRate,
+                              futaRate: futa,
+                            }))
+                          );
+                        }}
+                        disabled={!pricingSutaFutaState && !normalizeStateCode(worksiteDetails?.state)}
+                        sx={{ textTransform: 'none' }}
+                      >
+                        Apply SUTA/FUTA from state
+                      </Button>
+                      <Typography variant="caption" color="text.secondary">
+                        Uses estimated new-employer SUTA and FUTA rates for the selected state.
+                      </Typography>
+                    </Box>
+                  )}
+                  <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow sx={{ bgcolor: 'grey.50' }}>
+                          <TableCell sx={{ fontWeight: 600 }}>Job title</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }} align="right">Pay rate</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }} align="right">Markup %</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }} align="right">Bill rate</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }}>WC Code</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }} align="right">WC Rate %</TableCell>
+                          {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                            <>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">SUTA %</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">FUTA %</TableCell>
+                            </>
+                          )}
+                          <TableCell sx={{ fontWeight: 600 }} align="right">Net margin</TableCell>
+                          <TableCell sx={{ width: 56 }} />
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {pricingPositions.map((row, idx) => {
+                          const markupVal = row.markupPercent;
+                          const markup = markupVal == null ? null : Number(markupVal);
+                          const markupNum = typeof markup === 'number' && !Number.isNaN(markup) ? markup : null;
+                          const pay = Number(row.payRate) || 0;
+                          const bill = markupNum != null ? pay * (1 + markupNum / 100) : (Number(row.billRate) || 0);
+                          const wc = (Number(row.workersCompRate) || 0) / 100;
+                          const suta = (Number(row.sutaRate) || 0) / 100;
+                          const futa = (Number(row.futaRate) || 0) / 100;
+                          const margin = bill - pay - pay * wc - pay * suta - pay * futa;
+                          return (
+                            <TableRow key={row.id || idx}>
+                              <TableCell>
+                                <Autocomplete
+                                  freeSolo
+                                  size="small"
+                                  options={jobTitlesData as string[]}
+                                  value={row.jobTitle}
+                                  onInputChange={(_, v) =>
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], jobTitle: v };
+                                      return next;
+                                    })
+                                  }
+                                  renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
+                                  sx={{ minWidth: 200 }}
+                                />
+                              </TableCell>
+                              <TableCell align="right">
+                                <TextField
+                                  size="small"
+                                  type="number"
+                                  value={row.payRate || ''}
+                                  onChange={(e) => {
+                                    const v = e.target.value === '' ? 0 : Number(e.target.value);
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], payRate: v };
+                                      const m = next[idx].markupPercent;
+                                      if (m != null) {
+                                        const mNum = Number(m);
+                                        if (!Number.isNaN(mNum)) next[idx].billRate = v * (1 + mNum / 100);
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  inputProps={{ min: 0, step: 0.01 }}
+                                  sx={{ width: 90 }}
+                                />
+                              </TableCell>
+                              <TableCell align="right">
+                                <TextField
+                                  size="small"
+                                  type="number"
+                                  value={row.markupPercent ?? ''}
+                                  onChange={(e) => {
+                                    const v = e.target.value === '' ? null : Number(e.target.value);
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = {
+                                        ...next[idx],
+                                        markupPercent: v,
+                                        billRate: v != null ? (Number(next[idx].payRate) || 0) * (1 + v / 100) : next[idx].billRate,
+                                      };
+                                      return next;
+                                    });
+                                  }}
+                                  inputProps={{ min: 0, step: 0.5 }}
+                                  sx={{ width: 80 }}
+                                  placeholder="—"
+                                />
+                              </TableCell>
+                              <TableCell align="right">
+                                <TextField
+                                  size="small"
+                                  type="number"
+                                  value={markupNum != null ? bill.toFixed(2) : (row.billRate ?? '')}
+                                  disabled={markupNum != null}
+                                  onChange={(e) => {
+                                    if (markupNum != null) return;
+                                    const v = e.target.value === '' ? 0 : Number(e.target.value);
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], billRate: v };
+                                      return next;
+                                    });
+                                  }}
+                                  inputProps={{ min: 0, step: 0.01 }}
+                                  sx={{ width: 90 }}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <TextField
+                                  size="small"
+                                  value={row.workersCompCode ?? ''}
+                                  onChange={(e) => {
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], workersCompCode: e.target.value };
+                                      return next;
+                                    });
+                                  }}
+                                  sx={{ width: 100 }}
+                                  placeholder="—"
+                                />
+                              </TableCell>
+                              <TableCell align="right">
+                                <TextField
+                                  size="small"
+                                  type="number"
+                                  value={row.workersCompRate ?? ''}
+                                  onChange={(e) => {
+                                    const v = e.target.value === '' ? null : Number(e.target.value);
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], workersCompRate: v };
+                                      return next;
+                                    });
+                                  }}
+                                  inputProps={{ min: 0, step: 0.1 }}
+                                  sx={{ width: 70 }}
+                                  placeholder="e.g. 2.3"
+                                />
+                              </TableCell>
+                              {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                                <>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={row.sutaRate ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value === '' ? null : Number(e.target.value);
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], sutaRate: v };
+                                          return next;
+                                        });
+                                      }}
+                                      inputProps={{ min: 0, step: 0.1 }}
+                                      sx={{ width: 70 }}
+                                      placeholder="—"
+                                    />
+                                  </TableCell>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={row.futaRate ?? ''}
+                                      onChange={(e) => {
+                                        const v = e.target.value === '' ? null : Number(e.target.value);
+                                        setPricingPositions((prev) => {
+                                          const next = [...prev];
+                                          next[idx] = { ...next[idx], futaRate: v };
+                                          return next;
+                                        });
+                                      }}
+                                      inputProps={{ min: 0, step: 0.1 }}
+                                      sx={{ width: 70 }}
+                                      placeholder="—"
+                                    />
+                                  </TableCell>
+                                </>
+                              )}
+                              <TableCell align="right">
+                                <Typography variant="body2">{isNaN(margin) ? '—' : `$${margin.toFixed(2)}`}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => setPricingPositions((prev) => prev.filter((_, i) => i !== idx))}
+                                  sx={{ color: 'error.main' }}
+                                >
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                  {pricingPositions.length === 0 && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+                      No positions yet. Add job titles and pay/bill rates (or markup %) to define pricing. These titles will be the only ones available when creating job orders for this account.
+                    </Typography>
+                  )}
+                  <Button
+                    variant="contained"
+                    startIcon={pricingSaving ? <CircularProgress size={20} /> : <SaveIcon />}
+                    onClick={savePricing}
+                    disabled={pricingSaving}
+                    sx={{ mt: 2 }}
+                  >
+                    {pricingSaving ? 'Saving…' : 'Save pricing'}
+                  </Button>
                 </CardContent>
               </Card>
             </Grid>
@@ -1961,91 +4112,440 @@ const RecruiterAccountDetails: React.FC = () => {
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={2}>
+        <TabPanel value={tabValue} index={5}>
           <Grid container spacing={3}>
-            <Grid item xs={12} md={9}>
-              <Card>
-                <CardHeader title="Job Orders" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
-                <CardContent sx={{ pt: 0 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Manage the job orders connected to this account.
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <AccountSidebar
-                account={account}
-                tenantId={tenantId!}
-                navigate={navigate}
-                updateAccountAssociations={updateAccountAssociations}
-                companies={companies}
-                locationsByCompany={locationsByCompany}
-                contacts={contacts}
-                jobOrders={jobOrders}
-                deals={deals}
-                laborPoolOptions={laborPoolOptions}
-                salespeopleOptions={salespeopleOptions}
-                recruitersOptions={recruitersOptions}
-                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
-                parentAccount={parentAccount}
-                childAccounts={childAccounts}
-                onParentAccountChange={updateParentAccountRelationship}
-                onChildAccountsChange={updateChildAccountRelationships}
-                optionsLoading={optionsLoading}
-                saving={saving}
-                visibleSections={['jobOrders']}
-              />
+            <Grid item xs={12}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
+                {/* Filters: Status, Company, Sort By */}
+                <Box
+                  sx={{
+                    p: 1.5,
+                    backgroundColor: '#F9FAFB',
+                    borderRadius: '8px',
+                    border: '1px solid #E5E7EB',
+                  }}
+                >
+                  <Stack direction="row" gap={1.5} flexWrap="wrap">
+                    <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+                      <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
+                      <Select
+                        value={jobOrdersStatusFilter}
+                        onChange={(e) => { setJobOrdersStatusFilter(e.target.value); setJobOrdersPage(0); }}
+                        label="Status"
+                        sx={{ height: 36, borderRadius: '6px', backgroundColor: 'white', fontSize: '0.875rem' }}
+                      >
+                        <MenuItem value="">All Statuses</MenuItem>
+                        <MenuItem value="Open">Open</MenuItem>
+                        <MenuItem value="On-Hold">On-Hold</MenuItem>
+                        <MenuItem value="Cancelled">Cancelled</MenuItem>
+                        <MenuItem value="Filled">Filled</MenuItem>
+                        <MenuItem value="Completed">Completed</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {/* Company filter – commented out
+                    <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+                      <InputLabel sx={{ fontSize: '0.875rem' }}>Company</InputLabel>
+                      <Select
+                        value={jobOrdersCompanyFilter}
+                        onChange={(e) => { setJobOrdersCompanyFilter(e.target.value); setJobOrdersPage(0); }}
+                        label="Company"
+                        sx={{ height: 36, borderRadius: '6px', backgroundColor: 'white', fontSize: '0.875rem' }}
+                      >
+                        <MenuItem value="all">All Companies</MenuItem>
+                        {uniqueAccountJobOrderCompanies.map((company) => (
+                          <MenuItem key={company} value={company}>{company}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    */}
+                    <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+                      <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
+                      <Select
+                        value={jobOrdersSortField}
+                        onChange={(e) => {
+                          setJobOrdersSortField(e.target.value);
+                          setJobOrdersPage(0);
+                        }}
+                        label="Sort By"
+                        sx={{ height: 36, borderRadius: '6px', backgroundColor: 'white', fontSize: '0.875rem' }}
+                      >
+                        <MenuItem value="jobOrderNumber">Job Order #</MenuItem>
+                        <MenuItem value="createdAt">Newest First</MenuItem>
+                        <MenuItem value="recruiterName">Recruiter(s)</MenuItem>
+                      </Select>
+                    </FormControl>
+                  </Stack>
+                </Box>
+                {accountJobOrdersError && (
+                  <Alert severity="error">{accountJobOrdersError}</Alert>
+                )}
+                {accountJobOrdersLoading && accountJobOrders.length === 0 ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : !account?.associations?.companyIds?.length ? (
+                  <Box sx={{ textAlign: 'center', py: 8 }}>
+                    <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" color="text.secondary" gutterBottom>
+                      No companies linked
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Link companies to this account to see job orders here.
+                    </Typography>
+                  </Box>
+                ) : filteredAccountJobOrders.length === 0 ? (
+                  <Box sx={{ textAlign: 'center', py: 8 }}>
+                    <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" color="text.secondary" gutterBottom>
+                      No job orders found
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {jobOrdersSearch || jobOrdersStatusFilter ? 'Try adjusting your filters.' : 'No job orders for this account\'s companies yet.'}
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <TableContainer
+                      component={Paper}
+                      sx={{
+                        flex: 1,
+                        overflowY: 'auto',
+                        overflowX: 'auto',
+                        '&::-webkit-scrollbar': { width: 8, height: 8 },
+                        '&::-webkit-scrollbar-track': { background: 'rgba(0,0,0,0.02)', borderRadius: 1 },
+                        '&::-webkit-scrollbar-thumb': { background: 'rgba(0,0,0,0.15)', borderRadius: 1 },
+                      }}
+                    >
+                      <Table stickyHeader size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', width: 60 }} />
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                              <TableSortLabel
+                                active={jobOrdersSortField === 'jobOrderNumber'}
+                                direction={jobOrdersSortField === 'jobOrderNumber' ? jobOrdersSortDirection : 'desc'}
+                                onClick={() => {
+                                  setJobOrdersSortField('jobOrderNumber');
+                                  setJobOrdersSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'));
+                                  setJobOrdersPage(0);
+                                }}
+                              >
+                                #
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Title</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Job Title</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Account</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Location</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Status</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Requested/Filled</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                              <TableSortLabel
+                                active={jobOrdersSortField === 'recruiterName'}
+                                direction={jobOrdersSortField === 'recruiterName' ? jobOrdersSortDirection : 'asc'}
+                                onClick={() => {
+                                  setJobOrdersSortField('recruiterName');
+                                  setJobOrdersSortDirection((d) => (d === 'desc' ? 'asc' : 'desc'));
+                                  setJobOrdersPage(0);
+                                }}
+                              >
+                                Recruiter(s)
+                              </TableSortLabel>
+                            </TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Age</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {paginatedAccountJobOrders.map((jobOrder, index) => (
+                            <TableRow
+                              key={jobOrder.id}
+                              hover
+                              onClick={() => navigate(`/jobs/job-orders/${jobOrder.id}`)}
+                              sx={{
+                                cursor: 'pointer',
+                                backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
+                                '&:hover': { backgroundColor: 'action.selected' },
+                              }}
+                            >
+                              <TableCell onClick={(e) => e.stopPropagation()}>
+                                <FavoriteButton
+                                  itemId={jobOrder.id}
+                                  favoriteType="jobOrders"
+                                  isFavorite={isJobOrderFavorite}
+                                  toggleFavorite={toggleJobOrderFavorite}
+                                  size="small"
+                                  tooltipText={{ favorited: 'Remove from favorites', notFavorited: 'Add to favorites' }}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {formatJobOrderNumber((jobOrder as any).jobOrderNumber ?? 0)}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
+                                  <Typography variant="body2" fontWeight={500}>
+                                    {jobOrder.jobOrderName}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
+                                    Order Setup: —
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">{jobOrder.jobTitle || 'No Job Title'}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <BusinessIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                  <Typography variant="body2">{jobOrder.companyName || 'Unknown Company'}</Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <LocationOnIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                  <Typography variant="body2">{jobOrder.locationName || 'No Location'}</Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={jobOrder.status}
+                                  color={getJobOrderStatusColor(jobOrder.status) as any}
+                                  size="small"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">
+                                  {jobOrder.workersNeeded ?? 0} / {jobOrder.headcountFilled ?? 0}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {jobOrder.workersNeeded && jobOrder.headcountFilled
+                                    ? `${Math.round(((jobOrder.headcountFilled ?? 0) / (jobOrder.workersNeeded || 1)) * 100)}% filled`
+                                    : '0% filled'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
+                                  <Typography variant="body2">{jobOrder.recruiterName || 'Unassigned'}</Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">{getJobOrderAge(jobOrder.createdAt)} days</Typography>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                    <StandardTablePagination
+                      count={filteredAccountJobOrders.length}
+                      page={jobOrdersPage}
+                      onPageChange={(_, newPage) => setJobOrdersPage(newPage)}
+                      rowsPerPage={jobOrdersRowsPerPage}
+                      onRowsPerPageChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setJobOrdersRowsPerPage(val);
+                        setJobOrdersPage(0);
+                      }}
+                    />
+                  </Box>
+                )}
+              </Box>
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={3}>
+        <TabPanel value={tabValue} index={6}>
           <Grid container spacing={3}>
-            <Grid item xs={12} md={9}>
-              <Card>
-                <CardHeader title="Jobs Board" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
-                <CardContent sx={{ pt: 0 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    View and manage job post relationships for this account.
-                  </Typography>
-                </CardContent>
-              </Card>
-            </Grid>
-            <Grid item xs={12} md={3}>
-              <AccountSidebar
-                account={account}
-                tenantId={tenantId!}
-                navigate={navigate}
-                updateAccountAssociations={updateAccountAssociations}
-                companies={companies}
-                locationsByCompany={locationsByCompany}
-                contacts={contacts}
-                jobOrders={jobOrders}
-                deals={deals}
-                laborPoolOptions={laborPoolOptions}
-                salespeopleOptions={salespeopleOptions}
-                recruitersOptions={recruitersOptions}
-                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
-                parentAccount={parentAccount}
-                childAccounts={childAccounts}
-                onParentAccountChange={updateParentAccountRelationship}
-                onChildAccountsChange={updateChildAccountRelationships}
-                optionsLoading={optionsLoading}
-                saving={saving}
-                visibleSections={['jobsBoard']}
-              />
+            <Grid item xs={12}>
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
+                {accountJobPostsLoading && accountJobPosts.length === 0 ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : !account?.associations?.companyIds?.length ? (
+                  <Box sx={{ textAlign: 'center', py: 8 }}>
+                    <BadgeIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" color="text.secondary" gutterBottom>
+                      No companies linked
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Link companies to this account to see job board postings here.
+                    </Typography>
+                  </Box>
+                ) : accountJobPosts.length === 0 ? (
+                  <Box sx={{ textAlign: 'center', py: 8 }}>
+                    <BadgeIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
+                    <Typography variant="h6" color="text.secondary" gutterBottom>
+                      No job board postings
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      No job posts found for this account&apos;s companies. Create posts from the Jobs Board or link a job order.
+                    </Typography>
+                  </Box>
+                ) : (
+                  <Box sx={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <TableContainer
+                      component={Paper}
+                      sx={{
+                        flex: 1,
+                        overflowY: 'auto',
+                        overflowX: 'auto',
+                        '&::-webkit-scrollbar': { width: 8, height: 8 },
+                        '&::-webkit-scrollbar-track': { background: 'rgba(0,0,0,0.02)', borderRadius: 1 },
+                        '&::-webkit-scrollbar-thumb': { background: 'rgba(0,0,0,0.15)', borderRadius: 1 },
+                      }}
+                    >
+                      <Table stickyHeader size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem', width: 60 }} />
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Post #</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Post Title</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Type</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Company</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Location</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Status</TableCell>
+                            <TableCell sx={{ fontWeight: 700, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>Applications</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {paginatedAccountJobPosts.map((post, index) => (
+                            <TableRow
+                              key={post.id}
+                              hover
+                              onClick={() => navigate(`/jobs/jobs-board/edit/${post.id}`)}
+                              sx={{
+                                cursor: 'pointer',
+                                backgroundColor: index % 2 === 0 ? 'background.paper' : 'action.hover',
+                                '&:hover': { backgroundColor: 'action.selected' },
+                              }}
+                            >
+                              <TableCell onClick={(e) => e.stopPropagation()}>
+                                <FavoriteButton
+                                  itemId={post.id}
+                                  favoriteType="jobPosts"
+                                  isFavorite={isJobPostFavorite}
+                                  toggleFavorite={toggleJobPostFavorite}
+                                  size="small"
+                                  tooltipText={{ favorited: 'Remove from favorites', notFavorited: 'Add to favorites' }}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {post.jobPostId ?? post.id}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+                                  <Typography variant="body2" fontWeight={500}>
+                                    {post.postTitle}
+                                  </Typography>
+                                  {post.jobTitle && (
+                                    <Typography variant="caption" color="text.secondary">
+                                      {post.jobTitle}
+                                    </Typography>
+                                  )}
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={post.jobType === 'career' ? 'Career' : 'Gig'}
+                                  size="small"
+                                  color={post.jobType === 'career' ? 'primary' : 'secondary'}
+                                  variant="outlined"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">{post.companyName || '—'}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">{post.worksiteName || '—'}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={post.status}
+                                  size="small"
+                                  color={
+                                    post.status === 'active' ? 'success' :
+                                    post.status === 'draft' ? 'default' :
+                                    post.status === 'paused' ? 'warning' :
+                                    post.status === 'cancelled' || post.status === 'expired' ? 'error' : 'default'
+                                  }
+                                  variant="outlined"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">{post.applicationCount ?? 0}</Typography>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                    <StandardTablePagination
+                      count={accountJobPosts.length}
+                      page={jobPostsPage}
+                      onPageChange={(_, newPage) => setJobPostsPage(newPage)}
+                      rowsPerPage={jobPostsRowsPerPage}
+                      onRowsPerPageChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setJobPostsRowsPerPage(val);
+                        setJobPostsPage(0);
+                      }}
+                    />
+                  </Box>
+                )}
+              </Box>
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={4}>
+        <TabPanel value={tabValue} index={7}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Card>
                 <CardHeader title="Labor Pool" titleTypographyProps={{ variant: 'h6', fontWeight: 600 }} />
                 <CardContent sx={{ pt: 0 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Attach user groups and smart groups that define the labor pool for this account.
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    User groups and smart groups are attached in the sidebar. Job order applicant lists appear automatically for each job order linked to this account. Click a row to open the group or job order applicants.
                   </Typography>
+                  <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                    <Table size="small" stickyHeader>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell sx={{ fontWeight: 600 }}>Name</TableCell>
+                          <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {laborPoolTableRows.length === 0 ? (
+                          <TableRow>
+                            <TableCell colSpan={2} sx={{ py: 3, color: 'text.secondary', textAlign: 'center' }}>
+                              No labor pool items yet. Add user groups or smart groups in the sidebar; link job orders to this account to see applicant lists here.
+                            </TableCell>
+                          </TableRow>
+                        ) : (
+                          laborPoolTableRows.map((row) => (
+                            <TableRow
+                              key={row.kind === 'jobOrderApplicants' ? `applicants-${row.id}` : `${row.kind}-${row.id}`}
+                              hover
+                              sx={{ cursor: 'pointer' }}
+                              onClick={() => navigate(row.href)}
+                            >
+                              <TableCell>{row.label}</TableCell>
+                              <TableCell>
+                                {row.kind === 'userGroup'
+                                  ? 'User Group'
+                                  : row.kind === 'savedSmartGroup'
+                                    ? 'Smart Group'
+                                    : 'Job Order Applicants'}
+                              </TableCell>
+                            </TableRow>
+                          ))
+                        )}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
                 </CardContent>
               </Card>
             </Grid>
@@ -2075,7 +4575,636 @@ const RecruiterAccountDetails: React.FC = () => {
             </Grid>
           </Grid>
         </TabPanel>
-        <TabPanel value={tabValue} index={5}>
+        <TabPanel value={tabValue} index={8}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Defaults set here apply to this account and can trickle down to job orders. Override linked company defaults as needed.
+              </Typography>
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={7}>
+                  <Card>
+                    <CardHeader title="Customer Rules & Policies (Defaults)" />
+                    <CardContent>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12} md={6}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={defaultRules.replacingExistingAgency}
+                                onChange={(e) => setDefaultRules({ ...defaultRules, replacingExistingAgency: e.target.checked })}
+                              />
+                            }
+                            label="Replacing Existing Agency"
+                          />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={defaultRules.rolloverExistingStaff}
+                                onChange={(e) => setDefaultRules({ ...defaultRules, rolloverExistingStaff: e.target.checked })}
+                              />
+                            }
+                            label="Rollover Existing Staff"
+                          />
+                        </Grid>
+                        <Grid item xs={12} md={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Timeclock System"
+                            value={defaultRules.timeclockSystem}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, timeclockSystem: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Attendance Policy"
+                            value={defaultRules.attendancePolicy}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, attendancePolicy: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="No-Show Policy"
+                            value={defaultRules.noShowPolicy}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, noShowPolicy: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Overtime Policy"
+                            value={defaultRules.overtimePolicy}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, overtimePolicy: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Call-Off Policy"
+                            value={defaultRules.callOffPolicy}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, callOffPolicy: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Injury Handling Policy"
+                            value={defaultRules.injuryHandlingPolicy}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, injuryHandlingPolicy: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Discipline Policy"
+                            value={defaultRules.disciplinePolicy}
+                            onChange={(e) => setDefaultRules({ ...defaultRules, disciplinePolicy: e.target.value })}
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid item xs={12} md={5}>
+                  <Card sx={{ mb: 3 }}>
+                    <CardHeader title="Hiring Defaults" />
+                    <CardContent>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={defaultEVerify.eVerifyRequired}
+                                onChange={(e) => setDefaultEVerify({ ...defaultEVerify, eVerifyRequired: e.target.checked })}
+                              />
+                            }
+                            label="E-Verify Required"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <FormControl fullWidth size="small">
+                            <InputLabel>Hiring Entity</InputLabel>
+                            <Select
+                              label="Hiring Entity"
+                              value={account?.hiringEntityId ?? ''}
+                              onChange={(e) => updateAccountField('hiringEntityId', e.target.value || null)}
+                              disabled={saving}
+                            >
+                              <MenuItem value="">
+                                <em>None</em>
+                              </MenuItem>
+                              {entityOptions.map((ent) => (
+                                <MenuItem key={ent.id} value={ent.id}>
+                                  {ent.name} {ent.entityCode ? `(${ent.entityCode} · ${ent.workerType})` : ''}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardHeader title="Billing & Invoicing (Defaults)" />
+                    <CardContent>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={defaultBilling.poRequired}
+                                onChange={(e) => setDefaultBilling({ ...defaultBilling, poRequired: e.target.checked })}
+                              />
+                            }
+                            label="PO Required"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Payment Terms"
+                            value={defaultBilling.paymentTerms}
+                            onChange={(e) => setDefaultBilling({ ...defaultBilling, paymentTerms: e.target.value })}
+                            placeholder="e.g., Net 30"
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <FormControl fullWidth size="small">
+                            <InputLabel>Invoice Delivery Method</InputLabel>
+                            <Select
+                              value={defaultBilling.invoiceDeliveryMethod}
+                              label="Invoice Delivery Method"
+                              onChange={(e) => setDefaultBilling({ ...defaultBilling, invoiceDeliveryMethod: e.target.value as string })}
+                            >
+                              <MenuItem value="">—</MenuItem>
+                              <MenuItem value="email">Email</MenuItem>
+                              <MenuItem value="portal">Portal</MenuItem>
+                              <MenuItem value="mail">Mail</MenuItem>
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        <Grid item xs={12}>
+                          <FormControl fullWidth size="small">
+                            <InputLabel>Invoice Frequency</InputLabel>
+                            <Select
+                              value={defaultBilling.invoiceFrequency}
+                              label="Invoice Frequency"
+                              onChange={(e) => setDefaultBilling({ ...defaultBilling, invoiceFrequency: e.target.value as string })}
+                            >
+                              <MenuItem value="">—</MenuItem>
+                              <MenuItem value="weekly">Weekly</MenuItem>
+                              <MenuItem value="biweekly">Bi-weekly</MenuItem>
+                              <MenuItem value="monthly">Monthly</MenuItem>
+                              <MenuItem value="daily_event">Daily/Event-Based</MenuItem>
+                            </Select>
+                          </FormControl>
+                        </Grid>
+                        <Grid item xs={12}>
+                          <Autocomplete
+                            multiple
+                            size="small"
+                            options={(() => {
+                              const companyIds = account?.associations?.companyIds ?? [];
+                              return companyIds.length === 0 ? [] : contacts.filter((c) => c.companyId && companyIds.includes(c.companyId));
+                            })()}
+                            getOptionLabel={(opt) => (typeof opt === 'object' && opt && 'label' in opt ? opt.label : String(opt))}
+                            value={(defaultBilling.sendInvoicesTo ?? []).map((id) => contacts.find((c) => c.id === id)).filter(Boolean) as ContactOption[]}
+                            onChange={(_, next) => setDefaultBilling({ ...defaultBilling, sendInvoicesTo: next.map((c) => c.id) })}
+                            renderInput={(params) => <TextField {...params} label="Send Invoices To:" placeholder="Search contacts…" />}
+                            isOptionEqualToValue={(opt, val) => opt.id === val.id}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Billing Notes"
+                            value={defaultBilling.billingNotes}
+                            onChange={(e) => setDefaultBilling({ ...defaultBilling, billingNotes: e.target.value })}
+                            placeholder="Optional notes for billing and invoicing"
+                            multiline
+                            rows={3}
+                          />
+                        </Grid>
+                      </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
+                <Grid item xs={12}>
+                  <Button variant="contained" startIcon={defaultsSaving ? <CircularProgress size={20} /> : <SaveIcon />} onClick={saveAccountDefaults} disabled={defaultsSaving}>
+                    {defaultsSaving ? 'Saving…' : 'Save Defaults'}
+                  </Button>
+                </Grid>
+              </Grid>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={[]}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={9}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              {!canAccessInvoicing ? (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  Invoicing is available to users with security level 5, 6, or 7. You do not have access to this tab.
+                </Alert>
+              ) : (
+              (() => {
+                const qb = account.integrations?.quickbooks;
+                const qboStatus = qb?.status ?? 'not_connected';
+                const isMapped = qboStatus === 'mapped';
+                const isConnected = qboStatus === 'connected_unmapped' || isMapped || qboStatus === 'sync_error';
+                const canManageQuickBooks = canAccessInvoicing;
+                return (
+                  <Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                      <ToggleButtonGroup
+                        size="small"
+                        value={invoicingSubView}
+                        exclusive
+                        onChange={(_, v) => v != null && setInvoicingSubView(v)}
+                        aria-label="Invoicing view"
+                      >
+                        <ToggleButton value="invoices">Invoices</ToggleButton>
+                        <ToggleButton value="ar">A/R Aging</ToggleButton>
+                        <ToggleButton value="payments">Payments</ToggleButton>
+                        <ToggleButton value="mapping">Mapping / Settings</ToggleButton>
+                      </ToggleButtonGroup>
+                      <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                        {qb?.lastSyncAt ? `Last synced: ${typeof qb.lastSyncAt?.toDate === 'function' ? qb.lastSyncAt.toDate().toLocaleString() : '—'}` : 'Not synced yet'}
+                      </Typography>
+                      <Button size="small" variant="outlined" disabled sx={{ textTransform: 'none' }}>Refresh</Button>
+                      <Button size="small" variant="outlined" disabled sx={{ textTransform: 'none' }} startIcon={<OpenInNewIcon />}>Open in QuickBooks</Button>
+                    </Box>
+
+                    {invoicingSubView === 'invoices' && (
+                      <Card variant="outlined">
+                        <CardContent>
+                          {!isConnected && (
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                              No QuickBooks connection for this account yet.
+                            </Alert>
+                          )}
+                          <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow sx={{ bgcolor: 'grey.50' }}>
+                                  <TableCell sx={{ fontWeight: 600 }}>Invoice #</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Due Date</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">Total</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">Balance</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
+                                  <TableCell sx={{ fontWeight: 600, width: 120 }}>Actions</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {[]}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {invoicingSubView === 'ar' && (
+                      <Card variant="outlined">
+                        <CardContent>
+                          {!isConnected && (
+                            <Alert severity="info" sx={{ mb: 2 }}>
+                              Connect QuickBooks and map this account to view aging.
+                            </Alert>
+                          )}
+                          <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                            <Card variant="outlined" sx={{ minWidth: 120 }}>
+                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Typography variant="caption" color="text.secondary">Total Open A/R</Typography>
+                                <Typography variant="h6">—</Typography>
+                              </CardContent>
+                            </Card>
+                            <Card variant="outlined" sx={{ minWidth: 100 }}>
+                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Typography variant="caption" color="text.secondary">Current</Typography>
+                                <Typography variant="body1">—</Typography>
+                              </CardContent>
+                            </Card>
+                            <Card variant="outlined" sx={{ minWidth: 100 }}>
+                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Typography variant="caption" color="text.secondary">1–30</Typography>
+                                <Typography variant="body1">—</Typography>
+                              </CardContent>
+                            </Card>
+                            <Card variant="outlined" sx={{ minWidth: 100 }}>
+                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Typography variant="caption" color="text.secondary">31–60</Typography>
+                                <Typography variant="body1">—</Typography>
+                              </CardContent>
+                            </Card>
+                            <Card variant="outlined" sx={{ minWidth: 100 }}>
+                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Typography variant="caption" color="text.secondary">61–90</Typography>
+                                <Typography variant="body1">—</Typography>
+                              </CardContent>
+                            </Card>
+                            <Card variant="outlined" sx={{ minWidth: 100 }}>
+                              <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
+                                <Typography variant="caption" color="text.secondary">90+</Typography>
+                                <Typography variant="body1">—</Typography>
+                              </CardContent>
+                            </Card>
+                          </Box>
+                          <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow sx={{ bgcolor: 'grey.50' }}>
+                                  <TableCell sx={{ fontWeight: 600 }}>Invoice #</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Due Date</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">Days overdue</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">Balance</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Bucket</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {[]}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {invoicingSubView === 'payments' && (
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Alert severity="info" sx={{ mb: 2 }}>
+                            Payments will appear here after sync.
+                          </Alert>
+                          <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
+                            <Table size="small">
+                              <TableHead>
+                                <TableRow sx={{ bgcolor: 'grey.50' }}>
+                                  <TableCell sx={{ fontWeight: 600 }}>Payment Date</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }} align="right">Amount</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Reference #</TableCell>
+                                  <TableCell sx={{ fontWeight: 600 }}>Applied Invoices</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {[]}
+                              </TableBody>
+                            </Table>
+                          </TableContainer>
+                        </CardContent>
+                      </Card>
+                    )}
+
+                    {invoicingSubView === 'mapping' && (
+                      <Card variant="outlined">
+                        <CardContent>
+                          <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1 }}>QuickBooks mapping</Typography>
+                          {!isConnected && (
+                            <>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                Connect QuickBooks to view invoices, balances, and payment activity for this account.
+                              </Typography>
+                              {canManageQuickBooks && (
+                                <Stack direction="row" spacing={2}>
+                                  <Button variant="contained" disabled sx={{ textTransform: 'none' }}>Connect QuickBooks</Button>
+                                  <Button variant="outlined" disabled sx={{ textTransform: 'none' }}>Map Customer</Button>
+                                </Stack>
+                              )}
+                            </>
+                          )}
+                          {isConnected && !isMapped && (
+                            <>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                This account is not yet linked to a QuickBooks customer. Link an existing customer or create one.
+                              </Typography>
+                              {canManageQuickBooks && (
+                                <Button variant="contained" disabled sx={{ textTransform: 'none' }}>Map Customer</Button>
+                              )}
+                            </>
+                          )}
+                          {isMapped && (
+                            <>
+                              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                                Linked to: {qb?.customerDisplayName ?? qb?.customerId ?? '—'}
+                              </Typography>
+                              {canManageQuickBooks && (
+                                <Button variant="outlined" color="error" size="small" disabled sx={{ textTransform: 'none' }}>Disconnect</Button>
+                              )}
+                            </>
+                          )}
+                        </CardContent>
+                      </Card>
+                    )}
+                  </Box>
+                );
+              })()
+              )
+            }
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={[]}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={10}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} md={9}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Set default staff instructions and attachments for this account. When you create a new job order for this account, these will pre-fill the Job Order → Staff Instructions tab.
+              </Typography>
+              <Grid container spacing={3}>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="First Day Instructions"
+                    fieldKey="firstDay"
+                    placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet, orientation details...)"
+                    uploadPlaceholder="Upload first day schedules, orientation materials, or related documents"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="Parking Instructions"
+                    fieldKey="parking"
+                    placeholder="Enter parking instructions for staff (e.g., where to park, parking pass requirements, visitor parking location...)"
+                    uploadPlaceholder="Upload parking maps, diagrams, or related documents"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="Check-In Instructions"
+                    fieldKey="checkIn"
+                    placeholder="Enter check-in instructions (e.g., where to report, who to ask for, required documents...)"
+                    uploadPlaceholder="Upload check-in forms, maps, or related documents"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="Uniform Instructions"
+                    fieldKey="uniform"
+                    placeholder="Enter uniform and dress code requirements (e.g., specific colors, safety gear, PPE requirements...)"
+                    uploadPlaceholder="Upload uniform photos, dress code guides, or related documents"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="Credential Instructions"
+                    fieldKey="credentials"
+                    placeholder="Enter credential requirements (e.g., badge pickup, wristband issuance, ID requirements...)"
+                    uploadPlaceholder="Upload credential forms, badge photos, or related documents"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="Other Instructions"
+                    fieldKey="other"
+                    placeholder="Enter any additional instructions or important information for staff..."
+                    uploadPlaceholder="Upload any other relevant documents"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <AccountOrderDefaultsCard
+                    title="Other Attachments"
+                    fieldKey="attachments"
+                    placeholder=""
+                    uploadPlaceholder="Upload any other relevant documents for job orders under this account"
+                    account={account}
+                    accountId={accountId!}
+                    tenantId={tenantId!}
+                    userId={user?.uid || ''}
+                    onRefresh={loadAccount}
+                  />
+                </Grid>
+              </Grid>
+            </Grid>
+            <Grid item xs={12} md={3}>
+              <AccountSidebar
+                account={account}
+                tenantId={tenantId!}
+                navigate={navigate}
+                updateAccountAssociations={updateAccountAssociations}
+                companies={companies}
+                locationsByCompany={locationsByCompany}
+                contacts={contacts}
+                jobOrders={jobOrders}
+                deals={deals}
+                laborPoolOptions={laborPoolOptions}
+                salespeopleOptions={salespeopleOptions}
+                recruitersOptions={recruitersOptions}
+                accountOptions={accountOptions.filter((a) => a.id !== account.id && a.id !== account.parentAccountId && !(account.childAccountIds || []).includes(a.id))}
+                parentAccount={parentAccount}
+                childAccounts={childAccounts}
+                onParentAccountChange={updateParentAccountRelationship}
+                onChildAccountsChange={updateChildAccountRelationships}
+                optionsLoading={optionsLoading}
+                saving={saving}
+                visibleSections={[]}
+              />
+            </Grid>
+          </Grid>
+        </TabPanel>
+        <TabPanel value={tabValue} index={11}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Card>
@@ -2114,6 +5243,33 @@ const RecruiterAccountDetails: React.FC = () => {
           </Grid>
         </TabPanel>
       </Box>
+
+      {/* Delete upload confirmation */}
+      <Dialog
+        open={deleteConfirmUploadId != null}
+        onClose={() => setDeleteConfirmUploadId(null)}
+        maxWidth="xs"
+        fullWidth
+      >
+        <DialogTitle>Delete file?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">
+            This will permanently remove the file from storage. This action cannot be undone.
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeleteConfirmUploadId(null)} color="inherit">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => deleteConfirmUploadId != null && handleDeleteUpload(deleteConfirmUploadId)}
+            color="error"
+            variant="contained"
+          >
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
