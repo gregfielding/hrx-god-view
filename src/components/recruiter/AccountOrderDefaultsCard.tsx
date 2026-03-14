@@ -34,6 +34,10 @@ export interface AccountOrderDefaultsCardProps {
   tenantId: string;
   userId: string;
   onRefresh: () => void | Promise<void>;
+  /** When set, read effective from location then account and save to location_defaults (location override mode). */
+  locationKey?: string;
+  locationDefaults?: Record<string, unknown>;
+  onRefreshLocation?: () => void | Promise<void>;
 }
 
 function instructionTextToString(value: unknown): string {
@@ -62,8 +66,14 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
   tenantId,
   userId,
   onRefresh,
+  locationKey,
+  locationDefaults,
+  onRefreshLocation,
 }) => {
-  const instructionData = account?.orderDefaults?.staffInstructions?.[fieldKey];
+  const locationStaff = (locationDefaults as any)?.orderDefaults?.staffInstructions;
+  const accountStaff = account?.orderDefaults?.staffInstructions;
+  const instructionData = locationStaff?.[fieldKey] ?? accountStaff?.[fieldKey];
+  const isLocationMode = !!locationKey;
   const inputId = `account-${fieldKey}-file-label`;
   const rawValue = instructionData?.text ?? instructionData;
   const initialText = instructionTextToString(rawValue);
@@ -95,13 +105,25 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
   const saveTextToFirestore = async (text: string) => {
     if (text === lastSavedRef.current) return;
     try {
-      await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
-        [`orderDefaults.staffInstructions.${fieldKey}.text`]: text,
-        updatedAt: serverTimestamp(),
-      });
-      lastSavedRef.current = text;
-      setToast({ open: true, message: 'Saved', severity: 'success' });
-      await onRefresh();
+      if (isLocationMode && locationKey) {
+        const locationRef = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
+        await updateDoc(locationRef, {
+          [`orderDefaults.staffInstructions.${fieldKey}.text`]: text,
+          updatedAt: serverTimestamp(),
+          updatedBy: userId || null,
+        });
+        lastSavedRef.current = text;
+        setToast({ open: true, message: 'Saved (location override)', severity: 'success' });
+        await onRefreshLocation?.();
+      } else {
+        await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+          [`orderDefaults.staffInstructions.${fieldKey}.text`]: text,
+          updatedAt: serverTimestamp(),
+        });
+        lastSavedRef.current = text;
+        setToast({ open: true, message: 'Saved', severity: 'success' });
+        await onRefresh();
+      }
     } catch (error: any) {
       console.error(`Error saving ${fieldKey} order defaults:`, error);
       setToast({ open: true, message: `Failed to save: ${error?.message || 'Permission denied'}`, severity: 'error' });
@@ -187,11 +209,21 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
                           if (window.confirm('Delete this file?')) {
                             try {
                               const updatedFiles = instructionData.files.filter((_: any, i: number) => i !== index);
-                              await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
-                                [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
-                                updatedAt: serverTimestamp(),
-                              });
-                              await onRefresh();
+                              if (isLocationMode && locationKey) {
+                                const locationRef = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
+                                await updateDoc(locationRef, {
+                                  [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
+                                  updatedAt: serverTimestamp(),
+                                  updatedBy: userId || null,
+                                });
+                                await onRefreshLocation?.();
+                              } else {
+                                await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+                                  [`orderDefaults.staffInstructions.${fieldKey}.files`]: updatedFiles,
+                                  updatedAt: serverTimestamp(),
+                                });
+                                await onRefresh();
+                              }
                             } catch (error) {
                               console.error('Error deleting file:', error);
                             }
@@ -235,7 +267,10 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
                         if (!tenantId || !accountId) throw new Error('Missing tenantId or accountId');
 
                         const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-                        const storagePath = `tenants/${tenantId}/accounts/${accountId}/order_defaults/${fieldKey}/${Date.now()}_${safeName}`;
+                        const pathPrefix = isLocationMode && locationKey
+                          ? `tenants/${tenantId}/accounts/${accountId}/location_defaults/${locationKey}/${fieldKey}`
+                          : `tenants/${tenantId}/accounts/${accountId}/order_defaults/${fieldKey}`;
+                        const storagePath = `${pathPrefix}/${Date.now()}_${safeName}`;
                         const storageRef = ref(storage, storagePath);
 
                         await uploadBytes(storageRef, file);
@@ -252,14 +287,24 @@ const AccountOrderDefaultsCard: React.FC<AccountOrderDefaultsCardProps> = ({
                         };
 
                         const currentFiles = instructionData?.files || [];
-                        await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
-                          [`orderDefaults.staffInstructions.${fieldKey}.files`]: [...currentFiles, newFile],
-                          updatedAt: serverTimestamp(),
-                        });
+                        if (isLocationMode && locationKey) {
+                          const locationRef = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
+                          await updateDoc(locationRef, {
+                            [`orderDefaults.staffInstructions.${fieldKey}.files`]: [...currentFiles, newFile],
+                            updatedAt: serverTimestamp(),
+                            updatedBy: userId || null,
+                          });
+                          await onRefreshLocation?.();
+                        } else {
+                          await updateDoc(doc(db, p.recruiterAccount(tenantId, accountId)), {
+                            [`orderDefaults.staffInstructions.${fieldKey}.files`]: [...currentFiles, newFile],
+                            updatedAt: serverTimestamp(),
+                          });
+                          await onRefresh();
+                        }
 
                         if (labelInput) labelInput.value = '';
                         e.target.value = '';
-                        await onRefresh();
                       } catch (error: any) {
                         console.error(`Error uploading file to ${fieldKey}:`, error);
                         alert(`Failed to upload file: ${error?.message || 'Unknown error'}`);

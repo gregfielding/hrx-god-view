@@ -45,6 +45,9 @@ import jobTitlesList from '../data/onetJobTitles.json';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequirementPacks';
+import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
+import { useEntity } from '../hooks/useEntity';
+import { normalizeStateCode } from '../utils/unemploymentRates';
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -130,10 +133,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   // Use props if provided, otherwise fall back to auth context
   const tenantId = propTenantId || authTenantId;
   const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
-  
+  const wcRatesByStateAndJobTitle = useWorkersCompRatesByJobTitle(tenantId);
+
   const [loading, setLoading] = useState(propLoading ?? !!jobOrderId); // Loading if editing
   const [saving, setSaving] = useState(false);
   const [loadedJobOrderData, setLoadedJobOrderData] = useState<any>(null); // Store loaded job order for preserving associations
+
+  /** Hiring Entity (Employer of Record): E-Verify comes from here (read-only downstream). */
+  const hiringEntityIdForForm = initialData?.hiringEntityId ?? jobOrder?.hiringEntityId ?? (loadedJobOrderData as any)?.hiringEntityId ?? null;
+  const { entity: formEntity } = useEntity(tenantId ?? null, hiringEntityIdForForm);
   const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string}>>([
     { jobTitle: '', workersNeeded: 1, payRate: '' }
   ]); // For gig-type jobs with multiple positions
@@ -304,6 +312,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     }
   }, [tenantId, jobOrderId, dealId]);
 
+  // When Hiring Entity is set, E-Verify comes from entity (source of truth)
+  useEffect(() => {
+    if (formEntity) {
+      setFormData((prev) => ({ ...prev, eVerifyRequired: formEntity.everifyRequired }));
+    }
+  }, [formEntity?.id, formEntity?.everifyRequired]);
+
   // Load locations when company changes
   useEffect(() => {
     if (formData.companyId) {
@@ -342,6 +357,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       loadCompanyContacts(formData.companyId);
     }
   }, [formData.companyId, tenantId]);
+
+  // Auto-apply WC code/rate from master when job title + worksite state match (Settings > Workers Comp Rates)
+  useEffect(() => {
+    const jobTitle = formData.jobType === 'gig' ? (gigPositions[0]?.jobTitle ?? '') : (formData.jobTitle ?? '');
+    if (!jobTitle || !formData.worksiteId || Object.keys(wcRatesByStateAndJobTitle).length === 0) return;
+    const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as (Location & { state?: string; address?: { state?: string } }) | undefined;
+    const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
+    const stateCode = normalizeStateCode(stateRaw).trim().toUpperCase();
+    if (!stateCode) return;
+    const key = `${stateCode}_${String(jobTitle).trim().toLowerCase()}`;
+    const lookup = wcRatesByStateAndJobTitle[key];
+    if (!lookup) return;
+    setFormData((prev) => {
+      if (prev.workersCompClassCode === lookup.code && String(prev.workersCompRate ?? '') === String(lookup.rate)) return prev;
+      return { ...prev, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+    });
+  }, [formData.worksiteId, formData.jobTitle, formData.jobType, gigPositions, filteredLocations, wcRatesByStateAndJobTitle]);
 
   const loadCompanies = async () => {
     try {
@@ -1180,7 +1212,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               drugScreen: formData.drugScreenRequired,
               drugScreeningPanels: formData.drugScreeningPanels,
               additionalScreenings: formData.additionalScreenings,
-              eVerify: formData.eVerifyRequired,
+              eVerify: formEntity ? formEntity.everifyRequired : formData.eVerifyRequired,
               licensesCerts: formData.licensesCerts,
               experience: formData.experienceRequired || undefined,
               education: formData.educationRequired || undefined,
@@ -1310,10 +1342,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           return billRate * 2080 * workersNeeded;
         })(),
         
-        // Compliance Fields
+        // Compliance Fields (E-Verify from Hiring Entity when set)
         backgroundCheckRequired: formData.backgroundCheckRequired || false,
         drugScreenRequired: formData.drugScreenRequired || false,
-        eVerifyRequired: formData.eVerifyRequired || false,
+        eVerifyRequired: formEntity ? formEntity.everifyRequired : (formData.eVerifyRequired || false),
+        ...(hiringEntityIdForForm ? { hiringEntityId: hiringEntityIdForForm } : {}),
         experienceRequired: formData.experienceRequired || '',
         educationRequired: formData.educationRequired || '',
         licensesCerts: formData.licensesCerts || [],

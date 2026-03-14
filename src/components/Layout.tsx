@@ -50,6 +50,7 @@ import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import DoneAllIcon from '@mui/icons-material/DoneAll';
 import SellIcon from '@mui/icons-material/Sell';
 import AttachMoneyIcon from '@mui/icons-material/AttachMoney';
+import HealthAndSafetyIcon from '@mui/icons-material/HealthAndSafety';
 import AlternateEmailIcon from '@mui/icons-material/AlternateEmail';
 import PersonIcon from '@mui/icons-material/Person';
 import LanguageIcon from '@mui/icons-material/Language';
@@ -916,6 +917,7 @@ const Layout: React.FC = function Layout() {
       'Users': <GroupsIcon />,
       'Accounts': <AccountBalanceIcon />,
       'Invoicing': <AttachMoneyIcon />,
+      'Workers Comp': <HealthAndSafetyIcon />,
       'Contacts': <PersonIcon />,
       'Companies': <BusinessIcon />,
       'Job Orders': <AssignmentIcon />,

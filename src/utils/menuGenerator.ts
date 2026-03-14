@@ -247,6 +247,13 @@ export async function generateMenuItems(
         icon: 'attach_money',
         accessRoles: ['tenant_7'],
       }]),
+      // Workers Comp: central management of WC codes/rates by state and job title; visible to levels 5, 6, 7
+      ...([{
+        text: 'Workers Comp',
+        to: '/workers-comp',
+        icon: 'health_and_safety',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
       // Sales CRM (role-gated; no module gate)
       ...([{
         text: 'Sales CRM',

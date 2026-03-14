@@ -21,7 +21,7 @@ import {
   Today as TodayIcon,
 } from '@mui/icons-material';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, eachDayOfInterval, parseISO, isValid as isValidDate, isSameDay, isSameMonth, isToday, differenceInCalendarDays, addDays, subDays, addWeeks, subWeeks, addMonths, subMonths } from 'date-fns';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, documentId } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { useGigJobOrdersCalendar, getColorForJobOrderId } from '../../hooks/useGigJobOrdersCalendar';
@@ -67,13 +67,16 @@ function getEventColor(event: CalendarEvent): { backgroundColor: string; foregro
 export interface AccountCalendarTabProps {
   tenantId: string;
   account: RecruiterAccount | null;
+  /** When set, only show shifts for job orders at this worksite (calendar filtered downstream). */
+  locationFilter?: { companyId: string; locationId: string };
 }
 
-const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, account }) => {
+const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, account, locationFilter }) => {
   const navigate = useNavigate();
   const [view, setView] = useState<CalendarView>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [accountJobOrderIds, setAccountJobOrderIds] = useState<string[]>([]);
+  const [filteredJobOrderIds, setFilteredJobOrderIds] = useState<string[] | null>(null);
 
   const baseIds = useMemo(() => account?.associations?.jobOrderIds ?? [], [account?.associations?.jobOrderIds]);
 
@@ -107,6 +110,39 @@ const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, accou
     return () => { cancelled = true; };
   }, [tenantId, account?.id, baseIds.join(','), (account?.childAccountIds ?? []).join(',')]);
 
+  useEffect(() => {
+    if (!tenantId || !locationFilter || accountJobOrderIds.length === 0) {
+      setFilteredJobOrderIds(null);
+      return;
+    }
+    let cancelled = false;
+    const { companyId, locationId } = locationFilter;
+    (async () => {
+      const IN_LIMIT = 30;
+      const matchingIds: string[] = [];
+      for (let i = 0; i < accountJobOrderIds.length; i += IN_LIMIT) {
+        if (cancelled) return;
+        const batch = accountJobOrderIds.slice(i, i + IN_LIMIT);
+        const ref = collection(db, p.jobOrders(tenantId));
+        const q = query(ref, where(documentId(), 'in', batch));
+        const snap = await getDocs(q);
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const joCompanyId = (data as any).companyId ?? (data as any).deal?.companyId;
+          const joLocationId = (data as any).locationId ?? (data as any).worksiteId ?? (data as any).deal?.locationId;
+          if (joCompanyId === companyId && joLocationId === locationId) matchingIds.push(d.id);
+        });
+      }
+      if (!cancelled) setFilteredJobOrderIds(matchingIds);
+    })();
+    return () => { cancelled = true; };
+  }, [tenantId, locationFilter?.companyId, locationFilter?.locationId, accountJobOrderIds.join(',')]);
+
+  const jobOrderIdsForCalendar =
+    locationFilter
+      ? (filteredJobOrderIds ?? [])
+      : accountJobOrderIds;
+
   const dateRange = useMemo(() => getCalendarRange(view, currentDate), [view, currentDate]);
 
   const { events, loading } = useGigJobOrdersCalendar({
@@ -114,7 +150,7 @@ const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, accou
     timeMin: dateRange.start,
     timeMax: dateRange.end,
     enabled: !!tenantId,
-    jobOrderIds: accountJobOrderIds,
+    jobOrderIds: jobOrderIdsForCalendar,
   });
 
   const goToToday = () => {

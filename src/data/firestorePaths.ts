@@ -52,6 +52,14 @@ export const p = {
   /** Account file uploads (e.g. contracts) */
   recruiterAccountUploads: (tid: string, accountId: string) => `tenants/${tid}/accounts/${accountId}/uploads`,
   recruiterAccountUpload: (tid: string, accountId: string, uploadId: string) => `tenants/${tid}/accounts/${accountId}/uploads/${uploadId}`,
+  /** Location-level order defaults override (key = companyId_locationId, no slashes). */
+  recruiterAccountLocationDefaults: (tid: string, accountId: string, locationKey: string) =>
+    `tenants/${tid}/accounts/${accountId}/location_defaults/${locationKey}`,
+  /** Location-level file uploads (docs have locationKey field). */
+  recruiterAccountLocationUploads: (tid: string, accountId: string) =>
+    `tenants/${tid}/accounts/${accountId}/location_uploads`,
+  recruiterAccountLocationUpload: (tid: string, accountId: string, uploadId: string) =>
+    `tenants/${tid}/accounts/${accountId}/location_uploads/${uploadId}`,
 
   /**
    * QuickBooks Online integration (account-scoped cache and sync).
@@ -178,6 +186,10 @@ export const p = {
   workersCompClassCode: (tid: string, id: string) => `tenants/${tid}/workers_comp_class_codes/${id}`,
   workersCompRateSets: (tid: string) => `tenants/${tid}/workers_comp_rate_sets`,
   workersCompRateSet: (tid: string, id: string) => `tenants/${tid}/workers_comp_rate_sets/${id}`,
+  /** WC rates by state + code (single source of truth). One doc per (state, code); update here and all accounts/job orders use new rate. */
+  workersCompRates: (tid: string) => `tenants/${tid}/workers_comp_rates`,
+  workersCompRate: (tid: string, stateCode: string, code: string) =>
+    `tenants/${tid}/workers_comp_rates/${String(stateCode || '').trim().toUpperCase()}_${String(code || '').trim()}`,
 
   /**
    * User Groups (manual candidate grouping)

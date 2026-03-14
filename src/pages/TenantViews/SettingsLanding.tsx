@@ -23,7 +23,6 @@ const SmartGroupsSettings = lazy(() => import('./SmartGroupsSettings'));
 import { useAuth } from '../../contexts/AuthContext';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import DescriptionIcon from '@mui/icons-material/Description';
-
 type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'documents' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups' | 'everify-ops';
 
 const SettingsLanding: React.FC = () => {

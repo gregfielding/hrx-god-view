@@ -21,6 +21,8 @@ export interface JobOrder {
   // Company / Worksite
   companyId: string;
   companyName: string;
+  /** Hiring Entity (Employer of Record). E-Verify and onboarding flow come from this entity; set when creating from an account. */
+  hiringEntityId?: string | null;
   companyContacts: JobOrderContact[];
   worksiteId: string;
   worksiteName: string;

@@ -14,6 +14,10 @@ type Props = {
   workLng?: number | null;
   currentLat?: number | null;
   currentLng?: number | null;
+  /** Optional label for the home marker (e.g. "Location"). Default "Home". */
+  homeMarkerLabel?: string;
+  /** Optional tooltip for the home marker (shown on hover). */
+  homeMarkerTitle?: string;
 };
 
 const containerStyle = {
@@ -28,6 +32,8 @@ const MapWithMarkers: React.FC<Props> = ({
   workLng,
   currentLat,
   currentLng,
+  homeMarkerLabel = 'Home',
+  homeMarkerTitle,
 }) => {
   // Maps script is loaded globally in App via LoadScript; assume available here
   const isLoaded = !!(window as any).google?.maps;
@@ -69,7 +75,12 @@ const MapWithMarkers: React.FC<Props> = ({
       {center && (
         <GoogleMap mapContainerStyle={{ width: '100%', height: '400px' }} center={center} zoom={12}>
           {hasHome && (
-            <Marker position={{ lat: homeLat as number, lng: homeLng as number }} label="Home" />
+            <Marker
+              key={`home-${homeLat}-${homeLng}`}
+              position={{ lat: homeLat as number, lng: homeLng as number }}
+              label={homeMarkerLabel}
+              title={homeMarkerTitle}
+            />
           )}
           {hasWork && (
             <Marker position={{ lat: workLat as number, lng: workLng as number }} label="Work" />

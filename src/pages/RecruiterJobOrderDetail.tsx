@@ -100,6 +100,7 @@ import PlacementsTab from '../components/recruiter/PlacementsTab';
 import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
+import { useEntity } from '../hooks/useEntity';
 import FavoriteButton from '../components/FavoriteButton';
 import InterviewCell from '../components/InterviewCell';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
@@ -1839,6 +1840,9 @@ const JobOrderDefaultsTab: React.FC<{
   const [saving, setSaving] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  /** E-Verify comes from the Hiring Entity (Settings > Entities); read-only here. */
+  const { entity: jobOrderEntity, loading: entityLoading } = useEntity(tenantId, jobOrder?.hiringEntityId ?? null);
   
   // Get values from job order's deal.stageData.scoping structure
   const scoping = jobOrder?.deal?.stageData?.scoping || {};
@@ -1860,15 +1864,10 @@ const JobOrderDefaultsTab: React.FC<{
     invoiceDeliveryMethod: scoping.invoiceDeliveryMethod || '',
     invoiceFrequency: scoping.invoiceFrequency || '',
   };
-  const initialEVerify = {
-    eVerifyRequired: !!compliance.eVerify,
-  };
-  
   const [rules, setRules] = useState(initialRules);
   const [billing, setBilling] = useState(initialBilling);
-  const [eVerify, setEVerify] = useState(initialEVerify);
   
-  // Update state when jobOrder changes
+  // Update state when jobOrder changes (E-Verify is read from entity, not local state)
   useEffect(() => {
     const scoping = jobOrder?.deal?.stageData?.scoping || {};
     const compliance = scoping.compliance || {};
@@ -1888,9 +1887,6 @@ const JobOrderDefaultsTab: React.FC<{
       paymentTerms: scoping.paymentTerms || '',
       invoiceDeliveryMethod: scoping.invoiceDeliveryMethod || '',
       invoiceFrequency: scoping.invoiceFrequency || '',
-    });
-    setEVerify({
-      eVerifyRequired: !!compliance.eVerify,
     });
   }, [jobOrder]);
   
@@ -1925,7 +1921,8 @@ const JobOrderDefaultsTab: React.FC<{
           },
           compliance: {
             ...(currentData?.deal?.stageData?.scoping?.compliance || {}),
-            eVerify: eVerify.eVerifyRequired, // Explicitly save true or false (not undefined)
+            // E-Verify comes from Hiring Entity (source of truth); persist entity value when we have it
+            eVerify: jobOrderEntity ? jobOrderEntity.everifyRequired : (currentData?.deal?.stageData?.scoping?.compliance?.eVerify ?? false),
           },
         },
       };
@@ -2055,15 +2052,25 @@ const JobOrderDefaultsTab: React.FC<{
             <CardContent>
               <Grid container spacing={2}>
                 <Grid item xs={12}>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={eVerify.eVerifyRequired}
-                        onChange={(e) => setEVerify({ ...eVerify, eVerifyRequired: e.target.checked })}
-                      />
-                    }
-                    label="E-Verify Required"
-                  />
+                  {entityLoading ? (
+                    <Typography variant="body2" color="text.secondary">Loading entity…</Typography>
+                  ) : jobOrderEntity ? (
+                    <FormControlLabel
+                      control={<Checkbox checked={jobOrderEntity.everifyRequired} disabled />}
+                      label={
+                        <Box>
+                          <Typography variant="body2">E-Verify Required</Typography>
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            Set by Hiring Entity (Settings → Entities). Cannot be changed on the job order.
+                          </Typography>
+                        </Box>
+                      }
+                    />
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      E-Verify is set by the Hiring Entity. Create job orders from an account that has a Hiring Entity selected to set this.
+                    </Typography>
+                  )}
                 </Grid>
               </Grid>
             </CardContent>
@@ -2156,6 +2163,9 @@ const JobOrderJobsBoardTab: React.FC<{
   const [error, setError] = useState<string | null>(null);
   const jobsBoardService = JobsBoardService.getInstance();
 
+  /** E-Verify comes from Hiring Entity (source of truth). */
+  const { entity: jobOrderEntity } = useEntity(tenantId, jobOrder?.hiringEntityId ?? null);
+
   const gigPositions = (jobOrder as any).gigPositions as GigPosition[] | undefined;
   const isGigWithPositions = jobOrder?.jobType === 'gig' && gigPositions && gigPositions.length > 0;
 
@@ -2221,13 +2231,13 @@ const JobOrderJobsBoardTab: React.FC<{
       map[position.jobTitle] = getInitialDataStatic(existingPost, position);
     });
     return map;
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialDataByPositionKey drives recompute when posts/positions change
-  }, [initialDataByPositionKey, jobOrder?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialDataByPositionKey and jobOrderEntity drive recompute
+  }, [initialDataByPositionKey, jobOrder?.id, jobOrderEntity?.everifyRequired]);
 
   const initialDataSingle = useMemo(
     () => getInitialDataStatic(existingPostSingle, null),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when post loads or job order changes
-    [existingPostSingle?.id ?? 'new', jobOrder?.id]
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when post loads, job order or entity changes
+    [existingPostSingle?.id ?? 'new', jobOrder?.id, jobOrderEntity?.everifyRequired]
   );
 
   // Convert job order data to JobPostForm initialData format (optionally for a specific Gig position)
@@ -2299,7 +2309,7 @@ const JobOrderJobsBoardTab: React.FC<{
         : jobOrder.payRate?.toString() || '',
       ...(positionForPrefill && { positionJobTitle: positionForPrefill.jobTitle }),
       workersNeeded: jobOrder.workersNeeded || 1,
-      eVerifyRequired: compliance.eVerify === true || (jobOrder as any).eVerifyRequired || false,
+      eVerifyRequired: jobOrderEntity ? jobOrderEntity.everifyRequired : (compliance.eVerify === true || (jobOrder as any).eVerifyRequired || false),
       // Background check packages from scoping (preferred) or top-level, deduplicated
       backgroundCheckPackages: (() => {
         const scopingBg = Array.isArray(compliance.backgroundCheckPackages) ? compliance.backgroundCheckPackages : [];

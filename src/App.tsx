@@ -149,7 +149,9 @@ import SavedSmartGroupDetailPage from './pages/SavedSmartGroupDetailPage';
 import RecruiterUsers from './pages/RecruiterUsers';
 import UsersLayout from './pages/UsersLayout';
 import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
+import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
+import WorkersCompRatesPage from './pages/TenantViews/settings/WorkersCompRatesPage';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
 import NewJobOrder from './pages/NewJobOrder';
@@ -665,6 +667,16 @@ function App() {
           }
         />
         <Route
+          path="workers-comp"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <WorkersCompRatesPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="accounts/:accountId"
           element={
             <ProtectedRoute requiredSecurityLevel="5">
@@ -672,6 +684,16 @@ function App() {
                 <InvoicingTabGuard>
                   <RecruiterAccountDetails />
                 </InvoicingTabGuard>
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="accounts/:accountId/locations/:locationId"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <AccountLocationDetail />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

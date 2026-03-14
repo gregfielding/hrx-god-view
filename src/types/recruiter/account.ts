@@ -52,6 +52,8 @@ export interface AccountPricing {
   flatMarkupPercent?: number | null;
   /** Positions table: job titles and rates. At national level trickles to children; at child/standalone defines local rates and WC/SUTA/FUTA. */
   positions?: AccountPositionPricing[];
+  /** Free-form notes about pricing; flows downstream (e.g. National → Child → Job Order). */
+  pricingNotes?: string | null;
 }
 
 /** QuickBooks Online integration state for this account (HRX-side scaffolding). */
@@ -147,6 +149,8 @@ export interface RecruiterAccount {
   hiringEntityId?: string | null;
   parentAccountId?: string | null;
   childAccountIds?: string[];
+  /** MSP (Managed Service Provider) accounts linked to this account. */
+  mspAccountIds?: string[];
   createdAt?: any; // Firestore Timestamp or serverTimestamp
   updatedAt?: any;
   createdBy?: string;
@@ -155,6 +159,12 @@ export interface RecruiterAccount {
   /** Order defaults: staff instructions and attachments that pre-fill new job orders for this account */
   orderDefaults?: {
     staffInstructions?: Record<string, { text?: unknown; files?: Array<{ name?: string; label?: string; url?: string; uploadedAt?: string }> }>;
+  };
+  /** Billing/hiring defaults (E-Verify, etc.). Stored in Firestore as defaults; may be mirrored at top level for display. */
+  defaults?: {
+    eVerify?: { eVerifyRequired?: boolean };
+    rules?: Record<string, unknown>;
+    billing?: Record<string, unknown>;
   };
   /** Pricing: flat markup (national) or positions table; positions can trickle from national to sub-accounts. */
   pricing?: AccountPricing;
@@ -170,4 +180,22 @@ export interface RecruiterAccountFormData {
   name: string;
   active: boolean;
   parentAccountId?: string | null;
+}
+
+/**
+ * Tenant-level workers comp rate: one doc per (state, code). Single source of truth.
+ * Update the rate here and all accounts/job orders referencing this state+code use the new rate.
+ * jobTitles: from master job title list; when an account/job order uses one of these titles and worksite is in this state, code+rate auto-apply.
+ */
+export interface WorkersCompRateByState {
+  /** State code (e.g. TX) – rate applies statewide. */
+  state: string;
+  /** Class code (e.g. 9014). */
+  code: string;
+  /** Rate as percentage (e.g. 1.7). */
+  rate: number;
+  /** Job titles from master list that use this code/rate in this state (e.g. ["Cleaner", "Janitor"]). */
+  jobTitles?: string[] | null;
+  updatedAt?: any;
+  updatedBy?: string | null;
 }
