@@ -207,7 +207,7 @@ export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 export { deleteUserCompletely } from './deleteUserCompletely';
 export { sendProfileUpdateReminder } from './sendProfileUpdateReminder';
-export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
+export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
 export {
   everifyCreateCase,
   everifyCheckEligibility,
@@ -8768,14 +8768,16 @@ export const logAssignmentUpdated = onDocumentUpdated(
     
     if (statusChanged && after.userId) {
       try {
-        // Fetch user phone number
+        // Fetch user data (needed for template resolution and fallback message)
         const userDoc = await admin.firestore().doc(`users/${after.userId}`).get();
         const userData = userDoc.data();
-        
-        if (userData?.phoneE164 && userData?.phoneVerified) {
+        const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
+        // Attempt send when we have any phone number; orchestrator handles consent/opt-out.
+        // Previously we required phoneVerified, which skipped confirmation for many test users.
+        if (phoneE164) {
           let message = '';
-          const firstName = after.firstName || userData.firstName || 'there';
-          
+          const firstName = after.firstName || userData?.firstName || 'there';
+
           switch (after.status) {
             case 'confirmed':
               message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
@@ -8794,12 +8796,11 @@ export const logAssignmentUpdated = onDocumentUpdated(
               message = `Hi ${firstName}, your assignment has been cancelled. Please check your account for details.`;
               break;
             default:
-              // Don't send SMS for other status changes
-              return { success: true };
+              // Don't send for other status changes
+              break;
           }
-          
+
           if (message) {
-            // PHASE 3: Route through orchestrator instead of direct Twilio call
             const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
             let messageTypeId = 'assignment_status_update';
             if (after.status === 'confirmed') messageTypeId = 'assignment_confirmed';
@@ -8807,22 +8808,22 @@ export const logAssignmentUpdated = onDocumentUpdated(
             else if (after.status === 'completed') messageTypeId = 'assignment_completed';
             else if (after.status === 'declined') messageTypeId = 'assignment_status_change';
             else if (after.status === 'cancelled' || after.status === 'canceled') messageTypeId = 'assignment_cancelled';
-            
+
             const result = await sendLegacyAssignmentMessage({
               tenantId,
               userId: after.userId,
-              phoneE164: userData.phoneE164,
+              phoneE164,
               message,
               messageTypeId,
               source: 'assignment_status_update',
               sourceId: assignmentId,
               assignmentId,
             });
-            
+
             if (result.success) {
-              logger.info(`SMS sent for assignment status update ${assignmentId} to ${userData.phoneE164}`);
+              logger.info(`SMS sent for assignment status update ${assignmentId} to ${phoneE164}`);
             } else {
-              logger.warn(`SMS failed for assignment status update ${assignmentId} to ${userData.phoneE164}: ${result.error}`);
+              logger.warn(`SMS failed for assignment status update ${assignmentId} to ${phoneE164}: ${result.error}`);
             }
           }
         }

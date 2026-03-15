@@ -88,6 +88,7 @@ import PageHeader from '../components/PageHeader';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable from '../components/recruiter/ActiveWorkersTable';
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
+import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetailsForm';
 import MapWithMarkers from './UserProfile/components/AddressTab/MapWithMarkers';
 import { geocodeAddress, getGeocodingErrorMessage } from '../utils/geocodeAddress';
 import { canAccessAccountInvoicingTab } from '../utils/invoicingAccessControl';
@@ -183,6 +184,7 @@ export default function AccountLocationDetail() {
   const [laborPoolOptions, setLaborPoolOptions] = useState<LaborPoolOption[]>([]);
   const [jobOrderApplicantCounts, setJobOrderApplicantCounts] = useState<Record<string, number>>({});
   const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
+  const [orderDefaultsSubView, setOrderDefaultsSubView] = useState<'staffInstructions' | 'orderDetails'>('staffInstructions');
   const [entityOptions, setEntityOptions] = useState<EntityOption[]>([]);
   const [locationDefaultRules, setLocationDefaultRules] = useState({
     replacingExistingAgency: false,
@@ -229,6 +231,7 @@ export default function AccountLocationDetail() {
   const [companyContactsLoading, setCompanyContactsLoading] = useState(false);
   const [locationContactsModalSaving, setLocationContactsModalSaving] = useState(false);
   const [selectedLocationContactOption, setSelectedLocationContactOption] = useState<{ id: string; label: string } | null>(null);
+  const [accountCompaniesOptions, setAccountCompaniesOptions] = useState<Array<{ id: string; companyName?: string; name?: string; label?: string }>>([]);
   const isMounted = useRef(true);
 
   useEffect(() => {
@@ -237,6 +240,32 @@ export default function AccountLocationDetail() {
       isMounted.current = false;
     };
   }, []);
+
+  // Load company names for account's associated companies (for Job Order modal dropdown).
+  useEffect(() => {
+    const companyIds = account?.associations?.companyIds;
+    if (!tenantId || !companyIds?.length) {
+      setAccountCompaniesOptions([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const options: Array<{ id: string; companyName?: string; name?: string; label?: string }> = [];
+      for (const id of companyIds) {
+        if (cancelled) return;
+        try {
+          const companyRef = doc(db, p.accounts(tenantId), id);
+          const snap = await getDoc(companyRef);
+          const name = snap.exists() ? (snap.get('companyName') ?? snap.get('name') ?? id) : id;
+          options.push({ id, companyName: name, name, label: name });
+        } catch {
+          options.push({ id, companyName: id, name: id, label: id });
+        }
+      }
+      if (!cancelled && isMounted.current) setAccountCompaniesOptions(options);
+    })();
+    return () => { cancelled = true; };
+  }, [tenantId, account?.associations?.companyIds]);
 
   useEffect(() => {
     if (!tenantId || !accountId || !locationId) {
@@ -307,10 +336,11 @@ export default function AccountLocationDetail() {
     if (!tenantId || !resolvedCompanyId || !locationId) return;
     setJobOrdersLoading(true);
     const ref = collection(db, p.jobOrders(tenantId));
+    // Job orders store location as worksiteId (same id as this location); query by worksiteId so orders created from this location appear
     const q = query(
       ref,
       where('companyId', '==', resolvedCompanyId),
-      where('locationId', '==', locationId)
+      where('worksiteId', '==', locationId)
     );
     try {
       const snap = await getDocs(q);
@@ -1100,7 +1130,7 @@ export default function AccountLocationDetail() {
             </Box>
           </Box>
         }
-        rightActions={
+        titleRightActions={
           tabValue === 5 ? (
             <Button
               variant="contained"
@@ -2667,9 +2697,15 @@ export default function AccountLocationDetail() {
 
         <TabPanel value={tabValue} index={10}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Set default staff instructions for this location. They trickle down from the account; edit here to override for this location only. Job orders at this location can override again.
+            Set default staff instructions and order details for this location. They trickle down from the account; edit here to override for this location only. Job orders at this location can override again.
           </Typography>
-          {tenantId && accountId && locationKey && (
+          <Box sx={{ mb: 2 }}>
+            <ToggleButtonGroup size="small" value={orderDefaultsSubView} exclusive onChange={(_, v) => v != null && setOrderDefaultsSubView(v)} aria-label="Order defaults view">
+              <ToggleButton value="staffInstructions">Staff Instructions</ToggleButton>
+              <ToggleButton value="orderDetails">Order Details</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          {orderDefaultsSubView === 'staffInstructions' && tenantId && accountId && locationKey && (
             <Grid container spacing={3}>
               <Grid item xs={12}>
                 <AccountOrderDefaultsCard title="First Day Instructions" fieldKey="firstDay" placeholder="Enter first day instructions (e.g., arrival time, what to bring, who to meet...)" uploadPlaceholder="Upload first day schedules or orientation materials" account={account} accountId={accountId} tenantId={tenantId} userId={user?.uid || ''} onRefresh={() => {}} locationKey={locationKey} locationDefaults={locationDefaults as any} onRefreshLocation={refreshLocationDefaults} />
@@ -2681,6 +2717,18 @@ export default function AccountLocationDetail() {
               <Grid item xs={12}><AccountOrderDefaultsCard title="Other Instructions" fieldKey="other" placeholder="Enter any additional instructions for staff" uploadPlaceholder="Upload any other relevant documents" account={account} accountId={accountId} tenantId={tenantId} userId={user?.uid || ''} onRefresh={() => {}} locationKey={locationKey} locationDefaults={locationDefaults as any} onRefreshLocation={refreshLocationDefaults} /></Grid>
               <Grid item xs={12}><AccountOrderDefaultsCard title="Other Attachments" fieldKey="attachments" placeholder="" uploadPlaceholder="Upload any other relevant documents for job orders at this location" account={account} accountId={accountId} tenantId={tenantId} userId={user?.uid || ''} onRefresh={() => {}} locationKey={locationKey} locationDefaults={locationDefaults as any} onRefreshLocation={refreshLocationDefaults} /></Grid>
             </Grid>
+          )}
+          {orderDefaultsSubView === 'orderDetails' && tenantId && accountId && (
+            <AccountOrderDetailsForm
+              account={account}
+              accountId={accountId}
+              tenantId={tenantId}
+              userId={user?.uid || ''}
+              locationKey={locationKey ?? undefined}
+              locationDefaults={locationDefaults as any}
+              onRefreshLocation={refreshLocationDefaults}
+              contacts={contactsAtLocation}
+            />
           )}
         </TabPanel>
 
@@ -2850,6 +2898,26 @@ export default function AccountLocationDetail() {
         tenantId={tenantId ?? ''}
         userId={user?.uid ?? ''}
         defaultHiringEntityId={account?.hiringEntityId ?? null}
+        accountCompanies={
+          accountCompaniesOptions.length
+            ? accountCompaniesOptions.map((c) => ({
+                id: c.id,
+                label: c.companyName ?? c.label ?? c.id,
+                companyName: c.companyName ?? c.label ?? c.id,
+                name: c.companyName ?? c.label ?? c.id,
+              }))
+            : undefined
+        }
+        defaultCompanyId={
+          resolvedCompanyId ??
+          (account?.associations?.companyIds?.length === 1 ? account.associations.companyIds[0] : null)
+        }
+        defaultWorksiteId={locationId ?? null}
+        jobTitleOptions={
+          locationPricingPositions.length > 0
+            ? [...new Set(locationPricingPositions.map((p) => p.jobTitle).filter(Boolean))]
+            : undefined
+        }
       />
     </Box>
   );

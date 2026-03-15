@@ -636,6 +636,60 @@ export const respondToAssignment = onCall(async (request) => {
 });
 
 /**
+ * Recruiter confirms an assignment on behalf of the worker (same effect as worker clicking "Accept").
+ * Allowed when the caller can manage assignments for the tenant.
+ */
+export const confirmAssignmentForWorker = onCall(async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError('unauthenticated', 'Authentication required');
+  }
+
+  const { tenantId, assignmentId } = (request.data || {}) as { tenantId?: string; assignmentId?: string };
+  if (!tenantId || !assignmentId) {
+    throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+  }
+
+  const canManage = await canManageAssignments(request.auth, tenantId, request.auth.uid);
+  if (!canManage) {
+    throw new HttpsError('permission-denied', 'You do not have permission to confirm assignments for this tenant');
+  }
+
+  const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+  const assignmentSnap = await assignmentRef.get();
+  if (!assignmentSnap.exists) throw new HttpsError('not-found', 'Assignment not found');
+  const assignment = assignmentSnap.data() || {};
+  const applicationId = assignment.applicationId as string | undefined;
+  const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const uid = request.auth.uid;
+
+  await assignmentRef.set(
+    {
+      status: 'confirmed',
+      confirmedAt: now,
+      confirmedBy: uid,
+      updatedAt: now,
+      updatedBy: uid,
+    },
+    { merge: true },
+  );
+  if (applicationRef) {
+    await applicationRef.set(
+      {
+        status: 'confirmed',
+        confirmedAt: now,
+        confirmedBy: uid,
+        updatedAt: now,
+        updatedBy: uid,
+      },
+      { merge: true },
+    );
+  }
+  return { success: true, status: 'confirmed' };
+});
+
+/**
  * Cancel an assignment and revert to Placed state.
  * Deletes the assignment and creates a placement so the worker shows as "Placed" again.
  * For testing / recruiter use.
@@ -677,6 +731,12 @@ export const placementsCancelAssignment = onCall(async (request) => {
   const placementId = `${shiftId}__${userId}`;
   const placementRef = db.doc(`tenants/${tenantId}/placements/${placementId}`);
 
+  // Linked application: revert to submitted so worker's job posting view no longer shows "Confirmed"
+  const applicationId = assignmentData.applicationId as string | undefined;
+  const applicationRef = applicationId
+    ? db.doc(`tenants/${tenantId}/applications/${applicationId}`)
+    : null;
+
   // Update assignment to cancelled first so Firestore onUpdate trigger sends cancellation message (SMS/email/push)
   await assignmentRef.set(
     {
@@ -698,6 +758,14 @@ export const placementsCancelAssignment = onCall(async (request) => {
       createdBy: request.auth!.uid,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+    if (applicationRef) {
+      tx.update(applicationRef, {
+        status: 'submitted',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        confirmedAt: admin.firestore.FieldValue.delete(),
+        confirmedBy: admin.firestore.FieldValue.delete(),
+      });
+    }
   });
 
   return { success: true };

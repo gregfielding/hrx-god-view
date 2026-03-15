@@ -128,7 +128,10 @@ export const formatCalendarDate = (dateValue: Date | { toDate: () => Date } | st
  */
 export const getCalendarDayLocal = (shiftDate: string | Date | { toDate: () => Date } | null | undefined): string => {
   if (shiftDate == null || shiftDate === '') return '';
-  if (typeof shiftDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(shiftDate)) return shiftDate;
+  if (typeof shiftDate === 'string') {
+    const dateOnly = shiftDate.split('T')[0];
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateOnly)) return dateOnly;
+  }
   try {
     let date: Date;
     if (typeof shiftDate === 'string') {
@@ -149,3 +152,17 @@ export const getCalendarDayLocal = (shiftDate: string | Date | { toDate: () => D
     return '';
   }
 };
+
+/**
+ * Parse a value (YYYY-MM-DD string, Timestamp, or Date) as a calendar date and return a Date at local midnight.
+ * Avoids UTC interpretation: "2026-03-13" stays March 13 in the user's timezone instead of becoming March 12.
+ */
+export function parseCalendarDateLocal(
+  value: string | Date | { toDate: () => Date } | null | undefined
+): Date | undefined {
+  const dayStr = getCalendarDayLocal(value);
+  if (!dayStr || !/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) return undefined;
+  const [y, m, d] = dayStr.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return isNaN(date.getTime()) ? undefined : date;
+}

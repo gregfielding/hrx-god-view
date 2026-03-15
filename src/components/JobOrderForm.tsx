@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -135,6 +135,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
   const wcRatesByStateAndJobTitle = useWorkersCompRatesByJobTitle(tenantId);
 
+  /** Job Title dropdown: when opened from Account > Location, use that location's pricing positions; otherwise full O*NET list */
+  const jobTitleOptions = (propJobTitles && propJobTitles.length > 0) ? propJobTitles : (jobTitlesList as string[]);
+
   const [loading, setLoading] = useState(propLoading ?? !!jobOrderId); // Loading if editing
   const [saving, setSaving] = useState(false);
   const [loadedJobOrderData, setLoadedJobOrderData] = useState<any>(null); // Store loaded job order for preserving associations
@@ -142,7 +145,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   /** Hiring Entity (Employer of Record): E-Verify comes from here (read-only downstream). */
   const hiringEntityIdForForm = initialData?.hiringEntityId ?? jobOrder?.hiringEntityId ?? (loadedJobOrderData as any)?.hiringEntityId ?? null;
   const { entity: formEntity } = useEntity(tenantId ?? null, hiringEntityIdForForm);
-  const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string}>>([
+  const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string; workersCompClassCode?: string; workersCompRate?: string}>>([
     { jobTitle: '', workersNeeded: 1, payRate: '' }
   ]); // For gig-type jobs with multiple positions
   const [companies, setCompanies] = useState<Company[]>(propCompanies || []);
@@ -298,10 +301,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   const isEditing = !!jobOrderId;
 
-  // Load companies and company defaults
+  // Load companies (only when not provided, e.g. from account-scoped modal) and company defaults
   useEffect(() => {
     if (tenantId) {
-      loadCompanies();
+      if (!propCompanies?.length) {
+        loadCompanies();
+      }
       loadCompanyDefaults();
       if (isEditing && jobOrderId) {
         loadJobOrder();
@@ -311,6 +316,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       }
     }
   }, [tenantId, jobOrderId, dealId]);
+
+  // When account-scoped companies are passed (e.g. from Account > New Job Order), use only those
+  useEffect(() => {
+    if (propCompanies?.length) {
+      setCompanies(propCompanies as Company[]);
+    }
+  }, [propCompanies]);
+
+  // Dedupe companies by id so Autocomplete never has duplicate keys (fixes "two children with the same key")
+  const companiesDeduped = React.useMemo(() => {
+    const seen = new Set<string>();
+    return (companies || []).filter((c) => {
+      if (!c?.id || seen.has(c.id)) return false;
+      seen.add(c.id);
+      return true;
+    });
+  }, [companies]);
+
+  // When opening New Job Order from an account/location, pre-fill Company and Worksite
+  useEffect(() => {
+    if (!isEditing && (initialData?.companyId || initialData?.worksiteId)) {
+      setFormData((prev) => {
+        const next = { ...prev };
+        if (initialData?.companyId && !prev.companyId) next.companyId = initialData.companyId;
+        if (initialData?.worksiteId && !prev.worksiteId) next.worksiteId = initialData.worksiteId;
+        return next;
+      });
+    }
+  }, [initialData?.companyId, initialData?.worksiteId, isEditing]);
 
   // When Hiring Entity is set, E-Verify comes from entity (source of truth)
   useEffect(() => {
@@ -360,13 +394,31 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   // Auto-apply WC code/rate from master when job title + worksite state match (Settings > Workers Comp Rates)
   useEffect(() => {
-    const jobTitle = formData.jobType === 'gig' ? (gigPositions[0]?.jobTitle ?? '') : (formData.jobTitle ?? '');
-    if (!jobTitle || !formData.worksiteId || Object.keys(wcRatesByStateAndJobTitle).length === 0) return;
+    if (!formData.worksiteId || Object.keys(wcRatesByStateAndJobTitle).length === 0) return;
     const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as (Location & { state?: string; address?: { state?: string } }) | undefined;
     const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
     const stateCode = normalizeStateCode(stateRaw).trim().toUpperCase();
     if (!stateCode) return;
-    const key = `${stateCode}_${String(jobTitle).trim().toLowerCase()}`;
+
+    if (formData.jobType === 'gig') {
+      let updated = false;
+      const next = gigPositions.map((pos) => {
+        const jobTitle = (pos.jobTitle ?? '').trim();
+        if (!jobTitle) return pos;
+        const key = `${stateCode}_${jobTitle.toLowerCase()}`;
+        const lookup = wcRatesByStateAndJobTitle[key];
+        if (!lookup) return pos;
+        if (pos.workersCompClassCode === lookup.code && String(pos.workersCompRate ?? '') === String(lookup.rate)) return pos;
+        updated = true;
+        return { ...pos, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+      });
+      if (updated) setGigPositions(next);
+      return;
+    }
+
+    const jobTitle = (formData.jobTitle ?? '').trim();
+    if (!jobTitle) return;
+    const key = `${stateCode}_${jobTitle.toLowerCase()}`;
     const lookup = wcRatesByStateAndJobTitle[key];
     if (!lookup) return;
     setFormData((prev) => {
@@ -835,7 +887,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         
         // Load gig positions if job type is gig
         if ((data as any).jobType === 'gig' && (data as any).gigPositions) {
-          setGigPositions((data as any).gigPositions);
+          const loaded = ((data as any).gigPositions as any[]).map((p: any) => ({
+            jobTitle: p.jobTitle ?? '',
+            workersNeeded: p.workersNeeded ?? 1,
+            payRate: String(p.payRate ?? ''),
+            markup: p.markup,
+            billRate: p.billRate,
+            workersCompClassCode: p.workersCompClassCode ?? '',
+            workersCompRate: p.workersCompRate != null ? String(p.workersCompRate) : '',
+          }));
+          setGigPositions(loaded);
         } else if ((data as any).jobType === 'gig') {
           // If gig type but no positions saved, initialize with data from main fields
           setGigPositions([{
@@ -843,7 +904,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             workersNeeded: data.workersNeeded || 1,
             payRate: String((data as any).payRate || ''),
             markup: String((data as any).markup || ''),
-            billRate: String((data as any).billRate || '')
+            billRate: String((data as any).billRate || ''),
+            workersCompClassCode: (data as any).workersCompClassCode ?? '',
+            workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
           } as any]);
         }
         
@@ -918,21 +981,35 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
 
     try {
-      // Get company and location names if needed
+      // Resolve company and location names (and parent account) for lookup fields
+      const cid = dataToUse.companyId || (field === 'companyId' ? value : '');
+      const wid = dataToUse.worksiteId || (field === 'worksiteId' ? value : '');
       let companyName = '';
       let worksiteName = '';
-      
-      if (field === 'companyId' && value) {
-        const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', value);
+      let parentAccountId: string | null = null;
+      let parentAccountName: string | null = null;
+
+      if (cid) {
+        const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', cid);
         const companySnap = await getDoc(companyRef);
         if (companySnap.exists()) {
           const companyData = companySnap.data() as any;
           companyName = companyData.companyName || companyData.name || '';
+          const parentId = companyData.companyStructure?.parentId ?? companyData.parentCompany ?? (typeof companyData.parentId === 'string' ? companyData.parentId : null);
+          if (parentId) {
+            parentAccountId = typeof parentId === 'object' && parentId?.id ? parentId.id : parentId;
+            const parentRef = doc(db, 'tenants', tenantId, 'crm_companies', parentAccountId);
+            const parentSnap = await getDoc(parentRef);
+            if (parentSnap.exists()) {
+              const parentData = parentSnap.data() as any;
+              parentAccountName = parentData.companyName || parentData.name || null;
+            }
+          }
         }
       }
 
-      if (field === 'worksiteId' && value && dataToUse.companyId) {
-        const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', dataToUse.companyId, 'locations', value);
+      if (wid && cid) {
+        const locationRef = doc(db, 'tenants', tenantId, 'crm_companies', cid, 'locations', wid);
         const locationSnap = await getDoc(locationRef);
         if (locationSnap.exists()) {
           const locationData = locationSnap.data() as any;
@@ -1057,6 +1134,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         companyName,
         worksiteId: dataToUse.worksiteId || '',
         worksiteName,
+        accountId: cid || undefined,
+        parentAccountId: parentAccountId ?? undefined,
+        locationId: wid || undefined,
+        accountName: companyName || undefined,
+        parentAccountName: parentAccountName ?? undefined,
+        locationName: worksiteName || undefined,
         estimatedRevenue: (() => {
           // Calculate: Bill Rate × 2080 hours × Workers Needed
           const billRate = toNumberSafe(dataToUse.billRate) || toNumberSafe(dataToUse.calculatedBillRate) || 0;
@@ -1128,10 +1211,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     
     try {
       // Get company and location names (and worksite city/state for Smart Groups metro sync)
+      // Also resolve parent account (national) for account/parent/location lookup fields
       let companyName = '';
       let worksiteName = '';
       let worksiteCity = '';
       let worksiteState = '';
+      let parentAccountId: string | null = null;
+      let parentAccountName: string | null = null;
 
       if (formData.companyId) {
         const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', formData.companyId);
@@ -1139,6 +1225,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         if (companySnap.exists()) {
           const companyData = companySnap.data() as any;
           companyName = companyData.companyName || companyData.name || '';
+          const parentId = companyData.companyStructure?.parentId ?? companyData.parentCompany ?? (typeof companyData.parentId === 'string' ? companyData.parentId : null);
+          if (parentId) {
+            parentAccountId = typeof parentId === 'object' && parentId?.id ? parentId.id : parentId;
+            const parentRef = doc(db, 'tenants', tenantId, 'crm_companies', parentAccountId);
+            const parentSnap = await getDoc(parentRef);
+            if (parentSnap.exists()) {
+              const parentData = parentSnap.data() as any;
+              parentAccountName = parentData.companyName || parentData.name || null;
+            }
+          }
         }
       }
 
@@ -1286,6 +1382,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           : (parseInt(formData.workersNeeded.toString()) || 1),
         companyId: formData.companyId || '',
         worksiteId: formData.worksiteId || '',
+        accountId: formData.companyId || undefined,
+        parentAccountId: parentAccountId ?? undefined,
+        locationId: formData.worksiteId || undefined,
+        accountName: companyName || undefined,
+        parentAccountName: parentAccountName ?? undefined,
+        locationName: worksiteName || undefined,
         payRate: formData.jobType === 'gig' 
           ? (parseFloat(gigPositions[0]?.payRate || '0') || 0)
           : (parseFloat(formData.payRate) || 0),
@@ -1354,8 +1456,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         skillsRequired: formData.skillsRequired || [],
         physicalRequirements: formData.physicalRequirements || [],
         ppeRequirements: formData.ppeRequirements || [],
-        workersCompClassCode: formData.workersCompClassCode || undefined,
-        workersCompRate: formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined,
+        workersCompClassCode: formData.jobType === 'gig'
+          ? (gigPositions[0]?.workersCompClassCode || undefined)
+          : (formData.workersCompClassCode || undefined),
+        workersCompRate: formData.jobType === 'gig'
+          ? (gigPositions[0]?.workersCompRate ? parseFloat(gigPositions[0].workersCompRate) : undefined)
+          : (formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined),
         ppeProvidedBy: formData.ppeProvidedBy || 'company',
         customUniformRequirements: formData.customUniformRequirements || undefined,
         requirementPackId: formData.requirementPackId || undefined,
@@ -1568,15 +1674,20 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               <Grid item xs={12} md={6}>
                 <Autocomplete
                   fullWidth
-                  options={companies}
+                  options={companiesDeduped}
                   getOptionLabel={(option) => option.companyName || option.name || ''}
-                  value={companies.find(company => company.id === formData.companyId) || null}
+                  value={companiesDeduped.find(company => company.id === formData.companyId) || null}
                   onChange={(event, newValue) => {
                     handleInputChange('companyId', newValue?.id || '');
                     if (newValue?.id) {
                       handleFieldBlur('companyId', newValue.id);
                     }
                   }}
+                  renderOption={(props, option) => (
+                    <li {...props} key={option.id}>
+                      {option.companyName || option.name || ''}
+                    </li>
+                  )}
                   renderInput={(params) => (
                     <TextField
                       {...params}
@@ -1655,7 +1766,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     <Autocomplete
                       fullWidth
                       freeSolo
-                      options={jobTitlesList}
+                      options={jobTitleOptions}
                       value={formData.jobTitle}
                       onChange={(event, newValue) => {
                         handleInputChange('jobTitle', newValue || '');
@@ -1698,7 +1809,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         size="small"
                         startIcon={<AddIcon />}
                         onClick={() => {
-                          setGigPositions([...gigPositions, { jobTitle: '', workersNeeded: 1, payRate: '' }]);
+                          setGigPositions([...gigPositions, { jobTitle: '', workersNeeded: 1, payRate: '', workersCompClassCode: '', workersCompRate: '' }]);
                         }}
                       >
                         Add Position
@@ -1714,7 +1825,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                               <Autocomplete
                                 fullWidth
                                 freeSolo
-                                options={jobTitlesList}
+                                options={jobTitleOptions}
                                 value={position.jobTitle}
                                 onChange={(event, newValue) => {
                                   const updated = [...gigPositions];
@@ -1789,6 +1900,41 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                               />
                             </Box>
                           </Box>
+
+                          {/* Row 3: Workers Comp Class Code, Workers Comp Rate */}
+                          <Box sx={{ display: 'flex', gap: 2 }}>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Workers Comp Class Code"
+                                value={position.workersCompClassCode ?? ''}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index] = { ...updated[index], workersCompClassCode: e.target.value };
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g. 9015"
+                                helperText="From Settings > Onboarding Library > WC Class Codes"
+                              />
+                            </Box>
+                            <Box sx={{ flex: 1 }}>
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="Workers Comp Rate"
+                                value={position.workersCompRate ?? ''}
+                                onChange={(e) => {
+                                  const updated = [...gigPositions];
+                                  updated[index] = { ...updated[index], workersCompRate: e.target.value };
+                                  setGigPositions(updated);
+                                }}
+                                placeholder="e.g. 2.34"
+                                type="number"
+                                inputProps={{ step: 0.01, min: 0 }}
+                              />
+                            </Box>
+                          </Box>
                         </Box>
                         {gigPositions.length > 1 && (
                           <IconButton
@@ -1853,6 +1999,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       />
                     </Grid>
                   )}
+                  {/* Row 3: Workers Comp Class Code, Workers Comp Rate */}
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Workers Comp Class Code"
+                      value={formData.workersCompClassCode || ''}
+                      onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
+                      placeholder="e.g. 9015"
+                      helperText="From Settings > Onboarding Library > WC Class Codes"
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Workers Comp Rate"
+                      value={formData.workersCompRate || ''}
+                      onChange={(e) => handleInputChange('workersCompRate', e.target.value)}
+                      placeholder="e.g. 2.34"
+                      type="number"
+                      inputProps={{ step: 0.01, min: 0 }}
+                    />
+                  </Grid>
                 </>
               )}
 
@@ -1995,27 +2163,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         />
                       ))
                     }
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Workers Comp Class Code"
-                    value={formData.workersCompClassCode || ''}
-                    onChange={(e) => handleInputChange('workersCompClassCode', e.target.value)}
-                    placeholder="e.g. 9015"
-                    helperText="From Settings > Onboarding Library > WC Class Codes"
-                  />
-                </Grid>
-                <Grid item xs={12} md={6}>
-                  <TextField
-                    fullWidth
-                    label="Workers Comp Rate"
-                    value={formData.workersCompRate || ''}
-                    onChange={(e) => handleInputChange('workersCompRate', e.target.value)}
-                    placeholder="e.g. 2.34"
-                    type="number"
-                    inputProps={{ step: 0.01, min: 0 }}
                   />
                 </Grid>
                 <Grid item xs={12} md={6}>

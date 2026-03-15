@@ -270,9 +270,9 @@ export const onApplicationStatusChanged = onDocumentUpdated(
 
       logger.info(`Application ${applicationId} status changed from ${oldStatus} to ${newStatus}`);
 
-      // Do not send rejection when this application has an assignment in good standing (proposed/confirmed/active).
-      // This prevents the worker from getting "Application Rejected" when they were actually placed and/or accepted.
-      if (newStatus === 'rejected') {
+      // Do not send rejection or waitlisted when this application has an assignment in good standing (proposed/confirmed/active).
+      // Prevents the worker from getting "Application Rejected" or "You've been waitlisted" when they were actually placed and/or accepted.
+      const skipStatusNotificationWhenAssigned = async (reason: string) => {
         const assignmentId = after.assignmentId;
         if (assignmentId) {
           try {
@@ -282,13 +282,20 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             const assignment = assignmentSnap.data();
             const assignmentStatus = (assignment?.status || '').toLowerCase();
             if (['proposed', 'confirmed', 'active'].includes(assignmentStatus)) {
-              logger.info(`Application ${applicationId} status=rejected but assignment ${assignmentId} is ${assignmentStatus}; skipping rejection notification`);
-              return { success: true };
+              logger.info(`Application ${applicationId} status=${newStatus} but assignment ${assignmentId} is ${assignmentStatus}; ${reason}`);
+              return true;
             }
           } catch (err) {
             logger.warn(`Could not check assignment for application ${applicationId}:`, err);
           }
         }
+        return false;
+      };
+      if (newStatus === 'rejected' && (await skipStatusNotificationWhenAssigned('skipping rejection notification'))) {
+        return { success: true };
+      }
+      if (newStatus === 'waitlisted' && (await skipStatusNotificationWhenAssigned('skipping waitlisted notification'))) {
+        return { success: true };
       }
 
       // Get user ID from application (userId or candidateId)

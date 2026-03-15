@@ -119,6 +119,7 @@ import { useEntity } from '../hooks/useEntity';
 import { getJobOrderAge } from '../utils/dateUtils';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 import AccountOrderDefaultsCard from '../components/recruiter/AccountOrderDefaultsCard';
+import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetailsForm';
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable from '../components/recruiter/ActiveWorkersTable';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
@@ -1307,6 +1308,7 @@ const RecruiterAccountDetails: React.FC = () => {
   const [locationsSearchQuery, setLocationsSearchQuery] = useState('');
   const [showAddLocationDialog, setShowAddLocationDialog] = useState(false);
   const [showNewJobOrderModal, setShowNewJobOrderModal] = useState(false);
+  const [orderDefaultsSubView, setOrderDefaultsSubView] = useState<'staffInstructions' | 'orderDetails'>('staffInstructions');
   const [addLocationCompanyId, setAddLocationCompanyId] = useState<string>('');
   const [addLocationForm, setAddLocationForm] = useState({
     name: '',
@@ -3745,6 +3747,21 @@ const RecruiterAccountDetails: React.FC = () => {
         tenantId={tenantId ?? ''}
         userId={user?.uid ?? ''}
         defaultHiringEntityId={account?.hiringEntityId ?? null}
+        accountCompanies={
+          account?.associations?.companyIds?.length
+            ? associatedCompanies.map((c) => ({
+                id: c.id,
+                label: c.label,
+                companyName: c.companyName ?? c.label,
+                name: c.label,
+              }))
+            : undefined
+        }
+        defaultCompanyId={
+          account?.associations?.companyIds?.length === 1
+            ? account.associations.companyIds[0]
+            : null
+        }
       />
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pt: 2, pb: 2 }}>
@@ -6255,8 +6272,15 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Set default staff instructions and attachments for this account. When you create a new job order for this account, these will pre-fill the Job Order → Staff Instructions tab.
+                Set default staff instructions and order details for this account. They flow to child accounts and locations, then to job orders.
               </Typography>
+              <Box sx={{ mb: 2 }}>
+                <ToggleButtonGroup size="small" value={orderDefaultsSubView} exclusive onChange={(_, v) => v != null && setOrderDefaultsSubView(v)} aria-label="Order defaults view">
+                  <ToggleButton value="staffInstructions">Staff Instructions</ToggleButton>
+                  <ToggleButton value="orderDetails">Order Details</ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
+              {orderDefaultsSubView === 'staffInstructions' && (
               <Grid container spacing={3}>
                 <Grid item xs={12}>
                   <AccountOrderDefaultsCard
@@ -6350,6 +6374,16 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   />
                 </Grid>
               </Grid>
+              )}
+              {orderDefaultsSubView === 'orderDetails' && (
+                <AccountOrderDetailsForm
+                  account={account}
+                  accountId={accountId!}
+                  tenantId={tenantId!}
+                  userId={user?.uid || ''}
+                  contacts={contacts}
+                />
+              )}
             </Grid>
             <Grid item xs={12} md={3}>
               <AccountSidebar

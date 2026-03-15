@@ -241,6 +241,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     education?: string[];
   }>({});
   const [posting, setPosting] = useState<any>(null);
+  /** When hiring entity is C1 Events LLC, workers are independent contractors; skip Work Eligibility step and treat as eligible. */
+  const [hiringEntityName, setHiringEntityName] = useState<string | null>(null);
   const prefilledRef = useRef(false);
   const personalPrefilledRef = useRef(false);
   const [tenantAppId, setTenantAppId] = useState<string | null>(null);
@@ -252,16 +254,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const [confirmPassword, setConfirmPassword] = useState('');
   const [hasMissingRequiredCerts, setHasMissingRequiredCerts] = useState(false);
 
-  // Step indices to show - skip empty steps (Preferences for Gig jobs; Requirements when only transport + no job reqs)
+  // Step indices to show - skip empty steps (Preferences for Gig jobs; Work Eligibility for C1 Events LLC / contractors)
   const visibleStepIndices = useMemo(() => {
     const all = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     if (!posting) return all;
+    let indices = all;
+    // Skip Work Eligibility (2) when hiring entity is C1 Events LLC (independent contractors)
+    if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
+      indices = indices.filter((i) => i !== 2);
+    }
     // Skip Preferences (10) for Gig jobs - step is empty (no shift preferences for gigs)
     if (posting.jobType === 'gig') {
-      return all.filter((i) => i !== 10);
+      indices = indices.filter((i) => i !== 10);
     }
-    return all;
-  }, [posting]);
+    return indices;
+  }, [posting, hiringEntityName]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
@@ -424,6 +431,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               const jo = joSnap.data() as any;
               data = {
                 jobOrderId: jobId,
+                hiringEntityId: jo.hiringEntityId ?? null,
                 jobTitle: jo.jobTitle || jo.jobOrderName || jo.name || 'Job',
                 postTitle: jo.jobOrderName || jo.name || jo.jobTitle || 'Job',
                 jobType: jo.jobType || 'career',
@@ -483,6 +491,41 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     };
     loadPosting();
   }, [tenantId, jobId]);
+
+  // Resolve hiring entity name (for skipping Work Eligibility when C1 Events LLC / independent contractors)
+  useEffect(() => {
+    let cancelled = false;
+    const resolve = async () => {
+      if (!tenantId || !posting) {
+        setHiringEntityName(null);
+        return;
+      }
+      let entityId: string | null = posting.hiringEntityId ?? null;
+      if (!entityId && (posting.jobOrderId || jobId)) {
+        try {
+          const joRef = doc(db, 'tenants', tenantId, 'job_orders', posting.jobOrderId || jobId);
+          const joSnap = await getDoc(joRef);
+          if (joSnap.exists() && !cancelled) entityId = (joSnap.data() as any)?.hiringEntityId ?? null;
+        } catch {
+          if (!cancelled) setHiringEntityName(null);
+          return;
+        }
+      }
+      if (!entityId) {
+        if (!cancelled) setHiringEntityName(null);
+        return;
+      }
+      try {
+        const entityRef = doc(db, 'tenants', tenantId, 'entities', entityId);
+        const entitySnap = await getDoc(entityRef);
+        if (!cancelled) setHiringEntityName(entitySnap.exists() ? (entitySnap.data() as any)?.name ?? null : null);
+      } catch {
+        if (!cancelled) setHiringEntityName(null);
+      }
+    };
+    resolve();
+    return () => { cancelled = true; };
+  }, [tenantId, jobId, posting]);
 
   // Load user profile for validation
   useEffect(() => {
@@ -1674,7 +1717,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         profileUpdate.workHistory = quals.workHistory;
         profileUpdate.workExperience = quals.workHistory;
       }
-      const authorizedToWorkUS = typeof eligibility.workAuthorized === 'boolean' ? !!eligibility.workAuthorized : false;
+      const isC1EventsContractor = hiringEntityName != null && /C1 Events LLC/i.test(hiringEntityName);
+      const authorizedToWorkUS =
+        isC1EventsContractor || (typeof eligibility.workAuthorized === 'boolean' ? !!eligibility.workAuthorized : false);
       profileUpdate.workEligibility = authorizedToWorkUS;
       profileUpdate.workEligibilityAttestation = {
         authorizedToWorkUS,

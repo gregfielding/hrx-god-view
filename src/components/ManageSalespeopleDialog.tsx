@@ -97,34 +97,24 @@ const ManageSalespeopleDialog: React.FC<ManageSalespeopleDialogProps> = ({
         };
 
         if (filterByInternalTeam) {
-          // Internal team: securityLevel 5-7 (Sales, Manager, Admin)
+          // Same logic as Assign Recruiters on job order: internal team (securityLevel 5–7) OR recruiter access
           try {
-            const internalQuery = query(
-              usersRef,
-              where(`tenantIds.${tenantId}.securityLevel`, 'in', ['5', '6', '7'])
-            );
-            const snapshot = await getDocs(internalQuery);
+            const snapshot = await getDocs(usersRef);
             snapshot.docs.forEach((d) => {
               const userData = d.data();
-              allSalespeople.push(toSalesperson(userData, d.id));
+              if (!userData.tenantIds?.[tenantId]) return;
+              const tenantData = userData.tenantIds[tenantId];
+              const sl = tenantData?.securityLevel ?? userData.securityLevel ?? 0;
+              const slNum = typeof sl === 'number' ? sl : parseInt(String(sl), 10);
+              const isInternalTeam = slNum >= 5 && slNum <= 7;
+              const hasRecruiterAccess = !!(tenantData?.recruiter ?? userData.recruiter);
+              if (isInternalTeam || hasRecruiterAccess) {
+                allSalespeople.push(toSalesperson(userData, d.id));
+              }
             });
+            allSalespeople.sort((a, b) => (a.fullName || '').localeCompare(b.fullName || ''));
           } catch (err) {
-            console.warn('Internal team query failed:', err);
-            // Fallback: fetch users with tenantIds and filter in-memory
-            try {
-              const fallbackQuery = query(usersRef, where(`tenantIds.${tenantId}`, '!=', null));
-              const fallbackSnapshot = await getDocs(fallbackQuery);
-              fallbackSnapshot.docs.forEach((d) => {
-                const userData = d.data();
-                const tenantData = userData.tenantIds?.[tenantId];
-                const sl = String(tenantData?.securityLevel ?? userData.securityLevel ?? '0');
-                if (['5', '6', '7'].includes(sl)) {
-                  allSalespeople.push(toSalesperson(userData, d.id));
-                }
-              });
-            } catch (fallbackErr) {
-              console.warn('Fallback internal team query failed:', fallbackErr);
-            }
+            console.warn('Manage salespeople (internal team) load failed:', err);
           }
         } else {
           // Original logic: crm_sales users

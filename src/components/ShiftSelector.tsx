@@ -116,7 +116,9 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
         {shifts.map((shift) => {
           const hasApplied = appliedShifts.includes(shift.shiftId);
           const shiftStatus = shiftStatuses[shift.shiftId] || (hasApplied ? 'submitted' : null);
-          const isAccepted = shiftStatus === 'accepted';
+          // 'accepted' = offer sent by recruiter, worker has not yet accepted → show "Click to Accept" / "Decline"
+          // 'confirmed' = worker has accepted → show "Confirmed"
+          const isOffered = shiftStatus === 'accepted';
           const isConfirmed = shiftStatus === 'confirmed';
           const isFull = shift.spotsRemaining <= 0;
           const isLowAvailability = shift.spotsRemaining > 0 && shift.spotsRemaining <= 2;
@@ -127,13 +129,13 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
               variant="outlined"
               sx={{
                 border: '1px solid',
-                borderColor: isConfirmed ? '#4CAF50' : isAccepted ? '#2196F3' : hasApplied ? '#FFC700' : 'divider',
-                bgcolor: isConfirmed ? '#E8F5E9' : isAccepted ? '#E3F2FD' : hasApplied ? '#FFF9E6' : 'background.paper',
+                borderColor: isConfirmed ? '#4CAF50' : isOffered ? '#2196F3' : hasApplied ? '#FFC700' : 'divider',
+                bgcolor: isConfirmed ? '#E8F5E9' : isOffered ? '#E3F2FD' : hasApplied ? '#FFF9E6' : 'background.paper',
                 opacity: isFull ? 0.6 : 1,
                 transition: 'all 0.2s ease',
                 '&:hover': {
-                  bgcolor: disabled || isFull ? undefined : isConfirmed ? '#C8E6C9' : isAccepted ? '#BBDEFB' : hasApplied ? '#FFF4CC' : 'grey.50',
-                  borderColor: disabled || isFull ? undefined : isConfirmed ? '#4CAF50' : isAccepted ? '#2196F3' : hasApplied ? '#E6B300' : 'primary.main',
+                  bgcolor: disabled || isFull ? undefined : isConfirmed ? '#C8E6C9' : isOffered ? '#BBDEFB' : hasApplied ? '#FFF4CC' : 'grey.50',
+                  borderColor: disabled || isFull ? undefined : isConfirmed ? '#4CAF50' : isOffered ? '#2196F3' : hasApplied ? '#E6B300' : 'primary.main',
                 },
               }}
             >
@@ -226,25 +228,8 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                       >
                         Confirmed
                       </Button>
-                    ) : isAccepted ? (
+                    ) : isOffered ? (
                       <>
-                        <Button
-                          variant="contained"
-                          disabled
-                          sx={{
-                            minWidth: 140,
-                            backgroundColor: '#2196F3 !important',
-                            color: '#fff',
-                            fontWeight: 600,
-                            '&.Mui-disabled': {
-                              backgroundColor: '#2196F3 !important',
-                              color: '#fff',
-                              opacity: 1,
-                            },
-                          }}
-                        >
-                          Accepted
-                        </Button>
                         <Button
                           variant="contained"
                           onClick={() => onConfirmShift?.(shift.shiftId)}

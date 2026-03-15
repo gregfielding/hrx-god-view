@@ -27,6 +27,19 @@ export interface JobOrder {
   worksiteId: string;
   worksiteName: string;
   worksiteAddress: Address;
+
+  /** Account (sub or standalone CRM company) UID for lookup; equals companyId. */
+  accountId?: string;
+  /** Parent/national account UID when this account is a child. */
+  parentAccountId?: string | null;
+  /** Location/worksite UID for lookup; equals worksiteId. */
+  locationId?: string;
+  /** Account display name (quick lookup). */
+  accountName?: string;
+  /** Parent account display name (quick lookup). */
+  parentAccountName?: string | null;
+  /** Location display name (quick lookup). */
+  locationName?: string;
   
   // Job Details
   jobTitle: string;
@@ -207,7 +220,14 @@ export interface JobOrderFormData {
   worksiteId: string;
   worksiteName: string;
   worksiteAddress: Address;
-  
+  /** Account (sub/standalone) and parent/location for lookup (optional in form). */
+  accountId?: string;
+  parentAccountId?: string | null;
+  locationId?: string;
+  accountName?: string;
+  parentAccountName?: string | null;
+  locationName?: string;
+
   // Job Details
   jobTitle: string;
   jobDescription?: string;
@@ -222,7 +242,7 @@ export interface JobOrderFormData {
   workersCompRate?: number;
   checkInInstructions?: string;
   timesheetCollectionMethod: TimesheetMethod;
-  
+
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
   visibility?: JobsBoardVisibility; // Optional in form, defaults to 'hidden'

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -37,6 +37,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
 import { useT } from '../i18n';
 import { getShiftDisplayText } from '../utils/shiftI18n';
+import { parseCalendarDateLocal } from '../utils/dateUtils';
 import { format } from 'date-fns';
 
 interface AssignmentDetails {
@@ -119,6 +120,13 @@ const AssignmentDetails: React.FC = () => {
   const [resolvedCompanyName, setResolvedCompanyName] = useState<string | null>(null);
   const [resolvedWorksiteName, setResolvedWorksiteName] = useState<string | null>(null);
   const [resolvedWorksiteAddress, setResolvedWorksiteAddress] = useState<string | null>(null);
+
+  /** Full worksite address string for display and map (resolved or from assignment) */
+  const worksiteAddressStr = useMemo(() => {
+    const wa = assignment?.worksiteAddress as { street?: string; address?: string; city?: string; state?: string; zipCode?: string } | undefined;
+    const fromAssignment = wa ? [(wa.street || wa.address), wa.city, wa.state, wa.zipCode].filter(Boolean).join(', ') : '';
+    return resolvedWorksiteAddress || fromAssignment || '';
+  }, [assignment?.worksiteAddress, resolvedWorksiteAddress]);
 
   useEffect(() => {
     if (!assignmentId || !user?.uid) return;
@@ -437,16 +445,16 @@ const AssignmentDetails: React.FC = () => {
       let updatedAt: Date | undefined;
 
       if (data.startDate) {
-        const raw = data.startDate;
-        startDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+        startDate = parseCalendarDateLocal(data.startDate);
       }
       if (data.endDate) {
-        const raw = data.endDate;
-        endDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+        endDate = parseCalendarDateLocal(data.endDate);
       } else if (data.startDate && (data.startTime || data.endTime)) {
-        const dateStr = typeof data.startDate === 'string' ? data.startDate : data.startDate?.toDate?.()?.toISOString?.()?.slice(0, 10);
-        if (dateStr && data.endTime) {
-          endDate = new Date(`${dateStr}T${String(data.endTime).slice(0, 5)}:00`);
+        const dayStr = typeof data.startDate === 'string' ? data.startDate.split('T')[0] : data.startDate?.toDate?.()?.toISOString?.()?.slice(0, 10);
+        if (dayStr && data.endTime) {
+          const [y, m, d] = dayStr.split('-').map(Number);
+          const [hh, mm] = String(data.endTime).slice(0, 5).split(':').map(Number);
+          endDate = new Date(y, m - 1, d, hh || 0, mm || 0);
         }
       }
       if (data.createdAt) {
@@ -535,18 +543,16 @@ const AssignmentDetails: React.FC = () => {
       let updatedAt: Date | undefined;
 
       if (sourceData.startDate) {
-        const raw = sourceData.startDate;
-        startDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+        startDate = parseCalendarDateLocal(sourceData.startDate);
       }
       if (!startDate && jobOrderData.startDate) {
-        startDate = jobOrderData.startDate.toDate ? jobOrderData.startDate.toDate() : new Date(jobOrderData.startDate);
+        startDate = parseCalendarDateLocal(jobOrderData.startDate);
       }
       if (sourceData.endDate) {
-        const raw = sourceData.endDate;
-        endDate = raw?.toDate ? raw.toDate() : new Date(typeof raw === 'string' ? raw : raw);
+        endDate = parseCalendarDateLocal(sourceData.endDate);
       }
       if (!endDate && jobOrderData.endDate) {
-        endDate = jobOrderData.endDate.toDate ? jobOrderData.endDate.toDate() : new Date(jobOrderData.endDate);
+        endDate = parseCalendarDateLocal(jobOrderData.endDate);
       }
       if (sourceData.createdAt) {
         createdAt = sourceData.createdAt.toDate ? sourceData.createdAt.toDate() : new Date(sourceData.createdAt);
@@ -801,27 +807,20 @@ const AssignmentDetails: React.FC = () => {
                     <MapIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box sx={{ minWidth: 0 }}>
                       <Typography variant="body2" color="text.secondary">{t('assignment.worksiteAddress')}</Typography>
-                      {(() => {
-                        const wa = assignment.worksiteAddress as { street?: string; address?: string; city?: string; state?: string; zipCode?: string } | undefined;
-                        const fromAssignment = wa
-                          ? [(wa.street || wa.address), wa.city, wa.state, wa.zipCode].filter(Boolean).join(', ')
-                          : '';
-                        const addressStr = resolvedWorksiteAddress || fromAssignment;
-                        return addressStr ? (
+                      {worksiteAddressStr ? (
                           <Button
                             size="small"
                             startIcon={<OpenInNewIcon />}
-                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addressStr)}`}
+                            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(worksiteAddressStr)}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             sx={{ textTransform: 'none', p: 0, minHeight: 'auto' }}
                           >
-                            {addressStr}
+                            {worksiteAddressStr}
                           </Button>
                         ) : (
                           <Typography variant="body1">—</Typography>
-                        );
-                      })()}
+                        )}
                     </Box>
                   </Stack>
                   <Stack direction="row" spacing={2} alignItems="flex-start">
@@ -1089,6 +1088,47 @@ const AssignmentDetails: React.FC = () => {
               )}
             </Stack>
           </Paper>
+        )}
+
+        {/* Location map card — only when we have a worksite address */}
+        {worksiteAddressStr && (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                {t('assignment.locationMap')}
+              </Typography>
+              <Box
+                sx={{
+                  width: '100%',
+                  height: 320,
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                  bgcolor: 'grey.100',
+                }}
+              >
+                <iframe
+                  title={t('assignment.locationMap')}
+                  src={`https://www.google.com/maps?output=embed&q=${encodeURIComponent(worksiteAddressStr)}`}
+                  width="100%"
+                  height="100%"
+                  style={{ border: 0 }}
+                  allowFullScreen
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                />
+              </Box>
+              <Button
+                size="small"
+                startIcon={<OpenInNewIcon />}
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(worksiteAddressStr)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                sx={{ mt: 1.5, textTransform: 'none' }}
+              >
+                {t('assignment.openInGoogleMaps')}
+              </Button>
+            </CardContent>
+          </Card>
         )}
           </Stack>
         </Grid>

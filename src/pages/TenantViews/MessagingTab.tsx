@@ -804,7 +804,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     <Box sx={{ width: '100%', px: { xs: 2, md: 3 }, py: 2 }}>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Manage SMS and Email message templates and recruiter phone number assignments. Templates
-        support variables like {'{firstName}'}, {'{jobTitle}'}, and {'{locationCity}'}.
+        support variables like {'{firstName}'}, {'{jobTitle}'}, {'{locationCity}'}, and {'{assignmentUrl}'} (assignment details page link).
       </Typography>
 
       {/* Main Section Selector - Using Button Group */}
@@ -986,7 +986,14 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                         (rule) => rule.templateId === template.id,
                       );
                       return (
-                        <TableRow key={template.id}>
+                        <TableRow
+                          key={template.id}
+                          onClick={() => handleOpenTemplateDialog(template)}
+                          sx={{
+                            cursor: 'pointer',
+                            '&:hover': { bgcolor: 'action.hover' },
+                          }}
+                        >
                           <TableCell>
                             <Typography variant="body2" fontWeight={500}>
                               {template.name}
@@ -1050,7 +1057,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                               </Typography>
                             </Tooltip>
                           </TableCell>
-                          <TableCell>
+                          <TableCell onClick={(e) => e.stopPropagation()}>
                             <Stack direction="row" spacing={1} alignItems="center">
                               <FormControlLabel
                                 control={
@@ -1073,7 +1080,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                               )}
                             </Stack>
                           </TableCell>
-                          <TableCell align="right">
+                          <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                             <Stack direction="row" spacing={0.5} justifyContent="flex-end">
                               <Tooltip title="Edit">
                                 <IconButton
@@ -1377,7 +1384,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                   }}
                   availableVariables={[
                     'assignmentAcceptDeclineUrl',
-                  'firstName',
+                    'assignmentUrl',
+                    'firstName',
                     'lastName',
                     'fullName',
                     'email',
@@ -1414,8 +1422,8 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 required
                 multiline
                 rows={4}
-                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, {{assignmentAcceptDeclineUrl}}, etc."
-                placeholder="Hi {{firstName}}. Thank you for applying to be a {{jobTitle}} in {{locationCity}}."
+                helperText="Use variables like {{firstName}}, {{jobTitle}}, {{locationCity}}, {{assignmentAcceptDeclineUrl}}, {{assignmentUrl}} (full assignment details page), etc."
+                placeholder="Hi {{firstName}}. Thank you for applying to be a {{jobTitle}} in {{locationCity}}. View details: {{assignmentUrl}}"
               />
             )}
 

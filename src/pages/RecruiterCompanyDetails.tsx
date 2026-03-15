@@ -131,6 +131,7 @@ import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import PageHeader from '../components/PageHeader';
+import ImageCropDialog from '../components/common/ImageCropDialog';
 
 // Helper function to get sub-industries
 const getSubIndustries = (mainIndustryCode: string) => {
@@ -247,6 +248,9 @@ const RecruiterCompanyDetails: React.FC = () => {
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [aiEnhancing, setAiEnhancing] = useState(false);
+  const [logoHover, setLogoHover] = useState(false);
+  const [cropOpen, setCropOpen] = useState(false);
+  const [pendingImageSrc, setPendingImageSrc] = useState<string | null>(null);
 
   // Load company data
   useEffect(() => {
@@ -820,6 +824,56 @@ const RecruiterCompanyDetails: React.FC = () => {
     }
   };
 
+  // Avatar: file selected -> open crop dialog
+  const handleAvatarFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) return;
+    const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml'];
+    if (!validTypes.includes(file.type)) return;
+    try {
+      const src = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsDataURL(file);
+      });
+      setPendingImageSrc(src);
+      setCropOpen(true);
+    } catch {
+      if (logoInputRef.current) logoInputRef.current.value = '';
+    }
+    e.target.value = '';
+  };
+
+  // Avatar: after crop -> upload to storage, then update company
+  const handleConfirmCroppedLogo = async (blob: Blob) => {
+    if (!companyId || !tenantId || !company) return;
+    try {
+      setLogoLoading(true);
+      if (company.logo) {
+        try {
+          const urlParts = company.logo.split('/');
+          const fileName = urlParts[urlParts.length - 1]?.split('?')[0] || 'logo.jpg';
+          const prevRef = ref(storage, `tenants/${tenantId}/companies/${companyId}/logo/${fileName}`);
+          await deleteObject(prevRef);
+        } catch {}
+      }
+      const logoRef = ref(storage, `tenants/${tenantId}/companies/${companyId}/logo/logo.jpg`);
+      await uploadBytes(logoRef, blob, { contentType: blob.type || 'image/jpeg' });
+      const downloadURL = await getDownloadURL(logoRef);
+      await handleLogoUpload(downloadURL);
+      setCropOpen(false);
+      setPendingImageSrc(null);
+    } catch (err) {
+      console.error('Error uploading cropped logo:', err);
+      setError('Failed to upload logo. Please try again.');
+    } finally {
+      setLogoLoading(false);
+      if (logoInputRef.current) logoInputRef.current.value = '';
+    }
+  };
+
   // Memoize related company items - must be before early returns
   const relatedCompanyItems = React.useMemo(() => {
     if (!company) return [];
@@ -923,23 +977,88 @@ const RecruiterCompanyDetails: React.FC = () => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <ImageCropDialog
+        open={cropOpen}
+        imageSrc={pendingImageSrc}
+        onConfirm={handleConfirmCroppedLogo}
+        onCancel={() => { setCropOpen(false); setPendingImageSrc(null); }}
+        title="Crop company logo"
+      />
       <PageHeader
         title={
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
-            <Avatar
-              src={company?.logo || undefined}
-              alt={companyName}
-              sx={{
-                width: 108,
-                height: 108,
-                bgcolor: 'primary.main',
-                fontSize: '40px',
-                fontWeight: 700,
-                flexShrink: 0,
-              }}
+            <Box
+              sx={{ position: 'relative', flexShrink: 0 }}
+              onMouseEnter={() => setLogoHover(true)}
+              onMouseLeave={() => setLogoHover(false)}
             >
-              {companyInitial}
-            </Avatar>
+              <Avatar
+                src={company?.logo || undefined}
+                alt={companyName}
+                sx={{
+                  width: 108,
+                  height: 108,
+                  bgcolor: 'primary.main',
+                  fontSize: '40px',
+                  fontWeight: 700,
+                }}
+              >
+                {companyInitial}
+              </Avatar>
+              <Box sx={{ position: 'absolute', bottom: -8, right: -8, display: 'flex', gap: 0.5 }}>
+                <input
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  id="recruiter-company-logo-upload"
+                  type="file"
+                  onChange={handleAvatarFileChange}
+                  disabled={logoLoading}
+                  ref={logoInputRef}
+                />
+                <label htmlFor="recruiter-company-logo-upload">
+                  <IconButton
+                    component="span"
+                    size="small"
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      '&:hover': { bgcolor: 'grey.400' },
+                      width: 28,
+                      height: 28,
+                      display: logoHover ? 'inline-flex' : 'none',
+                    }}
+                    disabled={logoLoading}
+                  >
+                    {logoLoading ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <UploadIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                </label>
+                {company?.logo && (
+                  <IconButton
+                    size="small"
+                    onClick={handleLogoDelete}
+                    disabled={logoLoading}
+                    sx={{
+                      bgcolor: 'grey.300',
+                      color: 'grey.700',
+                      '&:hover': { bgcolor: 'grey.400' },
+                      width: 28,
+                      height: 28,
+                      display: logoHover ? 'inline-flex' : 'none',
+                    }}
+                  >
+                    {logoLoading ? (
+                      <CircularProgress size={16} color="inherit" />
+                    ) : (
+                      <DeleteIcon sx={{ fontSize: 16 }} />
+                    )}
+                  </IconButton>
+                )}
+              </Box>
+            </Box>
 
             <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
               {/* Line 1: Name + favorite */}

@@ -11,6 +11,7 @@ import { collection, doc, query, where, getDocs, getDoc } from 'firebase/firesto
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
+import { getCalendarDayLocal } from '../../../utils/dateUtils';
 import WorkerAssignmentsTabs from '../../../components/worker/assignments/WorkerAssignmentsTabs';
 import type { WorkerAssignmentItem } from '../../../components/worker/assignments/WorkerAssignmentCard';
 import type { AssignmentStatus } from '../../../components/worker/assignments/WorkerAssignmentCard';
@@ -30,20 +31,22 @@ function toStartAt(data: Record<string, any>): number {
   const startDate = data.startDate;
   const startTime = data.startTime || '00:00';
   if (!startDate) return 0;
-  const dateStr = typeof startDate === 'string' ? startDate : startDate.toDate?.()?.toISOString?.()?.slice(0, 10) ?? '';
+  const dateStr = getCalendarDayLocal(startDate);
   if (!dateStr) return 0;
-  const iso = `${dateStr}T${startTime.slice(0, 5)}:00`;
-  return new Date(iso).getTime();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = startTime.slice(0, 5).split(':').map(Number);
+  return new Date(y, m - 1, d, hh || 0, mm || 0).getTime();
 }
 
 function toEndAt(data: Record<string, any>): number | undefined {
-  const startDate = data.startDate;
+  const endDate = data.endDate || data.startDate;
   const endTime = data.endTime || data.startTime || '23:59';
-  if (!startDate) return undefined;
-  const dateStr = typeof startDate === 'string' ? startDate : startDate.toDate?.()?.toISOString?.()?.slice(0, 10) ?? '';
+  if (!endDate) return undefined;
+  const dateStr = getCalendarDayLocal(endDate);
   if (!dateStr) return undefined;
-  const iso = `${dateStr}T${endTime.slice(0, 5)}:00`;
-  return new Date(iso).getTime();
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const [hh, mm] = endTime.slice(0, 5).split(':').map(Number);
+  return new Date(y, m - 1, d, hh || 0, mm || 0).getTime();
 }
 
 /** Location doc shape for address enrichment */
@@ -183,9 +186,8 @@ const WorkerAssignments: React.FC = () => {
         );
         if (cancelled) return;
 
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-        const todayMs = todayStart.getTime();
+        const today = new Date();
+        const todayStr = getCalendarDayLocal(today);
 
         const up: WorkerAssignmentItem[] = [];
         const pa: WorkerAssignmentItem[] = [];
@@ -195,8 +197,19 @@ const WorkerAssignments: React.FC = () => {
           const item = docToItem(d.id, data, tenantId, locationMap);
           const status = (data.status || '').toLowerCase();
           const isPastStatus = ['cancelled', 'canceled', 'declined', 'completed'].includes(status);
-          const startMs = typeof item.startAt === 'number' ? item.startAt : new Date(item.startAt).getTime();
-          const isPastDate = startMs < todayMs;
+          // Show as upcoming until the day after the assignment ends (e.g. assignment 13th–14th stays upcoming through 15th).
+          const endDayStr = getCalendarDayLocal(data.endDate || data.startDate);
+          let isPastDate = true;
+          if (endDayStr && todayStr) {
+            const [ey, em, ed] = endDayStr.split('-').map(Number);
+            const dayAfterEnd = new Date(ey, em - 1, ed + 1);
+            const cutoffStr = getCalendarDayLocal(dayAfterEnd);
+            isPastDate = todayStr > cutoffStr;
+          } else {
+            const startMs = typeof item.startAt === 'number' ? item.startAt : new Date(item.startAt).getTime();
+            const todayMs = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+            isPastDate = startMs < todayMs;
+          }
 
           if (isPastStatus || isPastDate) {
             pa.push(item);

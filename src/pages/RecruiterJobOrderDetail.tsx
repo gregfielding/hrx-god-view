@@ -80,7 +80,7 @@ import {
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, type DocumentSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, limit, type DocumentSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -1116,22 +1116,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     );
   }
 
-  // When no applicants at all and NOT a Gig with shifts, show simple empty state
-  if (applicants.length === 0 && !(isGigJob && shifts.length > 0)) {
-    return (
-      <Card>
-        <CardContent>
-          <Typography variant="h6" gutterBottom>
-            Applications
-          </Typography>
-          <Alert severity="info">
-            No applications received yet for this job order.
-          </Alert>
-        </CardContent>
-      </Card>
-    );
-  }
-
+  // Always show the Applications card with Add Applicant button; table body shows empty state when no applicants
   return (
     <>
       <Card>
@@ -2574,6 +2559,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [company, setCompany] = useState<any>(null);
   const [location, setLocation] = useState<any>(null);
   const [deal, setDeal] = useState<any>(null);
+  /** Recruiter account linked to this job order's company (for Account Type, E-Verify, Hiring Entity). */
+  const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string; accountType?: string | null; hiringEntityId?: string | null; defaults?: { eVerify?: { eVerifyRequired?: boolean } } } | null>(null);
   const [loading, setLoading] = useState(true);
   
   // Persist active tab in localStorage; URL ?tab=applications overrides and opens Applications tab (index 6)
@@ -2700,6 +2687,41 @@ const RecruiterJobOrderDetail: React.FC = () => {
       setLoading(false);
     }
   }, [jobOrderId, tenantId, loadCompanyData, loadConnectedJobPosts]);
+
+  // Resolve recruiter account linked to this job order's company (for Account Type, E-Verify, Hiring Entity on Basic Information)
+  const companyIdForAccount = jobOrder?.companyId || (jobOrder as any)?.accountId || null;
+  useEffect(() => {
+    if (!tenantId || !companyIdForAccount) {
+      setLinkedAccount(null);
+      return;
+    }
+    let cancelled = false;
+    const accountsRef = collection(db, p.recruiterAccounts(tenantId));
+    const q = query(
+      accountsRef,
+      where('associations.companyIds', 'array-contains', companyIdForAccount),
+      limit(1)
+    );
+    getDocs(q)
+      .then((snap) => {
+        if (cancelled) return;
+        const first = snap.docs[0];
+        if (first) {
+          setLinkedAccount({ id: first.id, ...first.data() } as any);
+        } else {
+          setLinkedAccount(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedAccount(null);
+      });
+    return () => { cancelled = true; };
+  }, [tenantId, companyIdForAccount]);
+
+  /** Entity for linked account (Account Type / E-Verify / Hiring Entity on Basic Information card). */
+  const { entity: linkedAccountEntity } = useEntity(tenantId, linkedAccount?.hiringEntityId ?? null);
+  /** Job order hiring entity (for Placements: C1 Events LLC → everyone Eligible). */
+  const { entity: jobOrderHiringEntity } = useEntity(tenantId, jobOrder?.hiringEntityId ?? null);
 
   // Subscribe to job order with onSnapshot so Staff Instructions inputs update in real time; save on blur
   const jobOrderInitialLoadDone = useRef(false);
@@ -3898,6 +3920,59 @@ const RecruiterJobOrderDetail: React.FC = () => {
                             </Grid>
                           )}
 
+                          {/* Account Type, E-Verify, Hiring Entity from linked recruiter account */}
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Account Type
+                                </Typography>
+                                <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  {linkedAccount?.accountType === 'national'
+                                    ? 'National account'
+                                    : linkedAccount?.accountType === 'child'
+                                      ? 'Child account'
+                                      : linkedAccount != null
+                                        ? 'Standalone'
+                                        : '—'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <SecurityIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  E-Verify
+                                </Typography>
+                                <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  {linkedAccount != null
+                                    ? (linkedAccountEntity?.everifyRequired ?? linkedAccount?.defaults?.eVerify?.eVerifyRequired ?? false)
+                                      ? 'Yes'
+                                      : 'No'
+                                    : '—'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <WorkIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Hiring Entity
+                                </Typography>
+                                <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  {linkedAccount != null
+                                    ? (linkedAccountEntity?.name ?? '—')
+                                    : '—'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+
                           {jobOrder?.worksiteName && (
                             <Grid item xs={12} sm={6}>
                               <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -4562,6 +4637,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           jobOrder={jobOrder}
           onJobOrderUpdated={fetchJobOrder}
           connectedJobPostIds={(connectedJobPosts || []).map((p) => p.id).filter(Boolean)}
+          hiringEntityName={jobOrderHiringEntity?.name ?? null}
         />
       </TabPanel>
 

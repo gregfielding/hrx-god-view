@@ -74,6 +74,8 @@ interface PlacementsTabProps {
   onJobOrderUpdated?: () => void;
   /** Connected job post IDs (from Jobs Board) so we load the same applicants as the Applications tab */
   connectedJobPostIds?: string[];
+  /** When hiring entity is C1 Events LLC, all workers are shown as Eligible (independent contractors). */
+  hiringEntityName?: string | null;
 }
 
 interface Shift {
@@ -133,6 +135,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   jobOrder,
   onJobOrderUpdated,
   connectedJobPostIds = [],
+  hiringEntityName = null,
 }) => {
   // Only present in hrx-god-view workspace build (Assign All + Export + Preview Email)
   if (typeof console !== 'undefined' && console.log) {
@@ -183,6 +186,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [resendLoadingAssignmentId, setResendLoadingAssignmentId] = useState<string | null>(null);
   const [resendCooldownUntilByAssignmentId, setResendCooldownUntilByAssignmentId] = useState<Record<string, number>>({});
+  const [confirmLoadingAssignmentId, setConfirmLoadingAssignmentId] = useState<string | null>(null);
   const [confirmingPlacementUserId, setConfirmingPlacementUserId] = useState<string | null>(null);
   const [cancelAssignmentWorker, setCancelAssignmentWorker] = useState<Worker | null>(null);
   const [previewEmailOpen, setPreviewEmailOpen] = useState(false);
@@ -1096,6 +1100,24 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
+  /** Manually confirm assignment on behalf of the worker (same as worker clicking Accept). */
+  const handleConfirmForWorker = async (worker: Worker) => {
+    if (!worker.assignmentId || !tenantId) return;
+    const aid = worker.assignmentId;
+    if (confirmLoadingAssignmentId === aid) return;
+    try {
+      setConfirmLoadingAssignmentId(aid);
+      setError(null);
+      const confirmFn = httpsCallable(functions, 'confirmAssignmentForWorker');
+      await confirmFn({ tenantId, assignmentId: aid });
+    } catch (err: any) {
+      console.error('Error confirming assignment:', err);
+      setError(err?.message || 'Failed to confirm assignment');
+    } finally {
+      setConfirmLoadingAssignmentId(null);
+    }
+  };
+
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
   const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
   // Assignments column: all workers placed/assigned/confirmed/declined for this shift (from Firestore, not filtered by Workforce)
@@ -1549,12 +1571,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 <em>Select shift</em>
               </MenuItem>
               {shifts.map((shift) => {
-                const dv = shift.shiftDate as string | Date | { toDate?: () => Date };
-                let dateStr = '';
-                if (typeof dv === 'string') dateStr = dv.split('T')[0];
-                else if (dv instanceof Date) dateStr = dv.toISOString().split('T')[0];
-                else if (dv && typeof (dv as { toDate?: () => Date }).toDate === 'function') dateStr = (dv as { toDate: () => Date }).toDate().toISOString().split('T')[0];
-                const formatted = dateStr ? format(new Date(dateStr), 'EEE, MMM d, yyyy') : 'Unknown date';
+                const startDateStr = getCalendarDayLocal((shift as any).shiftDate);
+                const endDateStr =
+                  (shift as any).shiftMode === 'multi' && (shift as any).endDate && (shift as any).endDate !== (shift as any).shiftDate
+                    ? getCalendarDayLocal((shift as any).endDate)
+                    : null;
+                const formatLocalDate = (dateStr: string) => {
+                  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr || 'Unknown date';
+                  const [y, m, d] = dateStr.split('-').map(Number);
+                  return format(new Date(y, m - 1, d), 'EEE, MMM d, yyyy');
+                };
+                const formatted =
+                  startDateStr && endDateStr && startDateStr !== endDateStr
+                    ? `${formatLocalDate(startDateStr)} – ${formatLocalDate(endDateStr)}`
+                    : startDateStr
+                      ? formatLocalDate(startDateStr)
+                      : 'Unknown date';
                 const jobTitle = (shift as any).defaultJobTitle ?? (shift as any).jobTitle ?? (jobOrder as any)?.jobTitle ?? '';
                 return (
                   <MenuItem key={shift.id} value={shift.id}>
@@ -1862,6 +1894,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                     }}
                                   />
                                 </Tooltip>
+                                {!isPlacementOnly && !isConfirmed && !isDeclined && !isCancelled && worker.assignmentId && (
+                                  <Tooltip title="Confirm this assignment on behalf of the worker (same as them clicking Accept)">
+                                    <Chip
+                                      size="small"
+                                      label={confirmLoadingAssignmentId === worker.assignmentId ? 'Confirming…' : 'Confirm'}
+                                      onClick={() => handleConfirmForWorker(worker)}
+                                      disabled={confirmLoadingAssignmentId === worker.assignmentId}
+                                      sx={{
+                                        bgcolor: '#E3F2FD',
+                                        color: '#1976D2',
+                                        fontWeight: 500,
+                                        '&:hover': { bgcolor: '#BBDEFB' },
+                                      }}
+                                    />
+                                  </Tooltip>
+                                )}
                               </Box>
                               {!isPlacementOnly && !isDeclined && !isCancelled && (worker.assignmentConfirmedAt != null || worker.assignmentOfferSentAt != null) && (
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -2104,8 +2152,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}>
                                           <Chip
                                             size="small"
-                                  label={worker.workEligibility ? 'Eligible' : 'Not eligible'}
-                                  color={worker.workEligibility ? 'success' : 'error'}
+                                  label={
+                                    hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)
+                                      ? 'Eligible'
+                                      : worker.workEligibility
+                                        ? 'Eligible'
+                                        : 'Not eligible'
+                                  }
+                                  color={
+                                    hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)
+                                      ? 'success'
+                                      : worker.workEligibility
+                                        ? 'success'
+                                        : 'error'
+                                  }
                                   variant="outlined"
                                   sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
                                           />
