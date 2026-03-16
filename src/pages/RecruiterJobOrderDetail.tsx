@@ -77,6 +77,7 @@ import {
   ArrowBack as ArrowBackIcon,
   Email as EmailIcon,
   Sms as SmsIcon,
+  Lock as LockedIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -1587,19 +1588,27 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
                       const isDeclined = placementStatus === 'declined';
                       const isCancelled = placementStatus === 'cancelled' || placementStatus === 'canceled';
-                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Assigned' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : (applicant.applicationStatus || 'submitted');
-                      const displayColor = isConfirmed ? 'success' : isAssigned ? 'primary' : isDeclined || isCancelled ? 'error' :
+                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Accepted' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : (applicant.applicationStatus || 'submitted');
+                      const displayColor = isConfirmed ? 'success' : isAssigned ? undefined : isDeclined || isCancelled ? 'error' :
                         applicant.applicationStatus === 'accepted' ? 'success' :
                         applicant.applicationStatus === 'rejected' ? 'error' :
                         applicant.applicationStatus === 'waitlisted' ? 'warning' : 'default';
                       return (
                         <Tooltip title={isAssigned || isConfirmed ? `Application: ${applicant.applicationStatus || 'submitted'}` : isDeclined ? 'Worker declined assignment' : isCancelled ? 'Assignment cancelled' : undefined}>
-                          <Chip 
+                          <Chip
                             label={displayLabel}
                             size="small"
                             color={displayColor}
+                            icon={isAssigned && !isConfirmed ? <LockedIcon fontSize="small" /> : undefined}
                             onClick={(e) => handleOpenStatusMenu(e, applicant.uid)}
-                            sx={{ cursor: 'pointer' }}
+                            sx={{
+                              cursor: 'pointer',
+                              ...(isAssigned && !isConfirmed && {
+                                bgcolor: '#e8f5e9',
+                                color: 'success.main',
+                                '& .MuiChip-icon': { color: 'success.main' },
+                              }),
+                            }}
                           />
                         </Tooltip>
                       );

@@ -215,7 +215,7 @@ async function resolveApplicationForAssignment(args: {
   const { tenantId, jobOrderId, shiftId, userId, createdBy, assignmentId, jobPostId, entityId } = args;
   const applicationsRef = db.collection(`tenants/${tenantId}/applications`);
 
-  const [byShiftSnap, byShiftIdsSnap] = await Promise.all([
+  const [byShiftSnap, byShiftIdsSnap, byUserJobSnap] = await Promise.all([
     applicationsRef
       .where('userId', '==', userId)
       .where('jobOrderId', '==', jobOrderId)
@@ -228,9 +228,14 @@ async function resolveApplicationForAssignment(args: {
       .where('shiftIds', 'array-contains', shiftId)
       .limit(1)
       .get(),
+    applicationsRef
+      .where('userId', '==', userId)
+      .where('jobOrderId', '==', jobOrderId)
+      .limit(1)
+      .get(),
   ]);
 
-  const existing = byShiftSnap.docs[0] || byShiftIdsSnap.docs[0];
+  const existing = byShiftSnap.docs[0] || byShiftIdsSnap.docs[0] || byUserJobSnap.docs[0];
   const now = admin.firestore.FieldValue.serverTimestamp();
 
   if (existing) {
@@ -271,12 +276,14 @@ async function resolveApplicationForAssignment(args: {
   return created.id;
 }
 
-export const placementsCreateAssignments = onCall(async (request) => {
-  if (!request.auth?.uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+export const placementsCreateAssignments = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
 
-  const {
+    const {
     tenantId,
     jobOrderId,
     shiftId,
@@ -553,14 +560,17 @@ export const placementsCreateAssignments = onCall(async (request) => {
     skipped,
     failed,
   };
-});
+  },
+);
 
-export const respondToAssignment = onCall(async (request) => {
-  if (!request.auth?.uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+export const respondToAssignment = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
 
-  const { tenantId, assignmentId, decision } = (request.data || {}) as {
+    const { tenantId, assignmentId, decision } = (request.data || {}) as {
     tenantId?: string;
     assignmentId?: string;
     decision?: AssignmentDecision;
@@ -633,49 +643,41 @@ export const respondToAssignment = onCall(async (request) => {
     );
   }
   return { success: true, status: 'declined' };
-});
+  },
+);
 
 /**
  * Recruiter confirms an assignment on behalf of the worker (same effect as worker clicking "Accept").
  * Allowed when the caller can manage assignments for the tenant.
  */
-export const confirmAssignmentForWorker = onCall(async (request) => {
-  if (!request.auth?.uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+export const confirmAssignmentForWorker = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
 
-  const { tenantId, assignmentId } = (request.data || {}) as { tenantId?: string; assignmentId?: string };
-  if (!tenantId || !assignmentId) {
-    throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
-  }
+    const { tenantId, assignmentId } = (request.data || {}) as { tenantId?: string; assignmentId?: string };
+    if (!tenantId || !assignmentId) {
+      throw new HttpsError('invalid-argument', 'tenantId and assignmentId are required');
+    }
 
-  const canManage = await canManageAssignments(request.auth, tenantId, request.auth.uid);
-  if (!canManage) {
-    throw new HttpsError('permission-denied', 'You do not have permission to confirm assignments for this tenant');
-  }
+    const canManage = await canManageAssignments(request.auth, tenantId, request.auth.uid);
+    if (!canManage) {
+      throw new HttpsError('permission-denied', 'You do not have permission to confirm assignments for this tenant');
+    }
 
-  const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
-  const assignmentSnap = await assignmentRef.get();
-  if (!assignmentSnap.exists) throw new HttpsError('not-found', 'Assignment not found');
-  const assignment = assignmentSnap.data() || {};
-  const applicationId = assignment.applicationId as string | undefined;
-  const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
+    const assignmentRef = db.doc(`tenants/${tenantId}/assignments/${assignmentId}`);
+    const assignmentSnap = await assignmentRef.get();
+    if (!assignmentSnap.exists) throw new HttpsError('not-found', 'Assignment not found');
+    const assignment = assignmentSnap.data() || {};
+    const applicationId = assignment.applicationId as string | undefined;
+    const applicationRef = applicationId ? db.doc(`tenants/${tenantId}/applications/${applicationId}`) : null;
 
-  const now = admin.firestore.FieldValue.serverTimestamp();
-  const uid = request.auth.uid;
+    const now = admin.firestore.FieldValue.serverTimestamp();
+    const uid = request.auth.uid;
 
-  await assignmentRef.set(
-    {
-      status: 'confirmed',
-      confirmedAt: now,
-      confirmedBy: uid,
-      updatedAt: now,
-      updatedBy: uid,
-    },
-    { merge: true },
-  );
-  if (applicationRef) {
-    await applicationRef.set(
+    await assignmentRef.set(
       {
         status: 'confirmed',
         confirmedAt: now,
@@ -685,26 +687,40 @@ export const confirmAssignmentForWorker = onCall(async (request) => {
       },
       { merge: true },
     );
-  }
-  return { success: true, status: 'confirmed' };
-});
+    if (applicationRef) {
+      await applicationRef.set(
+        {
+          status: 'confirmed',
+          confirmedAt: now,
+          confirmedBy: uid,
+          updatedAt: now,
+          updatedBy: uid,
+        },
+        { merge: true },
+      );
+    }
+    return { success: true, status: 'confirmed' };
+  },
+);
 
 /**
  * Cancel an assignment and revert to Placed state.
  * Deletes the assignment and creates a placement so the worker shows as "Placed" again.
  * For testing / recruiter use.
  */
-export const placementsCancelAssignment = onCall(async (request) => {
-  if (!request.auth?.uid) {
-    throw new HttpsError('unauthenticated', 'Authentication required');
-  }
+export const placementsCancelAssignment = onCall(
+  { cors: true },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
 
-  const {
-    tenantId,
-    assignmentId,
-    shiftId,
-    userId,
-  } = (request.data || {}) as {
+    const {
+      tenantId,
+      assignmentId,
+      shiftId,
+      userId,
+    } = (request.data || {}) as {
     tenantId?: string;
     assignmentId?: string;
     shiftId?: string;
@@ -764,12 +780,15 @@ export const placementsCancelAssignment = onCall(async (request) => {
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         confirmedAt: admin.firestore.FieldValue.delete(),
         confirmedBy: admin.firestore.FieldValue.delete(),
+        // Signal to application triggers: do not send application_received SMS (assignment cancel already sends one message)
+        statusChangeReason: 'assignment_cancelled',
       });
     }
   });
 
   return { success: true };
-});
+  },
+);
 
 /**
  * Resend accept/decline offer (SMS, push, email) for an assignment.

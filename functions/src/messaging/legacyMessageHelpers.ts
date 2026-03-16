@@ -310,6 +310,10 @@ export async function sendLegacyAssignmentMessage(args: {
   /** When set, email is sent with this subject and HTML body (assignment details); SMS uses args.message */
   emailSubject?: string;
   emailBody?: string;
+  /** Pass assignment/job order data so template variables (jobTitle, locationCity) resolve from worksite, not user address */
+  assignmentData?: Record<string, unknown>;
+  jobOrderId?: string;
+  jobOrderData?: Record<string, unknown>;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
     const statusForTrigger =
@@ -335,6 +339,9 @@ export async function sendLegacyAssignmentMessage(args: {
           assignmentId: args.assignmentId,
           message: args.message,
           status: args.messageTypeId,
+          assignmentData: args.assignmentData,
+          jobOrderId: args.jobOrderId,
+          jobOrderData: args.jobOrderData,
         },
         metadata: {
           source: args.source,

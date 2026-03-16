@@ -57,6 +57,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../firebase';
 import {
   listTemplates,
+  getTemplate,
   createTemplate,
   updateTemplate,
   deleteTemplate,
@@ -291,8 +292,51 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     }
   };
 
-  const handleOpenTemplateDialog = (template?: UnifiedMessageTemplate) => {
-    if (template) {
+  const handleOpenTemplateDialog = async (template?: UnifiedMessageTemplate) => {
+    if (template?.id) {
+      // Fetch full template from server so we get subject and all fields (list can omit or stale)
+      let full: UnifiedMessageTemplate = template;
+      try {
+        const res = await getTemplate(tenantId, template.id);
+        if (res.success && res.data) full = res.data;
+      } catch (e) {
+        console.warn('Could not fetch full template for edit, using list data:', e);
+      }
+      setEditingTemplate(full);
+      setTemplateForm({
+        name: full.name,
+        messageTypeId: full.messageTypeId,
+        channel: full.channel,
+        language: full.language,
+        body: full.body,
+        subject: full.subject ?? '',
+        htmlBody: full.htmlBody ?? '',
+        variables: full.variables ?? [],
+        includeStopFooter: full.includeStopFooter,
+        active: full.active,
+      });
+      const linkedRule = automationRules.find((rule) => rule.templateId === full.id);
+      if (linkedRule) {
+        setRuleForm({
+          ruleId: linkedRule.ruleId,
+          triggerKey: linkedRule.triggerKey,
+          deliveryChannels: linkedRule.deliveryChannels,
+          status: linkedRule.status,
+        });
+      } else {
+        setRuleForm({
+          ruleId: `rule_${full.id}`,
+          triggerKey: '',
+          deliveryChannels: {
+            sms: full.channel === 'sms',
+            email: full.channel === 'email',
+            push: false,
+          },
+          status: full.active ? 'active' : 'draft',
+        });
+      }
+    } else if (template) {
+      // New template flow: template passed but no id (shouldn't happen, but keep same shape)
       setEditingTemplate(template);
       setTemplateForm({
         name: template.name,
@@ -300,9 +344,9 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         channel: template.channel,
         language: template.language,
         body: template.body,
-        subject: template.subject || '',
-        htmlBody: template.htmlBody || '',
-        variables: template.variables,
+        subject: template.subject ?? '',
+        htmlBody: template.htmlBody ?? '',
+        variables: template.variables ?? [],
         includeStopFooter: template.includeStopFooter,
         active: template.active,
       });
@@ -316,7 +360,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
         });
       } else {
         setRuleForm({
-          ruleId: `rule_${template.id}`,
+          ruleId: template.id ? `rule_${template.id}` : '',
           triggerKey: '',
           deliveryChannels: {
             sms: template.channel === 'sms',

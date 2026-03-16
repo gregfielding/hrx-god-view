@@ -42,6 +42,8 @@ import {
   Warning as WarningIcon,
   Email as EmailIcon,
   Sms as SmsIcon,
+  Send as SendIcon,
+  Cancel as CancelIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -1140,6 +1142,8 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [selectedAssignmentWorkerIds, setSelectedAssignmentWorkerIds] = useState<Set<string>>(new Set());
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
+  const [bulkAcceptBusy, setBulkAcceptBusy] = useState(false);
+  const [bulkCancelBusy, setBulkCancelBusy] = useState(false);
   const isAllAssignmentsSelected =
     displayedAssignedWorkers.length > 0 &&
     selectedAssignmentWorkerIds.size === displayedAssignedWorkers.length;
@@ -1172,6 +1176,68 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const recipientUserIds = selected.map((w) => w.id);
     return { recipients, recipientUserIds };
   }, [displayedAssignedWorkers, selectedAssignmentWorkerIds]);
+
+  /** Bulk Accept: send offer (create assignment + send accept/decline message) for all selected workers who are Placed only. */
+  const handleBulkAccept = async () => {
+    const selected = displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id));
+    const placedOnly = selected.filter((w) => w.isPlacementOnly);
+    if (placedOnly.length === 0 || !selectedShift) return;
+    setBulkAcceptBusy(true);
+    try {
+      setError(null);
+      await assignWorkersToShift(placedOnly.map((w) => w.id));
+      for (const worker of placedOnly) {
+        await deletePlacement(worker);
+      }
+      setSelectedAssignmentWorkerIds((prev) => {
+        const next = new Set(prev);
+        placedOnly.forEach((w) => next.delete(w.id));
+        return next;
+      });
+    } catch (err: any) {
+      console.error('Error bulk offering position:', err);
+      setError(err?.message || 'Failed to send offer to selected');
+    } finally {
+      setBulkAcceptBusy(false);
+    }
+  };
+
+  /** Bulk Cancel: cancel assignment (red X) for all selected workers who have an assignment. */
+  const handleBulkCancel = async () => {
+    const selected = displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id));
+    const withAssignment = selected.filter((w) => !w.isPlacementOnly && w.assignmentId);
+    if (withAssignment.length === 0 || !selectedShiftId || !jobOrderId) return;
+    setBulkCancelBusy(true);
+    try {
+      setError(null);
+      setPendingAssignmentCancels((prev) => new Set([...prev, ...withAssignment.map((w) => w.id)]));
+      const cancelFn = httpsCallable(functions, 'placementsCancelAssignment');
+      for (const worker of withAssignment) {
+        await cancelFn({
+          tenantId,
+          assignmentId: worker.assignmentId,
+          shiftId: selectedShiftId,
+          userId: worker.id,
+        });
+      }
+      setSelectedAssignmentWorkerIds((prev) => {
+        const next = new Set(prev);
+        withAssignment.forEach((w) => next.delete(w.id));
+        return next;
+      });
+    } catch (err: any) {
+      console.error('Error bulk cancelling assignments:', err);
+      setError(err?.message || 'Failed to cancel selected');
+      setPendingAssignmentCancels((prev) => {
+        const next = new Set(prev);
+        withAssignment.forEach((w) => next.delete(w.id));
+        return next;
+      });
+    } finally {
+      setBulkCancelBusy(false);
+    }
+  };
+
   const handleAssignAll = async () => {
     if (placedOnlyWorkers.length === 0 || !selectedShift) return;
     setAssignAllBusy(true);
@@ -1720,6 +1786,35 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       <Typography variant="body2" color="text.secondary">
                         {selectedAssignmentWorkerIds.size} selected
                       </Typography>
+                      <Tooltip title="Send offer (accept/decline message) to selected workers who are Placed">
+                        <span>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={bulkAcceptBusy ? <CircularProgress size={14} /> : <SendIcon />}
+                            onClick={handleBulkAccept}
+                            disabled={bulkAcceptBusy || displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id) && w.isPlacementOnly).length === 0}
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Accept
+                          </Button>
+                        </span>
+                      </Tooltip>
+                      <Tooltip title="Cancel assignment for selected workers">
+                        <span>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            color="error"
+                            startIcon={bulkCancelBusy ? <CircularProgress size={14} /> : <CancelIcon />}
+                            onClick={handleBulkCancel}
+                            disabled={bulkCancelBusy || displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id) && !w.isPlacementOnly && w.assignmentId).length === 0}
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Cancel
+                          </Button>
+                        </span>
+                      </Tooltip>
                       <Button
                         size="small"
                         variant="outlined"
@@ -1730,7 +1825,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         }}
                         sx={{ textTransform: 'none' }}
                       >
-                        Bulk Email
+                        Email
                       </Button>
                       <Button
                         size="small"
@@ -1742,7 +1837,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         }}
                         sx={{ textTransform: 'none' }}
                       >
-                        Bulk SMS
+                        SMS
                       </Button>
                       <Button
                         size="small"
@@ -1780,10 +1875,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         const isPlacementOnly = Boolean(worker.isPlacementOnly);
                         const isDeclined = worker.assignmentStatus === 'declined';
                         const isCancelled = worker.assignmentStatus === 'cancelled' || worker.assignmentStatus === 'canceled';
-                        // Placed = placement only (no offer sent). Assigned = offer sent, awaiting response. Confirmed = worker accepted. Declined/Cancelled = worker or system cancelled.
+                        // Placed = placement only (no offer sent). Accepted = offer sent, awaiting response. Confirmed = worker accepted. Declined/Cancelled = worker or system cancelled.
                         const isConfirmed = worker.assignmentStatus && ['confirmed', 'active'].includes(worker.assignmentStatus);
                         const offeringThis = isPlacementOnly && confirmingPlacementUserId === worker.id;
-                        const statusLabel = offeringThis ? 'Offering…' : isPlacementOnly ? 'Placed' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isConfirmed ? 'Confirmed' : 'Assigned';
+                        const statusLabel = offeringThis ? 'Offering…' : isPlacementOnly ? 'Placed' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : isConfirmed ? 'Confirmed' : 'Accepted';
                         const canDragBackToPool = isPlacementOnly && !offeringThis; // Only placement-only (no Assignment) can be dragged back
                         return (
                           <Paper
@@ -2196,7 +2291,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                           </Typography>
                                           {sameDayConflictByUserId.get(worker.id)?.map((c, i) => (
                                             <Typography key={i} variant="caption" display="block">
-                                              {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Assigned' : 'Confirmed'})
+                                              {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
                                             </Typography>
                                           ))}
                                         </Box>
@@ -2515,7 +2610,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             <Stack component="ul" sx={{ pl: 2, m: 0 }}>
               {doubleBookConfirmWorker && sameDayConflictByUserId.get(doubleBookConfirmWorker.id)?.map((c, i) => (
                 <Typography key={i} component="li" variant="body2" color="text.secondary">
-                  {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Assigned' : 'Confirmed'})
+                  {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
                 </Typography>
               ))}
             </Stack>

@@ -13,6 +13,7 @@ import {
   Alert,
   Stack,
   Paper,
+  Grid,
   useTheme,
   useMediaQuery,
   Snackbar,
@@ -32,6 +33,10 @@ import {
   VerifiedUser as VerifiedIcon,
   Lock as LockIcon,
   Language as LanguageIcon,
+  Map as MapIcon,
+  Checkroom as CheckroomIcon,
+  Engineering as EngineeringIcon,
+  OpenInNew as OpenInNewIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
@@ -40,7 +45,7 @@ import { db, functions } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { useT, setLanguage, useLanguage } from '../i18n';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, format } from 'date-fns';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
@@ -78,6 +83,8 @@ const JobPostingDetail: React.FC = () => {
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
   const [assignmentStartDate, setAssignmentStartDate] = useState<any>(null); // recruiter-set start date when worker has assignment
+  const [assignmentData, setAssignmentData] = useState<any>(null); // full assignment doc when in accept/decline mode
+  const [scheduleShiftData, setScheduleShiftData] = useState<any>(null); // shift doc for schedule card
   const [assignmentDecisionLoading, setAssignmentDecisionLoading] = useState(false); // prevent double-clicks on I Accept / Decline
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
@@ -509,7 +516,7 @@ const JobPostingDetail: React.FC = () => {
     void loadCareerSchedule();
   }, [posting]);
 
-  // When worker has an assignment (from URL, accepted state, or application doc), load assignment start date so we show recruiter-set date
+  // When worker has an assignment (from URL, accepted state, or application doc), load assignment + shift for start date and accept/decline cards
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const urlAssignmentId = params.get('assignmentId');
@@ -519,6 +526,8 @@ const JobPostingDetail: React.FC = () => {
       (applicationData?.assignmentId ? String(applicationData.assignmentId) : null);
     if (!assignmentId || !resolvedTenantId) {
       setAssignmentStartDate(null);
+      setAssignmentData(null);
+      setScheduleShiftData(null);
       return;
     }
     const loadAssignment = async () => {
@@ -528,12 +537,30 @@ const JobPostingDetail: React.FC = () => {
         if (snap.exists()) {
           const data = snap.data();
           setAssignmentStartDate(data?.startDate ?? null);
+          setAssignmentData(data);
+          const joId = data?.jobOrderId;
+          const shiftId = data?.shiftId;
+          if (joId && shiftId) {
+            try {
+              const shiftRef = doc(db, 'tenants', resolvedTenantId, 'job_orders', joId, 'shifts', shiftId);
+              const shiftSnap = await getDoc(shiftRef);
+              setScheduleShiftData(shiftSnap.exists() ? shiftSnap.data() : null);
+            } catch {
+              setScheduleShiftData(null);
+            }
+          } else {
+            setScheduleShiftData(null);
+          }
         } else {
           setAssignmentStartDate(null);
+          setAssignmentData(null);
+          setScheduleShiftData(null);
         }
       } catch (err) {
-        console.warn('Error loading assignment for start date:', err);
+        console.warn('Error loading assignment:', err);
         setAssignmentStartDate(null);
+        setAssignmentData(null);
+        setScheduleShiftData(null);
       }
     };
     loadAssignment();
@@ -673,6 +700,20 @@ const JobPostingDetail: React.FC = () => {
     } catch {
       return 'Date TBD';
     }
+  };
+
+  const formatTime = (t: string | undefined): string => {
+    if (!t || typeof t !== 'string') return '';
+    const [h, m] = t.trim().split(':');
+    const hh = Math.max(0, Math.min(23, parseInt(h, 10) || 0));
+    const mm = Math.max(0, Math.min(59, parseInt(m, 10) || 0));
+    const d = new Date(2000, 0, 1, hh, mm);
+    return format(d, 'h:mm a');
+  };
+
+  const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
+  const DOW_LABELS: Record<number, string> = {
+    0: 'Sunday', 1: 'Monday', 2: 'Tuesday', 3: 'Wednesday', 4: 'Thursday', 5: 'Friday', 6: 'Saturday',
   };
 
   // Helper function to get application status button label and styling
@@ -1423,32 +1464,12 @@ const JobPostingDetail: React.FC = () => {
             </Box>
           </Box>
 
-          {/* When hired: show simple message and link to assignment details (accept/decline from that page) */}
+          {/* When hired but not yet accepted: show message only (no View Assignment Details until they accept) */}
           {!(posting.jobType === 'gig' && dynamicShifts.length > 0) &&
             ((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
-              assignmentDetailsUrl ? (
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
-                  <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
-                    You&apos;ve been hired to work this job.
-                  </Typography>
-                  <Button
-                    component={Link}
-                    to={`/c1/workers/assignments/${assignmentDetailsId}`}
-                    variant="contained"
-                    size={isMobile ? 'small' : 'medium'}
-                    sx={{
-                      borderRadius: '999px',
-                      px: isMobile ? 1.5 : 2,
-                      fontWeight: 600,
-                      backgroundColor: '#4CAF50',
-                      color: '#fff',
-                      '&:hover': { backgroundColor: '#45a049' },
-                    }}
-                  >
-                    View Assignment Details
-                  </Button>
-                </Box>
-              ) : null
+              <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
+                You&apos;ve been hired to work this job.
+              </Typography>
             ) : statusButtonProps?.label === 'confirmed_special' ? (
               assignmentDetailsUrl ? (
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'center' }}>
@@ -1632,6 +1653,187 @@ const JobPostingDetail: React.FC = () => {
               </Typography>
             </CardContent>
           </Card>
+
+          {/* Assignment Info + Schedule (when worker needs to accept/decline — show key details from assignment) */}
+          {((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' && assignmentData) ? (
+            <>
+              <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+                <CardContent>
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                    {t('assignment.assignmentInfo')}
+                  </Typography>
+                  <Grid container spacing={3}>
+                    <Grid item xs={12} sm={6}>
+                      <Stack spacing={2}>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                          <WorkIcon color="action" sx={{ flexShrink: 0 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.jobTitle')}</Typography>
+                            <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                              {assignmentData.jobTitle || posting?.postTitle || posting?.jobTitle || '—'}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                          <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
+                            <Typography variant="body1">
+                              {assignmentData.startDate ? formatDate(assignmentData.startDate) : (assignmentStartDate ? formatDate(assignmentStartDate) : posting?.startDate ? formatDate(posting.startDate) : '—')}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                          <MoneyIcon color="action" sx={{ flexShrink: 0 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
+                            <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                              {assignmentData.payRate != null ? `$${assignmentData.payRate}/hr` : (posting?.payRate != null ? `$${posting.payRate}/hr` : '—')}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                          <BusinessIcon color="action" sx={{ flexShrink: 0 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.companyName')}</Typography>
+                            <Typography variant="body1">
+                              {assignmentData.companyName || posting?.companyName || '—'}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                      </Stack>
+                    </Grid>
+                    <Grid item xs={12} sm={6}>
+                      <Stack spacing={2}>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                          <LocationIcon color="action" sx={{ flexShrink: 0 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.worksiteName')}</Typography>
+                            <Typography variant="body1">
+                              {assignmentData.worksiteName || assignmentData.location || posting?.worksiteName || posting?.location || '—'}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Stack direction="row" spacing={2} alignItems="center">
+                          <MapIcon color="action" sx={{ flexShrink: 0 }} />
+                          <Box sx={{ minWidth: 0 }}>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.worksiteAddress')}</Typography>
+                            {(() => {
+                              const wa = assignmentData.worksiteAddress || posting?.worksiteAddress;
+                              const addrStr = wa ? [(wa.street || wa.address), wa.city, wa.state, wa.zipCode].filter(Boolean).join(', ') : '';
+                              return addrStr ? (
+                                <Button
+                                  size="small"
+                                  startIcon={<OpenInNewIcon />}
+                                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(addrStr)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  sx={{ textTransform: 'none', p: 0, minHeight: 'auto' }}
+                                >
+                                  {addrStr}
+                                </Button>
+                              ) : (
+                                <Typography variant="body1">—</Typography>
+                              );
+                            })()}
+                          </Box>
+                        </Stack>
+                        <Stack direction="row" spacing={2} alignItems="flex-start">
+                          <CheckroomIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.requiredUniform')}</Typography>
+                            <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                              {((assignmentData.uniformRequirements || assignmentData.customUniformRequirements) || (posting?.uniformRequirements || posting?.customUniformRequirements))
+                                ? [(assignmentData.uniformRequirements || assignmentData.customUniformRequirements), (posting?.uniformRequirements || posting?.customUniformRequirements)].filter(Boolean).join('\n\n')
+                                : '—'}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Stack direction="row" spacing={2} alignItems="flex-start">
+                          <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.requiredPpe')}</Typography>
+                            <Typography variant="body1">
+                              {assignmentData.ppeRequirements || posting?.requiredPpe || posting?.ppeRequirements || '—'}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                      </Stack>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+              <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+                <CardContent>
+                  <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                    Schedule
+                  </Typography>
+                  <Stack spacing={2}>
+                    {scheduleShiftData?.shiftMode === 'multi' && scheduleShiftData?.weeklySchedule && Object.keys(scheduleShiftData.weeklySchedule).length > 0 ? (
+                      <>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
+                          <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
+                            {DOW_ORDER.map((dow) => {
+                              const entry = scheduleShiftData.weeklySchedule[String(dow)];
+                              if (!entry?.enabled) return null;
+                              const start = formatTime(entry.startTime);
+                              const end = formatTime(entry.endTime);
+                              return (
+                                <Typography key={dow} component="li" variant="body2">
+                                  {DOW_LABELS[dow]}: {start} – {end}
+                                </Typography>
+                              );
+                            })}
+                          </Stack>
+                        </Box>
+                        {assignmentData.startDate && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
+                            <Typography variant="body1">{formatDate(assignmentData.startDate)}</Typography>
+                          </Box>
+                        )}
+                        {assignmentData.jobOrderType === 'gig' && (assignmentData.endDate || scheduleShiftData.endDate) && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
+                            <Typography variant="body1">
+                              {assignmentData.endDate ? formatDate(assignmentData.endDate) : (scheduleShiftData.endDate ? new Date(scheduleShiftData.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
+                            </Typography>
+                          </Box>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {assignmentData.startDate && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Date</Typography>
+                            <Typography variant="body1">{formatDate(assignmentData.startDate)}</Typography>
+                          </Box>
+                        )}
+                        {(assignmentData.startTime || assignmentData.endTime || scheduleShiftData?.defaultStartTime || scheduleShiftData?.defaultEndTime) && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">Time</Typography>
+                            <Typography variant="body1">
+                              {[formatTime(assignmentData.startTime || scheduleShiftData?.defaultStartTime), formatTime(assignmentData.endTime || scheduleShiftData?.defaultEndTime)].filter(Boolean).join(' – ')}
+                            </Typography>
+                          </Box>
+                        )}
+                        {assignmentData.endDate && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">End date</Typography>
+                            <Typography variant="body1">{formatDate(assignmentData.endDate)}</Typography>
+                          </Box>
+                        )}
+                        {!assignmentData.startDate && !assignmentData.startTime && !assignmentData.endTime && !scheduleShiftData?.defaultStartTime && (
+                          <Typography variant="body2" color="text.secondary">No schedule details available.</Typography>
+                        )}
+                      </>
+                    )}
+                  </Stack>
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
 
           {/* Shift Selector (for Gig jobs only) */}
           {posting.jobType === 'gig' && (

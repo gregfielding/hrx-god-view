@@ -8778,6 +8778,17 @@ export const logAssignmentUpdated = onDocumentUpdated(
           let message = '';
           const firstName = after.firstName || userData?.firstName || 'there';
 
+          // For cancellation: fetch job order first so fallback message and template variables use worksite (not user address)
+          let jobOrderData: admin.firestore.DocumentData | undefined;
+          if ((after.status === 'cancelled' || after.status === 'canceled') && after.jobOrderId) {
+            try {
+              const jobOrderSnap = await admin.firestore().doc(`tenants/${tenantId}/job_orders/${after.jobOrderId}`).get();
+              if (jobOrderSnap.exists) jobOrderData = jobOrderSnap.data();
+            } catch (e) {
+              logger.warn(`logAssignmentUpdated: could not fetch job order ${after.jobOrderId} for cancellation message`, e);
+            }
+          }
+
           switch (after.status) {
             case 'confirmed':
               message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
@@ -8792,9 +8803,14 @@ export const logAssignmentUpdated = onDocumentUpdated(
               message = `Hi ${firstName}, we received your decline for this assignment. Thank you for letting us know.`;
               break;
             case 'cancelled':
-            case 'canceled':
-              message = `Hi ${firstName}, your assignment has been cancelled. Please check your account for details.`;
+            case 'canceled': {
+              const jobTitle = after.jobTitle || (jobOrderData as any)?.jobTitle;
+              const worksiteCity = after.worksiteAddress?.city || (jobOrderData as any)?.worksiteAddress?.city || (jobOrderData as any)?.worksiteAddress?.address?.city || '';
+              const locationPhrase = worksiteCity ? ` in ${worksiteCity}` : '';
+              const rolePhrase = jobTitle ? ` to work as a ${jobTitle}` : ' for this position';
+              message = `Hi ${firstName}, your assignment${rolePhrase}${locationPhrase} has been cancelled. We are working on trying to get you a spot and will update you if we can get you reassigned.`;
               break;
+            }
             default:
               // Don't send for other status changes
               break;
@@ -8818,6 +8834,13 @@ export const logAssignmentUpdated = onDocumentUpdated(
               source: 'assignment_status_update',
               sourceId: assignmentId,
               assignmentId,
+              ...((after.status === 'cancelled' || after.status === 'canceled')
+                ? {
+                    assignmentData: after,
+                    jobOrderId: after.jobOrderId,
+                    jobOrderData,
+                  }
+                : {}),
             });
 
             if (result.success) {

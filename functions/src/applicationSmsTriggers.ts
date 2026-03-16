@@ -268,6 +268,12 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return { success: true };
       }
 
+      // When recruiter cancels assignment (Red X), application is reverted to submitted. Skip "Thank you for applying" — assignment_status_cancelled already sent the correct message.
+      if (newStatus === 'submitted' && (after.statusChangeReason === 'assignment_cancelled' || after.revertedFromAssignmentCancel === true)) {
+        logger.info(`Application ${applicationId} reverted to submitted due to assignment cancel - skipping application_received`);
+        return { success: true };
+      }
+
       logger.info(`Application ${applicationId} status changed from ${oldStatus} to ${newStatus}`);
 
       // Do not send rejection or waitlisted when this application has an assignment in good standing (proposed/confirmed/active).
@@ -291,10 +297,69 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         }
         return false;
       };
+
+      // Also skip waitlisted/rejected if this user has ANY assignment for this job order in good standing (covers multiple application docs or race where status=waitlisted is written before assignmentId is set).
+      const skipWaitlistedOrRejectedWhenUserHasAssignmentForJob = async () => {
+        const userId = after.userId || after.candidateId;
+        const jobOrderId = after.jobOrderId;
+        if (!userId || !jobOrderId) return false;
+        try {
+          const assignSnap = await admin.firestore()
+            .collection(`tenants/${tenantId}/assignments`)
+            .where('userId', '==', userId)
+            .where('jobOrderId', '==', jobOrderId)
+            .limit(5)
+            .get();
+          const hasGoodStanding = assignSnap.docs.some((d) => {
+            const s = (d.data()?.status || '').toLowerCase();
+            return ['proposed', 'confirmed', 'active'].includes(s);
+          });
+          if (hasGoodStanding) {
+            logger.info(`Application ${applicationId} status=${newStatus} but user ${userId} has an assignment for job ${jobOrderId}; skipping waitlisted/rejected notification`);
+            return true;
+          }
+        } catch (err) {
+          logger.warn(`Could not check assignments for job order ${jobOrderId}:`, err);
+        }
+        return false;
+      };
+
+      // Skip waitlisted when this user has another application for the same job with status 'accepted' (e.g. two application docs: one we just set accepted in placement flow, another incorrectly set to waitlisted).
+      const skipWaitlistedWhenOtherApplicationAcceptedForSameJob = async () => {
+        const userId = after.userId || after.candidateId;
+        const jobOrderId = after.jobOrderId;
+        if (!userId || !jobOrderId) return false;
+        try {
+          const appSnap = await admin.firestore()
+            .collection(`tenants/${tenantId}/applications`)
+            .where('userId', '==', userId)
+            .where('jobOrderId', '==', jobOrderId)
+            .limit(10)
+            .get();
+          const otherAccepted = appSnap.docs.some((d) => d.id !== applicationId && (d.data()?.status || '').toLowerCase() === 'accepted');
+          if (otherAccepted) {
+            logger.info(`Application ${applicationId} status=waitlisted but user ${userId} has another application for job ${jobOrderId} with status accepted; skipping waitlisted notification`);
+            return true;
+          }
+        } catch (err) {
+          logger.warn(`Could not check other applications for job order ${jobOrderId}:`, err);
+        }
+        return false;
+      };
+
       if (newStatus === 'rejected' && (await skipStatusNotificationWhenAssigned('skipping rejection notification'))) {
         return { success: true };
       }
+      if (newStatus === 'rejected' && (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob())) {
+        return { success: true };
+      }
       if (newStatus === 'waitlisted' && (await skipStatusNotificationWhenAssigned('skipping waitlisted notification'))) {
+        return { success: true };
+      }
+      if (newStatus === 'waitlisted' && (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob())) {
+        return { success: true };
+      }
+      if (newStatus === 'waitlisted' && (await skipWaitlistedWhenOtherApplicationAcceptedForSameJob())) {
         return { success: true };
       }
 
