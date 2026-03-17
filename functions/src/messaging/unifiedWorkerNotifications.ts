@@ -17,11 +17,235 @@ const PUSH_TOKENS = (uid: string) => `users/${uid}/pushTokens`;
 const THREADS = 'threads';
 const THREAD_MESSAGES = (threadId: string) => `threads/${threadId}/messages`;
 
-type NotificationType = 'assignment' | 'application' | 'document' | 'shift' | 'payroll' | 'general' | 'system';
+export type NotificationType = 'assignment' | 'application' | 'document' | 'shift' | 'payroll' | 'general' | 'system' | 'opportunity' | 'profile_action' | 'support';
+export type NotificationCategory = 'assignments' | 'applications' | 'opportunities' | 'profile' | 'system';
 type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
+
+const ASSIGNMENTS_PATH = '/c1/workers/assignments';
+const JOBS_BOARD_PATH = '/c1/jobs-board';
+const JOB_READINESS_PATH = '/c1/workers/job-readiness';
+const APPLICATIONS_PATH = '/c1/workers/applications';
+
+/** Build deepLink from ctaUrl, threadId, or entity. Push and inbox use this so tap opens the correct screen. */
+function resolveDeepLink(payload: {
+  deepLink?: string;
+  ctaUrl?: string;
+  threadId?: string;
+  entity?: { kind: string; id: string };
+}): string {
+  if (payload.deepLink && payload.deepLink.trim()) return payload.deepLink.trim();
+  if (payload.ctaUrl && payload.ctaUrl.trim()) return payload.ctaUrl.trim();
+  if (payload.threadId) return `/c1/workers/inbox/${payload.threadId}`;
+  if (payload.entity?.kind === 'job_post' && payload.entity?.id) return `/c1/jobs-board/${payload.entity.id}`;
+  return '';
+}
+
+/** Resolve entityId for inbox (e.g. assignmentId, jobId). */
+function resolveEntityId(payload: { entityId?: string; entity?: { kind: string; id: string } }): string {
+  if (payload.entityId && payload.entityId.trim()) return payload.entityId.trim();
+  if (payload.entity?.id) return payload.entity.id;
+  return '';
+}
+
+/**
+ * Write a persistent inbox message to users/{uid}/notifications (no push).
+ * Use when sending push via another path (e.g. orchestrator) so every push has an inbox record.
+ */
+function categoryForType(type: NotificationType): NotificationCategory {
+  switch (type) {
+    case 'assignment': case 'shift': return 'assignments';
+    case 'application': return 'applications';
+    case 'opportunity': case 'general': return 'opportunities';
+    case 'profile_action': return 'profile';
+    case 'support': return 'system';
+    default: return 'system';
+  }
+}
+
+// ——— High-value worker notification helpers (inbox + push + deepLink) ———
+
+/** 1. application_received — use in onApplicationCreatedPush with title/body/companyName. */
+
+/** 2. application_status_changed — call from applicationSmsTriggers with status-specific title/body. */
+export async function sendApplicationStatusChangedNotification(payload: {
+  uid: string;
+  tenantId: string;
+  jobPostId?: string;
+  title: string;
+  body: string;
+}): Promise<{ notificationId: string }> {
+  const deepLink = payload.jobPostId ? `${JOBS_BOARD_PATH}/${payload.jobPostId}` : APPLICATIONS_PATH;
+  return sendNotificationAndPush({
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    title: payload.title,
+    body: payload.body,
+    type: 'application',
+    category: 'applications',
+    deepLink,
+    entityId: payload.jobPostId,
+    source: 'automation',
+  });
+}
+
+/** 3. jobs_match_profile — new shifts match experience/schedule. */
+export async function sendJobsMatchProfileNotification(payload: {
+  uid: string;
+  tenantId: string;
+  count: number;
+  title?: string;
+  body?: string;
+}): Promise<{ notificationId: string }> {
+  const title = payload.title ?? `${payload.count} jobs match your experience and schedule`;
+  const body = payload.body ?? 'New shifts are available near you.';
+  return sendNotificationAndPush({
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    title,
+    body,
+    type: 'opportunity',
+    category: 'opportunities',
+    deepLink: JOBS_BOARD_PATH,
+    source: 'automation',
+  });
+}
+
+/** 4. assignment_reminder — e.g. shift tomorrow, shift starts in 2 hours. */
+export async function sendAssignmentReminderNotification(payload: {
+  uid: string;
+  tenantId: string;
+  assignmentId: string;
+  title: string;
+  body: string;
+}): Promise<{ notificationId: string }> {
+  const deepLink = `${ASSIGNMENTS_PATH}/${payload.assignmentId}`;
+  return sendNotificationAndPush({
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    title: payload.title,
+    body: payload.body,
+    type: 'assignment',
+    category: 'assignments',
+    deepLink,
+    entityId: payload.assignmentId,
+    source: 'automation',
+  });
+}
+
+/** 5. assignment_changed — time/location/canceled/instructions updated. (Status changes use onAssignmentUpdatedPush.) */
+export async function sendAssignmentChangedNotification(payload: {
+  uid: string;
+  tenantId: string;
+  assignmentId: string;
+  title: string;
+  body: string;
+}): Promise<{ notificationId: string }> {
+  const deepLink = `${ASSIGNMENTS_PATH}/${payload.assignmentId}`;
+  return sendNotificationAndPush({
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    title: payload.title,
+    body: payload.body,
+    type: 'assignment',
+    category: 'assignments',
+    deepLink,
+    entityId: payload.assignmentId,
+    source: 'automation',
+  });
+}
+
+/** 6. profile_action_needed — e.g. upload Food Handler, add availability, complete profile. */
+export async function sendProfileActionNeededNotification(payload: {
+  uid: string;
+  tenantId: string;
+  title: string;
+  body: string;
+  deepLink?: string;
+}): Promise<{ notificationId: string }> {
+  return sendNotificationAndPush({
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    title: payload.title,
+    body: payload.body,
+    type: 'profile_action',
+    category: 'profile',
+    deepLink: payload.deepLink ?? JOB_READINESS_PATH,
+    source: 'automation',
+  });
+}
+
+/** 7. support_or_operational_message — parking, check-in, dress code, recruiter message. */
+export async function sendSupportOrOperationalMessage(payload: {
+  uid: string;
+  tenantId: string;
+  title: string;
+  body: string;
+  deepLink: string;
+  entityId?: string;
+  threadId?: string;
+}): Promise<{ notificationId: string }> {
+  return sendNotificationAndPush({
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    title: payload.title,
+    body: payload.body,
+    type: 'support',
+    category: 'system',
+    deepLink: payload.deepLink,
+    entityId: payload.entityId,
+    threadId: payload.threadId,
+    source: payload.threadId ? 'recruiter' : 'system',
+  });
+}
+
+export async function writeWorkerInboxNotification(payload: {
+  uid: string;
+  tenantId: string;
+  title: string;
+  body: string;
+  type?: NotificationType;
+  category?: NotificationCategory;
+  deepLink?: string;
+  entityId?: string;
+  ctaUrl?: string;
+  entity?: { kind: string; id: string };
+  source?: 'system' | 'recruiter' | 'automation';
+  metadata?: Record<string, unknown>;
+  priority?: 'low' | 'normal' | 'high';
+}): Promise<{ notificationId: string }> {
+  const id = db.collection('_').doc().id;
+  const ref = db.doc(`${NOTIFICATIONS(payload.uid)}/${id}`);
+  const now = admin.firestore.Timestamp.now();
+  const deepLink = payload.deepLink?.trim() || resolveDeepLink(payload);
+  const entityId = payload.entityId?.trim() || resolveEntityId(payload);
+  const type = payload.type ?? 'general';
+  const category = payload.category ?? categoryForType(type);
+  await ref.set({
+    id,
+    uid: payload.uid,
+    tenantId: payload.tenantId,
+    type,
+    category,
+    title: payload.title,
+    body: payload.body,
+    createdAt: now,
+    readAt: null,
+    deepLink: deepLink || undefined,
+    entityId: entityId || undefined,
+    source: payload.source ?? 'system',
+    channel: 'push',
+    ctaUrl: payload.ctaUrl ?? deepLink || undefined,
+    entity: payload.entity,
+    ...(payload.metadata && Object.keys(payload.metadata).length > 0 ? { metadata: payload.metadata } : {}),
+    ...(payload.priority ? { priority: payload.priority } : {}),
+  });
+  logger.info('Worker inbox notification written', { notificationId: id, uid: payload.uid });
+  return { notificationId: id };
+}
 
 /**
  * 5.1 sendNotificationAndPush — write notification doc + FCM push
+ * Every push creates a persistent inbox message. Push data includes deepLink so tap opens the correct screen.
  */
 export async function sendNotificationAndPush(payload: {
   uid: string;
@@ -30,30 +254,45 @@ export async function sendNotificationAndPush(payload: {
   body: string;
   severity?: NotificationSeverity;
   type?: NotificationType;
+  category?: NotificationCategory;
+  deepLink?: string;
+  entityId?: string;
   ctaUrl?: string;
   ctaLabel?: string;
   threadId?: string;
   entity?: { kind: string; id: string };
   source?: 'system' | 'recruiter' | 'automation';
+  metadata?: Record<string, unknown>;
+  priority?: 'low' | 'normal' | 'high';
 }): Promise<{ notificationId: string }> {
   const id = db.collection('_').doc().id;
   const ref = db.doc(`${NOTIFICATIONS(payload.uid)}/${id}`);
   const now = admin.firestore.Timestamp.now();
+  const deepLink = payload.deepLink?.trim() || resolveDeepLink(payload);
+  const entityId = payload.entityId?.trim() || resolveEntityId(payload);
+  const type = payload.type ?? 'general';
+  const category = payload.category ?? categoryForType(type);
   await ref.set({
+    id,
     uid: payload.uid,
     tenantId: payload.tenantId,
-    type: payload.type ?? 'general',
+    type,
+    category,
     title: payload.title,
     body: payload.body,
     severity: payload.severity ?? 'info',
     createdAt: now,
     readAt: null,
+    deepLink: deepLink || undefined,
+    entityId: entityId || undefined,
     source: payload.source ?? 'system',
     channel: 'push',
     ctaLabel: payload.ctaLabel,
-    ctaUrl: payload.ctaUrl,
+    ctaUrl: payload.ctaUrl ?? deepLink || undefined,
     threadId: payload.threadId,
     entity: payload.entity,
+    ...(payload.metadata && Object.keys(payload.metadata).length > 0 ? { metadata: payload.metadata } : {}),
+    ...(payload.priority ? { priority: payload.priority } : {}),
   });
 
   const tokensSnap = await db.collection(PUSH_TOKENS(payload.uid)).where('enabled', '==', true).get();
@@ -61,7 +300,6 @@ export async function sendNotificationAndPush(payload: {
     const token = d.data().token ?? d.id;
     return token ? [token] : [];
   });
-  const deepLink = payload.ctaUrl ?? (payload.threadId ? `/c1/workers/inbox/${payload.threadId}` : '') ?? '';
   if (deviceTokens.length > 0) {
     const push = getPushProvider();
     await push.sendPush({
@@ -70,7 +308,13 @@ export async function sendNotificationAndPush(payload: {
       targets: [{ userId: payload.uid, deviceTokens }],
       title: payload.title,
       body: payload.body,
-      data: { notificationId: id, threadId: payload.threadId ?? '', ctaUrl: payload.ctaUrl ?? '', deepLink },
+      data: {
+        notificationId: id,
+        threadId: payload.threadId ?? '',
+        ctaUrl: payload.ctaUrl ?? '',
+        deepLink,
+        entityId: entityId || '',
+      },
     });
   }
   logger.info('Unified worker notification created', { notificationId: id, uid: payload.uid });

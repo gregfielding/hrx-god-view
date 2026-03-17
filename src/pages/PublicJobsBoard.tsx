@@ -33,6 +33,8 @@ import {
   useTheme,
   Menu,
   Tooltip,
+  ToggleButtonGroup,
+  ToggleButton,
 } from '@mui/material';
 import {
   Search,
@@ -54,6 +56,8 @@ import {
   Event,
   Warning as WarningIcon,
   FilterList,
+  ViewList,
+  ViewModule,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -72,6 +76,12 @@ import EligibilityModal from '../components/EligibilityModal';
 import { checkMissingCertifications } from '../utils/checkMissingCertifications';
 import { toChipLabel } from '../utils/chipLabel';
 import { getLastShiftDateFromShifts } from '../utils/dateSchedule';
+import CardDeck from '../components/worker/cards/CardDeck';
+import JobRecommendationCard from '../components/worker/dashboard/cards/JobRecommendationCard';
+import JobFeedCard from '../components/worker/JobFeedCard';
+import { getCategoryForTitle } from '../utils/dashboardCardCategory';
+import { emitWorkerCardSignal } from '../utils/workerCardSignals';
+import type { JobCategory } from '../components/worker/dashboard/cards/types';
 
 interface PublicJobPosting {
   id: string;
@@ -175,6 +185,12 @@ const PublicJobsBoard: React.FC = () => {
   });
   const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const [viewMode, setViewMode] = useState<'grid' | 'deck' | 'feed'>('grid');
+  const [deckIndex, setDeckIndex] = useState(0);
+  /** Feed mode: queue of jobs to show one-by-one (Skip/Save/View Details remove and show next). */
+  const [feedQueue, setFeedQueue] = useState<PublicJobPosting[]>([]);
+  /** When true, show "Application Submitted" confirmation then the next job card. */
+  const [showApplicationConfirmation, setShowApplicationConfirmation] = useState(false);
   const t = useT();
   const displayLanguage = useLanguage();
 
@@ -1240,6 +1256,24 @@ const PublicJobsBoard: React.FC = () => {
     setActiveTab(0); // Reset to first tab
   };
 
+  // Restore feed state when returning from job detail after apply (continuous feed flow)
+  useEffect(() => {
+    const state = location.state as { showApplicationConfirmation?: boolean; feedQueue?: PublicJobPosting[] } | null;
+    if (state?.showApplicationConfirmation && Array.isArray(state.feedQueue)) {
+      setShowApplicationConfirmation(true);
+      setFeedQueue(state.feedQueue);
+      setViewMode('feed');
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, location.pathname, navigate]);
+
+  // When entering feed mode with empty queue, seed from filtered jobs
+  useEffect(() => {
+    if (viewMode === 'feed' && feedQueue.length === 0 && filteredJobs.length > 0) {
+      setFeedQueue([...filteredJobs]);
+    }
+  }, [viewMode, filteredJobs, feedQueue.length]);
+
   // Load shifts when a job is selected for dialog
   useEffect(() => {
     const loadShiftsForDialog = async () => {
@@ -1677,17 +1711,146 @@ const PublicJobsBoard: React.FC = () => {
                 setSortBy('newest');
               }}
             >
-              Clear Filters
+              {t('jobs.clearFilters')}
             </Button>
           )}
         </Box>
       </Paper>
 
-      {/* Jobs Grid */}
+      {/* View mode: Grid | Cards (deck) | Feed (continuous opportunity feed) */}
+      {filteredJobs.length > 0 && (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', px: 2, pb: 1 }}>
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={(_, v) => {
+              if (v != null) {
+                setViewMode(v);
+                setDeckIndex(0);
+                if (v === 'feed' && feedQueue.length === 0) setFeedQueue([...filteredJobs]);
+              }
+            }}
+            size="small"
+            aria-label={t('jobs.viewMode')}
+          >
+            <ToggleButton value="grid" aria-label={t('jobs.viewGrid')}>
+              <ViewList sx={{ mr: 0.5 }} /> {t('jobs.viewGrid')}
+            </ToggleButton>
+            <ToggleButton value="deck" aria-label={t('jobs.viewCards')}>
+              <ViewModule sx={{ mr: 0.5 }} /> {t('jobs.viewCards')}
+            </ToggleButton>
+            <ToggleButton value="feed" aria-label={t('jobs.viewFeed')}>
+              <Work sx={{ mr: 0.5 }} /> {t('jobs.viewFeed')}
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+      )}
+
+      {/* Jobs Grid, Card Deck, or Feed (continuous opportunity feed) */}
       {filteredJobs.length === 0 ? (
         <Alert severity="info">
-          No jobs found matching your criteria. Try adjusting your filters or search terms.
+          {t('jobs.noJobsFound')}
         </Alert>
+      ) : viewMode === 'feed' ? (
+        <Box sx={{ px: 2, pb: 4 }}>
+          {showApplicationConfirmation && (
+            <Alert
+              severity="success"
+              sx={{ mb: 2 }}
+              onClose={() => setShowApplicationConfirmation(false)}
+            >
+              <Typography variant="subtitle1" fontWeight={600}>
+                {t('jobs.feed.applicationSubmitted')}
+              </Typography>
+              <Typography variant="body2">
+                {t('jobs.feed.hereIsAnotherOpportunity')}
+              </Typography>
+            </Alert>
+          )}
+          {feedQueue.length === 0 ? (
+            <Paper variant="outlined" sx={{ p: 4, textAlign: 'center' }}>
+              <Typography variant="h6" color="text.secondary" gutterBottom>
+                {t('jobs.feed.noMoreJobs')}
+              </Typography>
+              <Button
+                variant="contained"
+                onClick={() => { setViewMode('grid'); setFeedQueue([]); }}
+                sx={{ mt: 2 }}
+              >
+                {t('jobs.feed.viewAllJobs')}
+              </Button>
+            </Paper>
+          ) : (
+            <JobFeedCard
+              job={feedQueue[0]}
+              dateTimeLabel={feedQueue[0].startDate
+                ? new Date(feedQueue[0].startDate).toLocaleDateString(displayLanguage === 'es' ? 'es' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric', weekday: 'short' })
+                : undefined}
+              isSaved={user ? isFavorite(feedQueue[0].id) : false}
+              onSkip={() => setFeedQueue((q) => q.slice(1))}
+              onSave={() => {
+                if (user) toggleFavorite(feedQueue[0].id);
+                setFeedQueue((q) => q.slice(1));
+              }}
+              onViewDetails={() => {
+                const job = feedQueue[0];
+                navigate(`/c1/jobs-board/${job.id}`, {
+                  state: { fromFeed: true, feedQueue: feedQueue.slice(1) },
+                });
+              }}
+            />
+          )}
+        </Box>
+      ) : viewMode === 'deck' ? (
+        <CardDeck
+          totalCards={filteredJobs.length}
+          activeIndex={deckIndex}
+          onIndexChange={setDeckIndex}
+          onExpand={() => {
+            const job = filteredJobs[deckIndex];
+            if (job) {
+              emitWorkerCardSignal({ type: 'job_expanded', entityId: job.id });
+              navigate(`/c1/jobs-board/${job.id}`);
+            }
+          }}
+          showSectionProgress={false}
+          expandDisabled={filteredJobs.length === 0}
+          ariaLabel={t('jobs.title')}
+        >
+          {filteredJobs[deckIndex] && (() => {
+            const job = filteredJobs[deckIndex];
+            const location = job.worksiteAddress?.city && job.worksiteAddress?.state
+              ? `${job.worksiteAddress.city}, ${job.worksiteAddress.state}`
+              : job.worksiteName || undefined;
+            const dateTime = job.startDate
+              ? new Date(job.startDate).toLocaleDateString(displayLanguage === 'es' ? 'es' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+              : undefined;
+            const category = getCategoryForTitle(job.postTitle) as JobCategory;
+            return (
+              <JobRecommendationCard
+                payload={{
+                  type: 'job',
+                  id: job.id,
+                  label: t('dashboard.cardLabelNewJobNearYou'),
+                  jobTitle: job.postTitle,
+                  company: job.companyName,
+                  dateTime,
+                  location,
+                  pay: job.payRate,
+                  spotsLeft: job.workersNeeded,
+                  viewJobTo: `/c1/jobs-board/${job.id}`,
+                  applyTo: undefined,
+                  category,
+                }}
+                showApplyButton={false}
+                onTap={() => {
+                  emitWorkerCardSignal({ type: 'job_expanded', entityId: job.id });
+                  navigate(`/c1/jobs-board/${job.id}`);
+                }}
+              />
+            );
+          })()}
+        </CardDeck>
       ) : (
         <Grid container spacing={3} sx={{ px: 2, pb: 2 }}>
           {filteredJobs.map((job) => (

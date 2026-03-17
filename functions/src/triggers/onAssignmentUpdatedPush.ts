@@ -14,7 +14,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const DEEP_LINK_ASSIGNMENTS = '/c1/workers/assignments';
+const ASSIGNMENTS_PATH = '/c1/workers/assignments';
 
 const NOTIFY_STATUSES = new Set(['proposed', 'confirmed', 'active', 'canceled', 'cancelled']);
 
@@ -74,13 +74,16 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
         .get();
       const tokenCount = tokensSnap.size;
 
+      const deepLink = `${ASSIGNMENTS_PATH}/${assignmentId}`;
       await sendNotificationAndPush({
         uid: userId,
         tenantId,
         title,
         body,
         type: 'assignment',
-        ctaUrl: DEEP_LINK_ASSIGNMENTS,
+        category: 'assignments',
+        deepLink,
+        entityId: assignmentId,
         source: 'automation',
       });
 
@@ -89,7 +92,7 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
         lastPushSentAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      logger.info('[PUSH][assignment_updated] uid=%s status=%s->%s deepLink=%s tokens=%d', userId, beforeStatus, afterStatus, DEEP_LINK_ASSIGNMENTS, tokenCount);
+      logger.info('[PUSH][assignment_updated] uid=%s status=%s->%s deepLink=%s tokens=%d', userId, beforeStatus, afterStatus, deepLink, tokenCount);
     } catch (err: any) {
       logger.error('[PUSH][assignment_updated] failed', { uid: userId, assignmentId, error: err?.message || String(err) });
       // Do not throw — avoid blocking the assignment write

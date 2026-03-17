@@ -372,7 +372,9 @@ export async function sendLegacyAssignmentMessage(args: {
       },
       metadata: {
         assignmentId: args.assignmentId,
-        ctaUrl: '/c1/workers/assignments', // deepLink for push so tap opens Assignments
+        ctaUrl: args.assignmentId
+          ? `/c1/workers/assignments/${args.assignmentId}`
+          : '/c1/workers/assignments',
       },
       source: args.source || 'system',
       sourceId: args.sourceId,

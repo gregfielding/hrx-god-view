@@ -14,7 +14,12 @@ export type NotificationType =
   | 'shift'
   | 'payroll'
   | 'general'
-  | 'system';
+  | 'system'
+  | 'opportunity'
+  | 'profile_action'
+  | 'support';
+
+export type NotificationCategory = 'assignments' | 'applications' | 'opportunities' | 'profile' | 'system';
 
 export type NotificationSeverity = 'info' | 'success' | 'warning' | 'error';
 
@@ -26,6 +31,8 @@ export interface WorkerNotification {
   uid: string;
   tenantId: string;
   type: NotificationType;
+  /** Inbox filter category (assignments, applications, opportunities, profile, system). */
+  category?: NotificationCategory;
   title: string;
   body: string;
   severity: NotificationSeverity;
@@ -33,10 +40,16 @@ export interface WorkerNotification {
   readAt: Timestamp | null;
   source: NotificationSource;
   channel: NotificationChannel;
+  /** Preferred link for tap/click; push payload and Inbox use this to open the correct screen. */
+  deepLink?: string;
+  /** Entity id (e.g. assignmentId, jobId) for the notification. */
+  entityId?: string;
   ctaLabel?: string;
   ctaUrl?: string;
   threadId?: string;
   entity?: { kind: string; id: string };
+  metadata?: Record<string, unknown>;
+  priority?: 'low' | 'normal' | 'high';
 }
 
 export type ThreadTopic = 'recruiting' | 'support' | 'scheduling' | 'general' | string;

@@ -10,6 +10,7 @@ import { defineSecret } from 'firebase-functions/params';
 import { sendLegacyApplicationStatusMessage } from './messaging/legacyMessageHelpers';
 import { shouldSendNotification } from './utils/notificationSettings';
 import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } from './utils/templateVariableResolver';
+import { sendApplicationStatusChangedNotification } from './messaging/unifiedWorkerNotifications';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -330,7 +331,10 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return false;
       };
 
-      // Skip waitlisted when this user has another application for the same job with status 'accepted' (e.g. two application docs: one we just set accepted in placement flow, another incorrectly set to waitlisted).
+      // Skip waitlisted when this user has another application for the same job with status 'accepted' or 'confirmed'.
+      // Covers: (1) two application docs — one set accepted in placement flow, the other set waitlisted; (2) worker just
+      // confirmed in UI so their application is 'confirmed' (not 'accepted') — we must not send waitlist SMS.
+      const IN_GOOD_STANDING_STATUSES = ['accepted', 'confirmed'];
       const skipWaitlistedWhenOtherApplicationAcceptedForSameJob = async () => {
         const userId = after.userId || after.candidateId;
         const jobOrderId = after.jobOrderId;
@@ -342,9 +346,13 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             .where('jobOrderId', '==', jobOrderId)
             .limit(10)
             .get();
-          const otherAccepted = appSnap.docs.some((d) => d.id !== applicationId && (d.data()?.status || '').toLowerCase() === 'accepted');
-          if (otherAccepted) {
-            logger.info(`Application ${applicationId} status=waitlisted but user ${userId} has another application for job ${jobOrderId} with status accepted; skipping waitlisted notification`);
+          const otherInGoodStanding = appSnap.docs.some((d) => {
+            if (d.id === applicationId) return false;
+            const s = (d.data()?.status || '').toLowerCase();
+            return IN_GOOD_STANDING_STATUSES.includes(s);
+          });
+          if (otherInGoodStanding) {
+            logger.info(`Application ${applicationId} status=waitlisted but user ${userId} has another application for job ${jobOrderId} with status accepted/confirmed; skipping waitlisted notification`);
             return true;
           }
         } catch (err) {
@@ -387,17 +395,38 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       if (newStatus === 'rejected' && (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob())) {
         return { success: true };
       }
-      if (newStatus === 'waitlisted' && (await skipStatusNotificationWhenAssigned('skipping waitlisted notification'))) {
-        return { success: true };
-      }
-      if (newStatus === 'waitlisted' && (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob())) {
-        return { success: true };
-      }
-      if (newStatus === 'waitlisted' && (await skipWaitlistedWhenOtherApplicationAcceptedForSameJob())) {
-        return { success: true };
-      }
-      if (newStatus === 'waitlisted' && (await skipWaitlistedWhenUserHasAssignmentForThisShift())) {
-        return { success: true };
+      // Do not send waitlisted SMS when the user is already in good standing (assigned or accepted/confirmed for this job).
+      if (newStatus === 'waitlisted') {
+        if ((oldStatus || '').toLowerCase() === 'accepted' || (oldStatus || '').toLowerCase() === 'confirmed') {
+          logger.info(`Application ${applicationId} status changed to waitlisted but previous status was ${oldStatus}; skipping (user was already accepted/confirmed)`);
+          return { success: true };
+        }
+        if (await skipStatusNotificationWhenAssigned('skipping waitlisted notification')) return { success: true };
+        if (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob()) return { success: true };
+        if (await skipWaitlistedWhenOtherApplicationAcceptedForSameJob()) return { success: true };
+        if (await skipWaitlistedWhenUserHasAssignmentForThisShift()) return { success: true };
+        // Final hardening: re-read application and assignments right before we'd send (handles race where waitlist write fired before placement write was visible).
+        const reReadAppSnap = await admin.firestore().doc(`tenants/${tenantId}/applications/${applicationId}`).get();
+        const reReadApp = reReadAppSnap.data();
+        const currentStatus = (reReadApp?.status || '').toLowerCase();
+        if (currentStatus === 'accepted' || currentStatus === 'confirmed') {
+          logger.info(`Application ${applicationId} re-read shows status=${currentStatus}; skipping waitlisted SMS (placement won race)`);
+          return { success: true };
+        }
+        const reReadAssignmentId = reReadApp?.assignmentId;
+        if (reReadAssignmentId) {
+          const reReadAssignSnap = await admin.firestore().doc(`tenants/${tenantId}/assignments/${reReadAssignmentId}`).get();
+          const assignStatus = (reReadAssignSnap.data()?.status || '').toLowerCase();
+          if (['proposed', 'confirmed', 'active'].includes(assignStatus)) {
+            logger.info(`Application ${applicationId} re-read has assignment ${reReadAssignmentId} status=${assignStatus}; skipping waitlisted SMS`);
+            return { success: true };
+          }
+        }
+        // One more time: user might have an assignment for this job even if this application doc was overwritten (e.g. bulk waitlist cleared assignmentId).
+        if (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob()) {
+          logger.info(`Application ${applicationId} final check: user has assignment for job; skipping waitlisted SMS`);
+          return { success: true };
+        }
       }
 
       // Get user ID from application (userId or candidateId)
@@ -533,6 +562,30 @@ export const onApplicationStatusChanged = onDocumentUpdated(
               logger.info(`Unknown status ${newStatus} for application ${applicationId}, skipping SMS`);
               return { success: true };
           }
+        }
+
+        // Inbox + push for application_status_changed (every status change gets notification; SMS is separate)
+        const jobPostId = after.jobId || after.postId;
+        const statusTitle =
+          newStatus === 'accepted' || newStatus === 'hired' || newStatus === 'confirmed'
+            ? "You've been selected"
+            : newStatus === 'rejected'
+              ? 'Application declined'
+              : newStatus === 'waitlisted'
+                ? "You've been waitlisted"
+                : newStatus === 'screened' || newStatus === 'advanced' || newStatus === 'interview' || newStatus === 'offer' || newStatus === 'submitted'
+                  ? 'Application under review'
+                  : 'Application status updated';
+        try {
+          await sendApplicationStatusChangedNotification({
+            uid: userId,
+            tenantId,
+            jobPostId,
+            title: statusTitle,
+            body: message || statusTitle,
+          });
+        } catch (pushErr: any) {
+          logger.warn(`Application status push/inbox failed for ${applicationId}: ${pushErr?.message || pushErr}`);
         }
 
         if (message) {

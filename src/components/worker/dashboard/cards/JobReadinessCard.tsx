@@ -1,33 +1,28 @@
 /**
- * Profile completion card — "Improve Job Readiness". Single CTA: Update Profile.
- * 240–280px height, 16px radius, 20px padding.
+ * Job Readiness dashboard card — "Unlock More Jobs". Body, readiness %, Fix Now → job readiness feed.
  */
 
 import React from 'react';
 import { Card, CardContent, Typography, Button, LinearProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../../i18n';
-import type { ProfileCompletionCardPayload } from './types';
+import type { JobReadinessCardPayload } from './types';
 import { CARD_THEMES } from './types';
 
-export interface ProfileCompletionCardProps {
-  payload: ProfileCompletionCardPayload;
+export interface JobReadinessCardProps {
+  payload: JobReadinessCardPayload;
   onTap?: () => void;
 }
 
-const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({ payload, onTap }) => {
+const JobReadinessCard: React.FC<JobReadinessCardProps> = ({ payload, onTap }) => {
   const navigate = useNavigate();
   const t = useT();
-  const { bg, contrast } = CARD_THEMES.profile;
+  const { bg, contrast } = CARD_THEMES.job_readiness;
 
-  const handleUpdateProfile = (e: React.MouseEvent) => {
+  const handleFixNow = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate(payload.continueProfileTo);
+    navigate(payload.fixNowTo);
   };
-
-  const subtitle = payload.suggestedTasks.length > 0
-    ? payload.suggestedTasks[0]
-    : t('dashboard.suggestedTaskProfile');
 
   return (
     <Card
@@ -50,10 +45,10 @@ const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({ payload, 
           {payload.label}
         </Typography>
         <Typography variant="body2" sx={{ color: contrast, opacity: 0.9, mt: 1 }}>
-          {subtitle}
+          {payload.body}
         </Typography>
         <Typography variant="body2" sx={{ color: contrast, fontWeight: 600, mt: 0.5 }}>
-          {t('dashboard.jobReadinessScore', { percent: payload.readinessPercent })}
+          {t('dashboard.jobReadinessLabel', { percent: payload.readinessPercent })}
         </Typography>
         <LinearProgress
           variant="determinate"
@@ -71,7 +66,7 @@ const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({ payload, 
           variant="contained"
           fullWidth
           size="large"
-          onClick={handleUpdateProfile}
+          onClick={handleFixNow}
           sx={{
             mt: 2,
             py: 1.25,
@@ -82,11 +77,11 @@ const ProfileCompletionCard: React.FC<ProfileCompletionCardProps> = ({ payload, 
           }}
           onClickCapture={(e) => e.stopPropagation()}
         >
-          {t('dashboard.cardUpdateProfile')}
+          {t('dashboard.fixNow')}
         </Button>
       </CardContent>
     </Card>
   );
 };
 
-export default ProfileCompletionCard;
+export default JobReadinessCard;

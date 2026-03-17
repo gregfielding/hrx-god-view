@@ -113,8 +113,8 @@ const WorkerAppBar: React.FC = () => {
   const handleNotificationClick = async (n: WorkerNotification & { id: string }) => {
     if (!n.readAt) await handleMarkRead(n.id);
     handleClose();
-    const url = await getNotificationUrlAsync(n, uid);
-    if (n.threadId) navigate(`/c1/workers/inbox/${n.threadId}`);
+    const url = n.deepLink?.trim() ? n.deepLink.trim() : await getNotificationUrlAsync(n, uid);
+    if (url?.startsWith('/')) navigate(url);
     else if (url) window.location.href = url;
   };
 

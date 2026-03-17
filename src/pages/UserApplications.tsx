@@ -15,7 +15,12 @@ import {
   Button,
   IconButton,
   Tooltip,
+  ToggleButtonGroup,
+  ToggleButton,
+  Stack,
 } from '@mui/material';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -23,6 +28,10 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { useT, getLanguage } from '../i18n';
+import CardDeck from '../components/worker/cards/CardDeck';
+import ApplicationCard from '../components/worker/dashboard/cards/ApplicationCard';
+import type { ApplicationCardPayload } from '../components/worker/dashboard/cards/types';
+import { emitWorkerCardSignal } from '../utils/workerCardSignals';
 
 interface Application {
   id: string;
@@ -313,6 +322,30 @@ const UserApplications: React.FC = () => {
   };
 
   const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
+  const [deckIndex, setDeckIndex] = useState(0);
+
+  const applicationPayloads: ApplicationCardPayload[] = applications.map((app) => {
+    const statusLabel = getStatusLabel(app);
+    const appliedDateOrStatus = app.shiftStart
+      ? formatShiftDate(app.shiftStart)
+      : formatDate(app.submittedAt);
+    const key = `${app.tenantId}_${app.jobId}`;
+    const needsResponse = pendingOfferKeys.has(key);
+    return {
+      type: 'application',
+      id: app.id,
+      label: t('dashboard.cardLabelApplicationUpdate'),
+      jobTitle: app.postTitle || app.jobTitle || t('applications.untitledJob'),
+      company: app.companyName,
+      location: app.location,
+      pay: app.payRate,
+      appliedDateOrStatus: `${statusLabel} · ${appliedDateOrStatus}`,
+      viewJobTo: `/c1/jobs-board/${app.jobId}`,
+      viewApplicationsTo: '/c1/workers/applications',
+      needsResponse,
+    };
+  });
 
   if (loading) {
     return (
@@ -332,9 +365,27 @@ const UserApplications: React.FC = () => {
 
   return (
     <Box>
-      <Typography variant="h4" component="h1" sx={{ fontWeight: 600, mb: 2 }}>
-        {t('applications.title')}
-      </Typography>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2} sx={{ mb: 2 }}>
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+          {t('applications.title')}
+        </Typography>
+        {applications.length > 0 && (
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={(_, v) => { if (v != null) setViewMode(v); setDeckIndex(0); }}
+            size="small"
+            aria-label={t('applications.viewMode')}
+          >
+            <ToggleButton value="table" aria-label={t('applications.viewTable')}>
+              <ViewListIcon sx={{ mr: 0.5 }} /> {t('applications.viewTable')}
+            </ToggleButton>
+            <ToggleButton value="cards" aria-label={t('applications.viewCards')}>
+              <ViewModuleIcon sx={{ mr: 0.5 }} /> {t('applications.viewCards')}
+            </ToggleButton>
+          </ToggleButtonGroup>
+        )}
+      </Stack>
       {applications.length === 0 ? (
         <Box sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
@@ -344,6 +395,35 @@ const UserApplications: React.FC = () => {
             {t('applications.browseJobs')}
           </Button>
         </Box>
+      ) : viewMode === 'cards' ? (
+        <CardDeck
+          totalCards={applicationPayloads.length}
+          activeIndex={deckIndex}
+          onIndexChange={setDeckIndex}
+          onExpand={() => {
+            const app = applications[deckIndex];
+            if (app) {
+              emitWorkerCardSignal({ type: 'application_viewed', entityId: app.jobId });
+              navigate(`/c1/jobs-board/${app.jobId}`);
+            }
+          }}
+          showSectionProgress={false}
+          expandDisabled={applicationPayloads.length === 0}
+          ariaLabel={t('applications.title')}
+        >
+          {applicationPayloads[deckIndex] && (
+            <ApplicationCard
+              payload={applicationPayloads[deckIndex]}
+              onTap={() => {
+                const app = applications[deckIndex];
+                if (app) {
+                  emitWorkerCardSignal({ type: 'application_viewed', entityId: app.jobId });
+                  navigate(`/c1/jobs-board/${app.jobId}`);
+                }
+              }}
+            />
+          )}
+        </CardDeck>
       ) : (
         <TableContainer 
           component={Paper} 

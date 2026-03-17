@@ -1,6 +1,7 @@
 /**
- * Worker Notifications — /c1/workers/notifications
- * Spec: HRX-Unified-Notifications-and-Inbox-Spec.md §7.1
+ * Worker Inbox / Notification Center — /c1/workers/notifications
+ * Persistent list of all push notifications. Every push creates an inbox message.
+ * Filters: All, Unread, Assignments, Applications, Opportunities, Profile, System. Click → deepLink.
  */
 
 import React, { useState } from 'react';
@@ -10,17 +11,22 @@ import {
   Box,
   List,
   ListItemButton,
-  ListItemText,
   Chip,
   Button,
   CircularProgress,
   IconButton,
 } from '@mui/material';
+import AssignmentIcon from '@mui/icons-material/Assignment';
+import WorkIcon from '@mui/icons-material/Work';
+import CampaignIcon from '@mui/icons-material/Campaign';
+import NotificationsIcon from '@mui/icons-material/Notifications';
+import InfoIcon from '@mui/icons-material/Info';
+import PersonIcon from '@mui/icons-material/Person';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useWorkerNotifications, getNotificationUrlAsync } from '../../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../../api/workerNotificationsApi';
-import type { NotificationType } from '../../../types/unifiedWorkerNotifications';
+import type { NotificationType, NotificationCategory } from '../../../types/unifiedWorkerNotifications';
 
 const typeLabels: Record<NotificationType, string> = {
   assignment: 'Assignments',
@@ -29,6 +35,30 @@ const typeLabels: Record<NotificationType, string> = {
   shift: 'Shift',
   payroll: 'Payroll',
   general: 'General',
+  system: 'System',
+  opportunity: 'Opportunities',
+  profile_action: 'Profile',
+  support: 'System',
+};
+
+const typeIcons: Record<NotificationType, React.ReactNode> = {
+  assignment: <AssignmentIcon fontSize="small" />,
+  application: <WorkIcon fontSize="small" />,
+  document: <InfoIcon fontSize="small" />,
+  shift: <AssignmentIcon fontSize="small" />,
+  payroll: <WorkIcon fontSize="small" />,
+  general: <NotificationsIcon fontSize="small" />,
+  system: <NotificationsIcon fontSize="small" />,
+  opportunity: <CampaignIcon fontSize="small" />,
+  profile_action: <PersonIcon fontSize="small" />,
+  support: <NotificationsIcon fontSize="small" />,
+};
+
+const categoryLabels: Record<NotificationCategory, string> = {
+  assignments: 'Assignments',
+  applications: 'Applications',
+  opportunities: 'Opportunities',
+  profile: 'Profile',
   system: 'System',
 };
 
@@ -48,13 +78,14 @@ const C1WorkerNotifications: React.FC = () => {
   const uid = user?.uid ?? undefined;
   const navigate = useNavigate();
   const { notifications, unreadCount, loading } = useWorkerNotifications(uid);
-  const [filter, setFilter] = useState<'all' | 'unread' | NotificationType>('all');
+  const [filter, setFilter] = useState<'all' | 'unread' | NotificationCategory>('all');
   const [markingId, setMarkingId] = useState<string | null>(null);
 
   const filtered = notifications.filter((n) => {
     if (filter === 'unread') return !n.readAt;
     if (filter === 'all') return true;
-    return n.type === filter;
+    const cat = n.category ?? (n.type === 'opportunity' ? 'opportunities' : n.type === 'assignment' || n.type === 'shift' ? 'assignments' : n.type === 'application' ? 'applications' : n.type === 'profile_action' ? 'profile' : 'system');
+    return cat === filter;
   });
 
   const handleMarkRead = async (id: string) => {
@@ -76,8 +107,8 @@ const C1WorkerNotifications: React.FC = () => {
 
   const handleClick = async (n: (typeof notifications)[0]) => {
     if (!n.readAt) await handleMarkRead(n.id);
-    const url = await getNotificationUrlAsync(n, uid);
-    if (n.threadId) navigate(`/c1/workers/inbox/${n.threadId}`);
+    const url = n.deepLink ? n.deepLink : await getNotificationUrlAsync(n, uid);
+    if (url.startsWith('/')) navigate(url);
     else if (url) window.location.href = url;
   };
 
@@ -101,13 +132,13 @@ const C1WorkerNotifications: React.FC = () => {
           variant={filter === 'unread' ? 'filled' : 'outlined'}
           size="small"
         />
-        {(['assignment', 'document', 'application', 'general'] as const).map((t) => (
+        {(['assignments', 'applications', 'opportunities', 'profile', 'system'] as const).map((cat) => (
           <Chip
-            key={t}
-            label={typeLabels[t]}
-            onClick={() => setFilter(t)}
-            color={filter === t ? 'primary' : 'default'}
-            variant={filter === t ? 'filled' : 'outlined'}
+            key={cat}
+            label={categoryLabels[cat]}
+            onClick={() => setFilter(cat)}
+            color={filter === cat ? 'primary' : 'default'}
+            variant={filter === cat ? 'filled' : 'outlined'}
             size="small"
           />
         ))}
@@ -136,10 +167,11 @@ const C1WorkerNotifications: React.FC = () => {
             <ListItemButton
               key={n.id}
               onClick={() => handleClick(n)}
-              sx={{ alignItems: 'flex-start', borderBottom: '1px solid', borderColor: 'divider' }}
+              sx={{ alignItems: 'flex-start', borderBottom: '1px solid', borderColor: 'divider', gap: 1 }}
             >
+              <Box sx={{ color: 'text.secondary', mt: 0.25 }}>{typeIcons[n.type] ?? typeIcons.system}</Box>
               <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
                   {!n.readAt && (
                     <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0 }} />
                   )}
@@ -150,14 +182,9 @@ const C1WorkerNotifications: React.FC = () => {
                     {formatTime(n.createdAt)}
                   </Typography>
                 </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
+                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
                   {n.body}
                 </Typography>
-                {(n.ctaUrl || n.threadId) && (
-                  <Button size="small" sx={{ mt: 1 }}>
-                    {n.ctaLabel || (n.threadId ? 'View conversation' : 'Open')}
-                  </Button>
-                )}
               </Box>
               {!n.readAt && (
                 <IconButton

@@ -24,21 +24,25 @@ const ACTIONS = [
 const WorkerDashboardQuickActions: React.FC = () => {
   const t = useT();
   return (
-    <Stack direction="row" flexWrap="wrap" gap={2} useFlexGap>
+    <Stack direction="row" flexWrap="wrap" gap={1.5} useFlexGap justifyContent="center">
       {ACTIONS.map((a) => (
         <Link
           key={a.key}
           component={RouterLink}
           to={a.to}
-          underline="hover"
+          underline="none"
           sx={{
             display: 'inline-flex',
             alignItems: 'center',
             gap: 0.75,
             color: 'primary.main',
-            fontSize: '0.9375rem',
+            fontSize: '0.875rem',
+            fontWeight: 500,
             textDecoration: 'none',
-            '&:hover': { color: 'primary.dark' },
+            px: 1.5,
+            py: 1,
+            borderRadius: 2,
+            '&:hover': { bgcolor: 'action.hover', color: 'primary.dark' },
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', color: 'inherit' }}>{a.icon}</Box>

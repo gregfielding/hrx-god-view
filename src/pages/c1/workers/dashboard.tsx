@@ -1,34 +1,38 @@
 /**
  * Worker Dashboard — /c1/workers/dashboard
- * Mobile-first smart-card landing: one context-aware card rail + compact quick-nav.
- * Priority: upcoming assignment → action-needed application → applications → profile → jobs.
- * Routes and data structures preserved.
+ * Three sections (vertical scroll): 1. Assignment, 2. Recommended jobs, 3. Job Readiness.
+ * Horizontal swipe (mobile) or prev/next arrows (web) within each section.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { Box, Stack, Typography, CircularProgress } from '@mui/material';
+import React, { useState, useEffect, useMemo } from 'react';
+import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
+import { Box, Stack, Typography, CircularProgress, useTheme, useMediaQuery, Link } from '@mui/material';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useOnboarding } from '../../../hooks/useOnboarding';
-import WorkerDashboardSmsToggle from '../../../components/worker/dashboard/WorkerDashboardSmsToggle';
 import WorkerDashboardCardRail from '../../../components/worker/dashboard/WorkerDashboardCardRail';
 import WorkerDashboardQuickActions from '../../../components/worker/dashboard/WorkerDashboardQuickActions';
-import type { DashboardCardPayload } from '../../../components/worker/dashboard/cards';
+import JobReadinessCompactCard from '../../../components/worker/dashboard/cards/JobReadinessCompactCard';
+import type { DashboardCardPayload, JobReadinessCardPayload } from '../../../components/worker/dashboard/cards';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
 import { UserApplicationsService } from '../../../services/userApplicationsService';
 import type { UserApplication } from '../../../services/userApplicationsService';
 import { JobsBoardService } from '../../../services/recruiter/jobsBoardService';
 import type { JobsBoardPost } from '../../../services/recruiter/jobsBoardService';
 import { getCategoryForTitle } from '../../../utils/dashboardCardCategory';
+import { getImprovementTasks } from '../../../utils/jobReadinessTasks';
 import { useT, getLanguage } from '../../../i18n';
+import { useNavigate } from 'react-router-dom';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
-const MAX_APPLICATION_CARDS = 5;
-const MAX_JOB_CARDS = 5;
+/** Recommendation deck: exactly 3 job cards + 1 gateway card. */
+const RECOMMENDATION_JOB_COUNT = 3;
 
 /** Statuses that require worker action (Accept/Decline) */
 const APPLICATION_NEEDS_RESPONSE = ['offer_extended', 'offer_pending', 'offer', 'hired_pending'];
+
+/** Job Readiness: compact when only a few items missing; full deck when significantly incomplete. */
+const JOB_READINESS_COMPACT_MAX_ITEMS = 1;
 
 function toStartAt(data: Record<string, unknown>): number {
   const startDate = data.startDate;
@@ -50,6 +54,41 @@ function looksLikeDocId(s: unknown): boolean {
 }
 
 const localeForLanguage = (lang: string) => (lang === 'es' ? 'es' : 'en-US');
+
+/**
+ * Rank jobs for recommendation: nearest upcoming, pay rate, urgency (spots remaining), then stable order.
+ * Worker location/skills/preferred shifts can be added later when available.
+ */
+function rankRecommendedJobs(
+  posts: JobsBoardPost[],
+  _userDoc: Record<string, unknown> | null
+): JobsBoardPost[] {
+  const now = Date.now();
+  return [...posts].sort((a, b) => {
+    // Nearest upcoming shift date first
+    const aDate = a.nextShiftDate ? new Date(a.nextShiftDate).getTime() : 0;
+    const bDate = b.nextShiftDate ? new Date(b.nextShiftDate).getTime() : 0;
+    if (aDate && bDate && aDate !== bDate) return aDate - bDate;
+    if (aDate && !bDate) return -1;
+    if (!aDate && bDate) return 1;
+
+    // Higher pay rate preferred
+    const aPay = a.payRate ?? 0;
+    const bPay = b.payRate ?? 0;
+    if (aPay !== bPay) return bPay - aPay;
+
+    // Urgency: fewer spots remaining = higher priority (optional; use workersNeeded as proxy if no applicationCount)
+    const aSpots = a.workersNeeded ?? 0;
+    const bSpots = b.workersNeeded ?? 0;
+    const aApp = (a as { applicationCount?: number }).applicationCount ?? 0;
+    const bApp = (b as { applicationCount?: number }).applicationCount ?? 0;
+    const aLeft = Math.max(0, aSpots - aApp);
+    const bLeft = Math.max(0, bSpots - bApp);
+    if (aLeft !== bLeft) return aLeft - bLeft;
+
+    return 0;
+  });
+}
 
 function assignmentToUpcomingShift(
   docId: string,
@@ -101,6 +140,10 @@ const WorkerDashboard: React.FC = () => {
   const [jobs, setJobs] = useState<JobsBoardPost[]>([]);
   const [cardsLoading, setCardsLoading] = useState(true);
   const { checklist, summary: complianceSummary, hasOnboarding } = useOnboarding(user?.uid);
+  const improvementTasks = useMemo(
+    () => getImprovementTasks(userDoc, checklist),
+    [userDoc, checklist]
+  );
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
 
   const firstName =
@@ -195,7 +238,7 @@ const WorkerDashboard: React.FC = () => {
     const jobsService = JobsBoardService.getInstance();
     Promise.all([
       appsService.getUserApplications(user.uid, tenantId),
-      jobsService.getPublicPosts(tenantId).then((posts) => posts.filter((p) => p.status === 'active').slice(0, 12)),
+      jobsService.getPublicPosts(tenantId).then((posts) => posts.filter((p) => p.status === 'active')),
     ])
       .then(([apps, posts]) => {
         if (cancelled) return;
@@ -217,52 +260,23 @@ const WorkerDashboard: React.FC = () => {
     };
   }, [user?.uid, tenantId]);
 
-  const smsEnabled =
-    userDoc != null &&
-    userDoc.smsOptIn !== false &&
-    userDoc.smsBlockedSystem !== true;
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('sm'));
+  const navigate = useNavigate();
 
-  const fetchUserDoc = useCallback(() => {
-    if (!user?.uid) return;
-    getDoc(doc(db, 'users', user.uid)).then((snap) => {
-      setUserDoc(snap.exists() ? (snap.data() as Record<string, unknown>) : null);
-    });
-  }, [user?.uid]);
-
-  const handleSmsToggle = useCallback(
-    async (enabled: boolean) => {
-      if (!user?.uid) return;
-      try {
-        const updates: Record<string, unknown> = {
-          smsOptIn: enabled,
-          updatedAt: new Date(),
-        };
-        if (enabled) {
-          updates.smsBlockedSystem = false;
-        }
-        await updateDoc(doc(db, 'users', user.uid), updates);
-        fetchUserDoc();
-      } catch (err) {
-        console.error('Failed to update SMS preference:', err);
-      }
-    },
-    [user?.uid, fetchUserDoc]
-  );
-
-  const cards = useMemo((): DashboardCardPayload[] => {
-    const list: DashboardCardPayload[] = [];
-
-    // 1. Upcoming assignment
+  const sections = useMemo(() => {
+    // ——— Section 1: Assignment (active job / upcoming assignment or application needing action) ———
+    const assignmentCards: DashboardCardPayload[] = [];
     if (nextShift) {
       const dateTime = `${nextShift.day}, ${nextShift.date} at ${nextShift.time}`;
       const location = nextShift.addressShort || nextShift.locationCity;
       const viewTo = nextShift.assignmentId
         ? `/c1/workers/assignments/${nextShift.assignmentId}`
         : '/c1/workers/assignments';
-      list.push({
+      assignmentCards.push({
         type: 'assignment',
         id: `assignment-${nextShift.assignmentId ?? 'next'}`,
-        label: t('dashboard.cardLabelNextShift'),
+        label: t('dashboard.cardLabelUpcomingShift'),
         jobTitle: nextShift.jobTitle,
         company: nextShift.clientName || nextShift.siteName,
         dateTime,
@@ -272,57 +286,38 @@ const WorkerDashboard: React.FC = () => {
         viewAssignmentTo: viewTo,
         directionsQuery: location || undefined,
       });
-    }
-
-    // 2. Action-needed applications first, then other active applications
-    const needsResponse = applications.filter((app) =>
-      APPLICATION_NEEDS_RESPONSE.includes(String(app.status || '').toLowerCase())
-    );
-    const otherApps = applications.filter(
-      (app) => !APPLICATION_NEEDS_RESPONSE.includes(String(app.status || '').toLowerCase())
-    );
-    const orderedApps = [...needsResponse, ...otherApps].slice(0, MAX_APPLICATION_CARDS);
-    orderedApps.forEach((app) => {
-      const jobTitle = app.jobTitle || app.postTitle || 'Job';
-      const appliedDateOrStatus = app.appliedAt
-        ? new Date(app.appliedAt).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })
-        : (app.status || '').replace(/_/g, ' ');
-      const needsResponse = APPLICATION_NEEDS_RESPONSE.includes(String(app.status || '').toLowerCase());
-      list.push({
-        type: 'application',
-        id: `app-${app.applicationId}`,
-        label: t('dashboard.cardLabelApplicationUpdate'),
-        jobTitle,
-        company: app.companyName,
-        location: app.location,
-        pay: app.payRate,
-        appliedDateOrStatus,
-        viewJobTo: `/c1/jobs-board/${app.jobId}`,
-        viewApplicationsTo: '/c1/workers/applications',
-        needsResponse,
-      });
-    });
-
-    // 3. Profile completion
-    if (profileIncomplete) {
-      const suggestedTasks: string[] = [];
-      if (complianceSummary.compliancePercent < 100) {
-        suggestedTasks.push(t('dashboard.suggestedTaskDocuments'));
-        suggestedTasks.push(t('dashboard.suggestedTaskProfile'));
+    } else {
+      const needsResponse = applications.find((app) =>
+        APPLICATION_NEEDS_RESPONSE.includes(String(app.status || '').toLowerCase())
+      );
+      if (needsResponse) {
+        const app = needsResponse;
+        const jobTitle = app.jobTitle || app.postTitle || 'Job';
+        const appliedDateOrStatus = app.appliedAt
+          ? new Date(app.appliedAt).toLocaleDateString(locale, { month: 'short', day: 'numeric', year: 'numeric' })
+          : (app.status || '').replace(/_/g, ' ');
+        assignmentCards.push({
+          type: 'application',
+          id: `app-${app.applicationId}`,
+          label: t('dashboard.cardLabelApplicationUpdate'),
+          jobTitle,
+          company: app.companyName,
+          location: app.location,
+          pay: app.payRate,
+          appliedDateOrStatus,
+          viewJobTo: `/c1/jobs-board/${app.jobId}`,
+          viewApplicationsTo: '/c1/workers/applications',
+          needsResponse: true,
+        });
       }
-      list.push({
-        type: 'profile',
-        id: 'profile-completion',
-        label: t('dashboard.cardLabelUnlockMoreJobs'),
-        readinessPercent: complianceSummary.compliancePercent,
-        suggestedTasks,
-        continueProfileTo: '/c1/workers/profile',
-        seeJobsTo: '/c1/jobs-board',
-      });
     }
 
-    // 4. Recommended jobs
-    jobs.slice(0, MAX_JOB_CARDS).forEach((post) => {
+    // ——— Section 2: Recommended jobs (header + top 3 jobs + gateway) ———
+    const ranked = rankRecommendedJobs(jobs, userDoc);
+    const topJobs = ranked.slice(0, RECOMMENDATION_JOB_COUNT);
+    const jobsSectionHeader = t('dashboard.recommendationHeader', { count: topJobs.length });
+    const jobsCards: DashboardCardPayload[] = [];
+    for (const post of topJobs) {
       const jobTitle = post.jobTitle || post.postTitle || 'Job';
       const location =
         post.worksiteAddress?.city && post.worksiteAddress?.state
@@ -331,14 +326,13 @@ const WorkerDashboard: React.FC = () => {
       const dateTime = post.nextShiftDate
         ? new Date(post.nextShiftDate).toLocaleDateString(locale, { month: 'short', day: 'numeric' })
         : undefined;
+      const appCount = (post as { applicationCount?: number }).applicationCount ?? 0;
       const spotsLeft =
-        post.workersNeeded != null && post.applicationCount != null
-          ? Math.max(0, post.workersNeeded - post.applicationCount)
-          : undefined;
-      list.push({
+        post.workersNeeded != null ? Math.max(0, post.workersNeeded - appCount) : undefined;
+      jobsCards.push({
         type: 'job',
         id: `job-${post.id}`,
-        label: t('dashboard.cardLabelNewJobNearYou'),
+        label: t('dashboard.cardLabelRecommendedJob'),
         jobTitle,
         company: post.companyName,
         dateTime,
@@ -349,43 +343,125 @@ const WorkerDashboard: React.FC = () => {
         applyTo: `/c1/jobs-board/${post.id}`,
         category: getCategoryForTitle(jobTitle),
       });
+    }
+    jobsCards.push({
+      type: 'gateway',
+      id: 'gateway-see-all-jobs',
+      label: t('dashboard.seeAllJobs'),
+      seeJobsTo: '/c1/jobs-board',
     });
 
-    return list;
+    // ——— Section 3: Job Readiness (compact or full) ———
+    let jobReadinessPayload: JobReadinessCardPayload | null = null;
+    let jobReadinessCompact = true;
+    if (profileIncomplete && improvementTasks.length > 0) {
+      const blockingCount = improvementTasks.length;
+      jobReadinessPayload = {
+        type: 'job_readiness',
+        id: 'job-readiness-unlock',
+        label: t('dashboard.cardLabelUnlockMoreJobs'),
+        body: t('dashboard.unlockMoreJobsBody', { count: blockingCount }),
+        readinessPercent: complianceSummary.compliancePercent ?? 0,
+        blockingCount,
+        fixNowTo: '/c1/workers/job-readiness',
+      };
+      jobReadinessCompact = blockingCount <= JOB_READINESS_COMPACT_MAX_ITEMS;
+    }
+
+    return {
+      assignmentCards,
+      jobsSectionHeader,
+      jobsCards,
+      jobReadinessPayload,
+      jobReadinessCompact,
+    };
   }, [
     nextShift,
     applications,
     jobs,
+    userDoc,
     profileIncomplete,
+    improvementTasks.length,
     complianceSummary.compliancePercent,
     t,
     locale,
   ]);
 
   return (
-    <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
-      <Stack spacing={3} sx={{ py: 2 }}>
-        <Box>
-          <Typography variant="h5" sx={{ fontWeight: 700 }}>
-            {t('dashboard.welcomeBack', { firstName: displayFirstName })}
-          </Typography>
-        </Box>
-
-        <WorkerDashboardSmsToggle
-          smsEnabled={smsEnabled}
-          onToggle={handleSmsToggle}
-          disabled={!user?.uid}
-        />
+    <Box sx={{ maxWidth: 480, mx: 'auto', px: 1 }}>
+      <Stack spacing={4} sx={{ py: 2 }}>
+        <Typography variant="h5" sx={{ fontWeight: 700 }}>
+          {t('dashboard.welcomeBack', { firstName: displayFirstName })}
+        </Typography>
 
         {cardsLoading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
             <CircularProgress />
           </Box>
         ) : (
-          <WorkerDashboardCardRail cards={cards} />
-        )}
+          <>
+            {/* Section 1: Active job / upcoming assignment */}
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {t('dashboard.sectionAssignment')}
+              </Typography>
+              {sections.assignmentCards.length > 0 ? (
+                <WorkerDashboardCardRail
+                  cards={sections.assignmentCards}
+                  showNavArrows={isDesktop}
+                />
+              ) : (
+                <Box sx={{ py: 2, px: 1, textAlign: 'center' }}>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    {t('dashboard.noUpcomingAssignment')}
+                  </Typography>
+                  <Link
+                    component="button"
+                    variant="body2"
+                    onClick={() => navigate('/c1/jobs-board')}
+                    sx={{ fontWeight: 600 }}
+                  >
+                    {t('dashboard.viewJobs')}
+                  </Link>
+                </Box>
+              )}
+            </Stack>
 
-        <WorkerDashboardQuickActions />
+            {/* Section 2: Recommended jobs */}
+            <Stack spacing={1.5}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {t('dashboard.sectionRecommendedJobs')}
+              </Typography>
+              <WorkerDashboardCardRail
+                cards={sections.jobsCards}
+                sectionHeader={sections.jobsSectionHeader}
+                showNavArrows={isDesktop}
+              />
+            </Stack>
+
+            {/* Section 3: Job Readiness (profile improvements) */}
+            {sections.jobReadinessPayload && (
+              <Stack spacing={1.5}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  {t('dashboard.sectionJobReadiness')}
+                </Typography>
+                {sections.jobReadinessCompact ? (
+                  <JobReadinessCompactCard
+                    payload={sections.jobReadinessPayload}
+                    onTap={() => navigate(sections.jobReadinessPayload!.fixNowTo)}
+                  />
+                ) : (
+                  <WorkerDashboardCardRail
+                    cards={[sections.jobReadinessPayload]}
+                    showNavArrows={isDesktop}
+                  />
+                )}
+              </Stack>
+            )}
+
+            <WorkerDashboardQuickActions />
+          </>
+        )}
       </Stack>
     </Box>
   );

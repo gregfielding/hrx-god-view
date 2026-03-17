@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Card, CardContent, Typography, Button, Stack } from '@mui/material';
+import { Card, CardContent, Typography, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../../i18n';
 import type { JobRecommendationCardPayload } from './types';
@@ -18,9 +18,11 @@ function formatPay(pay: number | undefined): string {
 export interface JobRecommendationCardProps {
   payload: JobRecommendationCardPayload;
   onTap?: () => void;
+  /** When false, only show View Job (e.g. Find Work deck: apply only in detail). Default true. */
+  showApplyButton?: boolean;
 }
 
-const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, onTap }) => {
+const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, onTap, showApplyButton = true }) => {
   const navigate = useNavigate();
   const t = useT();
   const { bg, contrast } = CARD_THEMES.job[payload.category];
@@ -43,8 +45,9 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
       onClick={onTap}
       sx={{
         width: '100%',
-        minHeight: 240,
-        borderRadius: 3,
+        minHeight: 260,
+        maxHeight: 280,
+        borderRadius: '16px',
         border: 'none',
         boxShadow: 2,
         backgroundColor: bg,
@@ -53,10 +56,10 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
       }}
     >
       <CardContent sx={{ p: 2.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600 }}>
+        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600, fontSize: '0.7rem' }}>
           {payload.label}
         </Typography>
-        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast, mt: 0.5 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, color: contrast, mt: 0.5 }}>
           {payload.jobTitle}
         </Typography>
         {payload.company && (
@@ -75,7 +78,7 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
           </Typography>
         )}
         {payStr && (
-          <Typography variant="body1" sx={{ fontWeight: 600, color: contrast }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast }}>
             {payStr}
           </Typography>
         )}
@@ -84,16 +87,23 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
             {t('dashboard.cardSpotsLeft', { count: payload.spotsLeft })}
           </Typography>
         )}
-        <Stack direction="row" spacing={1} sx={{ mt: 2 }} onClick={(e) => e.stopPropagation()}>
-          <Button variant="contained" size="medium" onClick={handleViewJob} sx={{ bgcolor: contrast, color: bg, '&:hover': { bgcolor: contrast, opacity: 0.9 } }}>
-            {t('dashboard.cardViewJob')}
-          </Button>
-          {(payload.applyTo || payload.viewJobTo) && (
-            <Button variant="outlined" size="medium" onClick={handleApply} sx={{ borderColor: contrast, color: contrast }}>
-              {t('jobs.applyNow')}
-            </Button>
-          )}
-        </Stack>
+        <Button
+          variant="contained"
+          fullWidth
+          size="large"
+          onClick={handleViewJob}
+          sx={{
+            mt: 2,
+            py: 1.25,
+            bgcolor: contrast,
+            color: bg,
+            borderRadius: 2,
+            '&:hover': { bgcolor: contrast, opacity: 0.9 },
+          }}
+          onClickCapture={(e) => e.stopPropagation()}
+        >
+          {t('dashboard.cardViewJob')}
+        </Button>
       </CardContent>
     </Card>
   );

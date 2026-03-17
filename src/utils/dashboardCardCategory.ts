@@ -10,6 +10,7 @@ const WAREHOUSE_KEYWORDS = ['warehouse', 'fulfillment', 'stock', 'inventory', 'd
 const EVENTS_KEYWORDS = ['event', 'events', 'concert', 'festival', 'conference', 'catering', 'venue'];
 const CLEANING_KEYWORDS = ['clean', 'cleaning', 'janitor', 'custodial', 'housekeeping', 'sanitation'];
 const HEALTHCARE_KEYWORDS = ['healthcare', 'health', 'care', 'nurse', 'medical', 'clinical'];
+const ADMIN_CLERICAL_KEYWORDS = ['admin', 'administrative', 'clerical', 'office', 'reception', 'data entry', 'secretary'];
 
 export function getCategoryForTitle(title: string | undefined): JobCategory {
   if (!title || typeof title !== 'string') return 'default';
@@ -19,5 +20,6 @@ export function getCategoryForTitle(title: string | undefined): JobCategory {
   if (EVENTS_KEYWORDS.some((k) => lower.includes(k))) return 'events';
   if (CLEANING_KEYWORDS.some((k) => lower.includes(k))) return 'cleaning';
   if (HEALTHCARE_KEYWORDS.some((k) => lower.includes(k))) return 'healthcare';
+  if (ADMIN_CLERICAL_KEYWORDS.some((k) => lower.includes(k))) return 'admin';
   return 'default';
 }

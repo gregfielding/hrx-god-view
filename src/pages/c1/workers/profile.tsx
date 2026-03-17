@@ -22,7 +22,11 @@ import {
   LinearProgress,
   Alert,
   Button,
+  ToggleButtonGroup,
+  ToggleButton,
 } from '@mui/material';
+import ViewListIcon from '@mui/icons-material/ViewList';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -31,6 +35,7 @@ import { userProfileBatcher, flushProfileUpdates } from '../../../utils/userProf
 import { getUserScore } from '../../../utils/scoreSummary';
 import WorkerProfileAccordions, { type ReadinessAccordionSection } from '../../../components/worker/profile/WorkerProfileAccordions';
 import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
+import WorkerProfileCardDeck from '../../../components/worker/profile/WorkerProfileCardDeck';
 import {
   getReadinessPrompts,
   READINESS_SECTION_IDS,
@@ -44,6 +49,8 @@ const WorkerProfile: React.FC = () => {
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<any>(null);
   const [expandedSection, setExpandedSection] = useState<ReadinessAccordionSection | false>('availability');
+  const [viewMode, setViewMode] = useState<'sections' | 'cards'>('sections');
+  const [deckIndex, setDeckIndex] = useState(0);
 
   useEffect(() => {
     userProfileBatcher.initialize();
@@ -74,6 +81,15 @@ const WorkerProfile: React.FC = () => {
   const topImprovements = (userDoc?.scoreSummary?.explainability?.nextActions ?? []).slice(0, 3);
 
   const handleFixNow = useCallback((sectionId: keyof typeof READINESS_SECTION_IDS) => {
+    setExpandedSection(sectionId);
+    setViewMode('sections');
+    const id = READINESS_SECTION_IDS[sectionId];
+    setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, []);
+
+  const handleExpandProfileSection = useCallback((sectionId: ReadinessAccordionSection) => {
     setExpandedSection(sectionId);
     const id = READINESS_SECTION_IDS[sectionId];
     setTimeout(() => {
@@ -274,7 +290,38 @@ const WorkerProfile: React.FC = () => {
           </CardContent>
         </Card>
 
-        {/* 3. Accordion modules (existing forms) */}
+        {/* 3. View toggle: Sections (accordion) | Cards (deck) */}
+        {uid && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <ToggleButtonGroup
+              value={viewMode}
+              exclusive
+              onChange={(_, v) => { if (v != null) setViewMode(v); setDeckIndex(0); }}
+              size="small"
+              aria-label={t('profile.viewMode')}
+            >
+              <ToggleButton value="sections" aria-label={t('profile.viewSections')}>
+                <ViewListIcon sx={{ mr: 0.5 }} /> {t('profile.viewSections')}
+              </ToggleButton>
+              <ToggleButton value="cards" aria-label={t('profile.viewCards')}>
+                <ViewModuleIcon sx={{ mr: 0.5 }} /> {t('profile.viewCards')}
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+        )}
+
+        {/* 4. Accordion (sections) or Card deck */}
+        {uid ? (
+          viewMode === 'cards' ? (
+            <WorkerProfileCardDeck
+              activeIndex={deckIndex}
+              onIndexChange={setDeckIndex}
+              onExpandSection={handleExpandProfileSection}
+            />
+          ) : null
+        ) : null}
+
+        {/* 5. Accordion modules (existing forms) — always in DOM so Expand from deck can scroll here */}
         {uid ? (
           <WorkerProfileAccordions
             uid={uid}

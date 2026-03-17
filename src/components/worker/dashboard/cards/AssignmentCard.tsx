@@ -1,23 +1,19 @@
 /**
- * Assignment card — "Your Next Shift", blue theme.
- * CTAs: View Assignment, Get Directions.
+ * Assignment card — "Upcoming Shift". Single CTA: View Assignment.
+ * Hospitality → warm gold; default blue. 240–280px height, 16px radius, 20px padding.
  */
 
 import React from 'react';
-import { Card, CardContent, Typography, Button, Stack } from '@mui/material';
+import { Card, CardContent, Typography, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../../i18n';
 import type { AssignmentCardPayload } from './types';
 import { CARD_THEMES } from './types';
+import { getCategoryForTitle } from '../../../../utils/dashboardCardCategory';
 
 function formatPay(pay: number | undefined): string {
   if (pay == null || Number.isNaN(pay)) return '';
   return `$${Number(pay).toFixed(2)}/hr`;
-}
-
-function getDirectionsUrl(query: string): string {
-  const encoded = encodeURIComponent(query);
-  return `https://www.google.com/maps/search/?api=1&query=${encoded}`;
 }
 
 export interface AssignmentCardProps {
@@ -28,18 +24,13 @@ export interface AssignmentCardProps {
 const AssignmentCard: React.FC<AssignmentCardProps> = ({ payload, onTap }) => {
   const navigate = useNavigate();
   const t = useT();
-  const { bg, contrast } = CARD_THEMES.assignment;
+  const isHospitality = getCategoryForTitle(payload.jobTitle) === 'hospitality';
+  const { bg, contrast } = isHospitality ? CARD_THEMES.job.hospitality : CARD_THEMES.assignment;
   const payStr = formatPay(payload.pay);
 
   const handleViewAssignment = (e: React.MouseEvent) => {
     e.stopPropagation();
     navigate(payload.viewAssignmentTo);
-  };
-
-  const handleGetDirections = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    const query = payload.directionsQuery || payload.location || payload.jobTitle;
-    if (query) window.open(getDirectionsUrl(query), '_blank', 'noopener,noreferrer');
   };
 
   return (
@@ -48,8 +39,9 @@ const AssignmentCard: React.FC<AssignmentCardProps> = ({ payload, onTap }) => {
       onClick={onTap}
       sx={{
         width: '100%',
-        minHeight: 240,
-        borderRadius: 3,
+        minHeight: 260,
+        maxHeight: 280,
+        borderRadius: '16px',
         border: 'none',
         boxShadow: 2,
         backgroundColor: bg,
@@ -58,12 +50,17 @@ const AssignmentCard: React.FC<AssignmentCardProps> = ({ payload, onTap }) => {
       }}
     >
       <CardContent sx={{ p: 2.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600 }}>
+        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600, fontSize: '0.7rem' }}>
           {payload.label}
         </Typography>
-        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast, mt: 0.5 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, color: contrast, mt: 0.5 }}>
           {payload.jobTitle}
         </Typography>
+        {payStr && (
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast }}>
+            {payStr}
+          </Typography>
+        )}
         {payload.company && (
           <Typography variant="body2" sx={{ color: contrast, opacity: 0.85 }}>
             {payload.company}
@@ -77,26 +74,23 @@ const AssignmentCard: React.FC<AssignmentCardProps> = ({ payload, onTap }) => {
             {payload.location}
           </Typography>
         )}
-        {payload.status && (
-          <Typography variant="caption" sx={{ color: contrast, opacity: 0.8 }}>
-            {payload.status}
-          </Typography>
-        )}
-        {payStr && (
-          <Typography variant="body1" sx={{ fontWeight: 600, color: contrast, mt: 0.5 }}>
-            {payStr}
-          </Typography>
-        )}
-        <Stack direction="row" spacing={1} sx={{ mt: 2 }} onClick={(e) => e.stopPropagation()}>
-          <Button variant="contained" size="medium" onClick={handleViewAssignment} sx={{ bgcolor: contrast, color: bg, '&:hover': { bgcolor: contrast, opacity: 0.9 } }}>
-            {t('dashboard.cardViewAssignment')}
-          </Button>
-          {(payload.directionsQuery || payload.location) && (
-            <Button variant="outlined" size="medium" onClick={handleGetDirections} sx={{ borderColor: contrast, color: contrast }}>
-              {t('dashboard.cardGetDirections')}
-            </Button>
-          )}
-        </Stack>
+        <Button
+          variant="contained"
+          fullWidth
+          size="large"
+          onClick={handleViewAssignment}
+          sx={{
+            mt: 2,
+            py: 1.25,
+            bgcolor: contrast,
+            color: bg,
+            borderRadius: 2,
+            '&:hover': { bgcolor: contrast, opacity: 0.9 },
+          }}
+          onClickCapture={(e) => e.stopPropagation()}
+        >
+          {t('dashboard.cardViewAssignment')}
+        </Button>
       </CardContent>
     </Card>
   );

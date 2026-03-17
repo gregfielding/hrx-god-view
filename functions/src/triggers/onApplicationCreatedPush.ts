@@ -2,12 +2,14 @@
  * FCM push when a worker submits an application.
  * Trigger: tenants/{tenantId}/applications/{applicationId} onCreate.
  * Uses sendNotificationAndPush + users/{uid}/pushTokens. Deduped via applicationPushSentAt.
+ * Event: application_received — inbox + push + deepLink to jobs-board/{jobId}.
  */
 
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
+import { resolveTemplateVariables } from '../utils/templateVariableResolver';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -47,16 +49,42 @@ export const onApplicationCreatedPush = onDocumentCreated(
       return;
     }
 
-    const jobTitle =
+    const jobPostId = applicationData.jobId || applicationData.postId;
+    let jobTitle =
       applicationData.jobOrderName ||
       applicationData.postTitle ||
       applicationData.jobTitle ||
       'your application';
-    const title = 'Application submitted';
-    const body = `We received your application for ${jobTitle}.`;
+    let companyName = applicationData.companyName ?? '';
 
-    const jobPostId = applicationData.jobId || applicationData.postId;
-    const ctaUrl = jobPostId ? `${JOBS_BOARD_PATH}/${jobPostId}` : DEEP_LINK_APPLICATIONS;
+    if (!companyName || !jobTitle) {
+      try {
+        const userDoc = await db.doc(`users/${userId}`).get();
+        const userData = userDoc.data();
+        const context = {
+          userId,
+          userData,
+          applicationId,
+          applicationData,
+          jobOrderId: applicationData.jobOrderId,
+          jobPostId: applicationData.jobId || applicationData.postId,
+          tenantId,
+          status: applicationData.status || 'submitted',
+        };
+        const variables = await resolveTemplateVariables(context);
+        if (variables.jobTitle) jobTitle = variables.jobTitle;
+        if (variables.companyName) companyName = variables.companyName;
+      } catch (e) {
+        logger.warn('[PUSH][application_created] resolveTemplateVariables failed', { applicationId, error: (e as Error)?.message });
+      }
+    }
+
+    const title = 'Application received';
+    const body = companyName
+      ? `We got your application for ${jobTitle} at ${companyName}.`
+      : `We got your application for ${jobTitle}.`;
+
+    const deepLink = jobPostId ? `${JOBS_BOARD_PATH}/${jobPostId}` : DEEP_LINK_APPLICATIONS;
 
     try {
       const tokensSnap = await db
@@ -73,7 +101,9 @@ export const onApplicationCreatedPush = onDocumentCreated(
         title,
         body,
         type: 'application',
-        ctaUrl,
+        category: 'applications',
+        deepLink,
+        entityId: jobPostId,
         entity: jobPostId ? { kind: 'job_post', id: jobPostId } : undefined,
         source: 'automation',
       });
@@ -82,7 +112,7 @@ export const onApplicationCreatedPush = onDocumentCreated(
         applicationPushSentAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      logger.info('[PUSH][application_created] uid=%s tenantId=%s deepLink=%s tokens=%d', userId, tenantId, ctaUrl, tokenCount);
+      logger.info('[PUSH][application_created] uid=%s tenantId=%s deepLink=%s tokens=%d', userId, tenantId, deepLink, tokenCount);
     } catch (err: any) {
       logger.error('[PUSH][application_created] failed', { uid: userId, applicationId, error: err?.message || String(err) });
       // Do not throw — avoid blocking the application write

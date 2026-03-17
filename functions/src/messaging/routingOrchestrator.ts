@@ -17,6 +17,7 @@ import { getTemplate, renderTemplate, renderTemplateHtmlBody, renderStringWithVa
 import { getEmailProvider, isSendGridConfigured } from './emailProviderFactory';
 import { getSmsProvider } from './smsProviderFactory';
 import { getPushProvider } from './pushProviderFactory';
+import { writeWorkerInboxNotification } from './unifiedWorkerNotifications';
 import { getTenantSmsConsent } from './tenantConsent';
 import { getTenantNotificationSettings, isChannelAllowedForUser } from './tenantNotificationSettings';
 import { checkRateLimits } from './rateLimiter';
@@ -1470,8 +1471,28 @@ async function deliverPush(
     
     await logRef.set(logDoc);
     
-    // 4. Send via PushProvider — include deepLink for SW notificationclick (HRX-FCM-Messaging-Complete)
+    // 4. Persistent inbox: every push creates a notification doc so Inbox is the permanent record (worker Notification Center).
     const deepLink = context.metadata?.ctaUrl ?? context.variables?.ctaUrl ?? '';
+    const entityId = context.metadata?.assignmentId ?? context.metadata?.applicationId ?? context.metadata?.jobPostId ?? context.metadata?.entityId ?? '';
+    const inboxType = context.messageTypeId === 'assignment_created' ? 'assignment'
+      : (context.messageTypeId || '').startsWith('application_') ? 'application'
+      : 'general';
+    try {
+      await writeWorkerInboxNotification({
+        uid: context.userId,
+        tenantId: context.tenantId,
+        title,
+        body,
+        type: inboxType,
+        deepLink: deepLink || undefined,
+        entityId: entityId || undefined,
+        source: 'automation',
+      });
+    } catch (inboxErr: any) {
+      logger.warn('Failed to write worker inbox notification (push still sent)', { userId: context.userId, error: inboxErr?.message });
+    }
+    
+    // 5. Send via PushProvider — include deepLink for SW notificationclick (HRX-FCM-Messaging-Complete)
     const pushProvider = getPushProvider();
     const result = await pushProvider.sendPush({
       tenantId: context.tenantId,
@@ -1484,12 +1505,13 @@ async function deliverPush(
       data: {
         messageTypeId: context.messageTypeId,
         deepLink,
+        entityId: entityId || '',
         ...context.metadata,
       },
       messageTypeId: context.messageTypeId,
     });
     
-    // 5. Update log with final status
+    // 6. Update log with final status
     const update: any = {
       status: result.success ? 'sent' : 'failed',
     };

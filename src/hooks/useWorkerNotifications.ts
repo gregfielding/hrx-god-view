@@ -8,16 +8,37 @@ import { p } from '../data/firestorePaths';
 import { useEffect, useState } from 'react';
 import { db } from '../firebase';
 import { workerNotificationsPaths } from '../data/firestorePaths';
-import type { WorkerNotification } from '../types/unifiedWorkerNotifications';
+import type { WorkerNotification, NotificationCategory, NotificationType } from '../types/unifiedWorkerNotifications';
 import type { Timestamp } from 'firebase/firestore';
+
+function typeToCategory(type: NotificationType): NotificationCategory {
+  switch (type) {
+    case 'assignment':
+    case 'shift':
+      return 'assignments';
+    case 'application':
+      return 'applications';
+    case 'opportunity':
+    case 'general':
+      return 'opportunities';
+    case 'profile_action':
+      return 'profile';
+    default:
+      return 'system';
+  }
+}
 
 function mapDoc(doc: import('firebase/firestore').DocumentSnapshot): WorkerNotification & { id: string } {
   const d = doc.data();
+  const entity = d?.entity;
+  const type = (d?.type ?? 'general') as NotificationType;
+  const category = (d?.category ?? typeToCategory(type)) as NotificationCategory;
   return {
     id: doc.id,
     uid: d?.uid ?? '',
     tenantId: d?.tenantId ?? '',
-    type: d?.type ?? 'general',
+    type,
+    category,
     title: d?.title ?? '',
     body: d?.body ?? '',
     severity: d?.severity ?? 'info',
@@ -25,10 +46,14 @@ function mapDoc(doc: import('firebase/firestore').DocumentSnapshot): WorkerNotif
     readAt: (d?.readAt ?? null) as Timestamp | null,
     source: d?.source ?? 'system',
     channel: d?.channel ?? 'web',
+    deepLink: d?.deepLink ?? d?.ctaUrl,
+    entityId: d?.entityId ?? entity?.id,
     ctaLabel: d?.ctaLabel,
     ctaUrl: d?.ctaUrl,
     threadId: d?.threadId,
     entity: d?.entity,
+    metadata: d?.metadata,
+    priority: d?.priority,
   };
 }
 
@@ -66,8 +91,9 @@ export function useWorkerNotifications(uid: string | undefined, options?: { max?
   return { notifications, unreadCount, loading };
 }
 
-/** Resolve notification link: prefer job board post when entity is job_post, else ctaUrl. */
+/** Resolve notification link: prefer deepLink, then entity/ctaUrl/threadId. */
 export function getNotificationUrl(n: WorkerNotification & { id: string }): string {
+  if (n.deepLink && n.deepLink.trim()) return n.deepLink.trim();
   if (n.entity?.kind === 'job_post' && n.entity?.id) {
     return `/c1/jobs-board/${n.entity.id}`;
   }

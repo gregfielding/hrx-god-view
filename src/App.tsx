@@ -104,6 +104,7 @@ import C1WorkersIndex from './pages/c1/workers/index';
 import C1WorkerDashboard from './pages/c1/workers/dashboard';
 import C1WorkerAssignments from './pages/c1/workers/assignments';
 import C1WorkerProfile from './pages/c1/workers/profile';
+import JobReadinessFeed from './pages/c1/workers/JobReadinessFeed';
 import C1WorkerDocuments from './pages/c1/workers/documents';
 import C1WorkerSupport from './pages/c1/workers/support';
 import C1WorkerNotifications from './pages/c1/workers/notifications';
@@ -475,6 +476,7 @@ function App() {
             <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
             <Route path="applications" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
+            <Route path="job-readiness" element={<JobReadinessFeed />} />
             <Route path="documents" element={<WorkerDocuments />} />
             <Route path="support" element={<WorkerSupport />} />
             <Route path="settings" element={<PrivacySettings />} />

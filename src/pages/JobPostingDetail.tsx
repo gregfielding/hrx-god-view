@@ -1010,8 +1010,17 @@ const JobPostingDetail: React.FC = () => {
           );
 
           if (result.success) {
-            // Success - redirect back to jobs board
-            const tenantSlug = posting.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1'; // Default to c1 for now
+            const { emitWorkerCardSignal } = await import('../utils/workerCardSignals');
+            emitWorkerCardSignal({ type: 'job_applied', entityId: postId! });
+            // Continuous feed: return to jobs board with confirmation and next job queue (no dead end)
+            const fromFeedState = location.state as { fromFeed?: boolean; feedQueue?: any[] } | null;
+            if (fromFeedState?.fromFeed && Array.isArray(fromFeedState.feedQueue)) {
+              navigate('/c1/jobs-board', {
+                state: { showApplicationConfirmation: true, feedQueue: fromFeedState.feedQueue },
+              });
+              return;
+            }
+            const tenantSlug = posting.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1';
             navigate(`/${tenantSlug}/jobs-board`);
             return;
           } else {
@@ -1452,11 +1461,10 @@ const JobPostingDetail: React.FC = () => {
 
   const stepsToApply = eligibilitySummary?.missingRequired.length ?? 0;
 
-  // Mobile sticky Apply footer: when to show and labels (computed once for footer + layout padding)
+  // Mobile sticky Apply footer: show only for non-gig jobs. Gigs are applied shift-by-shift (or day-by-day) via ShiftSelector, not a general Apply bar.
   const isGigWithShifts = posting?.jobType === 'gig' && dynamicShifts.length > 0;
-  const hasApplyableShift = isGigWithShifts && dynamicShifts.some((s: any) => !appliedShifts.includes(s.shiftId) && ((s.spotsRemaining ?? 1) > 0));
   const isNonGigApply = !isGigWithShifts && (statusButtonProps?.label === t('jobs.applyNow') || showApplyAgain) && !(statusButtonProps?.label === 'accepted_special' || statusButtonProps?.label === 'confirmed_special');
-  const showStickyApply = Boolean(isMobile && posting && scrolledPastHeader && (hasApplyableShift || isNonGigApply));
+  const showStickyApply = Boolean(isMobile && posting && scrolledPastHeader && isNonGigApply);
 
   // Assignment accept/decline link from SMS: show "You've been hired" + I Accept / Decline Job
   const params = new URLSearchParams(location.search);
@@ -1959,7 +1967,7 @@ const JobPostingDetail: React.FC = () => {
                   fontWeight: 600,
                 }}
               >
-                {t('jobs.applyNow')}
+                {t('jobs.applyForJob')}
               </Button>
             ))}
         </Box>
@@ -2780,7 +2788,7 @@ const JobPostingDetail: React.FC = () => {
                     onClick={handleApply}
                     sx={{ mt: 3, py: 1.5 }}
                   >
-                    {t('jobs.applyNow')}
+                    {t('jobs.applyForJob')}
                   </Button>
                 )}
 
@@ -2865,7 +2873,7 @@ const JobPostingDetail: React.FC = () => {
                 onClick={isGigWithShifts ? () => { const s = dynamicShifts.find((x: any) => !appliedShifts.includes(x.shiftId) && ((x.spotsRemaining ?? 1) > 0)); if (s) handleApplyToShift(s.shiftId); } : handleApply}
                 sx={{ flexShrink: 0, fontWeight: 600, borderRadius: '999px', px: 2.5 }}
               >
-                Apply
+                {t('jobs.applyForJob')}
               </Button>
             </Box>
           );
