@@ -1328,12 +1328,12 @@ const PublicJobsBoard: React.FC = () => {
     }
   };
 
-  // Helper function to get application status button label and styling
+  // Helper function to get application status button label and styling (labels are translated for display)
   const getApplicationStatusButton = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'hired':
         return {
-          label: 'Hired',
+          label: t('jobs.applicationStatusHired'),
           backgroundColor: '#4CAF50', // Green
           color: '#fff',
           cursor: 'default',
@@ -1341,7 +1341,7 @@ const PublicJobsBoard: React.FC = () => {
         };
       case 'waitlisted':
         return {
-          label: 'Waitlisted',
+          label: t('jobs.applicationStatusWaitlisted'),
           backgroundColor: '#ED6C02', // Orange
           color: '#fff',
           cursor: 'default',
@@ -1350,7 +1350,7 @@ const PublicJobsBoard: React.FC = () => {
       case 'rejected':
       case 'not accepted':
         return {
-          label: 'Not Accepted',
+          label: t('jobs.applicationStatusNotAccepted'),
           backgroundColor: '#F44336', // Red
           color: '#fff',
           cursor: 'default',
@@ -1359,7 +1359,7 @@ const PublicJobsBoard: React.FC = () => {
       case 'withdrawn':
       case 'cancelled':
         return {
-          label: 'Cancelled',
+          label: t('jobs.applicationStatusCancelled'),
           backgroundColor: '#9E9E9E', // Grey
           color: '#fff',
           cursor: 'default',
@@ -1371,7 +1371,7 @@ const PublicJobsBoard: React.FC = () => {
       case 'offer':
       case 'accepted':
         return {
-          label: 'Accepted',
+          label: t('jobs.applicationStatusAccepted'),
           backgroundColor: '#2196F3', // Blue
           color: '#fff',
           cursor: 'default',
@@ -1381,7 +1381,7 @@ const PublicJobsBoard: React.FC = () => {
       case 'new':
       default:
         return {
-          label: 'Application Submitted',
+          label: t('jobs.feed.applicationSubmitted'),
           backgroundColor: '#FFC700', // Yellow (existing color)
           color: '#000',
           cursor: 'default',
@@ -1525,7 +1525,7 @@ const PublicJobsBoard: React.FC = () => {
                 lineHeight: { xs: 1.3, sm: 1.2 }
               }}
             >
-              {isC1Route ? t('nav.jobsBoard') : t('jobs.findMoreWork')}
+              {isC1Route ? t('nav.findWork') : t('jobs.findMoreWork')}
             </Typography>
           </Box>
         </Box>

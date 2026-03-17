@@ -11,7 +11,7 @@ import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useOnboarding } from '../../../hooks/useOnboarding';
 import WorkerDashboardCardRail from '../../../components/worker/dashboard/WorkerDashboardCardRail';
-import WorkerDashboardQuickActions from '../../../components/worker/dashboard/WorkerDashboardQuickActions';
+import WorkerQuickNav from '../../../components/worker/WorkerQuickNav';
 import JobReadinessCompactCard from '../../../components/worker/dashboard/cards/JobReadinessCompactCard';
 import type { DashboardCardPayload, JobReadinessCardPayload } from '../../../components/worker/dashboard/cards';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
@@ -459,7 +459,7 @@ const WorkerDashboard: React.FC = () => {
               </Stack>
             )}
 
-            <WorkerDashboardQuickActions />
+            <WorkerQuickNav />
           </>
         )}
       </Stack>

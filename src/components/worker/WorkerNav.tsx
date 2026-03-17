@@ -22,17 +22,19 @@ import ListAltIcon from '@mui/icons-material/ListAlt';
 import PersonIcon from '@mui/icons-material/Person';
 import FolderIcon from '@mui/icons-material/Folder';
 import InboxIcon from '@mui/icons-material/Inbox';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 
 const drawerWidth = 240;
 
 const navConfig = [
   { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
-  { key: 'nav.inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
+  { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
-  { key: 'nav.jobsBoard', path: '/c1/jobs-board', icon: <WorkIcon /> },
-  { key: 'nav.jobReadiness', path: '/c1/workers/profile', icon: <PersonIcon /> },
+  { key: 'nav.inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
+  { key: 'nav.jobReadiness', path: '/c1/workers/job-readiness', icon: <PersonIcon /> },
   { key: 'nav.myDocuments', path: '/c1/workers/documents', icon: <FolderIcon /> },
+  { key: 'nav.helpSupport', path: '/c1/workers/support', icon: <HelpOutlineIcon /> },
 ];
 
 const drawerPaperSx = {

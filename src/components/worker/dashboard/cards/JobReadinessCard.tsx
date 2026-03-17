@@ -1,5 +1,5 @@
 /**
- * Job Readiness dashboard card — "Unlock More Jobs". Body, readiness %, Fix Now → job readiness feed.
+ * Job Readiness card — pastel orange. Single CTA: Fix Now.
  */
 
 import React from 'react';
@@ -30,50 +30,51 @@ const JobReadinessCard: React.FC<JobReadinessCardProps> = ({ payload, onTap }) =
       onClick={onTap}
       sx={{
         width: '100%',
-        minHeight: 260,
-        maxHeight: 280,
-        borderRadius: '16px',
+        minHeight: 200,
+        borderRadius: '14px',
         border: 'none',
-        boxShadow: 2,
+        boxShadow: 1,
         backgroundColor: bg,
         color: contrast,
         cursor: onTap ? 'pointer' : 'default',
       }}
     >
-      <CardContent sx={{ p: 2.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600, fontSize: '0.7rem' }}>
+      <CardContent sx={{ p: 1.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Typography variant="overline" sx={{ color: contrast, opacity: 0.85, fontWeight: 600, fontSize: '0.65rem', letterSpacing: '0.08em' }}>
           {payload.label}
         </Typography>
-        <Typography variant="body2" sx={{ color: contrast, opacity: 0.9, mt: 1 }}>
+        <Typography variant="body2" sx={{ color: contrast, opacity: 0.9, mt: 0.5 }}>
           {payload.body}
         </Typography>
-        <Typography variant="body2" sx={{ color: contrast, fontWeight: 600, mt: 0.5 }}>
+        <Typography variant="caption" sx={{ color: contrast, fontWeight: 600, mt: 0.25 }}>
           {t('dashboard.jobReadinessLabel', { percent: payload.readinessPercent })}
         </Typography>
         <LinearProgress
           variant="determinate"
           value={Math.min(100, Math.max(0, payload.readinessPercent))}
           sx={{
-            mt: 1,
-            mb: 1.5,
-            height: 8,
+            mt: 0.75,
+            height: 6,
             borderRadius: 1,
             bgcolor: 'rgba(0,0,0,0.1)',
-            '& .MuiLinearProgress-bar': { borderRadius: 1 },
+            '& .MuiLinearProgress-bar': { borderRadius: 1, bgcolor: contrast },
           }}
         />
         <Button
           variant="contained"
           fullWidth
-          size="large"
+          size="medium"
           onClick={handleFixNow}
           sx={{
-            mt: 2,
-            py: 1.25,
+            mt: 1.5,
+            py: 1,
             bgcolor: contrast,
-            color: bg,
+            color: '#fff',
             borderRadius: 2,
-            '&:hover': { bgcolor: contrast, opacity: 0.9 },
+            fontSize: '0.875rem',
+            textTransform: 'none',
+            fontWeight: 600,
+            '&:hover': { bgcolor: contrast, opacity: 0.92 },
           }}
           onClickCapture={(e) => e.stopPropagation()}
         >

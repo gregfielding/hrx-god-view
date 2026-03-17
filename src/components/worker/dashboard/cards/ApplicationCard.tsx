@@ -1,6 +1,5 @@
 /**
- * Application card — "Application Update". Single primary CTA: View Application.
- * 240–280px height, 16px radius, 20px padding.
+ * Application card — pastel purple. Short copy: label + "JobTitle — Company", one CTA: View Status.
  */
 
 import React from 'react';
@@ -9,11 +8,6 @@ import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../../i18n';
 import type { ApplicationCardPayload } from './types';
 import { CARD_THEMES } from './types';
-
-function formatPay(pay: number | undefined): string {
-  if (pay == null || Number.isNaN(pay)) return '';
-  return `$${Number(pay).toFixed(2)}/hr`;
-}
 
 export interface ApplicationCardProps {
   payload: ApplicationCardPayload;
@@ -24,7 +18,7 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({ payload, onTap }) => 
   const navigate = useNavigate();
   const t = useT();
   const { bg, contrast } = CARD_THEMES.application;
-  const payStr = formatPay(payload.pay);
+  const titleLine = payload.company ? `${payload.jobTitle} — ${payload.company}` : payload.jobTitle;
 
   const handlePrimary = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -37,52 +31,44 @@ const ApplicationCard: React.FC<ApplicationCardProps> = ({ payload, onTap }) => 
       onClick={onTap}
       sx={{
         width: '100%',
-        minHeight: 260,
-        maxHeight: 280,
-        borderRadius: '16px',
+        minHeight: 200,
+        borderRadius: '14px',
         border: 'none',
-        boxShadow: 2,
+        boxShadow: 1,
         backgroundColor: bg,
         color: contrast,
         cursor: onTap ? 'pointer' : 'default',
       }}
     >
-      <CardContent sx={{ p: 2.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600, fontSize: '0.7rem' }}>
+      <CardContent sx={{ p: 1.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Typography variant="overline" sx={{ color: contrast, opacity: 0.85, fontWeight: 600, fontSize: '0.65rem', letterSpacing: '0.08em' }}>
           {payload.label}
         </Typography>
-        <Typography variant="h6" sx={{ fontWeight: 700, color: contrast, mt: 0.5 }}>
-          {payload.jobTitle}
+        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast, mt: 0.25, lineHeight: 1.3 }}>
+          {titleLine}
         </Typography>
-        {payload.company && (
-          <Typography variant="body2" sx={{ color: contrast, opacity: 0.85 }}>
-            {payload.company}
-          </Typography>
-        )}
-        <Typography variant="body2" sx={{ color: contrast, opacity: 0.9 }}>
-          {t('applications.status')}: {payload.appliedDateOrStatus}
+        <Typography variant="body2" sx={{ color: contrast, opacity: 0.9, mt: 0.25 }}>
+          {payload.appliedDateOrStatus}
         </Typography>
-        {payStr && (
-          <Typography variant="body1" sx={{ fontWeight: 600, color: contrast }}>
-            {payStr}
-          </Typography>
-        )}
         <Button
           variant="contained"
           fullWidth
-          size="large"
+          size="medium"
           onClick={handlePrimary}
           sx={{
-            mt: 2,
-            py: 1.25,
+            mt: 1.5,
+            py: 1,
             bgcolor: contrast,
-            color: bg,
+            color: '#fff',
             borderRadius: 2,
-            '&:hover': { bgcolor: contrast, opacity: 0.9 },
+            fontSize: '0.875rem',
+            textTransform: 'none',
+            fontWeight: 600,
+            '&:hover': { bgcolor: contrast, opacity: 0.92 },
           }}
           onClickCapture={(e) => e.stopPropagation()}
         >
-          {t('dashboard.cardViewApplication')}
+          {t('dashboard.cardViewStatus')}
         </Button>
       </CardContent>
     </Card>

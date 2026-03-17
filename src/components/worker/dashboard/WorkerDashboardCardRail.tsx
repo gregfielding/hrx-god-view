@@ -1,11 +1,12 @@
+const SWIPE_HINT_KEY = 'c1_dashboard_swipe_hint_seen';
+
 /**
- * Worker Dashboard Card Rail — mobile swipe / web arrows.
- * Vertical scroll moves between sections; horizontal swipe (mobile) or prev/next (web) within section.
- * Card dimensions: 70vw width (30% peek), 240–280px height, 16px radius, 20px padding.
+ * Worker Dashboard Card Rail — mobile swipe + small arrows + dots.
+ * Small < > arrows only (no large buttons). Swipe hint shown until user swipes once.
  */
 
 import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { Box, Stack, Typography, IconButton } from '@mui/material';
+import { Box, Stack, Typography, IconButton, useTheme, useMediaQuery } from '@mui/material';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { useNavigate } from 'react-router-dom';
@@ -16,9 +17,9 @@ import { emitWorkerCardSignal } from '../../../utils/workerCardSignals';
 
 export interface WorkerDashboardCardRailProps {
   cards: DashboardCardPayload[];
-  /** Optional section header above the cards (e.g. "3 jobs match your experience and schedule") */
+  /** Optional section header above the cards */
   sectionHeader?: string;
-  /** Show prev/next arrow buttons (web). When false, only swipe + dots (mobile). */
+  /** Show small prev/next arrow icons (default true when multiple cards). */
   showNavArrows?: boolean;
 }
 
@@ -41,46 +42,72 @@ function getPrimaryRoute(payload: DashboardCardPayload): string | undefined {
   }
 }
 
-const CARD_WIDTH_VW = 70;
+const MOBILE_CARD_WIDTH_PCT = 88;
+const DESKTOP_CARD_WIDTH_PCT = 92;
 const CARD_GAP_PX = 12;
 const SWIPE_THRESHOLD_PX = 60;
 
 const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
   cards,
   sectionHeader,
-  showNavArrows = false,
+  showNavArrows = true,
 }) => {
   const navigate = useNavigate();
   const t = useT();
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('sm'));
   const scrollRef = useRef<HTMLDivElement>(null);
   const cardRefs = useRef<(HTMLElement | null)[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [showSwipeHint, setShowSwipeHint] = useState(false);
   const touchStartX = useRef<number>(0);
   const touchStartY = useRef<number>(0);
+  const cardWidthPct = isDesktop ? DESKTOP_CARD_WIDTH_PCT : MOBILE_CARD_WIDTH_PCT;
+
+  useEffect(() => {
+    try {
+      setShowSwipeHint(!localStorage.getItem(SWIPE_HINT_KEY) && cards.length > 1);
+    } catch {
+      setShowSwipeHint(cards.length > 1);
+    }
+  }, [cards.length]);
 
   const updateActiveIndex = useCallback(() => {
     const el = scrollRef.current;
     if (!el || cards.length === 0) return;
-    const cardWidth = el.offsetWidth * (CARD_WIDTH_VW / 100) + CARD_GAP_PX;
+    const cardWidth = el.offsetWidth * (cardWidthPct / 100) + CARD_GAP_PX;
     const scrollLeft = el.scrollLeft;
     const index = Math.round(scrollLeft / cardWidth);
     setActiveIndex(Math.min(Math.max(0, index), cards.length - 1));
-  }, [cards.length]);
+  }, [cards.length, cardWidthPct]);
+
+  const markSwipeHintSeen = useCallback(() => {
+    try {
+      localStorage.setItem(SWIPE_HINT_KEY, '1');
+      setShowSwipeHint(false);
+    } catch {
+      setShowSwipeHint(false);
+    }
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.addEventListener('scroll', updateActiveIndex);
-    return () => el.removeEventListener('scroll', updateActiveIndex);
-  }, [updateActiveIndex]);
+    const onScroll = () => {
+      updateActiveIndex();
+      markSwipeHintSeen();
+    };
+    el.addEventListener('scroll', onScroll);
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [updateActiveIndex, markSwipeHintSeen]);
 
   const goToIndex = useCallback((i: number) => {
     setActiveIndex(i);
     const el = scrollRef.current;
     if (!el) return;
-    const cardWidth = el.offsetWidth * (CARD_WIDTH_VW / 100) + CARD_GAP_PX;
+    const cardWidth = el.offsetWidth * (cardWidthPct / 100) + CARD_GAP_PX;
     el.scrollTo({ left: i * cardWidth, behavior: 'smooth' });
-  }, []);
+  }, [cardWidthPct]);
 
   const handleTap = useCallback(
     (payload: DashboardCardPayload) => {
@@ -104,8 +131,11 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
       const endY = e.changedTouches[0].clientY;
       const deltaX = endX - touchStartX.current;
       const deltaY = endY - touchStartY.current;
+      if (Math.abs(deltaX) >= SWIPE_THRESHOLD_PX && Math.abs(deltaX) >= Math.abs(deltaY)) {
+        markSwipeHintSeen();
+      }
       if (Math.abs(deltaX) < SWIPE_THRESHOLD_PX) return;
-      if (Math.abs(deltaY) > Math.abs(deltaX)) return; // vertical swipe, ignore for card dismiss
+      if (Math.abs(deltaY) > Math.abs(deltaX)) return;
       const payload = cards[activeIndex];
       if (payload?.type === 'job') {
         if (deltaX < 0) {
@@ -118,7 +148,7 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
         goToIndex(activeIndex + 1);
       }
     },
-    [activeIndex, cards, goToIndex]
+    [activeIndex, cards, goToIndex, markSwipeHintSeen]
   );
 
   if (cards.length === 0) {
@@ -126,7 +156,7 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
   }
 
   return (
-    <Stack spacing={2}>
+    <Stack spacing={1.5}>
       {sectionHeader && (
         <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'text.primary', px: 0.5 }}>
           {sectionHeader}
@@ -138,10 +168,10 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
             size="small"
             onClick={() => goToIndex(Math.max(0, activeIndex - 1))}
             disabled={activeIndex <= 0}
-            sx={{ flexShrink: 0 }}
+            sx={{ flexShrink: 0, p: 0.5 }}
             aria-label={t('cardDeck.previous')}
           >
-            <ChevronLeftIcon />
+            <ChevronLeftIcon sx={{ fontSize: 24 }} />
           </IconButton>
         )}
         <Box
@@ -156,11 +186,11 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
             scrollSnapType: 'x mandatory',
             scrollBehavior: 'smooth',
             gap: `${CARD_GAP_PX}px`,
-            px: showNavArrows ? 1 : '5vw',
+            px: { xs: '4vw', sm: 0 },
             py: 1,
-            mx: showNavArrows ? 0 : -1,
-            '&::-webkit-scrollbar': { height: 6 },
-            '&::-webkit-scrollbar-thumb': { borderRadius: 3, bgcolor: 'action.selected' },
+            mx: 0,
+            '&::-webkit-scrollbar': { height: 4 },
+            '&::-webkit-scrollbar-thumb': { borderRadius: 2, bgcolor: 'action.selected' },
           }}
         >
           {cards.map((payload, i) => (
@@ -168,7 +198,7 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
               key={payload.id}
               ref={(el) => { cardRefs.current[i] = el as HTMLElement | null; }}
               sx={{
-                flex: `0 0 calc(${CARD_WIDTH_VW}vw - ${CARD_GAP_PX}px)`,
+                flex: `0 0 calc(${cardWidthPct}% - ${CARD_GAP_PX}px)`,
                 minWidth: 0,
                 scrollSnapAlign: 'center',
                 scrollSnapStop: 'always',
@@ -187,7 +217,7 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
                 <JobReadinessCard payload={payload} onTap={() => handleTap(payload)} />
               )}
               {payload.type === 'job' && (
-                <JobRecommendationCard payload={payload} onTap={() => handleTap(payload)} showApplyButton={false} />
+                <JobRecommendationCard payload={payload} onTap={() => handleTap(payload)} />
               )}
               {payload.type === 'gateway' && (
                 <GatewayCard payload={payload} onTap={() => handleTap(payload)} />
@@ -200,22 +230,27 @@ const WorkerDashboardCardRail: React.FC<WorkerDashboardCardRailProps> = ({
             size="small"
             onClick={() => goToIndex(Math.min(cards.length - 1, activeIndex + 1))}
             disabled={activeIndex >= cards.length - 1}
-            sx={{ flexShrink: 0 }}
+            sx={{ flexShrink: 0, p: 0.5 }}
             aria-label={t('cardDeck.next')}
           >
-            <ChevronRightIcon />
+            <ChevronRightIcon sx={{ fontSize: 24 }} />
           </IconButton>
         )}
       </Stack>
+      {showSwipeHint && cards.length > 1 && (
+        <Typography variant="caption" sx={{ color: 'text.secondary', textAlign: 'center', px: 1 }}>
+          {t('dashboard.swipeHint')}
+        </Typography>
+      )}
       {cards.length > 1 && (
-        <Stack direction="row" justifyContent="center" spacing={0.75} sx={{ flexWrap: 'wrap' }}>
+        <Stack direction="row" justifyContent="center" spacing={0.5} sx={{ flexWrap: 'wrap' }}>
           {cards.map((_, i) => (
             <Box
               key={i}
               onClick={() => goToIndex(i)}
               sx={{
-                width: 8,
-                height: 8,
+                width: 6,
+                height: 6,
                 borderRadius: '50%',
                 bgcolor: i === activeIndex ? 'primary.main' : 'action.disabled',
                 cursor: 'pointer',

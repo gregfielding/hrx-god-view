@@ -1,5 +1,5 @@
 /**
- * Gateway card — "See all jobs" entry to the full jobs board.
+ * Gateway card — "See all jobs". Light, minimal, one CTA.
  */
 
 import React from 'react';
@@ -7,6 +7,9 @@ import { Card, CardContent, Typography, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../../i18n';
 import type { GatewayCardPayload } from './types';
+
+const GATEWAY_BG = '#F8FAFC';
+const GATEWAY_ACCENT = '#0F9D58';
 
 export interface GatewayCardProps {
   payload: GatewayCardPayload;
@@ -28,32 +31,41 @@ const GatewayCard: React.FC<GatewayCardProps> = ({ payload, onTap }) => {
       onClick={onTap}
       sx={{
         width: '100%',
-        minHeight: 260,
-        maxHeight: 280,
-        borderRadius: '16px',
+        minHeight: 200,
+        borderRadius: '14px',
         border: '2px dashed',
-        borderColor: 'primary.main',
+        borderColor: GATEWAY_ACCENT,
         boxShadow: 1,
-        backgroundColor: 'grey.50',
+        backgroundColor: GATEWAY_BG,
         cursor: onTap ? 'pointer' : 'default',
       }}
     >
-      <CardContent sx={{ p: 2.5, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 600, fontSize: '0.7rem' }}>
+      <CardContent sx={{ p: 1.5, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+        <Typography variant="overline" sx={{ color: 'text.secondary', fontWeight: 600, fontSize: '0.65rem', letterSpacing: '0.08em' }}>
           {payload.label}
         </Typography>
-        <Typography variant="h6" sx={{ fontWeight: 700, color: 'text.primary', mt: 1 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: 'text.primary', mt: 0.5 }}>
           {t('dashboard.seeAllJobs')}
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.25 }}>
           {t('dashboard.seeAllJobsSubtext')}
         </Typography>
         <Button
           variant="contained"
           fullWidth
-          size="large"
+          size="medium"
           onClick={handleSeeAll}
-          sx={{ mt: 2, py: 1.25, borderRadius: 2 }}
+          sx={{
+            mt: 1.5,
+            py: 1,
+            bgcolor: GATEWAY_ACCENT,
+            color: '#fff',
+            borderRadius: 2,
+            fontSize: '0.875rem',
+            textTransform: 'none',
+            fontWeight: 600,
+            '&:hover': { bgcolor: GATEWAY_ACCENT, opacity: 0.92 },
+          }}
           onClickCapture={(e) => e.stopPropagation()}
         >
           {t('dashboard.seeAllJobs')}

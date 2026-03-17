@@ -97,24 +97,28 @@ export type DashboardCardPayload =
   | JobRecommendationCardPayload
   | GatewayCardPayload;
 
-/** Subtle tinted card themes: assignment (blue), application (amber), profile (teal), job by category, action-needed, cancelled/declined */
+/** Pastel card themes: light, positive, mobile-friendly. */
 export const CARD_THEMES = {
-  assignment: { bg: '#C8DAF5', contrast: '#1a365d' },
-  application: { bg: '#FEF3C7', contrast: '#92400e' },
-  profile: { bg: '#CCFBF1', contrast: '#134e4a' },
-  job_readiness: { bg: '#CCFBF1', contrast: '#134e4a' },
-  /** Action-needed (e.g. Accept/Decline offer) */
-  actionNeeded: { bg: '#FED7AA', contrast: '#9a3412' },
+  /** Assignment cards */
+  assignment: { bg: '#E8F0FE', contrast: '#2B6CB0' },
+  /** Application update cards */
+  application: { bg: '#F1E8FF', contrast: '#6B46C1' },
+  /** Profile / readiness cards */
+  profile: { bg: '#FFF4E6', contrast: '#DD6B20' },
+  job_readiness: { bg: '#FFF4E6', contrast: '#DD6B20' },
+  /** Action-needed (e.g. offer extended) — use application purple */
+  actionNeeded: { bg: '#F1E8FF', contrast: '#6B46C1' },
   /** Cancelled / declined / expired */
   cancelled: { bg: '#E5E7EB', contrast: '#4b5563' },
+  /** New job cards — single green theme */
   job: {
-    hospitality: { bg: '#F5E6C8', contrast: '#5D4E37' },
-    warehouse: { bg: '#C8DAF5', contrast: '#2C3E5C' },
-    events: { bg: '#E0D4F5', contrast: '#3D2E5C' },
-    cleaning: { bg: '#C8F5D8', contrast: '#2E5C3D' },
-    healthcare: { bg: '#F5C8D8', contrast: '#5C2E3D' },
-    admin: { bg: '#E2E8F0', contrast: '#334155' },
-    clerical: { bg: '#E2E8F0', contrast: '#334155' },
-    default: { bg: '#E8E8E8', contrast: '#333' },
+    hospitality: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    warehouse: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    events: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    cleaning: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    healthcare: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    admin: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    clerical: { bg: '#E8FFF5', contrast: '#0F9D58' },
+    default: { bg: '#E8FFF5', contrast: '#0F9D58' },
   },
 } as const;

@@ -952,13 +952,27 @@ const JobPostingDetail: React.FC = () => {
   const getApplicationStatusHelperText = (status: string): string | null => {
     switch (status?.toLowerCase()) {
       case 'waitlisted':
-        return "You're on our shortlist. We'll contact you if a spot opens up.";
+        return t('jobs.applicationStatusWaitlistedHelp');
       case 'rejected':
       case 'not accepted':
-        return "This role has been filled or we've moved forward with other candidates.";
+        return t('jobs.applicationStatusRejectedHelp');
       default:
         return null;
     }
+  };
+
+  const getStatusDisplayLabel = (label: string): string => {
+    const map: Record<string, string> = {
+      'Application Submitted': t('jobs.applicationStatusSubmitted'),
+      Hired: t('jobs.applicationStatusHired'),
+      Waitlisted: t('jobs.applicationStatusWaitlisted'),
+      'Not Accepted': t('jobs.applicationStatusNotAccepted'),
+      cancelled: t('jobs.applicationStatusCancelled'),
+      Accepted: t('jobs.applicationStatusAccepted'),
+      accepted_special: t('jobs.applicationStatusAccepted'),
+      confirmed_special: t('jobs.applicationStatusConfirmed'),
+    };
+    return map[label] ?? label;
   };
 
   const handleApply = async () => {
@@ -1744,13 +1758,13 @@ const JobPostingDetail: React.FC = () => {
             </Box>
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-              <Chip label={posting.jobType === 'gig' ? 'Gig' : 'Career'} color="primary" size="small" />
+              <Chip label={posting.jobType === 'gig' ? t('jobs.gig') : t('jobs.career')} color="primary" size="small" />
               {posting.workersNeeded != null &&
                 posting.showWorkersNeeded !== false &&
                 !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
                   <Chip
                     icon={<WorkIcon />}
-                    label={`${posting.workersNeeded} position${posting.workersNeeded !== 1 ? 's' : ''}`}
+                    label={posting.workersNeeded === 1 ? t('jobs.positionsCountOne') : t('jobs.positionsCountOther', { count: posting.workersNeeded })}
                     size="small"
                     variant="outlined"
                   />
@@ -1780,7 +1794,7 @@ const JobPostingDetail: React.FC = () => {
                     return (
                       <Chip
                         icon={<ScheduleIcon />}
-                        label={`Next Shift: ${displayDate}`}
+                        label={t('jobs.nextShiftLabel', { date: displayDate })}
                         size="small"
                         variant="outlined"
                       />
@@ -1789,13 +1803,14 @@ const JobPostingDetail: React.FC = () => {
                 }
                 // For non-gig jobs or gigs without shifts, show start date if available
                 if (posting.startDate) {
+                  const dateStr = formatDate(posting.startDate);
                   return (
                     <Chip
                       icon={<ScheduleIcon />}
                       label={
                         posting.jobType === 'career'
-                          ? `Estimated Start: ${formatDate(posting.startDate)}`
-                          : `Starts ${formatDate(posting.startDate)}`
+                          ? t('jobs.estimatedStartLabel', { date: dateStr })
+                          : t('jobs.startsLabel', { date: dateStr })
                       }
                       size="small"
                       variant="outlined"
@@ -1862,7 +1877,7 @@ const JobPostingDetail: React.FC = () => {
                       },
                     }}
                   >
-                    {statusButtonProps.label}
+                    {getStatusDisplayLabel(statusButtonProps.label)}
                   </Button>
                   <Button
                     variant="contained"
@@ -1913,7 +1928,7 @@ const JobPostingDetail: React.FC = () => {
                       pointerEvents: statusButtonProps.pointerEvents,
                     }}
                   >
-                    {statusButtonProps.label}
+                    {getStatusDisplayLabel(statusButtonProps.label)}
                   </Button>
                   {applicationStatus && getApplicationStatusHelperText(applicationStatus) && (
                     <Typography
@@ -2007,10 +2022,10 @@ const JobPostingDetail: React.FC = () => {
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent sx={{ p: 0 }}>
                   <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
-                    About this Job
+                    {t('jobs.aboutThisJob')}
                   </Typography>
                   <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-                    {displayText || 'No description provided.'}
+                    {displayText || t('jobs.noDescriptionProvided')}
                   </Typography>
                   {isLong && (
                     <Button
@@ -2018,7 +2033,7 @@ const JobPostingDetail: React.FC = () => {
                       onClick={() => setDescriptionExpanded((e) => !e)}
                       sx={{ mt: 1, textTransform: 'none' }}
                     >
-                      {descriptionExpanded ? 'Show less' : 'Read more'}
+                      {descriptionExpanded ? t('jobs.showLess') : t('jobs.readMore')}
                     </Button>
                   )}
                 </CardContent>
@@ -2737,7 +2752,7 @@ const JobPostingDetail: React.FC = () => {
                           pointerEvents: statusButtonProps.pointerEvents,
                         }}
                       >
-                        {statusButtonProps.label}
+                        {getStatusDisplayLabel(statusButtonProps.label)}
                       </Button>
                       {applicationStatus && getApplicationStatusHelperText(applicationStatus) && (
                         <Typography

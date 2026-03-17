@@ -1,6 +1,5 @@
 /**
- * Job recommendation card — "New Job Near You", category-based theme.
- * CTAs: View Job, optional Apply.
+ * Job recommendation card — pastel green. One primary CTA: Apply Now.
  */
 
 import React from 'react';
@@ -18,20 +17,17 @@ function formatPay(pay: number | undefined): string {
 export interface JobRecommendationCardProps {
   payload: JobRecommendationCardPayload;
   onTap?: () => void;
-  /** When false, only show View Job (e.g. Find Work deck: apply only in detail). Default true. */
+  /** When false, rail uses single primary CTA (Apply Now). */
   showApplyButton?: boolean;
 }
 
-const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, onTap, showApplyButton = true }) => {
+const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, onTap }) => {
   const navigate = useNavigate();
   const t = useT();
   const { bg, contrast } = CARD_THEMES.job[payload.category];
   const payStr = formatPay(payload.pay);
-
-  const handleViewJob = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    navigate(payload.viewJobTo);
-  };
+  const detailParts = [payload.dateTime, payload.location, payStr].filter(Boolean);
+  const detailLine = detailParts.join(' · ');
 
   const handleApply = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -45,64 +41,56 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
       onClick={onTap}
       sx={{
         width: '100%',
-        minHeight: 260,
-        maxHeight: 280,
-        borderRadius: '16px',
+        minHeight: 200,
+        borderRadius: '14px',
         border: 'none',
-        boxShadow: 2,
+        boxShadow: 1,
         backgroundColor: bg,
         color: contrast,
         cursor: onTap ? 'pointer' : 'default',
       }}
     >
-      <CardContent sx={{ p: 2.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
-        <Typography variant="overline" sx={{ color: contrast, opacity: 0.9, fontWeight: 600, fontSize: '0.7rem' }}>
+      <CardContent sx={{ p: 1.5, height: '100%', display: 'flex', flexDirection: 'column' }}>
+        <Typography variant="overline" sx={{ color: contrast, opacity: 0.85, fontWeight: 600, fontSize: '0.65rem', letterSpacing: '0.08em' }}>
           {payload.label}
         </Typography>
-        <Typography variant="h6" sx={{ fontWeight: 700, color: contrast, mt: 0.5 }}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast, mt: 0.25, lineHeight: 1.3 }}>
           {payload.jobTitle}
         </Typography>
         {payload.company && (
-          <Typography variant="body2" sx={{ color: contrast, opacity: 0.85 }}>
+          <Typography variant="body2" sx={{ color: contrast, opacity: 0.9, mt: 0.25 }}>
             {payload.company}
           </Typography>
         )}
-        {payload.dateTime && (
-          <Typography variant="body2" sx={{ color: contrast, opacity: 0.9 }}>
-            {payload.dateTime}
-          </Typography>
-        )}
-        {payload.location && (
-          <Typography variant="body2" sx={{ color: contrast, opacity: 0.85 }}>
-            {payload.location}
-          </Typography>
-        )}
-        {payStr && (
-          <Typography variant="subtitle1" sx={{ fontWeight: 700, color: contrast }}>
-            {payStr}
+        {detailLine && (
+          <Typography variant="body2" sx={{ color: contrast, opacity: 0.9, mt: 0.25 }}>
+            {detailLine}
           </Typography>
         )}
         {payload.spotsLeft != null && payload.spotsLeft > 0 && (
-          <Typography variant="caption" sx={{ color: contrast, opacity: 0.9 }}>
+          <Typography variant="caption" sx={{ color: contrast, opacity: 0.85, display: 'block', mt: 0.25 }}>
             {t('dashboard.cardSpotsLeft', { count: payload.spotsLeft })}
           </Typography>
         )}
         <Button
           variant="contained"
           fullWidth
-          size="large"
-          onClick={handleViewJob}
+          size="medium"
+          onClick={handleApply}
           sx={{
-            mt: 2,
-            py: 1.25,
+            mt: 1.5,
+            py: 1,
             bgcolor: contrast,
-            color: bg,
+            color: '#fff',
             borderRadius: 2,
-            '&:hover': { bgcolor: contrast, opacity: 0.9 },
+            fontSize: '0.875rem',
+            textTransform: 'none',
+            fontWeight: 600,
+            '&:hover': { bgcolor: contrast, opacity: 0.92 },
           }}
           onClickCapture={(e) => e.stopPropagation()}
         >
-          {t('dashboard.cardViewJob')}
+          {t('dashboard.cardApplyNow')}
         </Button>
       </CardContent>
     </Card>

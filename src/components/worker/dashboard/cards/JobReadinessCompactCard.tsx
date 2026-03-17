@@ -30,7 +30,7 @@ const JobReadinessCompactCard: React.FC<JobReadinessCompactCardProps> = ({ paylo
       onClick={onTap}
       sx={{
         width: '100%',
-        borderRadius: '12px',
+        borderRadius: '14px',
         border: 'none',
         boxShadow: 1,
         backgroundColor: bg,
@@ -38,7 +38,7 @@ const JobReadinessCompactCard: React.FC<JobReadinessCompactCardProps> = ({ paylo
         cursor: onTap ? 'pointer' : 'default',
       }}
     >
-      <CardContent sx={{ py: 1.5, px: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+      <CardContent sx={{ py: 1.25, px: 1.5, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
         <Typography variant="body2" sx={{ color: contrast, fontWeight: 500 }}>
           {payload.body}
         </Typography>

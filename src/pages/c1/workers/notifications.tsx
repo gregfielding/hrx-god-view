@@ -10,49 +10,15 @@ import {
   Typography,
   Box,
   List,
-  ListItemButton,
   Chip,
   Button,
   CircularProgress,
-  IconButton,
 } from '@mui/material';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import WorkIcon from '@mui/icons-material/Work';
-import CampaignIcon from '@mui/icons-material/Campaign';
-import NotificationsIcon from '@mui/icons-material/Notifications';
-import InfoIcon from '@mui/icons-material/Info';
-import PersonIcon from '@mui/icons-material/Person';
-import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useWorkerNotifications, getNotificationUrlAsync } from '../../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../../api/workerNotificationsApi';
-import type { NotificationType, NotificationCategory } from '../../../types/unifiedWorkerNotifications';
-
-const typeLabels: Record<NotificationType, string> = {
-  assignment: 'Assignments',
-  application: 'Applications',
-  document: 'Documents',
-  shift: 'Shift',
-  payroll: 'Payroll',
-  general: 'General',
-  system: 'System',
-  opportunity: 'Opportunities',
-  profile_action: 'Profile',
-  support: 'System',
-};
-
-const typeIcons: Record<NotificationType, React.ReactNode> = {
-  assignment: <AssignmentIcon fontSize="small" />,
-  application: <WorkIcon fontSize="small" />,
-  document: <InfoIcon fontSize="small" />,
-  shift: <AssignmentIcon fontSize="small" />,
-  payroll: <WorkIcon fontSize="small" />,
-  general: <NotificationsIcon fontSize="small" />,
-  system: <NotificationsIcon fontSize="small" />,
-  opportunity: <CampaignIcon fontSize="small" />,
-  profile_action: <PersonIcon fontSize="small" />,
-  support: <NotificationsIcon fontSize="small" />,
-};
+import type { NotificationCategory } from '../../../types/unifiedWorkerNotifications';
+import WorkerNotificationListItem from '../../../components/worker/WorkerNotificationListItem';
 
 const categoryLabels: Record<NotificationCategory, string> = {
   assignments: 'Assignments',
@@ -61,17 +27,6 @@ const categoryLabels: Record<NotificationCategory, string> = {
   profile: 'Profile',
   system: 'System',
 };
-
-function formatTime(ts: { toDate?: () => Date } | null): string {
-  if (!ts) return '';
-  const d = typeof (ts as any).toDate === 'function' ? (ts as any).toDate() : new Date((ts as any).seconds * 1000);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  if (diff < 60000) return 'Just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  return d.toLocaleDateString();
-}
 
 const C1WorkerNotifications: React.FC = () => {
   const { user } = useAuth();
@@ -164,39 +119,13 @@ const C1WorkerNotifications: React.FC = () => {
       ) : (
         <List disablePadding>
           {filtered.map((n) => (
-            <ListItemButton
+            <WorkerNotificationListItem
               key={n.id}
-              onClick={() => handleClick(n)}
-              sx={{ alignItems: 'flex-start', borderBottom: '1px solid', borderColor: 'divider', gap: 1 }}
-            >
-              <Box sx={{ color: 'text.secondary', mt: 0.25 }}>{typeIcons[n.type] ?? typeIcons.system}</Box>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5, flexWrap: 'wrap' }}>
-                  {!n.readAt && (
-                    <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', flexShrink: 0 }} />
-                  )}
-                  <Typography variant="subtitle2" sx={{ fontWeight: n.readAt ? 400 : 600 }}>
-                    {n.title}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {formatTime(n.createdAt)}
-                  </Typography>
-                </Box>
-                <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'block' }}>
-                  {n.body}
-                </Typography>
-              </Box>
-              {!n.readAt && (
-                <IconButton
-                  size="small"
-                  onClick={(e) => { e.stopPropagation(); handleMarkRead(n.id); }}
-                  disabled={markingId === n.id}
-                  aria-label="Mark read"
-                >
-                  <NotificationsActiveIcon fontSize="small" />
-                </IconButton>
-              )}
-            </ListItemButton>
+              notification={n}
+              onClick={handleClick}
+              onMarkRead={handleMarkRead}
+              isMarkingRead={markingId === n.id}
+            />
           ))}
         </List>
       )}
