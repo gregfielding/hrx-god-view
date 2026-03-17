@@ -1906,8 +1906,8 @@ const JobsBoard: React.FC = () => {
               </Box>
             )}
 
-            {/* Time Section - Only show for Gig job type */}
-            {newPost.jobType === 'gig' && (
+            {/* Time Section - Only show for Career job type; GIG uses per-shift times */}
+            {newPost.jobType === 'career' && (
               <Box sx={{ mt: 2 }}>
                 <Grid container spacing={2} alignItems="center">
                   <Grid item xs={12} sm={3}>

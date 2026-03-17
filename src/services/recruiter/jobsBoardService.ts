@@ -54,10 +54,16 @@ export interface JobBoardShift {
   endDate?: string; // ISO date string (only for multi-day)
   shiftMode?: 'single' | 'multi';
   /**
-   * Optional weekly schedule for multi-day shifts.
+   * Optional weekly schedule for multi-day shifts (Career).
    * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
    */
   weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+  /**
+   * Per-date schedule for GIG multi-day shifts. Keys are YYYY-MM-DD.
+   * When present, worker views show only dates that have start/end times.
+   * workersNeeded is per day for GIG (defaults to 1 if not set).
+   */
+  dateSchedule?: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }>;
   startTime: string; // "08:00" (HH:mm format)
   endTime: string; // "17:30" (HH:mm format)
   staffNeeded: number; // Total positions for this shift
@@ -376,6 +382,7 @@ export class JobsBoardService {
           endDate: isMulti ? endDate : undefined,
           shiftMode: isMulti ? 'multi' : 'single',
           weeklySchedule: isMulti ? (data.weeklySchedule || undefined) : undefined,
+          dateSchedule: isMulti ? (data.dateSchedule || undefined) : undefined,
           startTime: data.defaultStartTime, // HH:mm format
           endTime: data.defaultEndTime, // HH:mm format
           staffNeeded: data.totalStaffRequested || 1,
@@ -476,6 +483,7 @@ export class JobsBoardService {
           endDate: isMulti ? endDate : undefined,
           shiftMode: isMulti ? 'multi' : 'single',
           weeklySchedule: isMulti ? (data.weeklySchedule || undefined) : undefined,
+          dateSchedule: isMulti ? (data.dateSchedule || undefined) : undefined,
           startTime: data.defaultStartTime, // HH:mm format
           endTime: data.defaultEndTime, // HH:mm format
           staffNeeded: data.totalStaffRequested || 1,
@@ -614,7 +622,7 @@ export class JobsBoardService {
         payRate: payRate,
         showPayRate: customData?.showPayRate !== undefined ? customData.showPayRate : jobOrder.showPayRate,
         workersNeeded: customData?.workersNeeded ?? (isGigJob ? 1 : (jobOrder.workersNeeded ?? 1)),
-        showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : true, // Default to true if not set
+        showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : false, // Default to false so workers needed is hidden on job board unless explicitly enabled
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
         backgroundCheckPackages: customData?.backgroundCheckPackages !== undefined ? customData.backgroundCheckPackages : jobOrder.backgroundCheckPackages,
         showBackgroundChecks: customData?.showBackgroundChecks !== undefined ? customData.showBackgroundChecks : false,
@@ -1007,6 +1015,42 @@ export class JobsBoardService {
     } catch (error) {
       console.error('Error getting posts by job order:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Sync current job order dates and shifts to all linked job postings.
+   * Call after updating job order start/end dates or after adding/editing/deleting shifts
+   * so the stored posting documents stay in sync (public board also enriches at read time).
+   */
+  async syncJobOrderToLinkedPostings(tenantId: string, jobOrderId: string): Promise<void> {
+    try {
+      const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+      const jobOrderSnap = await getDoc(jobOrderRef);
+      if (!jobOrderSnap.exists()) return;
+
+      const jobOrderData = jobOrderSnap.data() as Record<string, unknown>;
+      const posts = await this.getPostsByJobOrder(tenantId, jobOrderId);
+      if (posts.length === 0) return;
+
+      const startDate = jobOrderData.startDate ?? null;
+      const endDate = jobOrderData.endDate ?? null;
+
+      for (const post of posts) {
+        const postRef = doc(db, 'tenants', tenantId, 'job_postings', post.id);
+        const updateData: Record<string, unknown> = {
+          updatedAt: new Date(),
+          ...(startDate != null && { startDate }),
+          ...(endDate != null && { endDate }),
+        };
+        await updateDoc(postRef, updateData);
+        if (post.jobType === 'gig') {
+          await this.syncShiftsToPosting(tenantId, post.id, jobOrderId);
+        }
+      }
+    } catch (error) {
+      console.error('Error syncing job order to linked postings:', error);
+      // Non-fatal: public board enriches at read time
     }
   }
 

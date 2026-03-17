@@ -290,6 +290,8 @@ export const placementsCreateAssignments = onCall(
     userIds,
     sourceType = 'manual',
     sourceId = null,
+    applyDate = null,
+    applyDates = null,
   } = (request.data || {}) as {
     tenantId?: string;
     jobOrderId?: string;
@@ -297,6 +299,8 @@ export const placementsCreateAssignments = onCall(
     userIds?: string[];
     sourceType?: string;
     sourceId?: string | null;
+    applyDate?: string | null;
+    applyDates?: string[] | null;
   };
 
   if (!tenantId || !jobOrderId || !shiftId || !Array.isArray(userIds) || userIds.length === 0) {
@@ -326,6 +330,12 @@ export const placementsCreateAssignments = onCall(
   });
   const shiftDate = toDateOnly(shift.shiftDate);
   const shiftEndDate = toDateOnly(shift.endDate) || shiftDate;
+  const bulkDates = Array.isArray(applyDates) && applyDates.length > 0
+    ? [...new Set(applyDates.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)))]
+    : null;
+  const useBulkDates = bulkDates && bulkDates.length > 0;
+  const effectiveStartDate = useBulkDates ? shiftDate : (applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate) ? applyDate : shiftDate);
+  const effectiveEndDate = useBulkDates ? shiftEndDate : (applyDate && /^\d{4}-\d{2}-\d{2}$/.test(applyDate) ? applyDate : shiftEndDate);
   const shiftStartMin = parseMinutes(shift.startTime || shift.defaultStartTime);
   const shiftEndMin = parseMinutes(shift.endTime || shift.defaultEndTime);
 
@@ -349,6 +359,199 @@ export const placementsCreateAssignments = onCall(
   const skipped: Array<{ userId: string; reason: string }> = [];
   const failed: Array<{ userId: string; error: string }> = [];
 
+  if (useBulkDates && bulkDates) {
+    const createdByUserId = new Map<string, Array<{ assignmentId: string; date: string }>>();
+    for (const userId of uniqueUserIds) {
+      try {
+        const userSnap = await db.doc(`users/${userId}`).get();
+        if (!userSnap.exists) {
+          skipped.push({ userId, reason: 'user_not_found' });
+          continue;
+        }
+        const userData = userSnap.data() || {};
+        const firstName = String(userData.firstName || '').trim() || String(userData.displayName || '').split(' ')[0] || '';
+        const lastName = String(userData.lastName || '').trim() || (String(userData.displayName || '').split(' ').slice(1).join(' ').trim()) || '';
+        const warnings: string[] = [];
+        const userCreated: Array<{ assignmentId: string; date: string }> = [];
+        for (const singleDate of bulkDates) {
+          const assignmentDocId = `${shiftId}__${userId}__${singleDate}`;
+          const assignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(assignmentDocId);
+          const assignmentDoc = await assignmentRef.get();
+          const existingStatus = assignmentDoc.exists ? String((assignmentDoc.data() || {}).status || '').toLowerCase() : '';
+          if (assignmentDoc.exists && !['declined', 'canceled', 'cancelled'].includes(existingStatus)) {
+            continue;
+          }
+          const activeAssignments = await db
+            .collection(`tenants/${tenantId}/assignments`)
+            .where('userId', '==', userId)
+            .where('status', 'in', ['proposed', 'confirmed', 'active'])
+            .get();
+          let blockedByOverlap = false;
+          activeAssignments.docs.forEach((docSnap) => {
+            const assignment = docSnap.data() || {};
+            if (assignment.shiftId === shiftId) return;
+            const assignmentStartDate = toDateOnly(assignment.startDate);
+            if (assignmentStartDate !== singleDate) return;
+            const existingStart = parseMinutes(assignment.startTime);
+            const existingEnd = parseMinutes(assignment.endTime);
+            if (overlapsSameDay(shiftStartMin, shiftEndMin, existingStart, existingEnd)) blockedByOverlap = true;
+          });
+          if (blockedByOverlap) continue;
+          const isReactivating = assignmentDoc.exists && ['canceled', 'cancelled', 'declined'].includes(existingStatus);
+          const assignmentData: any = {
+            tenantId,
+            jobOrderId,
+            shiftId,
+            candidateId: userId,
+            userId,
+            status: 'proposed',
+            startDate: singleDate,
+            endDate: singleDate,
+            startTime: shift.startTime || shift.defaultStartTime || '',
+            endTime: shift.endTime || shift.defaultEndTime || '',
+            payRate: Number(shift.payRate ?? jobOrder.payRate ?? 0),
+            billRate: Number(shift.billRate ?? jobOrder.billRate ?? 0),
+            timesheetMode: jobOrder.timesheetMode || 'mobile',
+            firstName,
+            lastName,
+            email: userData.email || '',
+            phone: userData.phone || userData.phoneE164 || '',
+            companyId: jobOrder.companyId || '',
+            companyName: jobOrder.companyName || '',
+            companyTitle: jobOrder.companyName || '',
+            locationId: locationId || '',
+            locationIds: locationId ? [locationId] : [],
+            locationNickname,
+            worksiteName: locationNickname,
+            latitude,
+            longitude,
+            jobOrderType: jobOrder.jobType || 'gig',
+            jobTitle: shift.defaultJobTitle || jobOrder.jobTitle || '',
+            shiftTitle: shift.shiftTitle || '',
+            assignmentSource: sourceType,
+            sourceGroupId: sourceType === 'group' ? sourceId : null,
+            placementMode: 'assign_now',
+            jobPostId: jobPostId || null,
+            createdBy,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+            suppressInitialNotification: true,
+            entityId: onboardingConfig.entityId,
+            requirementPackageId: onboardingConfig.requirementPackageId,
+            onboardingInstanceId: assignmentRef.id,
+            onboardingStatus: (onboardingConfig.entityId && onboardingConfig.requirementPackageId && onboardingConfig.packageData) ? 'not_started' : 'blocked',
+            onboardingPercent: 0,
+          };
+          if (isReactivating) {
+            await assignmentRef.set(
+              {
+                status: 'proposed',
+                updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                assignedAt: admin.firestore.FieldValue.serverTimestamp(),
+                suppressInitialNotification: true,
+                entityId: onboardingConfig.entityId,
+                requirementPackageId: onboardingConfig.requirementPackageId,
+                onboardingInstanceId: assignmentRef.id,
+                onboardingStatus: (onboardingConfig.entityId && onboardingConfig.requirementPackageId && onboardingConfig.packageData) ? 'not_started' : 'blocked',
+                onboardingPercent: 0,
+                canceledAt: admin.firestore.FieldValue.delete(),
+                cancellationReason: admin.firestore.FieldValue.delete(),
+                declinedAt: admin.firestore.FieldValue.delete(),
+                declinedBy: admin.firestore.FieldValue.delete(),
+              },
+              { merge: true },
+            );
+          } else {
+            await assignmentRef.set(assignmentData, { merge: false });
+          }
+          await ensureOnboardingInstance({
+            tenantId,
+            assignmentId: assignmentRef.id,
+            userId,
+            jobOrderId,
+            shiftId,
+            entityId: onboardingConfig.entityId,
+            requirementPackageId: onboardingConfig.requirementPackageId,
+            packageData: onboardingConfig.packageData,
+            createdBy,
+            blockedReason: onboardingConfig.blockedReason,
+          });
+          const applicationId = await resolveApplicationForAssignment({
+            tenantId,
+            jobOrderId,
+            shiftId,
+            userId,
+            createdBy,
+            assignmentId: assignmentRef.id,
+            jobPostId,
+            entityId: onboardingConfig.entityId,
+          });
+          await assignmentRef.set(
+            { applicationId, updatedAt: admin.firestore.FieldValue.serverTimestamp() },
+            { merge: true },
+          );
+          created.push({ userId, assignmentId: assignmentRef.id, warnings });
+          userCreated.push({ assignmentId: assignmentRef.id, date: singleDate });
+        }
+        if (userCreated.length > 0) {
+          createdByUserId.set(userId, userCreated);
+        }
+      } catch (error: any) {
+        failed.push({ userId, error: error?.message || 'unknown_error' });
+      }
+    }
+    for (const [userId, assignments] of createdByUserId) {
+      try {
+        const userDoc = await db.doc(`users/${userId}`).get();
+        const userData = userDoc.data() || {};
+        const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
+        const firstName = assignments.length ? (userData?.firstName as string) || 'there' : 'there';
+        const jobTitle = shift.defaultJobTitle || jobOrder.jobTitle || 'a position';
+        const dateStrs = assignments.map((a) => {
+          const d = new Date(a.date + 'T12:00:00');
+          return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+        });
+        const dateTimeInfo = dateStrs.length ? ` on ${dateStrs.join(', ')}` : '';
+        const postingPath = jobPostId
+          ? `/c1/jobs-board/${jobPostId}?assignmentId=${assignments[0].assignmentId}&shiftId=${shiftId}&intent=assignment_response`
+          : '/c1/jobs-board';
+        const jobUrl = `https://hrxone.com${postingPath}`;
+        const locationText = locationNickname ? ` at ${locationNickname}` : '';
+        const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}`;
+        let emailSubject: string | undefined;
+        let emailBody: string | undefined;
+        try {
+          const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+          const emailResult = await buildAssignmentDetailsEmail(tenantId, assignments[0].assignmentId);
+          if (emailResult) {
+            emailSubject = emailResult.subject;
+            emailBody = emailResult.html;
+          }
+        } catch (_) {
+          /* ignore */
+        }
+        const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
+        await sendLegacyAssignmentMessage({
+          tenantId,
+          userId,
+          phoneE164: phoneE164 || '+0000000000',
+          message,
+          messageTypeId: 'assignment_created',
+          source: 'assignment_created',
+          sourceId: assignments[0].assignmentId,
+          assignmentId: assignments[0].assignmentId,
+          emailSubject,
+          emailBody,
+        });
+      } catch (notifyErr: any) {
+        // log but don't fail the whole operation
+        console.warn(`Bulk assignment notification failed for user ${userId}:`, notifyErr?.message);
+      }
+    }
+    return { success: failed.length === 0, created, skipped, failed };
+  }
+
   for (const userId of uniqueUserIds) {
     try {
       const userSnap = await db.doc(`users/${userId}`).get();
@@ -359,17 +562,14 @@ export const placementsCreateAssignments = onCall(
       const userData = userSnap.data() || {};
       const warnings: string[] = [];
 
-      const existingShiftAssignments = await db
-        .collection(`tenants/${tenantId}/assignments`)
-        .where('userId', '==', userId)
-        .where('shiftId', '==', shiftId)
-        .limit(5)
-        .get();
-      const hasExistingForShift = existingShiftAssignments.docs.some((docSnap) => {
-        const s = String((docSnap.data() || {}).status || '').toLowerCase();
-        return !['declined', 'canceled', 'cancelled'].includes(s);
-      });
-      if (hasExistingForShift) {
+      const assignmentDocId = effectiveStartDate !== shiftDate || effectiveEndDate !== shiftEndDate
+        ? `${shiftId}__${userId}__${effectiveStartDate}`
+        : `${shiftId}__${userId}`;
+      const assignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(assignmentDocId);
+      const assignmentDoc = await assignmentRef.get();
+      const existingStatus = assignmentDoc.exists ? String((assignmentDoc.data() || {}).status || '').toLowerCase() : '';
+      const hasExistingForThisSlot = assignmentDoc.exists && !['declined', 'canceled', 'cancelled'].includes(existingStatus);
+      if (hasExistingForThisSlot) {
         skipped.push({ userId, reason: 'already_assigned_to_shift' });
         continue;
       }
@@ -388,7 +588,7 @@ export const placementsCreateAssignments = onCall(
         if (assignmentShiftId === shiftId) return;
 
         const assignmentStartDate = toDateOnly(assignment.startDate);
-        if (assignmentStartDate !== shiftDate) return;
+        if (assignmentStartDate !== effectiveStartDate) return;
 
         const existingStart = parseMinutes(assignment.startTime);
         const existingEnd = parseMinutes(assignment.endTime);
@@ -405,14 +605,6 @@ export const placementsCreateAssignments = onCall(
       }
       if (sameDayDifferentShift) {
         warnings.push('same_day_second_shift_warning');
-      }
-
-      const assignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(`${shiftId}__${userId}`);
-      const assignmentDoc = await assignmentRef.get();
-      const existingStatus = assignmentDoc.exists ? String((assignmentDoc.data() || {}).status || '').toLowerCase() : '';
-      if (assignmentDoc.exists && !['canceled', 'cancelled', 'declined'].includes(existingStatus)) {
-        skipped.push({ userId, reason: 'duplicate_assignment_key' });
-        continue;
       }
 
       const firstName = String(userData.firstName || '').trim() || String(userData.displayName || '').split(' ')[0] || '';
@@ -472,8 +664,8 @@ export const placementsCreateAssignments = onCall(
           candidateId: userId,
           userId,
           status: 'proposed',
-          startDate: shiftDate || '',
-          endDate: shiftEndDate || shiftDate || '',
+          startDate: effectiveStartDate || '',
+          endDate: effectiveEndDate || effectiveStartDate || '',
           startTime: shift.startTime || shift.defaultStartTime || '',
           endTime: shift.endTime || shift.defaultEndTime || '',
           payRate: Number(shift.payRate ?? jobOrder.payRate ?? 0),

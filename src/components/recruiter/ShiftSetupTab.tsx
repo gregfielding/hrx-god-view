@@ -40,6 +40,7 @@ import {
   Group as GroupIcon,
   ChevronLeft as ChevronLeftIcon,
   ChevronRight as ChevronRightIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import {
   addDoc,
@@ -53,6 +54,8 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
+import { getDateRange, formatDayAndDate, dateHasHours } from '../../utils/dateSchedule';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
 export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
@@ -72,10 +75,15 @@ interface Shift {
   shiftMode?: 'single' | 'multi';
   endDate?: string; // ISO date string (only for multi-day)
   /**
-   * Weekly schedule for multi-day shifts.
+   * Weekly schedule for multi-day shifts (Career recurring).
    * Keys are JS day-of-week numbers as strings: 0=Sun ... 6=Sat
    */
   weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+  /**
+   * Per-date schedule for GIG multi-day shifts. Keys are YYYY-MM-DD.
+   * When present, worker views show only these dates (with hours).
+   */
+  dateSchedule?: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }>;
   defaultStartTime: string; // HH:mm format
   defaultEndTime: string; // HH:mm format
   shiftDescription?: string;
@@ -148,6 +156,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     shiftDate: string;
     endDate: string;
     weeklySchedule: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    dateSchedule: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }>;
     defaultStartTime: string;
     defaultEndTime: string;
     shiftDescription: string;
@@ -165,6 +174,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     shiftDate: '',
     endDate: '',
     weeklySchedule: buildDefaultWeeklySchedule('', ''),
+    dateSchedule: {},
     defaultStartTime: '',
     defaultEndTime: '',
     shiftDescription: '',
@@ -246,6 +256,37 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         mode === 'multi'
           ? (shift.weeklySchedule || buildDefaultWeeklySchedule(shift.defaultStartTime || '', shift.defaultEndTime || ''))
           : buildDefaultWeeklySchedule('', '');
+      const endDateVal = mode === 'multi' ? (isGigJob ? (shift.endDate || shift.shiftDate) : '') : '';
+      const dateSchedule: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }> = {};
+      if (isGigJob && mode === 'multi' && shift.shiftDate && endDateVal) {
+        if ((shift as any).dateSchedule && typeof (shift as any).dateSchedule === 'object') {
+          const raw = (shift as any).dateSchedule;
+          Object.keys(raw).forEach((iso) => {
+            const e = raw[iso];
+            dateSchedule[iso] = {
+              startTime: e?.startTime ?? '',
+              endTime: e?.endTime ?? '',
+              workersNeeded: e?.workersNeeded != null ? Number(e.workersNeeded) : 1,
+              overstaff: e?.overstaff != null ? Math.max(0, Number(e.overstaff)) : 0,
+            };
+          });
+        } else {
+          const range = getDateRange(shift.shiftDate, endDateVal);
+          const defStart = shift.defaultStartTime || '';
+          const defEnd = shift.defaultEndTime || '';
+          range.forEach((iso) => {
+            const d = new Date(iso + 'T12:00:00');
+            const dow = d.getDay();
+            const ws = shift.weeklySchedule?.[String(dow)];
+            dateSchedule[iso] = {
+              startTime: ws?.enabled ? (ws.startTime || defStart) : defStart,
+              endTime: ws?.enabled ? (ws.endTime || defEnd) : defEnd,
+              workersNeeded: 1,
+              overstaff: 0,
+            };
+          });
+        }
+      }
       setFormData({
         shiftTitle: shift.shiftTitle,
         status: (shift.status || 'open') as ShiftStatus,
@@ -256,9 +297,9 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         poNumber: shift.poNumber || '',
         shiftMode: mode,
         shiftDate: shift.shiftDate,
-        // Gig: multi-day uses an end date. Career: multi-day is an open-ended weekly schedule.
-        endDate: mode === 'multi' ? (isGigJob ? (shift.endDate || shift.shiftDate) : '') : '',
+        endDate: endDateVal,
         weeklySchedule,
+        dateSchedule,
         defaultStartTime: shift.defaultStartTime,
         defaultEndTime: shift.defaultEndTime,
         shiftDescription: shift.shiftDescription || '',
@@ -279,12 +320,13 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         defaultJobTitle: defaultJobTitle,
         totalStaffRequested: 1,
         overstaffCount: 0,
-        showStaffNeeded: false,
+        showStaffNeeded: jobOrder?.showWorkersNeeded === true,
         poNumber: '',
         shiftMode: 'single',
         shiftDate: '',
         endDate: '',
         weeklySchedule: buildDefaultWeeklySchedule('', ''),
+        dateSchedule: {},
         defaultStartTime: '',
         defaultEndTime: '',
         shiftDescription: '',
@@ -308,11 +350,11 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         setError('Shift title is required');
         return;
       }
-      if (!formData.defaultStartTime || !formData.defaultEndTime) {
+      if (!isGigJob && (!formData.defaultStartTime || !formData.defaultEndTime)) {
         setError('Start and end times are required');
         return;
       }
-      if (formData.totalStaffRequested < 1) {
+      if (!isGigJob && formData.totalStaffRequested < 1) {
         setError('Total staff requested must be at least 1');
         return;
       }
@@ -335,19 +377,36 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         return;
       }
 
-      // Validate weekly schedule for multi-day shifts
+      // Validate schedule for multi-day shifts
       if (isSchedule) {
-        const schedule = formData.weeklySchedule || {};
-        const enabledDays = Object.values(schedule).filter((d) => d?.enabled);
-        if (enabledDays.length === 0) {
-          setError('Select at least one day of the week for this multi-day shift');
-          return;
-        }
-        for (const [k, d] of Object.entries(schedule)) {
-          if (!d?.enabled) continue;
-          if (!d.startTime || !d.endTime) {
-            setError(`Start and end times are required for ${DOWS.find((x) => String(x.dow) === k)?.label || 'a selected day'}`);
+        if (isGigJob) {
+          const range = getDateRange(formData.shiftDate, formData.endDate);
+          const dateSchedule = formData.dateSchedule || {};
+          const withHours = range.filter((iso) => dateHasHours(dateSchedule[iso]));
+          if (withHours.length === 0) {
+            setError('Enter start and end times for at least one date in the range');
             return;
+          }
+          for (const iso of withHours) {
+            const d = dateSchedule[iso];
+            if (!d?.startTime?.trim() || !d?.endTime?.trim()) {
+              setError(`Start and end times are required for ${formatDayAndDate(iso)}`);
+              return;
+            }
+          }
+        } else {
+          const schedule = formData.weeklySchedule || {};
+          const enabledDays = Object.values(schedule).filter((d) => d?.enabled);
+          if (enabledDays.length === 0) {
+            setError('Select at least one day of the week for this multi-day shift');
+            return;
+          }
+          for (const [k, d] of Object.entries(schedule)) {
+            if (!d?.enabled) continue;
+            if (!d.startTime || !d.endTime) {
+              setError(`Start and end times are required for ${DOWS.find((x) => String(x.dow) === k)?.label || 'a selected day'}`);
+              return;
+            }
           }
         }
       }
@@ -385,16 +444,40 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
       if (isSchedule) {
         if (isGigJob) {
           shiftData.endDate = formData.endDate;
+          const range = getDateRange(formData.shiftDate, formData.endDate);
+          const merged: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }> = {};
+          range.forEach((iso) => {
+            const existing = formData.dateSchedule?.[iso];
+            merged[iso] = {
+              startTime: existing?.startTime ?? formData.defaultStartTime,
+              endTime: existing?.endTime ?? formData.defaultEndTime,
+              workersNeeded: existing?.workersNeeded != null ? Math.max(1, Number(existing.workersNeeded)) : 1,
+              overstaff: existing?.overstaff != null ? Math.max(0, Number(existing.overstaff)) : 0,
+            };
+          });
+          shiftData.dateSchedule = merged;
+          // GIG: derive totalStaffRequested from sum of (workers + over) per day for backward compatibility
+          const gigTotal = range.reduce((sum, iso) => {
+            const e = merged[iso];
+            return sum + (e?.workersNeeded ?? 1) + (e?.overstaff ?? 0);
+          }, 0);
+          shiftData.totalStaffRequested = Math.max(1, gigTotal);
+          shiftData.overstaffCount = 0; // GIG uses per-day over
         } else {
           // Open-ended schedule: no endDate. Only use deleteField for updateDoc (not allowed with addDoc).
           if (editingShift) shiftData.endDate = deleteField();
         }
-        shiftData.weeklySchedule = formData.weeklySchedule || buildDefaultWeeklySchedule(formData.defaultStartTime, formData.defaultEndTime);
+        if (!isGigJob) {
+          shiftData.weeklySchedule = formData.weeklySchedule || buildDefaultWeeklySchedule(formData.defaultStartTime, formData.defaultEndTime);
+        } else {
+          if (editingShift) shiftData.weeklySchedule = deleteField();
+        }
       } else {
-        // Single-day: no endDate or weeklySchedule. Only use deleteField for updateDoc.
+        // Single-day: no endDate, weeklySchedule, or dateSchedule.
         if (editingShift) {
           shiftData.endDate = deleteField();
           shiftData.weeklySchedule = deleteField();
+          if (isGigJob) shiftData.dateSchedule = deleteField();
         }
       }
 
@@ -407,6 +490,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         if (!isSchedule) {
           delete dataForAdd.endDate;
           delete dataForAdd.weeklySchedule;
+          delete dataForAdd.dateSchedule;
         } else if (!isGigJob) {
           delete dataForAdd.endDate;
         }
@@ -416,7 +500,9 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
 
       handleCloseDialog();
       fetchShifts();
-      
+      // Keep linked job postings in sync so jobs board shows current shifts/dates
+      JobsBoardService.getInstance().syncJobOrderToLinkedPostings(tenantId, jobOrderId).catch(() => {});
+
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       console.error('Error saving shift:', err);
@@ -433,6 +519,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
       await deleteDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', shiftId));
       setSuccess('Shift deleted successfully');
       fetchShifts();
+      JobsBoardService.getInstance().syncJobOrderToLinkedPostings(tenantId, jobOrderId).catch(() => {});
       setTimeout(() => setSuccess(''), 3000);
     } catch (err) {
       console.error('Error deleting shift:', err);
@@ -544,8 +631,8 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
             Shift Setup
           </Typography>
           {jobOrder?.jobType === 'gig' && (
-            <Typography variant="caption" color="text.secondary">
-              Shifts are automatically shown on the jobs board for the next 30 days
+            <Typography variant="caption" color="text.secondary" display="block">
+              Shifts are shown on the jobs board. When you add, edit, or remove shifts (or change the job order end date), the jobs board listing updates so candidates see current dates and shifts.
             </Typography>
           )}
         </Box>
@@ -787,43 +874,56 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               disabled={availablePositions.length === 0}
             />
 
-            {/* Total Staff Requested + Overstaff + Toggle */}
-            <Grid container spacing={2}>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="Total Staff Requested"
-                  type="number"
-                  value={formData.totalStaffRequested}
-                  onChange={(e) => setFormData({ ...formData, totalStaffRequested: parseInt(e.target.value) || 1 })}
-                  inputProps={{ min: 1 }}
-                  required
-                />
+            {/* Total Staff Requested + Overstaff + Toggle — hidden for GIGs (GIG uses per-day Workers + Over) */}
+            {!isGigJob && (
+              <Grid container spacing={2}>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="Total Staff Requested"
+                    type="number"
+                    value={formData.totalStaffRequested}
+                    onChange={(e) => setFormData({ ...formData, totalStaffRequested: parseInt(e.target.value) || 1 })}
+                    inputProps={{ min: 1 }}
+                    required
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <TextField
+                    fullWidth
+                    label="Overstaff (extra)"
+                    type="number"
+                    value={formData.overstaffCount}
+                    onChange={(e) => setFormData({ ...formData, overstaffCount: parseInt(e.target.value) || 0 })}
+                    inputProps={{ min: 0 }}
+                    helperText={`Filled target: ${Math.max(1, (formData.totalStaffRequested || 1) + (formData.overstaffCount || 0))} assignments`}
+                  />
+                </Grid>
+                <Grid item xs={12} md={4}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={formData.showStaffNeeded}
+                        onChange={(e) => setFormData({ ...formData, showStaffNeeded: e.target.checked })}
+                      />
+                    }
+                    label="Show Staff Needed on Jobs Board"
+                    sx={{ mt: 1.5 }}
+                  />
+                </Grid>
               </Grid>
-              <Grid item xs={12} md={4}>
-                <TextField
-                  fullWidth
-                  label="Overstaff (extra)"
-                  type="number"
-                  value={formData.overstaffCount}
-                  onChange={(e) => setFormData({ ...formData, overstaffCount: parseInt(e.target.value) || 0 })}
-                  inputProps={{ min: 0 }}
-                  helperText={`Filled target: ${Math.max(1, (formData.totalStaffRequested || 1) + (formData.overstaffCount || 0))} assignments`}
-                />
-              </Grid>
-              <Grid item xs={12} md={4}>
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={formData.showStaffNeeded}
-                      onChange={(e) => setFormData({ ...formData, showStaffNeeded: e.target.checked })}
-                    />
-                  }
-                  label="Show Staff Needed on Jobs Board"
-                  sx={{ mt: 1.5 }}
-                />
-              </Grid>
-            </Grid>
+            )}
+            {isGigJob && (
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={formData.showStaffNeeded}
+                    onChange={(e) => setFormData({ ...formData, showStaffNeeded: e.target.checked })}
+                  />
+                }
+                label="Show Staff Needed on Jobs Board"
+              />
+            )}
 
             {/* PO Number */}
             <TextField
@@ -947,7 +1047,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                   setFormData({ ...formData, defaultStartTime: next, weeklySchedule: nextSchedule });
                 }}
                 InputLabelProps={{ shrink: true }}
-                required
+                required={!isGigJob}
               />
               <TextField
                 fullWidth
@@ -971,24 +1071,122 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                   setFormData({ ...formData, defaultEndTime: next, weeklySchedule: nextSchedule });
                 }}
                 InputLabelProps={{ shrink: true }}
-                required
+                required={!isGigJob}
               />
             </Box>
 
-            {/* Weekly schedule:
-                - Gig: show only when the date range spans > 1 day.
-                - Career: show whenever "Weekly schedule" is enabled. */}
-            {formData.shiftMode === 'multi' && (!isGigJob || (formData.endDate && formData.endDate !== formData.shiftDate)) && (
+            {/* GIG multi-day: per-date schedule (first day = start date, last = end date). */}
+            {formData.shiftMode === 'multi' && isGigJob && formData.shiftDate && formData.endDate && formData.endDate >= formData.shiftDate && (
               <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 2 }}>
                 <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                  Weekly schedule {isGigJob ? '(applies to dates within the range)' : ''}
+                  Shift hours by date
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Set start and end times and workers needed for each date. Only dates with times set will appear on the job posting for workers.
+                </Typography>
+                <Grid container spacing={1} sx={{ alignItems: 'center' }}>
+                  {getDateRange(formData.shiftDate, formData.endDate).map((iso) => {
+                    const entry = formData.dateSchedule?.[iso] ?? { startTime: formData.defaultStartTime, endTime: formData.defaultEndTime, workersNeeded: 1, overstaff: 0 };
+                    return (
+                      <React.Fragment key={iso}>
+                        <Grid item xs={12} md={2}>
+                          <Typography variant="body2" fontWeight={600}>
+                            {formatDayAndDate(iso)}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={3} md={2}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Start"
+                            type="time"
+                            value={entry.startTime || ''}
+                            onChange={(e) => {
+                              const next = { ...(formData.dateSchedule || {}), [iso]: { ...entry, startTime: e.target.value } };
+                              setFormData({ ...formData, dateSchedule: next });
+                            }}
+                            InputLabelProps={{ shrink: true }}
+                          />
+                        </Grid>
+                        <Grid item xs={3} md={2}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="End"
+                            type="time"
+                            value={entry.endTime || ''}
+                            onChange={(e) => {
+                              const next = { ...(formData.dateSchedule || {}), [iso]: { ...entry, endTime: e.target.value } };
+                              setFormData({ ...formData, dateSchedule: next });
+                            }}
+                            InputLabelProps={{ shrink: true }}
+                          />
+                        </Grid>
+                        <Grid item xs={3} md={1.5}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Over"
+                            type="number"
+                            inputProps={{ min: 0, max: 999 }}
+                            value={entry.overstaff ?? 0}
+                            onChange={(e) => {
+                              const v = Math.max(0, parseInt(e.target.value, 10) || 0);
+                              const next = { ...(formData.dateSchedule || {}), [iso]: { ...entry, overstaff: v } };
+                              setFormData({ ...formData, dateSchedule: next });
+                            }}
+                          />
+                        </Grid>
+                        <Grid item xs={3} md={1.5}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="Workers"
+                            type="number"
+                            inputProps={{ min: 1, max: 999 }}
+                            value={entry.workersNeeded ?? 1}
+                            onChange={(e) => {
+                              const v = Math.max(1, parseInt(e.target.value, 10) || 1);
+                              const next = { ...(formData.dateSchedule || {}), [iso]: { ...entry, workersNeeded: v } };
+                              setFormData({ ...formData, dateSchedule: next });
+                            }}
+                          />
+                        </Grid>
+                        <Grid item xs={12} md={2}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<ClearIcon />}
+                            onClick={() => {
+                              const next = { ...(formData.dateSchedule || {}), [iso]: { startTime: '', endTime: '', workersNeeded: entry.workersNeeded ?? 1, overstaff: 0 } };
+                              setFormData({ ...formData, dateSchedule: next });
+                            }}
+                            title="Clear times for this day (date will not appear on job posting)"
+                            aria-label="Clear times for this day"
+                            sx={{ minWidth: 'fit-content' }}
+                          >
+                            Clear
+                          </Button>
+                        </Grid>
+                      </React.Fragment>
+                    );
+                  })}
+                </Grid>
+              </Box>
+            )}
+
+            {/* Career multi-day: weekly schedule (Mon–Sun). */}
+            {formData.shiftMode === 'multi' && !isGigJob && (
+              <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 2 }}>
+                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                  Weekly schedule (recurring)
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   Choose which days are worked and set start/end times per day (e.g., Wed 10–6).
                 </Typography>
 
                 <Grid container spacing={1} sx={{ alignItems: 'center' }}>
-                  {DOWS.map(({ dow, label, short }) => {
+                  {DOWS.map(({ dow, short }) => {
                     const key = String(dow);
                     const day = formData.weeklySchedule?.[key] || { enabled: false, startTime: formData.defaultStartTime, endTime: formData.defaultEndTime };
                     return (
@@ -1091,8 +1289,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
             disabled={
               !formData.shiftTitle ||
               !formData.shiftDate ||
-              !formData.defaultStartTime ||
-              !formData.defaultEndTime ||
+              (!isGigJob && (!formData.defaultStartTime || !formData.defaultEndTime)) ||
               (isGigJob && formData.shiftMode === 'multi' && (!formData.endDate || formData.endDate < formData.shiftDate))
             }
           >

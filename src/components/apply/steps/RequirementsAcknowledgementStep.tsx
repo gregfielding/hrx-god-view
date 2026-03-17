@@ -504,8 +504,11 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
 
       {/* Transport Method */}
       <Box sx={{ mt: 3 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700, mb: 1.5 }}>
+        <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           {t('apply.howWillYouGetToWork')}
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+          {t('apply.microcopyTransportation')}
         </Typography>
         <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
           {[

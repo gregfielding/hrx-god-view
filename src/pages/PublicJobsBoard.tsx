@@ -71,6 +71,7 @@ import AuthDialog from '../components/AuthDialog';
 import EligibilityModal from '../components/EligibilityModal';
 import { checkMissingCertifications } from '../utils/checkMissingCertifications';
 import { toChipLabel } from '../utils/chipLabel';
+import { getLastShiftDateFromShifts } from '../utils/dateSchedule';
 
 interface PublicJobPosting {
   id: string;
@@ -137,6 +138,9 @@ interface PublicJobPosting {
   createdAt: Date;
   benefits?: string;
   jobOrderId?: string; // For Gig jobs loaded directly from job_orders
+  trustedClient?: boolean;
+  popularShift?: boolean;
+  highDemand?: boolean;
 }
 
 const PublicJobsBoard: React.FC = () => {
@@ -457,7 +461,7 @@ const PublicJobsBoard: React.FC = () => {
       payRate: payRate,
       showPayRate: jobOrder.showPayRate || false,
       workersNeeded: jobOrder.workersNeeded,
-      showWorkersNeeded: jobOrder.showWorkersNeeded !== false, // Default to true if not set
+      showWorkersNeeded: jobOrder.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
       eVerifyRequired: jobOrder.eVerifyRequired || false,
       backgroundCheckPackages: jobOrder.backgroundCheckPackages || [],
       showBackgroundChecks: false,
@@ -493,7 +497,10 @@ const PublicJobsBoard: React.FC = () => {
       createdAt: createdAt,
       benefits: '',
       // Add jobOrderId for reference
-      jobOrderId: jobOrder.id
+      jobOrderId: jobOrder.id,
+      trustedClient: !!jobOrder.trustedClient,
+      popularShift: !!jobOrder.popularShift,
+      highDemand: !!jobOrder.highDemand
     };
   };
 
@@ -613,15 +620,46 @@ const PublicJobsBoard: React.FC = () => {
             // If worksiteAddress is missing city/state, try to fetch location
             let worksiteAddress: any = post.worksiteAddress;
             let worksiteId = (post as any).worksiteId;
-            
-            // If posting doesn't have worksiteId but has jobOrderId, fetch it from the job order
-            if (!worksiteId && (post as any).jobOrderId) {
+            // Enrich with current job order dates so board shows latest start/end (e.g. extended dates, new shifts)
+            let enrichedStartDate: Date | undefined = post.startDate instanceof Date ? post.startDate : (post.startDate ? new Date(post.startDate) : undefined);
+            let enrichedEndDate: Date | undefined = post.endDate instanceof Date ? post.endDate : (post.endDate ? new Date(post.endDate) : undefined);
+
+            // When post is linked to a job order, fetch it for worksiteId and for current start/end dates
+            if ((post as any).jobOrderId) {
               try {
                 const jobOrderRef = doc(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId);
                 const jobOrderSnap = await getDoc(jobOrderRef);
                 if (jobOrderSnap.exists()) {
-                  const jobOrderData = jobOrderSnap.data();
-                  worksiteId = jobOrderData.worksiteId;
+                  const jobOrderData = jobOrderSnap.data() as Record<string, unknown>;
+                  if (!worksiteId && jobOrderData.worksiteId) worksiteId = jobOrderData.worksiteId as string;
+                  const toDate = (v: unknown): Date | undefined => {
+                    if (v == null) return undefined;
+                    if (v instanceof Date) return v;
+                    if (typeof (v as { toDate?: () => Date }).toDate === 'function') return (v as { toDate: () => Date }).toDate();
+                    if (typeof v === 'string' || typeof v === 'number') return new Date(v);
+                    return undefined;
+                  };
+                  if (jobOrderData.startDate != null) enrichedStartDate = toDate(jobOrderData.startDate);
+                  if (jobOrderData.endDate != null) enrichedEndDate = toDate(jobOrderData.endDate);
+                  // For gig posts, extend end date to last shift date (worker UI override)
+                  if ((post as any).jobType === 'gig') {
+                    try {
+                      const shiftsRef = collection(db, 'tenants', specificTenantId, 'job_orders', (post as any).jobOrderId, 'shifts');
+                      const shiftsSnap = await getDocs(shiftsRef);
+                      const shifts = shiftsSnap.docs.map((d) => d.data()).map((data: any) => ({
+                        shiftDate: data.shiftDate,
+                        endDate: data.endDate,
+                        dateSchedule: data.dateSchedule,
+                      }));
+                      const lastStr = getLastShiftDateFromShifts(shifts);
+                      if (lastStr) {
+                        const lastDate = new Date(lastStr);
+                        if (!enrichedEndDate || lastDate > enrichedEndDate) enrichedEndDate = lastDate;
+                      }
+                    } catch (e) {
+                      console.debug('Failed to fetch shifts for gig post end date', post.id, e);
+                    }
+                  }
                 }
               } catch (err) {
                 console.debug('Failed to fetch job order for posting', post.id, ':', err);
@@ -677,15 +715,15 @@ const PublicJobsBoard: React.FC = () => {
               companyName: post.companyName,
               worksiteName: post.worksiteName,
               worksiteAddress: worksiteAddress || post.worksiteAddress,
-            startDate: post.startDate,
-            endDate: post.endDate,
-            expDate: post.expDate,
+              startDate: enrichedStartDate,
+              endDate: enrichedEndDate,
+              expDate: post.expDate,
             showStart: post.showStart,
             showEnd: post.showEnd,
             payRate: post.payRate,
             showPayRate: post.showPayRate,
             workersNeeded: post.workersNeeded,
-            showWorkersNeeded: post.showWorkersNeeded !== false, // Default to true if not set
+            showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
             eVerifyRequired: post.eVerifyRequired,
             backgroundCheckPackages: post.backgroundCheckPackages,
             showBackgroundChecks: post.showBackgroundChecks,
@@ -722,7 +760,10 @@ const PublicJobsBoard: React.FC = () => {
             restrictedGroups: (post as any).restrictedGroups,
             createdAt: post.createdAt,
             benefits: post.benefits,
-            jobOrderId: post.jobOrderId
+            jobOrderId: post.jobOrderId,
+            trustedClient: !!(post as any).trustedClient,
+            popularShift: !!(post as any).popularShift,
+            highDemand: !!(post as any).highDemand
           };
         });
         
@@ -851,26 +892,67 @@ const PublicJobsBoard: React.FC = () => {
               console.warn(`Failed to load gig job orders for tenant ${tenantId}:`, gigErr);
             }
             
-            // Convert to PublicJobPosting format
-            const convertedPosts: PublicJobPosting[] = activePosts.map(post => ({
-              id: post.id,
-              tenantId: post.tenantId,
-              postTitle: post.postTitle,
-              jobTitle: post.jobTitle,
-              jobType: post.jobType,
-              jobDescription: post.jobDescription,
-              companyName: post.companyName,
-              worksiteName: post.worksiteName,
-              worksiteAddress: post.worksiteAddress,
-              startDate: post.startDate,
-              endDate: post.endDate,
-              expDate: post.expDate,
+            // Convert to PublicJobPosting format; enrich with current job order dates when linked
+            const toDate = (v: unknown): Date | undefined => {
+              if (v == null) return undefined;
+              if (v instanceof Date) return v;
+              if (typeof (v as { toDate?: () => Date }).toDate === 'function') return (v as { toDate: () => Date }).toDate();
+              if (typeof v === 'string' || typeof v === 'number') return new Date(v);
+              return undefined;
+            };
+            const convertedPostsPromisesAll = activePosts.map(async (post) => {
+              let startDate: Date | undefined = post.startDate instanceof Date ? post.startDate : (post.startDate ? new Date(post.startDate) : undefined);
+              let endDate: Date | undefined = post.endDate instanceof Date ? post.endDate : (post.endDate ? new Date(post.endDate) : undefined);
+              if ((post as any).jobOrderId) {
+                try {
+                  const jobOrderRef = doc(db, 'tenants', tenantId, 'job_orders', (post as any).jobOrderId);
+                  const jobOrderSnap = await getDoc(jobOrderRef);
+                  if (jobOrderSnap.exists()) {
+                    const jobOrderData = jobOrderSnap.data() as Record<string, unknown>;
+                    if (jobOrderData.startDate != null) startDate = toDate(jobOrderData.startDate);
+                    if (jobOrderData.endDate != null) endDate = toDate(jobOrderData.endDate);
+                    if ((post as any).jobType === 'gig') {
+                      try {
+                        const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', (post as any).jobOrderId, 'shifts');
+                        const shiftsSnap = await getDocs(shiftsRef);
+                        const shifts = shiftsSnap.docs.map((d) => d.data()).map((data: any) => ({
+                          shiftDate: data.shiftDate,
+                          endDate: data.endDate,
+                          dateSchedule: data.dateSchedule,
+                        }));
+                        const lastStr = getLastShiftDateFromShifts(shifts);
+                        if (lastStr) {
+                          const lastDate = new Date(lastStr);
+                          if (!endDate || lastDate > endDate) endDate = lastDate;
+                        }
+                      } catch (e) {
+                        console.debug('Failed to fetch shifts for gig post end date', post.id, e);
+                      }
+                    }
+                  }
+                } catch (err) {
+                  console.debug('Failed to fetch job order for posting', post.id, ':', err);
+                }
+              }
+              return {
+                id: post.id,
+                tenantId: post.tenantId,
+                postTitle: post.postTitle,
+                jobTitle: post.jobTitle,
+                jobType: post.jobType,
+                jobDescription: post.jobDescription,
+                companyName: post.companyName,
+                worksiteName: post.worksiteName,
+                worksiteAddress: post.worksiteAddress,
+                startDate,
+                endDate,
+                expDate: post.expDate,
               showStart: post.showStart,
               showEnd: post.showEnd,
               payRate: post.payRate,
               showPayRate: post.showPayRate,
               workersNeeded: post.workersNeeded,
-            showWorkersNeeded: post.showWorkersNeeded !== false, // Default to true if not set
+            showWorkersNeeded: post.showWorkersNeeded === true, // Default to false so workers needed is hidden unless explicitly enabled
               eVerifyRequired: post.eVerifyRequired,
               backgroundCheckPackages: post.backgroundCheckPackages,
               showBackgroundChecks: post.showBackgroundChecks,
@@ -905,8 +987,14 @@ const PublicJobsBoard: React.FC = () => {
               restrictedGroups: (post as any).restrictedGroups,
               createdAt: post.createdAt,
               benefits: post.benefits,
-            }));
-            
+              jobOrderId: (post as any).jobOrderId,
+              trustedClient: !!(post as any).trustedClient,
+              popularShift: !!(post as any).popularShift,
+              highDemand: !!(post as any).highDemand
+            };
+            });
+            const convertedPosts = await Promise.all(convertedPostsPromisesAll);
+
             // Combine postings and gig job orders
             allJobs.push(...convertedPosts, ...gigJobOrders);
           } catch (err) {
@@ -1640,6 +1728,20 @@ const PublicJobsBoard: React.FC = () => {
                           }}
                         />
                       )}
+                      {/* Optional trust indicators */}
+                      {(job.trustedClient || job.popularShift || job.highDemand) && (
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                          {job.trustedClient && (
+                            <Chip label={t('apply.trustedClient')} size="small" variant="outlined" color="success" sx={{ height: 22, fontSize: '0.7rem' }} />
+                          )}
+                          {job.popularShift && (
+                            <Chip label={t('apply.popularShift')} size="small" variant="outlined" color="primary" sx={{ height: 22, fontSize: '0.7rem' }} />
+                          )}
+                          {job.highDemand && (
+                            <Chip label={t('apply.highDemand')} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.7rem' }} />
+                          )}
+                        </Stack>
+                      )}
                     </Box>
                     {user && (
                       <FavoriteButton
@@ -1818,8 +1920,8 @@ const PublicJobsBoard: React.FC = () => {
                       
                       if (hasApplied) {
                         const status = userApplicationStatuses[applicationId] || 'submitted';
-                        // If application is withdrawn or cancelled, show "Apply Now" button instead
-                        if (status === 'withdrawn' || status === 'cancelled') {
+                        // If application is withdrawn, cancelled, or removed by admin, show "Apply Now" button instead
+                        if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') {
                           return (
                             <Button 
                               variant="contained" 
@@ -2392,8 +2494,8 @@ const PublicJobsBoard: React.FC = () => {
                 
                 if (hasApplied) {
                   const status = userApplicationStatuses[applicationId] || 'submitted';
-                  // If application is withdrawn or cancelled, show "Apply Now" button instead
-                  if (status === 'withdrawn' || status === 'cancelled') {
+                  // If application is withdrawn, cancelled, or removed by admin, show "Apply Now" button instead
+                  if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') {
                     return (
                       <Button 
                         variant="contained" 

@@ -42,8 +42,8 @@ import {
   Warning as WarningIcon,
   Email as EmailIcon,
   Sms as SmsIcon,
-  Send as SendIcon,
   Cancel as CancelIcon,
+  GetApp as GetAppIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -64,6 +64,7 @@ import { format } from 'date-fns';
 
 import { db, functions } from '../../firebase';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
+import { getDateScheduleEntriesWithHours } from '../../utils/dateSchedule';
 import MessageDrawer, { type MessageRecipient } from '../MessageDrawer';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
@@ -148,7 +149,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const storageKey = `placements_filters_${tenantId}_${jobOrderId}`;
   
   // Helper to load persisted filters from localStorage
-  const loadPersistedFilters = (): { shiftId: string; workforce: string } => {
+  const loadPersistedFilters = (): { shiftId: string; workforce: string; day?: string } => {
     try {
       const saved = localStorage.getItem(storageKey);
       if (saved) {
@@ -156,31 +157,27 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         return {
           shiftId: parsed.shiftId || '',
           workforce: parsed.workforce || 'applicants',
+          day: parsed.day || '',
         };
       }
     } catch (err) {
       console.error('Error loading persisted filters:', err);
     }
-    // Default values: Applicants as default workforce
-    return { shiftId: '', workforce: 'applicants' };
+    return { shiftId: '', workforce: 'applicants', day: '' };
   };
 
-  // Load initial state from localStorage
   const persistedFilters = loadPersistedFilters();
-  
-  // Filter state (removed date picker - will show all upcoming shifts)
   const [selectedShiftId, setSelectedShiftId] = useState<string>(persistedFilters.shiftId);
   const [selectedWorkforce, setSelectedWorkforce] = useState<string>(persistedFilters.workforce);
+  const [selectedDay, setSelectedDay] = useState<string>(persistedFilters.day ?? '');
   
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
-  const [assignmentStatusByUserId, setAssignmentStatusByUserId] = useState<Map<string, string>>(new Map());
-  const [assignmentStartDateByUserId, setAssignmentStartDateByUserId] = useState<Map<string, string>>(new Map());
-  const [assignmentOfferSentAtByUserId, setAssignmentOfferSentAtByUserId] = useState<Map<string, number>>(new Map());
-  const [assignmentConfirmedAtByUserId, setAssignmentConfirmedAtByUserId] = useState<Map<string, number>>(new Map());
+  type AssignmentRow = { userId: string; assignmentId: string; status: string; startDate: string; offerSentAt?: number; confirmedAt?: number };
+  const [assignmentRows, setAssignmentRows] = useState<AssignmentRow[]>([]);
   const [placementUserIds, setPlacementUserIds] = useState<Set<string>>(new Set());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
   const [confirmedApplicationsCount, setConfirmedApplicationsCount] = useState<number>(0);
@@ -271,7 +268,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const [selectedCerts, setSelectedCerts] = useState<any[]>([]);
   const [licenseModalOpen, setLicenseModalOpen] = useState(false);
   const [selectedLicenses, setSelectedLicenses] = useState<any[]>([]);
-  const [assignmentIdByUserId, setAssignmentIdByUserId] = useState<Map<string, string>>(new Map());
   // Assignments column: workers placed/assigned/confirmed/declined for this shift (from Firestore only, not filtered by Workforce)
   const [assignmentWorkersList, setAssignmentWorkersList] = useState<Worker[]>([]);
   const lastAssignmentShiftIdRef = useRef<string | null>(null); // clear list only when shift changes, not when workforce changes
@@ -310,11 +306,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       localStorage.setItem(storageKey, JSON.stringify({
         shiftId: selectedShiftId,
         workforce: selectedWorkforce,
+        day: selectedDay || undefined,
       }));
     } catch (err) {
       console.error('Error saving filters to localStorage:', err);
     }
-  }, [selectedShiftId, selectedWorkforce, storageKey]);
+  }, [selectedShiftId, selectedWorkforce, selectedDay, storageKey]);
 
   // Load confirmed applications count for selected shift
   useEffect(() => {
@@ -494,6 +491,15 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           (Array.isArray(applicationData.selectedShifts) &&
             applicationData.selectedShifts.some((s: any) => s.shiftId === selectedShiftId || s.id === selectedShiftId));
 
+        /** For gig "All Applicants" / "All Candidates": include if application matches any shift (any day) for this job. */
+        const allShiftIds = shifts.map((s) => s.id);
+        const matchesAnyShiftInJob = (applicationData: any) =>
+          allShiftIds.length > 0 &&
+          (allShiftIds.includes(applicationData?.shiftId) ||
+            (Array.isArray(applicationData?.shiftIds) && applicationData.shiftIds.some((sid: string) => allShiftIds.includes(sid))) ||
+            (Array.isArray(applicationData?.selectedShifts) &&
+              applicationData.selectedShifts.some((s: any) => allShiftIds.includes(s?.shiftId) || allShiftIds.includes(s?.id))));
+
         const loadApplicationDocs = async (): Promise<Array<{ id: string; data: any }>> => {
           const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
           const docMap = new Map<string, { id: string; data: any }>();
@@ -541,6 +547,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return hasShift || allowWithoutShift;
         };
 
+        // For gig "All Applicants" / "All Candidates": show everyone who applied to any day (any shift) for this job, without duplicates.
+        const includeApplicantForAllDays = (data: any) =>
+          allShiftIds.length === 0 || !hasShiftMetadata(data) || matchesAnyShiftInJob(data);
+
         if (workforce === 'all_applicants' || workforce === 'shift_applicants') {
           const applicationDocs = await loadApplicationDocs();
           const userIds = new Set<string>();
@@ -551,6 +561,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             const status = String(data.status || 'submitted').toLowerCase();
             if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
             if (filterByShift && !includeApplicantByShift(data)) return;
+            if (!filterByShift && !isCareerJob && !includeApplicantForAllDays(data)) return;
             userIds.add(data.userId);
           });
           const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
@@ -570,6 +581,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             const status = String(data.status || 'submitted').toLowerCase();
             if (['withdrawn', 'deleted', 'rejected', 'waitlisted'].includes(status)) return;
             if (filterByShift && !includeApplicantByShift(data)) return;
+            if (!filterByShift && !isCareerJob && !includeApplicantForAllDays(data)) return;
             candidateUserIds.add(data.userId);
           });
           const userPromises = Array.from(candidateUserIds).map(async (userId): Promise<Worker | null> => {
@@ -654,16 +666,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadWorkforce();
-  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, jobOrder, connectedJobPostIds]);
+  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, jobOrder, connectedJobPostIds, shifts]);
 
   // Real-time assignment status map for the selected shift.
   useEffect(() => {
     if (!tenantId || !selectedShiftId) {
-      setAssignmentStatusByUserId(new Map());
-      setAssignmentIdByUserId(new Map());
-      setAssignmentStartDateByUserId(new Map());
-      setAssignmentOfferSentAtByUserId(new Map());
-      setAssignmentConfirmedAtByUserId(new Map());
+      setAssignmentRows([]);
       return;
     }
 
@@ -682,33 +690,23 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       assignmentsQuery,
       { includeMetadataChanges: true },
       (snapshot) => {
-        const nextStatus = new Map<string, string>();
-        const nextIds = new Map<string, string>();
-        const nextStartDates = new Map<string, string>();
-        const nextOfferSentAt = new Map<string, number>();
-        const nextConfirmedAt = new Map<string, number>();
+        const rows: AssignmentRow[] = [];
         snapshot.docs.forEach((docSnap) => {
           const data = docSnap.data() as any;
           const userId = String(data?.userId || data?.candidateId || '');
           const status = String(data?.status || 'proposed').toLowerCase();
           if (!userId) return;
-          nextStatus.set(userId, status);
-          nextIds.set(userId, docSnap.id);
-          const startDate = data?.startDate;
-          if (typeof startDate === 'string' && startDate) nextStartDates.set(userId, startDate.split('T')[0]);
-          else if (startDate?.toDate) nextStartDates.set(userId, startDate.toDate().toISOString().split('T')[0]);
+          let startDate = '';
+          const startDateVal = data?.startDate;
+          if (typeof startDateVal === 'string' && startDateVal) startDate = startDateVal.split('T')[0];
+          else if (startDateVal?.toDate) startDate = startDateVal.toDate().toISOString().split('T')[0];
           const reminderMs = toMs(data?.lastReminderSentAt);
           const assignedMs = toMs(data?.assignedAt);
-          const offerSentMs = reminderMs ?? assignedMs;
-          if (offerSentMs != null) nextOfferSentAt.set(userId, offerSentMs);
-          const confirmedMs = toMs(data?.confirmedAt);
-          if (confirmedMs != null) nextConfirmedAt.set(userId, confirmedMs);
+          const offerSentAt = reminderMs ?? assignedMs;
+          const confirmedAt = toMs(data?.confirmedAt);
+          rows.push({ userId, assignmentId: docSnap.id, status, startDate, offerSentAt, confirmedAt });
         });
-        setAssignmentStatusByUserId(nextStatus);
-        setAssignmentIdByUserId(nextIds);
-        setAssignmentStartDateByUserId(nextStartDates);
-        setAssignmentOfferSentAtByUserId(nextOfferSentAt);
-        setAssignmentConfirmedAtByUserId(nextConfirmedAt);
+        setAssignmentRows(rows);
       },
       (err) => {
         console.warn('Assignments onSnapshot error:', err);
@@ -717,6 +715,47 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
     return () => unsubscribe();
   }, [tenantId, selectedShiftId]);
+
+  // Derive per-user assignment maps from rows. Only filter by selectedDay when this is a multi-day gig;
+  // otherwise a stale selectedDay (e.g. from persistence) would wrongly filter single-day shifts.
+  const {
+    assignmentStatusByUserId,
+    assignmentIdByUserId,
+    assignmentStartDateByUserId,
+    assignmentOfferSentAtByUserId,
+    assignmentConfirmedAtByUserId,
+  } = useMemo(() => {
+    const selectedShift = shifts.find((s) => s.id === selectedShiftId);
+    const isMultiDay =
+      selectedShift &&
+      (selectedShift as any).dateSchedule &&
+      (selectedShift as any).endDate &&
+      (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
+    const filtered =
+      isMultiDay && selectedDay
+        ? assignmentRows.filter((r) => r.startDate === selectedDay)
+        : assignmentRows;
+    const statusByUser = new Map<string, string>();
+    const idByUser = new Map<string, string>();
+    const startDateByUser = new Map<string, string>();
+    const offerSentAtByUser = new Map<string, number>();
+    const confirmedAtByUser = new Map<string, number>();
+    filtered.forEach((r) => {
+      if (statusByUser.has(r.userId)) return;
+      statusByUser.set(r.userId, r.status);
+      idByUser.set(r.userId, r.assignmentId);
+      if (r.startDate) startDateByUser.set(r.userId, r.startDate);
+      if (r.offerSentAt != null) offerSentAtByUser.set(r.userId, r.offerSentAt);
+      if (r.confirmedAt != null) confirmedAtByUser.set(r.userId, r.confirmedAt);
+    });
+    return {
+      assignmentStatusByUserId: statusByUser,
+      assignmentIdByUserId: idByUser,
+      assignmentStartDateByUserId: startDateByUser,
+      assignmentOfferSentAtByUserId: offerSentAtByUser,
+      assignmentConfirmedAtByUserId: confirmedAtByUser,
+    };
+  }, [assignmentRows, selectedDay, shifts, selectedShiftId]);
 
   // Real-time placements (placed but not yet assigned - no Assignment created, no messages sent).
   useEffect(() => {
@@ -991,7 +1030,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return options;
   }
 
-  const assignWorkersToShift = async (workerIds: string[]) => {
+  const assignWorkersToShift = async (workerIds: string[], dayOverride?: string) => {
     if (!selectedShift || !tenantId || !jobOrderId || workerIds.length === 0) {
       setError('Missing required information to assign shift');
       return;
@@ -999,16 +1038,40 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
     try {
       setError(null);
-
-      const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
-      const response = await assignFn({
+      // Use explicit day override (e.g. from Placed chip) so the correct day is used even if state updates
+      const effectiveDay = dayOverride !== undefined ? dayOverride : selectedDay;
+      const jobTypeForAssign = String((jobOrder as any)?.jobType || '').toLowerCase();
+      const isGigMultiDayForAssign =
+        jobTypeForAssign === 'gig' &&
+        selectedShift &&
+        (selectedShift as any).dateSchedule &&
+        (selectedShift as any).endDate &&
+        (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
+      // When a specific day is selected, create assignment for that day only (never send applyDates).
+      const useSingleDay = Boolean(effectiveDay && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDay));
+      const bulkDates =
+        !useSingleDay && !effectiveDay && isGigMultiDayForAssign && selectedShift
+          ? getDateScheduleEntriesWithHours(
+              (selectedShift as any).dateSchedule,
+              (selectedShift as any).shiftDate,
+              (selectedShift as any).endDate,
+            ).map((d) => d.date)
+          : [];
+      const payload: Record<string, unknown> = {
         tenantId,
         jobOrderId,
         shiftId: selectedShift.id,
         userIds: workerIds,
         sourceType: selectedWorkforce || 'manual',
         sourceId: selectedWorkforce.startsWith('group_') ? selectedWorkforce.replace('group_', '') : null,
-      });
+      };
+      if (useSingleDay) {
+        payload.applyDate = effectiveDay;
+      } else if (bulkDates.length > 0) {
+        payload.applyDates = bulkDates;
+      }
+      const assignFn = httpsCallable(functions, 'placementsCreateAssignments');
+      const response = await assignFn(payload);
 
       const data = response.data as any;
       const created = Array.isArray(data?.created) ? data.created : [];
@@ -1033,21 +1096,24 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // Handle assign to shift (create new assignment from pool)
+  // Handle assign to shift (create new assignment from pool). Pass selected day when set.
   const handleAssignToShift = async (worker: Worker, shift: Shift | undefined) => {
     if (!shift || !worker.id) return;
-    await assignWorkersToShift([worker.id]);
+    await assignWorkersToShift([worker.id], selectedDay || undefined);
   };
 
-  // Handle offering position: create Assignment (sends accept/decline message) and remove placement.
+  // Handle offering position: create Assignment (sends accept/decline message). Pass selected day so
+  // assignment is for that day only when a day is selected; for "All days" we send all dates.
   const handleConfirmPlacement = async (worker: Worker) => {
     if (!worker.isPlacementOnly || !selectedShift) return;
     if (confirmingPlacementUserId) return;
     setConfirmingPlacementUserId(worker.id);
     try {
       setError(null);
-      await assignWorkersToShift([worker.id]);
-      await deletePlacement(worker);
+      await assignWorkersToShift([worker.id], selectedDay || undefined);
+      if (selectedDay === '') {
+        await deletePlacement(worker);
+      }
     } catch (err: any) {
       console.error('Error offering position:', err);
       setError(err?.message || 'Failed to offer position');
@@ -1056,20 +1122,26 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // Cancel assignment and revert to Placed state. Worker is notified (SMS/email/push).
+  // Cancel assignment(s). When "All days" selected, cancel all assignments for this user on this shift.
   const handleCancelAssignment = async (worker: Worker) => {
-    if (worker.isPlacementOnly || !worker.assignmentId || !selectedShiftId || !jobOrderId) return;
+    if (worker.isPlacementOnly || !selectedShiftId || !jobOrderId) return;
+    const assignmentIds =
+      selectedDay === ''
+        ? assignmentRows.filter((r) => r.userId === worker.id).map((r) => r.assignmentId)
+        : worker.assignmentId
+          ? [worker.assignmentId]
+          : [];
+    if (assignmentIds.length === 0) return;
     setCancelAssignmentWorker(null);
     try {
       setError(null);
       setPendingAssignmentCancels((prev) => new Set([...prev, worker.id]));
       const cancelFn = httpsCallable(functions, 'placementsCancelAssignment');
-      await cancelFn({
-        tenantId,
-        assignmentId: worker.assignmentId,
-        shiftId: selectedShiftId,
-        userId: worker.id,
-      });
+      await Promise.all(
+        assignmentIds.map((assignmentId) =>
+          cancelFn({ tenantId, assignmentId, shiftId: selectedShiftId, userId: worker.id }),
+        ),
+      );
     } catch (err: any) {
       console.error('Error cancelling assignment:', err);
       setError(err?.message || 'Failed to cancel assignment');
@@ -1102,16 +1174,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  /** Manually confirm assignment on behalf of the worker (same as worker clicking Accept). */
+  /** Manually confirm assignment(s) on behalf of the worker. When "All days", confirm all their assignments for this shift. */
   const handleConfirmForWorker = async (worker: Worker) => {
-    if (!worker.assignmentId || !tenantId) return;
-    const aid = worker.assignmentId;
-    if (confirmLoadingAssignmentId === aid) return;
+    if (!tenantId) return;
+    const assignmentIds =
+      selectedDay === ''
+        ? assignmentRows.filter((r) => r.userId === worker.id).map((r) => r.assignmentId)
+        : worker.assignmentId
+          ? [worker.assignmentId]
+          : [];
+    if (assignmentIds.length === 0) return;
+    if (confirmLoadingAssignmentId === worker.id) return;
     try {
-      setConfirmLoadingAssignmentId(aid);
+      setConfirmLoadingAssignmentId(worker.id);
       setError(null);
       const confirmFn = httpsCallable(functions, 'confirmAssignmentForWorker');
-      await confirmFn({ tenantId, assignmentId: aid });
+      await Promise.all(assignmentIds.map((aid) => confirmFn({ tenantId, assignmentId: aid })));
     } catch (err: any) {
       console.error('Error confirming assignment:', err);
       setError(err?.message || 'Failed to confirm assignment');
@@ -1121,22 +1199,54 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   };
 
   const selectedShift = shifts.find(s => s.id === selectedShiftId);
+  const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
+  const isGigMultiDay =
+    jobType === 'gig' &&
+    selectedShift &&
+    (selectedShift as any).dateSchedule &&
+    (selectedShift as any).endDate &&
+    (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
+  const dayOptions = useMemo(() => {
+    if (!isGigMultiDay || !selectedShift) return [];
+    return getDateScheduleEntriesWithHours(
+      (selectedShift as any).dateSchedule,
+      (selectedShift as any).shiftDate,
+      (selectedShift as any).endDate,
+    );
+  }, [isGigMultiDay, selectedShift]);
+  useEffect(() => {
+    if (dayOptions.length === 0) {
+      if (selectedDay) setSelectedDay('');
+      return;
+    }
+    if (!selectedDay) return;
+    const valid = dayOptions.some((d) => d.date === selectedDay);
+    if (!valid) setSelectedDay('');
+  }, [selectedShiftId, selectedDay, dayOptions]);
   const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
-  // Assignments column: all workers placed/assigned/confirmed/declined for this shift (from Firestore, not filtered by Workforce)
+  // Assignments column: workers placed/assigned for this shift. When a specific day is selected (multi-day gig), show only that day.
   const assignedWorkers = assignmentWorkersList;
-  // Exclude cancelled (and canceled) from the list so they are not shown
-  const displayedAssignedWorkers = useMemo(
-    () =>
-      assignedWorkers.filter(
-        (w) => w.assignmentStatus !== 'cancelled' && w.assignmentStatus !== 'canceled',
-      ),
-    [assignedWorkers],
-  );
+  // Exclude cancelled. For multi-day gig: when a specific day is selected, show placement-only + assigned for that day;
+  // when "All Days" is selected, show only placement-only (day-specific assignments appear only when that day is selected).
+  const displayedAssignedWorkers = useMemo(() => {
+    const notCancelled = assignedWorkers.filter(
+      (w) => w.assignmentStatus !== 'cancelled' && w.assignmentStatus !== 'canceled',
+    );
+    if (isGigMultiDay && selectedDay) {
+      return notCancelled.filter(
+        (w) => w.isPlacementOnly || w.assignmentStartDate === selectedDay,
+      );
+    }
+    if (isGigMultiDay && !selectedDay) {
+      return notCancelled.filter((w) => w.isPlacementOnly);
+    }
+    return notCancelled;
+  }, [assignedWorkers, isGigMultiDay, selectedDay]);
   const placedOnlyWorkers = useMemo(
     () => assignedWorkers.filter((w) => w.isPlacementOnly),
     [assignedWorkers],
   );
-  const [assignAllBusy, setAssignAllBusy] = useState(false);
+  const [, setAssignAllBusy] = useState(false); // kept for compatibility (Assign All button removed; bulk Accept does the same)
 
   // Selection and bulk messaging for assignees (same pattern as Applications tab)
   const [selectedAssignmentWorkerIds, setSelectedAssignmentWorkerIds] = useState<Set<string>>(new Set());
@@ -1185,9 +1295,11 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     setBulkAcceptBusy(true);
     try {
       setError(null);
-      await assignWorkersToShift(placedOnly.map((w) => w.id));
-      for (const worker of placedOnly) {
-        await deletePlacement(worker);
+      await assignWorkersToShift(placedOnly.map((w) => w.id), selectedDay || undefined);
+      if (selectedDay === '') {
+        for (const worker of placedOnly) {
+          await deletePlacement(worker);
+        }
       }
       setSelectedAssignmentWorkerIds((prev) => {
         const next = new Set(prev);
@@ -1238,29 +1350,21 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  const handleAssignAll = async () => {
-    if (placedOnlyWorkers.length === 0 || !selectedShift) return;
-    setAssignAllBusy(true);
-    try {
-      setError(null);
-      await assignWorkersToShift(placedOnlyWorkers.map((w) => w.id));
-      for (const worker of placedOnlyWorkers) {
-        await deletePlacement(worker);
-      }
-    } catch (err: any) {
-      console.error('Error assigning all:', err);
-      setError(err?.message ?? 'Failed to offer positions');
-    } finally {
-      setAssignAllBusy(false);
-    }
-  };
-  // Worker Pool: current workforce minus anyone already placed/assigned.
-  // Career: exclude anyone placed/assigned on any shift of this job. Gig/other: exclude only for the selected shift.
+  // --- Single-day selected (no "All Days"): left = placed/assigned for that day only, right = labor pool for that day only ---
+  // Assignment maps are filtered by selectedDay only when isGigMultiDay (so single-day shifts show all rows). displayedAssignedWorkers
+  // shows placement-only + assignments for selected day. poolExcludeIds = placed/assigned for selected day, so availableWorkers
+  // = workforce minus that set. Drag/drop and Offer use selectedDay (applyDate) when set.
+  // Worker Pool: exclude anyone placed or assigned for the selected day (so they don't appear for drag-and-drop again).
+  // Career: exclude anyone placed/assigned on any shift. Gig/other: exclude only placed/assigned for the selected day.
   const jobTypeForPool = String((jobOrder as any)?.jobType || '').toLowerCase();
   const isCareerForPool = jobTypeForPool === 'career';
-  const poolExcludeIds = isCareerForPool && (safeSelectedWorkforce === 'applicants' || safeSelectedWorkforce === 'candidates')
-    ? allShiftsPlacedOrAssignedUserIds
-    : assignedUserIds;
+  const poolExcludeIds = useMemo(() => {
+    if (isCareerForPool && (safeSelectedWorkforce === 'applicants' || safeSelectedWorkforce === 'candidates')) {
+      return allShiftsPlacedOrAssignedUserIds;
+    }
+    // Gig/other: assignedUserIds = placementUserIds + (assignment user IDs for selected day when selectedDay set) + pending; excludes from pool anyone "placed for the selected day"
+    return assignedUserIds;
+  }, [isCareerForPool, safeSelectedWorkforce, allShiftsPlacedOrAssignedUserIds, assignedUserIds]);
   const availableWorkers = useMemo(
     () => workers.filter((w) => !poolExcludeIds.has(w.id)),
     [workers, poolExcludeIds],
@@ -1668,11 +1772,35 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
             </Select>
           </FormControl>
         )}
-        {selectedShift && (
+        {isGigMultiDay && dayOptions.length > 0 && (
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <InputLabel>Day</InputLabel>
+            <Select
+              value={selectedDay || '__all__'}
+              label="Day"
+              onChange={(e) => setSelectedDay(e.target.value === '__all__' ? '' : e.target.value)}
+              disabled={loading}
+              renderValue={(v) => (v === '__all__' || !v ? 'All days' : dayOptions.find((d) => d.date === v)?.dayLabel ?? v)}
+            >
+              <MenuItem value="__all__">
+                <em>All days</em>
+              </MenuItem>
+              {dayOptions.map((opt) => (
+                <MenuItem key={opt.date} value={opt.date}>
+                  {opt.dayLabel}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        )}
+        {selectedShift && !(isGigMultiDay && selectedDay === '') && (
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
             {(() => {
-              const startTime = (selectedShift as any).defaultStartTime ?? (selectedShift as any).startTime ?? '';
-              const endTime = (selectedShift as any).defaultEndTime ?? (selectedShift as any).endTime ?? '';
+              const dayEntry = selectedDay && dayOptions.length > 0 ? dayOptions.find((d) => d.date === selectedDay) : null;
+              const startTime =
+                dayEntry?.startTime ?? (selectedShift as any).defaultStartTime ?? (selectedShift as any).startTime ?? '';
+              const endTime =
+                dayEntry?.endTime ?? (selectedShift as any).defaultEndTime ?? (selectedShift as any).endTime ?? '';
               const formatTimeStr = (t: string) => {
                 if (!t) return '';
                 const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
@@ -1684,8 +1812,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                 const displayHour = hour % 12 || 12;
                 return `${displayHour}:${min} ${ampm}`;
               };
-              const staffReq = (selectedShift as any).totalStaffRequested ?? (selectedShift as any).staffNeeded ?? (selectedShift as any).workersNeeded;
-              const overstaff = (selectedShift as any).overstaffCount ?? (selectedShift as any).overstaff ?? 0;
+              const staffReq =
+                dayEntry?.workersNeeded !== undefined
+                  ? dayEntry.workersNeeded
+                  : (selectedShift as any).totalStaffRequested ?? (selectedShift as any).staffNeeded ?? (selectedShift as any).workersNeeded;
+              const overstaff =
+                dayEntry?.overstaff ?? (selectedShift as any).overstaffCount ?? (selectedShift as any).overstaff ?? 0;
               const scheduleStr = startTime && endTime ? `${formatTimeStr(startTime)} – ${formatTimeStr(endTime)}` : null;
               return (
                 <>
@@ -1740,23 +1872,18 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       </Typography>
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flex: '0 0 auto', ml: 'auto' }}>
-                      <Button
-                        size="small"
-                        variant="contained"
-                        color="primary"
-                        disabled={placedOnlyWorkers.length === 0 || !selectedShiftId || assignAllBusy}
-                        onClick={handleAssignAll}
-                      >
-                        {assignAllBusy ? 'Offering…' : 'Assign All'}
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        disabled={displayedAssignedWorkers.length === 0 || !selectedShiftId}
-                        onClick={handleExportAssignmentsCsv}
-                      >
-                        Export
-                      </Button>
+                      <Tooltip title="Export">
+                        <span>
+                          <IconButton
+                            size="small"
+                            disabled={displayedAssignedWorkers.length === 0 || !selectedShiftId}
+                            onClick={handleExportAssignmentsCsv}
+                            aria-label="Export"
+                          >
+                            <GetAppIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
                       <Button
                         size="small"
                         variant="outlined"
@@ -1764,8 +1891,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         disabled={!selectedShiftId}
                         onClick={handlePreviewEmail}
                         title="Preview the confirmation email workers receive (staff details, parking, check-in, attachments)"
+                        sx={{ minWidth: 0, py: 0.5, px: 1.25, fontSize: '0.8125rem' }}
                       >
-                        Preview Email
+                        Preview
                       </Button>
                     </Box>
                   </Box>
@@ -1786,59 +1914,58 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                       <Typography variant="body2" color="text.secondary">
                         {selectedAssignmentWorkerIds.size} selected
                       </Typography>
-                      <Tooltip title="Send offer (accept/decline message) to selected workers who are Placed">
+                      <Tooltip title="Accept All">
                         <span>
-                          <Button
+                          <IconButton
                             size="small"
-                            variant="outlined"
-                            startIcon={bulkAcceptBusy ? <CircularProgress size={14} /> : <SendIcon />}
+                            color="primary"
                             onClick={handleBulkAccept}
                             disabled={bulkAcceptBusy || displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id) && w.isPlacementOnly).length === 0}
-                            sx={{ textTransform: 'none' }}
+                            aria-label="Accept All"
                           >
-                            Accept
-                          </Button>
+                            {bulkAcceptBusy ? <CircularProgress size={20} /> : <CheckIcon />}
+                          </IconButton>
                         </span>
                       </Tooltip>
-                      <Tooltip title="Cancel assignment for selected workers">
+                      <Tooltip title="Cancel All">
                         <span>
-                          <Button
+                          <IconButton
                             size="small"
-                            variant="outlined"
                             color="error"
-                            startIcon={bulkCancelBusy ? <CircularProgress size={14} /> : <CancelIcon />}
                             onClick={handleBulkCancel}
                             disabled={bulkCancelBusy || displayedAssignedWorkers.filter((w) => selectedAssignmentWorkerIds.has(w.id) && !w.isPlacementOnly && w.assignmentId).length === 0}
-                            sx={{ textTransform: 'none' }}
+                            aria-label="Cancel All"
                           >
-                            Cancel
-                          </Button>
+                            {bulkCancelBusy ? <CircularProgress size={20} /> : <CancelIcon />}
+                          </IconButton>
                         </span>
                       </Tooltip>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<EmailIcon />}
-                        onClick={() => {
-                          setBulkDrawerChannel('email');
-                          setBulkDrawerOpen(true);
-                        }}
-                        sx={{ textTransform: 'none' }}
-                      >
-                        Email
-                      </Button>
-                      <Button
-                        size="small"
-                        variant="outlined"
-                        startIcon={<SmsIcon />}
-                        onClick={() => {
-                          setBulkDrawerChannel('sms');
-                          setBulkDrawerOpen(true);
-                        }}
-                        sx={{ textTransform: 'none' }}
-                      >
-                        SMS
-                      </Button>
+                      <Tooltip title="Email All">
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => {
+                            setBulkDrawerChannel('email');
+                            setBulkDrawerOpen(true);
+                          }}
+                          aria-label="Email All"
+                        >
+                          <EmailIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="Message All">
+                        <IconButton
+                          size="small"
+                          color="primary"
+                          onClick={() => {
+                            setBulkDrawerChannel('sms');
+                            setBulkDrawerOpen(true);
+                          }}
+                          aria-label="Message All"
+                        >
+                          <SmsIcon />
+                        </IconButton>
+                      </Tooltip>
                       <Button
                         size="small"
                         onClick={() => setSelectedAssignmentWorkerIds(new Set())}
@@ -1993,9 +2120,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                   <Tooltip title="Confirm this assignment on behalf of the worker (same as them clicking Accept)">
                                     <Chip
                                       size="small"
-                                      label={confirmLoadingAssignmentId === worker.assignmentId ? 'Confirming…' : 'Confirm'}
+                                      label={confirmLoadingAssignmentId === worker.assignmentId || confirmLoadingAssignmentId === worker.id ? 'Confirming…' : 'Confirm'}
                                       onClick={() => handleConfirmForWorker(worker)}
-                                      disabled={confirmLoadingAssignmentId === worker.assignmentId}
+                                      disabled={confirmLoadingAssignmentId === worker.assignmentId || confirmLoadingAssignmentId === worker.id}
                                       sx={{
                                         bgcolor: '#E3F2FD',
                                         color: '#1976D2',

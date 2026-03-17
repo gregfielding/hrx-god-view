@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import {
@@ -21,7 +21,13 @@ import {
   Menu,
   MenuItem,
   Tooltip,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  LinearProgress,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import CheckCircle from '@mui/icons-material/CheckCircle';
 import {
   LocationOn as LocationIcon,
   Work as WorkIcon,
@@ -37,8 +43,10 @@ import {
   Checkroom as CheckroomIcon,
   Engineering as EngineeringIcon,
   OpenInNew as OpenInNewIcon,
+  Directions as DirectionsIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, serverTimestamp } from 'firebase/firestore';
+import IconButton from '@mui/material/IconButton';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, arrayRemove, serverTimestamp, deleteField } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../firebase';
@@ -49,10 +57,11 @@ import { formatDistanceToNow, format } from 'date-fns';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
+import { getDateScheduleEntriesWithHours, getLastShiftDateFromShifts } from '../utils/dateSchedule';
 import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
-import { getRequirementsWithStatus } from '../utils/jobRequirementStatus';
-import { JobRequirementChip } from '../components/JobRequirementChip';
+import { getRequirementsWithStatus, getRequirementsWithStatusForJobPost, getEligibilitySummary } from '../utils/jobRequirementStatus';
+import { RequirementInteraction } from '../components/RequirementInteraction';
 import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
 import AuthDialog from '../components/AuthDialog';
@@ -78,6 +87,7 @@ const JobPostingDetail: React.FC = () => {
   const [careerWeeklyScheduleSummary, setCareerWeeklyScheduleSummary] = useState<string>('');
   const [appliedShifts, setAppliedShifts] = useState<string[]>([]);
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
+  const [appliedShiftsRefresh, setAppliedShiftsRefresh] = useState(0); // Increment to reload applied shifts (e.g. after cancel for day)
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
@@ -92,9 +102,95 @@ const JobPostingDetail: React.FC = () => {
   const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
   const [authDialogOpen, setAuthDialogOpen] = useState(false);
   const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationPermission, setLocationPermission] = useState<'prompt' | 'granted' | 'denied'>('prompt');
+  const [distanceMiles, setDistanceMiles] = useState<number | null>(null);
+  const [descriptionExpanded, setDescriptionExpanded] = useState(false);
+  const [scrolledPastHeader, setScrolledPastHeader] = useState(false);
+  const heroHeaderRef = useRef<HTMLDivElement>(null);
   const t = useT();
+
+  useEffect(() => {
+    const onScroll = () => {
+      const hero = heroHeaderRef.current;
+      if (!hero) return;
+      const rect = hero.getBoundingClientRect();
+      setScrolledPastHeader(rect.bottom < 0);
+    };
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  // Haversine distance in miles (for location section)
+  const haversineMiles = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 3959;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLon = ((lon2 - lon1) * Math.PI) / 180;
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+  };
+
+  // Job site coordinates (worksiteAddress may have coordinates.lat/lng or coordinates.latitude/longitude)
+  const jobCoords = useMemo(() => {
+    const c = posting?.worksiteAddress?.coordinates;
+    if (!c) return null;
+    const lat = (c as { lat?: number; latitude?: number }).lat ?? (c as { latitude?: number }).latitude;
+    const lng = (c as { lng?: number; longitude?: number }).lng ?? (c as { longitude?: number }).longitude;
+    if (lat == null || lng == null || typeof lat !== 'number' || typeof lng !== 'number') return null;
+    return { lat, lng };
+  }, [posting?.worksiteAddress?.coordinates]);
+
+  // Compute distance when we have both user and job coordinates
+  useEffect(() => {
+    if (!userLocation || !jobCoords) {
+      setDistanceMiles(null);
+      return;
+    }
+    setDistanceMiles(haversineMiles(userLocation.lat, userLocation.lng, jobCoords.lat, jobCoords.lng));
+  }, [userLocation, jobCoords]);
+
+  const requestLocationForDistance = () => {
+    if (!('geolocation' in navigator)) return;
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setUserLocation({ lat: position.coords.latitude, lng: position.coords.longitude });
+        setLocationPermission('granted');
+      },
+      () => setLocationPermission('denied'),
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+  };
   // Single source of truth for content language: i18n (layout + app bar when logged in; guest selector when guest)
   const displayLanguage = useLanguage();
+
+  // Eligibility for requirements UX (must be before any early return to satisfy rules-of-hooks)
+  const eligibilitySummary = useMemo(
+    () => (posting ? getEligibilitySummary(posting, userProfile, applicationData) : null),
+    [posting, userProfile, applicationData]
+  );
+  const allRequirementsCategories = useMemo(
+    () => (posting ? getRequirementsWithStatus(posting, userProfile, applicationData) : []),
+    [posting, userProfile, applicationData]
+  );
+  const [requirementsExpanded, setRequirementsExpanded] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    if (allRequirementsCategories.length === 0) return;
+    setRequirementsExpanded((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      allRequirementsCategories.forEach((cat) => {
+        if (next[cat.category] === undefined) {
+          next[cat.category] = !cat.items.every((i) => i.met);
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
+  }, [allRequirementsCategories]);
 
   // Only sync guest language → i18n when user is NOT logged in. Logged-in language is driven by C1WorkerLayout + WorkerAppBar (Firestore preferredLanguage); never overwrite with localStorage.
   useEffect(() => {
@@ -182,7 +278,7 @@ const JobPostingDetail: React.FC = () => {
               showWorkersNeeded:
                 jobOrderData.showWorkersNeeded !== undefined
                   ? jobOrderData.showWorkersNeeded
-                  : true, // Default to true if not set
+                  : false, // Default to false so workers needed is hidden unless explicitly enabled
               eVerifyRequired: jobOrderData.eVerifyRequired || false,
               backgroundCheckPackages: Array.isArray(jobOrderData.backgroundCheckPackages)
                 ? jobOrderData.backgroundCheckPackages
@@ -272,9 +368,9 @@ const JobPostingDetail: React.FC = () => {
             setPosting({
               id: postSnap.id,
               ...postData,
-              // Ensure showWorkersNeeded defaults to true if not set
+              // Default to false so workers needed is hidden unless explicitly enabled
               showWorkersNeeded:
-                postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : true,
+                postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : false,
             });
           } else {
             console.error('❌ Job posting not found:', { resolvedTenantId, postId });
@@ -338,21 +434,27 @@ const JobPostingDetail: React.FC = () => {
 
         const snapshots = await Promise.all(queries);
 
-        // Find the first application that matches (they should all have the same status)
+        // Find the first application that matches and is not removed (deleted)
+        // When admin clicks "Remove Application", status is set to 'deleted' — treat as no application so worker can apply again
         let foundStatus: string | null = null;
         let foundDocId: string | null = null;
         let foundJobScore: JobScoreSummaryStored | null = null;
+        const isRemoved = (status: string | undefined) => (status || '').toLowerCase() === 'deleted';
+
         for (const snapshot of snapshots) {
           if (!snapshot.empty) {
-            const firstDoc = snapshot.docs[0];
-            const appData = firstDoc.data();
-            foundStatus = appData.status || 'submitted';
-            foundDocId = firstDoc.id;
-            const js = appData.jobScoreSummary;
-            if (js && typeof js.jobScore === 'number') {
-              foundJobScore = js as JobScoreSummaryStored;
+            for (const docSnap of snapshot.docs) {
+              const appData = docSnap.data();
+              if (isRemoved(appData.status)) continue;
+              foundStatus = appData.status || 'submitted';
+              foundDocId = docSnap.id;
+              const js = appData.jobScoreSummary;
+              if (js && typeof js.jobScore === 'number') {
+                foundJobScore = js as JobScoreSummaryStored;
+              }
+              break;
             }
-            break;
+            if (foundStatus != null) break;
           }
         }
 
@@ -364,11 +466,13 @@ const JobPostingDetail: React.FC = () => {
             const appSnap = await getDoc(appRef);
             if (appSnap.exists()) {
               const appData = appSnap.data();
-              foundStatus = appData.status || 'submitted';
-              foundDocId = appSnap.id;
-              const js = appData.jobScoreSummary;
-              if (js && typeof js.jobScore === 'number') {
-                foundJobScore = js as JobScoreSummaryStored;
+              if (!isRemoved(appData?.status)) {
+                foundStatus = appData?.status || 'submitted';
+                foundDocId = appSnap.id;
+                const js = appData?.jobScoreSummary;
+                if (js && typeof js.jobScore === 'number') {
+                  foundJobScore = js as JobScoreSummaryStored;
+                }
               }
             }
           } catch {
@@ -572,10 +676,10 @@ const JobPostingDetail: React.FC = () => {
     );
   };
 
-  // Load applied shifts for the current user
+  // Load applied shifts for the current user (run as soon as we have user + tenant + postId so returning from wizard shows Applied)
   useEffect(() => {
     const loadAppliedShifts = async () => {
-      if (!user?.uid || !resolvedTenantId || !postId || dynamicShifts.length === 0) {
+      if (!user?.uid || !resolvedTenantId || !postId) {
         setAppliedShifts([]);
         setShiftStatuses({});
         return;
@@ -611,6 +715,24 @@ const JobPostingDetail: React.FC = () => {
         const statuses: Record<string, string> = {};
         const seenDocs = new Set<string>();
 
+        // Dates the user applied for (multi-day gig): from applyDate or applyDates; fallback to shiftDate/shiftDates for legacy
+        const getAppliedDates = (data: Record<string, unknown>): string[] => {
+          const ad = data.applyDate;
+          const ads = data.applyDates;
+          if (Array.isArray(ads) && ads.length > 0) {
+            return ads.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
+          }
+          if (ad && typeof ad === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ad)) return [ad];
+          // Legacy: application may have shiftDate (single) or shiftDates (array) from the shift
+          const sd = data.shiftDate;
+          const sds = data.shiftDates;
+          if (Array.isArray(sds) && sds.length > 0) {
+            return sds.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
+          }
+          if (sd && typeof sd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sd)) return [sd];
+          return [];
+        };
+
         snapshots.forEach((snapshot) => {
           snapshot.forEach((doc) => {
             // Avoid duplicates if a doc matches both queries
@@ -618,18 +740,40 @@ const JobPostingDetail: React.FC = () => {
             seenDocs.add(doc.id);
 
             const data = doc.data();
-            const appStatus = data.status || 'submitted';
+            const appStatus = (data.status || '').toLowerCase();
+            // Skip deleted, withdrawn, or cancelled applications
+            if (appStatus === 'deleted' || appStatus === 'withdrawn' || appStatus === 'cancelled') return;
 
-            // Check if application has shiftId or shiftIds
-            if (data.shiftId) {
-              applied.push(data.shiftId);
-              statuses[data.shiftId] = appStatus;
-            } else if (Array.isArray(data.shiftIds)) {
-              data.shiftIds.forEach((shiftId: string) => {
+            const statusForDisplay = data.status || 'submitted';
+            const appliedDates = getAppliedDates(data);
+            const hasDaySpecific = appliedDates.length > 0;
+
+            const shiftIds: string[] = data.shiftId ? [data.shiftId] : Array.isArray(data.shiftIds) ? data.shiftIds : [];
+
+            if (shiftIds.length === 0) return;
+
+            if (hasDaySpecific) {
+              // Multi-day gig: mark the specific day(s) they applied to (shiftId__date)
+              shiftIds.forEach((shiftId: string) => {
+                appliedDates.forEach((dateStr: string) => {
+                  const rowKey = `${shiftId}__${dateStr}`;
+                  applied.push(rowKey);
+                  if (!statuses[rowKey] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
+                    statuses[rowKey] = statusForDisplay;
+                  }
+                });
+                // Also mark whole shift so a single shift row (when UI does not show day breakdown) shows Application Submitted
                 applied.push(shiftId);
-                // If multiple shifts, use the most advanced status
-                if (!statuses[shiftId] || appStatus === 'confirmed' || appStatus === 'accepted') {
-                  statuses[shiftId] = appStatus;
+                if (!statuses[shiftId] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
+                  statuses[shiftId] = statusForDisplay;
+                }
+              });
+            } else {
+              // No applyDate/applyDates: whole-shift application – mark whole shift(s) as applied
+              shiftIds.forEach((shiftId: string) => {
+                applied.push(shiftId);
+                if (!statuses[shiftId] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
+                  statuses[shiftId] = statusForDisplay;
                 }
               });
             }
@@ -668,17 +812,17 @@ const JobPostingDetail: React.FC = () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [user?.uid, resolvedTenantId, postId, posting?.jobOrderId, dynamicShifts.length]);
+  }, [user?.uid, resolvedTenantId, postId, posting?.jobOrderId, dynamicShifts.length, appliedShiftsRefresh]);
 
-  const handleApplyToShift = (shiftId: string) => {
+  const handleApplyToShift = (shiftId: string, applyDate?: string) => {
+    const params = new URLSearchParams({ shiftId });
+    if (applyDate) params.set('applyDate', applyDate);
+    const returnTo = `/c1/jobs-board/${postId}`;
     if (!user) {
-      // Redirect to login/signup with return URL and shiftId
-      navigate(
-        `/apply/${posting.tenantId}/${postId}?returnTo=/c1/jobs-board/${postId}&shiftId=${shiftId}`,
-      );
+      params.set('returnTo', returnTo);
+      navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
     } else {
-      // Navigate to application wizard with shiftId
-      navigate(`/apply/${posting.tenantId}/${postId}?shiftId=${shiftId}`);
+      navigate(`/apply/${posting.tenantId}/${postId}?${params.toString()}`);
     }
   };
 
@@ -710,6 +854,18 @@ const JobPostingDetail: React.FC = () => {
     const d = new Date(2000, 0, 1, hh, mm);
     return format(d, 'h:mm a');
   };
+
+  // Override end date with last shift date when we have shifts (so worker UI shows correct "through" date)
+  const effectiveEndDate = useMemo(() => {
+    if (!posting) return undefined;
+    const postEnd = posting.endDate ? (posting.endDate?.toDate ? posting.endDate.toDate() : new Date(posting.endDate)) : null;
+    if (dynamicShifts.length === 0) return postEnd ?? undefined;
+    const lastStr = getLastShiftDateFromShifts(dynamicShifts);
+    if (!lastStr) return postEnd ?? undefined;
+    const lastDate = new Date(lastStr);
+    if (!postEnd) return lastDate;
+    return postEnd > lastDate ? postEnd : lastDate;
+  }, [posting, dynamicShifts]);
 
   const DOW_ORDER = [1, 2, 3, 4, 5, 6, 0];
   const DOW_LABELS: Record<number, string> = {
@@ -913,6 +1069,68 @@ const JobPostingDetail: React.FC = () => {
     }
   };
 
+  /** Cancel application for a single day (multi-day gig) or whole shift. */
+  const handleCancelApplicationForDay = async (shiftId: string, date?: string) => {
+    const confirmed = window.confirm(
+      date
+        ? 'Are you sure you want to cancel your application for this day? You can apply again for this day later.'
+        : 'Are you sure you want to cancel your application for this shift?',
+    );
+    if (!confirmed) return;
+
+    if (!user?.uid || !resolvedTenantId || !postId) return;
+    const appDocId = `${user.uid}_${postId}`;
+    const applicationRef = doc(db, 'tenants', resolvedTenantId, 'applications', appDocId);
+
+    try {
+      const snap = await getDoc(applicationRef);
+      if (!snap.exists()) {
+        setAppliedShiftsRefresh((r) => r + 1);
+        return;
+      }
+      const data = snap.data();
+
+      if (date) {
+        // Remove this day from applyDates (or clear applyDate)
+        const applyDates = Array.isArray(data.applyDates)
+          ? [...(data.applyDates as string[])]
+          : data.applyDate && /^\d{4}-\d{2}-\d{2}$/.test(String(data.applyDate))
+            ? [String(data.applyDate)]
+            : [];
+        const remaining = applyDates.filter((d) => d !== date);
+        if (remaining.length === 0) {
+          await updateDoc(applicationRef, {
+            status: 'withdrawn',
+            withdrawnAt: new Date(),
+            withdrawnBy: user.uid,
+            updatedAt: serverTimestamp(),
+            applyDate: deleteField(),
+            applyDates: deleteField(),
+          });
+          setApplicationStatus('withdrawn');
+        } else {
+          await updateDoc(applicationRef, {
+            applyDates: remaining,
+            applyDate: remaining[0],
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } else {
+        await updateDoc(applicationRef, {
+          status: 'withdrawn',
+          withdrawnAt: new Date(),
+          withdrawnBy: user.uid,
+          updatedAt: serverTimestamp(),
+        });
+        setApplicationStatus('withdrawn');
+      }
+      setAppliedShiftsRefresh((r) => r + 1);
+    } catch (err) {
+      console.error('Failed to cancel application for day:', err);
+      alert('We were unable to cancel your application. Please try again.');
+    }
+  };
+
   const handleRequirementFix = async (
     ackKey: string | undefined,
     answer: 'Yes' | 'No',
@@ -929,9 +1147,12 @@ const JobPostingDetail: React.FC = () => {
       const existingAcks = existingReqs.acks || {};
       const existingAdditionalScreenings = existingReqs.additionalScreenings || {};
       const nextReqs = { ...existingReqs };
-      if (category === 'additionalScreenings') {
+      const isFollowUpAck = ackKey && String(ackKey).endsWith('_willing');
+      if (isFollowUpAck && ackKey) {
+        nextReqs.acks = { ...existingAcks, [ackKey]: answer };
+      } else if (category === 'additionalScreenings') {
         nextReqs.additionalScreenings = { ...existingAdditionalScreenings, [label]: answer };
-      } else if (ackKey === 'backgroundScreeningComfort' || ackKey === 'drugScreeningComfort') {
+      } else if (ackKey === 'backgroundScreeningComfort' || ackKey === 'drugScreeningComfort' || ackKey === 'eVerifyComfort') {
         nextReqs[ackKey] = answer;
       } else if (ackKey) {
         nextReqs.acks = { ...existingAcks, [ackKey]: answer };
@@ -944,34 +1165,139 @@ const JobPostingDetail: React.FC = () => {
         const next = prev ? { ...prev } : {};
         next.data = next.data || {};
         next.data.requirements = next.data.requirements || {};
-        if (category === 'additionalScreenings') {
+        if (isFollowUpAck && ackKey) {
+          next.data.requirements.acks = { ...(next.data.requirements.acks || {}), [ackKey]: answer };
+        } else if (category === 'additionalScreenings') {
           next.data.requirements.additionalScreenings = { ...(next.data.requirements.additionalScreenings || {}), [label]: answer };
-        } else if (ackKey === 'backgroundScreeningComfort' || ackKey === 'drugScreeningComfort') {
+        } else if (ackKey === 'backgroundScreeningComfort' || ackKey === 'drugScreeningComfort' || ackKey === 'eVerifyComfort') {
           next.data.requirements[ackKey] = answer;
         } else if (ackKey) {
           next.data.requirements.acks = { ...(next.data.requirements.acks || {}), [ackKey]: answer };
         }
         return next;
       });
-      if (answer === 'Yes' && (category === 'skills' || category === 'languages')) {
-        const userRef = doc(db, 'users', user.uid);
-        if (category === 'skills') {
-          await updateDoc(userRef, {
-            skills: arrayUnion(label),
-            updatedAt: serverTimestamp(),
+
+      // Persist to user profile so recruiters see changes and future applications pre-fill
+      const userRef = doc(db, 'users', user.uid);
+      const ts = serverTimestamp();
+
+      if (category === 'skills') {
+        if (answer === 'Yes') {
+          await updateDoc(userRef, { skills: arrayUnion(label), updatedAt: ts });
+          setUserProfile((p: any) => {
+            const list = p?.skills || [];
+            const has = list.some((s: any) => (typeof s === 'string' ? s : s?.name) === label);
+            return { ...p, skills: has ? list : [...list, label], updatedAt: new Date() };
           });
-          setUserProfile((p: any) => ({ ...p, skills: [...(p?.skills || []), label], updatedAt: new Date() }));
-        } else if (category === 'languages') {
-          await updateDoc(userRef, {
-            languages: arrayUnion(label),
-            updatedAt: serverTimestamp(),
-          });
-          setUserProfile((p: any) => ({ ...p, languages: [...(p?.languages || []), label], updatedAt: new Date() }));
+        } else {
+          const userSnap = await getDoc(userRef);
+          const userData = userSnap.exists() ? userSnap.data() : {};
+          const arr = Array.isArray((userData as any).skills) ? (userData as any).skills : [];
+          const filtered = arr.filter((s: any) => (typeof s === 'string' ? s : s?.name) !== label);
+          await updateDoc(userRef, { skills: filtered, updatedAt: ts });
+          setUserProfile((p: any) => ({ ...p, skills: filtered, updatedAt: new Date() }));
         }
+      } else if (category === 'languages') {
+        if (answer === 'Yes') {
+          await updateDoc(userRef, { languages: arrayUnion(label), updatedAt: ts });
+          setUserProfile((p: any) => {
+            const list = p?.languages || [];
+            const has = list.some((l: any) => (typeof l === 'string' ? l : l?.name) === label);
+            return { ...p, languages: has ? list : [...list, label], updatedAt: new Date() };
+          });
+        } else {
+          const userSnap = await getDoc(userRef);
+          const userData = userSnap.exists() ? userSnap.data() : {};
+          const arr = Array.isArray((userData as any).languages) ? (userData as any).languages : [];
+          const filtered = arr.filter((l: any) => (typeof l === 'string' ? l : l?.name) !== label);
+          await updateDoc(userRef, { languages: filtered, updatedAt: ts });
+          setUserProfile((p: any) => ({ ...p, languages: filtered, updatedAt: new Date() }));
+        }
+      } else if (category === 'experienceLevels' && answer === 'Yes') {
+        await updateDoc(userRef, { experienceLevel: label, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, experienceLevel: label, updatedAt: new Date() }));
+      } else if (category === 'licensesCerts' && !isFollowUpAck) {
+        const certObj = { name: label };
+        if (answer === 'Yes') {
+          await updateDoc(userRef, { certifications: arrayUnion(certObj), updatedAt: ts });
+          setUserProfile((p: any) => {
+            const certs = p?.certifications || [];
+            const has = certs.some((c: any) => (typeof c === 'string' ? c : c?.name) === label);
+            return { ...p, certifications: has ? certs : [...certs, certObj], updatedAt: new Date() };
+          });
+        } else {
+          const userSnap = await getDoc(userRef);
+          const userData = userSnap.exists() ? userSnap.data() : {};
+          const certs = Array.isArray((userData as any).certifications) ? (userData as any).certifications : [];
+          const filtered = certs.filter((c: any) => {
+            const name = typeof c === 'string' ? c : c?.name;
+            return name !== label || (typeof c === 'object' && c?.fileUrl);
+          });
+          await updateDoc(userRef, { certifications: filtered, updatedAt: ts });
+          setUserProfile((p: any) => ({ ...p, certifications: filtered, updatedAt: new Date() }));
+        }
+      } else if (category === 'additionalScreenings' && !isFollowUpAck) {
+        const userSnap = await getDoc(userRef);
+        const userData = userSnap.exists() ? userSnap.data() : {};
+        const existing = (userData as any).additionalScreenings || {};
+        const nextScreenings = { ...existing, [label]: answer };
+        await updateDoc(userRef, { additionalScreenings: nextScreenings, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, additionalScreenings: nextScreenings, updatedAt: new Date() }));
+      } else if (isFollowUpAck && ackKey) {
+        const userSnap = await getDoc(userRef);
+        const userData = userSnap.exists() ? userSnap.data() : {};
+        const existing = (userData as any).requirementsAcks || {};
+        await updateDoc(userRef, { requirementsAcks: { ...existing, [ackKey]: answer }, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, requirementsAcks: { ...(p?.requirementsAcks || {}), [ackKey]: answer }, updatedAt: new Date() }));
+      } else if (ackKey === 'eVerifyComfort') {
+        await updateDoc(userRef, { comfortableEVerify: answer, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, comfortableEVerify: answer, updatedAt: new Date() }));
+      } else if (ackKey === 'backgroundScreeningComfort') {
+        await updateDoc(userRef, { comfortablePassBackground: answer, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, comfortablePassBackground: answer, updatedAt: new Date() }));
+      } else if (ackKey === 'drugScreeningComfort') {
+        await updateDoc(userRef, { comfortablePassDrug: answer, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, comfortablePassDrug: answer, updatedAt: new Date() }));
+      } else if (ackKey) {
+        const userSnap = await getDoc(userRef);
+        const userData = userSnap.exists() ? userSnap.data() : {};
+        const existing = (userData as any).requirementsAcks || {};
+        await updateDoc(userRef, { requirementsAcks: { ...existing, [ackKey]: answer }, updatedAt: ts });
+        setUserProfile((p: any) => ({ ...p, requirementsAcks: { ...(p?.requirementsAcks || {}), [ackKey]: answer }, updatedAt: new Date() }));
       }
     } catch (err) {
       console.error('Failed to update requirement:', err);
       alert('We couldn’t save that. Please try again.');
+    }
+  };
+
+  const handleEducationSelect = async (level: string) => {
+    if (!resolvedTenantId || !applicationDocId || !user?.uid) return;
+    const ackKey = `education_${level}`;
+    try {
+      const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
+      const snap = await getDoc(appRef);
+      const data = snap.exists() ? snap.data() : {};
+      const existingData = (data as any).data || {};
+      const existingReqs = existingData.requirements || {};
+      const existingAcks = existingReqs.acks || {};
+      await updateDoc(appRef, {
+        data: { ...existingData, requirements: { ...existingReqs, acks: { ...existingAcks, [ackKey]: 'Yes' } } },
+        updatedAt: serverTimestamp(),
+      });
+      setApplicationData((prev: any) => {
+        const next = prev ? { ...prev } : {};
+        next.data = next.data || {};
+        next.data.requirements = next.data.requirements || {};
+        next.data.requirements.acks = { ...(next.data.requirements.acks || {}), [ackKey]: 'Yes' };
+        return next;
+      });
+      const userRef = doc(db, 'users', user.uid);
+      await updateDoc(userRef, { educationLevel: level, updatedAt: serverTimestamp() });
+      setUserProfile((p: any) => ({ ...p, educationLevel: level }));
+    } catch (err) {
+      console.error('Failed to update education:', err);
+      alert('We couldn\'t save that. Please try again.');
     }
   };
 
@@ -1124,6 +1450,14 @@ const JobPostingDetail: React.FC = () => {
     applicationStatus && ['withdrawn', 'cancelled'].includes(applicationStatus.toLowerCase())
   );
 
+  const stepsToApply = eligibilitySummary?.missingRequired.length ?? 0;
+
+  // Mobile sticky Apply footer: when to show and labels (computed once for footer + layout padding)
+  const isGigWithShifts = posting?.jobType === 'gig' && dynamicShifts.length > 0;
+  const hasApplyableShift = isGigWithShifts && dynamicShifts.some((s: any) => !appliedShifts.includes(s.shiftId) && ((s.spotsRemaining ?? 1) > 0));
+  const isNonGigApply = !isGigWithShifts && (statusButtonProps?.label === t('jobs.applyNow') || showApplyAgain) && !(statusButtonProps?.label === 'accepted_special' || statusButtonProps?.label === 'confirmed_special');
+  const showStickyApply = Boolean(isMobile && posting && scrolledPastHeader && (hasApplyableShift || isNonGigApply));
+
   // Assignment accept/decline link from SMS: show "You've been hired" + I Accept / Decline Job
   const params = new URLSearchParams(location.search);
   const urlAssignmentId = params.get('assignmentId');
@@ -1221,7 +1555,7 @@ const JobPostingDetail: React.FC = () => {
   } as const;
 
   return (
-    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 2 }}>
+    <Box sx={{ maxWidth: 1200, mx: 'auto', p: 0, pt: 2, px: { xs: 2, sm: 3 }, pb: showStickyApply ? 10 : 0 }}>
       {/* Google Jobs Structured Data */}
       <Helmet>
         <title>
@@ -1326,118 +1660,119 @@ const JobPostingDetail: React.FC = () => {
         initialPreferredLanguage={guestLanguage}
       />
 
-      {/* Header */}
-      <Paper elevation={2} sx={{ ...cardBaseSx, mb: 3 }}>
-        <Box
-          sx={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'flex-start',
-            flexWrap: 'wrap',
-            gap: 2,
-          }}
-        >
-          <Box sx={{ flex: 1 }}>
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                mb: 2,
-                flexWrap: 'wrap',
-                gap: 2,
-              }}
-            >
-              <Typography
-                variant={isMobile ? 'h5' : 'h4'}
-                component="h1"
-                sx={{ fontWeight: 'bold', fontSize: isMobile ? '1.25rem' : undefined }}
-              >
+      {/* Hero header card */}
+      <Paper ref={heroHeaderRef} elevation={2} sx={{ ...cardBaseSx, mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 2 }}>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1, mb: 1 }}>
+              <Typography component="h1" variant={isMobile ? 'h5' : 'h4'} sx={{ fontWeight: 700, fontSize: isMobile ? '1.35rem' : '1.5rem' }}>
                 {getJobPostingDisplayText(posting, 'postTitle', displayLanguage) || posting.postTitle}
               </Typography>
-              {/* Copy Link Button */}
-              <Button
-                variant="outlined"
-                size={isMobile ? 'small' : 'small'}
-                startIcon={<ContentCopyIcon />}
-                onClick={() => {
-                  const url = window.location.href;
-                  navigator.clipboard.writeText(url);
-                  setShareSnackbarOpen(true);
-                }}
-                sx={{ fontSize: isMobile ? '0.75rem' : undefined }}
-              >
-                {t('jobs.copyLink')}
-              </Button>
+              <Tooltip title={t('jobs.copyLink')}>
+                <IconButton
+                  size="small"
+                  onClick={() => {
+                    navigator.clipboard.writeText(window.location.href);
+                    setShareSnackbarOpen(true);
+                  }}
+                  sx={{ color: 'text.secondary', flexShrink: 0 }}
+                  aria-label={t('jobs.copyLink')}
+                >
+                  <ContentCopyIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             </Box>
 
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-              {posting.companyName && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <BusinessIcon fontSize={isMobile ? 'small' : 'small'} color="primary" />
-                  <Typography variant={isMobile ? 'body2' : 'body1'} color="text.secondary">
-                    {posting.companyName}
-                  </Typography>
-                </Box>
-              )}
+            {(posting.trustedClient || posting.popularShift || posting.highDemand) && (
+              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
+                {posting.trustedClient && (
+                  <Chip label={t('apply.trustedClient')} size="small" variant="outlined" color="success" sx={{ fontSize: '0.7rem' }} />
+                )}
+                {posting.popularShift && (
+                  <Chip label={t('apply.popularShift')} size="small" variant="outlined" color="primary" sx={{ fontSize: '0.7rem' }} />
+                )}
+                {posting.highDemand && (
+                  <Chip label={t('apply.highDemand')} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                )}
+              </Stack>
+            )}
 
+            {posting.companyName && (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+                <BusinessIcon fontSize="small" color="action" />
+                <Typography variant="body1" color="text.secondary">
+                  {posting.companyName}
+                </Typography>
+              </Box>
+            )}
+
+            {/* Pay rate — visually dominant in header (hierarchy: Title → Company → PAY RATE → Location → Next Shift) */}
+            {posting.showPayRate && posting.payRate != null && (
+              <Typography
+                component="div"
+                sx={{
+                  fontWeight: 800,
+                  color: 'success.dark',
+                  fontSize: isMobile ? '1.5rem' : '1.75rem',
+                  letterSpacing: '-0.02em',
+                  mb: 1.5,
+                  lineHeight: 1.2,
+                }}
+              >
+                ${Number(posting.payRate)}/hr
+              </Typography>
+            )}
+
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mb: 1 }}>
               {posting.worksiteAddress?.city && posting.worksiteAddress?.state && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <LocationIcon fontSize={isMobile ? 'small' : 'small'} color="primary" />
-                  <Typography variant={isMobile ? 'body2' : 'body1'} color="text.secondary">
+                  <LocationIcon fontSize="small" color="action" />
+                  <Typography variant="body2" color="text.secondary">
                     {posting.worksiteAddress.city}, {posting.worksiteAddress.state}
-                    {posting.worksiteAddress.zipCode && ` ${posting.worksiteAddress.zipCode}`}
+                    {posting.worksiteAddress.zipCode ? ` ${posting.worksiteAddress.zipCode}` : ''}
                   </Typography>
                 </Box>
               )}
             </Box>
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-              <Chip
-                label={posting.jobType === 'gig' ? 'Gig' : 'Career'}
-                color="primary"
-                size="small"
-              />
-
-              {/* Hide pay rate for gig jobs with shifts - it's shown on individual shift cards instead */}
-              {posting.showPayRate &&
-                posting.payRate &&
-                !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
-                  <Chip
-                    icon={<MoneyIcon />}
-                    label={`$${posting.payRate}/hr`}
-                    color="success"
-                    size="small"
-                  />
-                )}
-
-              {/* Hide openings count for gig jobs - individual shifts show their own staff needed */}
-              {posting.workersNeeded &&
+              <Chip label={posting.jobType === 'gig' ? 'Gig' : 'Career'} color="primary" size="small" />
+              {posting.workersNeeded != null &&
                 posting.showWorkersNeeded !== false &&
                 !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
                   <Chip
                     icon={<WorkIcon />}
-                    label={`${posting.workersNeeded} position${
-                      posting.workersNeeded > 1 ? 's' : ''
-                    }`}
+                    label={`${posting.workersNeeded} position${posting.workersNeeded !== 1 ? 's' : ''}`}
                     size="small"
                     variant="outlined"
                   />
                 )}
-
               {(() => {
-                // For gig jobs with shifts, show next shift date
+                // For gig jobs with shifts, show next shift date (today or later, local time)
                 if (posting.jobType === 'gig' && dynamicShifts.length > 0) {
-                  // Sort shifts by date and get the earliest one
-                  const sortedShifts = [...dynamicShifts].sort(
-                    (a, b) => new Date(a.shiftDate).getTime() - new Date(b.shiftDate).getTime(),
-                  );
-                  const nextShift = sortedShifts[0];
-                  if (nextShift?.shiftDate) {
+                  const now = new Date();
+                  const todayISO = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                  const allDates: string[] = [];
+                  dynamicShifts.forEach((s: any) => {
+                    if (s.dateSchedule && s.endDate && s.endDate !== s.shiftDate) {
+                      const entries = getDateScheduleEntriesWithHours(s.dateSchedule, s.shiftDate, s.endDate);
+                      entries.forEach((e) => allDates.push(e.date));
+                    } else if (s.shiftDate) {
+                      const d = s.shiftDate?.toDate ? s.shiftDate.toDate() : new Date(s.shiftDate);
+                      if (!isNaN(d.getTime())) {
+                        const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0');
+                        allDates.push(`${y}-${m}-${day}`);
+                      }
+                    }
+                  });
+                  const nextDate = [...new Set(allDates)].filter((d) => d >= todayISO).sort()[0];
+                  if (nextDate) {
+                    const [y, m, day] = nextDate.split('-').map(Number);
+                    const displayDate = `${m}/${day}/${y}`;
                     return (
                       <Chip
                         icon={<ScheduleIcon />}
-                        label={`Next Shift: ${formatDate(nextShift.shiftDate)}`}
+                        label={`Next Shift: ${displayDate}`}
                         size="small"
                         variant="outlined"
                       />
@@ -1464,7 +1799,7 @@ const JobPostingDetail: React.FC = () => {
             </Box>
           </Box>
 
-          {/* When hired but not yet accepted: show message only (no View Assignment Details until they accept) */}
+          {/* Primary actions / status (unchanged logic) */}
           {!(posting.jobType === 'gig' && dynamicShifts.length > 0) &&
             ((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' ? (
               <Typography variant="body2" sx={{ color: '#2e7d32', fontWeight: 700 }}>
@@ -1630,6 +1965,16 @@ const JobPostingDetail: React.FC = () => {
         </Box>
       </Paper>
 
+      {/* Quick Facts strip — Pay, Location (requirements moved to Requirements section) */}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3, alignItems: 'center' }}>
+        {posting.showPayRate && posting.payRate != null && (
+          <Chip size="small" icon={<MoneyIcon />} label={`$${Number(posting.payRate)}/hr`} color="success" variant="outlined" />
+        )}
+        {posting.worksiteAddress?.city && posting.worksiteAddress?.state && (
+          <Chip size="small" icon={<LocationIcon />} label={`${posting.worksiteAddress.city}, ${posting.worksiteAddress.state}`} variant="outlined" />
+        )}
+      </Box>
+
       <Box
         sx={{
           display: 'grid',
@@ -1642,17 +1987,102 @@ const JobPostingDetail: React.FC = () => {
       >
         {/* Main Content */}
         <Box sx={{ width: '100%', maxWidth: '100%', boxSizing: 'border-box' }}>
-          {/* Job Description */}
-          <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
-            <CardContent sx={{ p: 0 }}>
-              <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                {t('jobs.jobDescription')}
-              </Typography>
-              <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
-                {getJobPostingDisplayText(posting, 'jobDescription', displayLanguage) || posting.jobDescription || 'No description provided'}
-              </Typography>
-            </CardContent>
-          </Card>
+          {/* About this Job — description with optional Read more */}
+          {(() => {
+            const rawDesc = getJobPostingDisplayText(posting, 'jobDescription', displayLanguage) || posting.jobDescription || '';
+            const cleanedDesc = rawDesc.replace(/\*\*([^*]+):\*\*/g, '$1:').replace(/\*\*([^*]+)\*\*/g, '$1').trim();
+            const charLimit = isMobile ? 280 : 400;
+            const isLong = cleanedDesc.length > charLimit;
+            const showTruncated = isLong && !descriptionExpanded;
+            const displayText = showTruncated ? cleanedDesc.slice(0, charLimit) + '…' : cleanedDesc;
+            return (
+              <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+                <CardContent sx={{ p: 0 }}>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                    About this Job
+                  </Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+                    {displayText || 'No description provided.'}
+                  </Typography>
+                  {isLong && (
+                    <Button
+                      size="small"
+                      onClick={() => setDescriptionExpanded((e) => !e)}
+                      sx={{ mt: 1, textTransform: 'none' }}
+                    >
+                      {descriptionExpanded ? 'Show less' : 'Read more'}
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
+
+          {/* Location — address, map preview, Get Directions, optional distance */}
+          {(posting.worksiteAddress?.street || posting.worksiteAddress?.city || posting.worksiteAddress?.state) && (
+            <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
+              <CardContent sx={{ p: 0 }}>
+                <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
+                  Location
+                </Typography>
+                {(() => {
+                  const wa = posting.worksiteAddress;
+                  const parts = [wa?.street, wa?.city, wa?.state, wa?.zipCode].filter(Boolean);
+                  const addressStr = parts.join(', ');
+                  const mapsQuery = encodeURIComponent(addressStr || `${wa?.city} ${wa?.state}`.trim());
+                  return (
+                    <>
+                      <Typography variant="body1" sx={{ mb: 1 }}>
+                        {posting.worksiteName ? `${posting.worksiteName} — ` : ''}{addressStr || 'Address TBD'}
+                      </Typography>
+                      {addressStr && (
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mb: 2 }}>
+                          <Button
+                            variant="contained"
+                            size="small"
+                            startIcon={<DirectionsIcon />}
+                            href={`https://www.google.com/maps/search/?api=1&query=${mapsQuery}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            sx={{ textTransform: 'none' }}
+                          >
+                            Get Directions
+                          </Button>
+                          {distanceMiles != null && (
+                            <Typography variant="body2" color="text.secondary">
+                              {distanceMiles < 0.1 ? '< 0.1 miles away' : `${distanceMiles.toFixed(1)} miles away`}
+                            </Typography>
+                          )}
+                          {locationPermission === 'prompt' && jobCoords && (
+                            <Button size="small" variant="outlined" onClick={requestLocationForDistance} sx={{ textTransform: 'none' }}>
+                              Show distance from me
+                            </Button>
+                          )}
+                          {locationPermission === 'denied' && (
+                            <Typography variant="caption" color="text.secondary">Enable location to see distance</Typography>
+                          )}
+                        </Box>
+                      )}
+                      {addressStr && (
+                        <Box
+                          component="iframe"
+                          title="Map"
+                          src={`https://www.google.com/maps?q=${mapsQuery}&output=embed`}
+                          sx={{
+                            width: '100%',
+                            height: 200,
+                            border: 0,
+                            borderRadius: 1,
+                            mt: 1,
+                          }}
+                        />
+                      )}
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Assignment Info + Schedule (when worker needs to accept/decline — show key details from assignment) */}
           {((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' && assignmentData) ? (
@@ -1769,13 +2199,43 @@ const JobPostingDetail: React.FC = () => {
                     Schedule
                   </Typography>
                   <Stack spacing={2}>
-                    {scheduleShiftData?.shiftMode === 'multi' && scheduleShiftData?.weeklySchedule && Object.keys(scheduleShiftData.weeklySchedule).length > 0 ? (
+                    {scheduleShiftData?.shiftMode === 'multi' && (scheduleShiftData as any)?.dateSchedule && scheduleShiftData?.shiftDate && (() => {
+                      const entries = getDateScheduleEntriesWithHours((scheduleShiftData as any).dateSchedule, scheduleShiftData.shiftDate, scheduleShiftData.endDate);
+                      return entries.length > 0;
+                    })() ? (
+                      <>
+                        <Box>
+                          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
+                          <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
+                            {getDateScheduleEntriesWithHours((scheduleShiftData as any).dateSchedule, scheduleShiftData!.shiftDate, scheduleShiftData!.endDate).map((e) => (
+                              <Typography key={e.date} component="li" variant="body2">
+                                {e.dayLabel}: {formatTime(e.startTime)} – {formatTime(e.endTime)}
+                              </Typography>
+                            ))}
+                          </Stack>
+                        </Box>
+                        {assignmentData.startDate && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
+                            <Typography variant="body1">{formatDate(assignmentData.startDate)}</Typography>
+                          </Box>
+                        )}
+                        {assignmentData.jobOrderType === 'gig' && (assignmentData.endDate || scheduleShiftData.endDate) && (
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
+                            <Typography variant="body1">
+                              {assignmentData.endDate ? formatDate(assignmentData.endDate) : (scheduleShiftData.endDate ? new Date(scheduleShiftData.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
+                            </Typography>
+                          </Box>
+                        )}
+                      </>
+                    ) : scheduleShiftData?.shiftMode === 'multi' && scheduleShiftData?.weeklySchedule && Object.keys(scheduleShiftData.weeklySchedule).length > 0 ? (
                       <>
                         <Box>
                           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
                           <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
                             {DOW_ORDER.map((dow) => {
-                              const entry = scheduleShiftData.weeklySchedule[String(dow)];
+                              const entry = scheduleShiftData.weeklySchedule![String(dow)];
                               if (!entry?.enabled) return null;
                               const start = formatTime(entry.startTime);
                               const end = formatTime(entry.endTime);
@@ -1835,7 +2295,7 @@ const JobPostingDetail: React.FC = () => {
             </>
           ) : null}
 
-          {/* Shift Selector (for Gig jobs only) */}
+          {/* Available Shifts (Gig jobs) — compact, action-oriented */}
           {posting.jobType === 'gig' && (
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
@@ -1851,6 +2311,7 @@ const JobPostingDetail: React.FC = () => {
                     shiftStatuses={shiftStatuses}
                     onConfirmShift={handleConfirmAssignmentForShift}
                     onDeclineShift={handleDeclineAssignmentForShift}
+                    onCancelApplication={handleCancelApplicationForDay}
                     jobPostId={postId}
                     tenantId={resolvedTenantId}
                     language={displayLanguage}
@@ -1865,67 +2326,202 @@ const JobPostingDetail: React.FC = () => {
             </Card>
           )}
 
-          {/* Requirements — show met (green check) vs not met (red + Add to fix) when user has application */}
-          {((posting.showBackgroundChecks && posting.backgroundCheckPackages?.length > 0) ||
-            (posting.showDrugScreening && posting.drugScreeningPanels?.length > 0) ||
-            (posting.showAdditionalScreenings && posting.additionalScreenings?.length > 0) ||
-            (posting.showLicensesCerts && posting.licensesCerts?.length > 0) ||
-            (posting.showSkills && posting.skills?.length > 0) ||
-            (posting.showExperience && posting.experienceLevels?.length > 0) ||
-            (posting.showEducation && posting.educationLevels?.length > 0) ||
-            (posting.showLanguages && posting.languages?.length > 0) ||
-            (posting.showPhysicalRequirements && posting.physicalRequirements?.length > 0) ||
-            (posting.showUniformRequirements && posting.uniformRequirements?.length > 0) ||
-            (posting.showRequiredPpe && posting.requiredPpe?.length > 0) ||
-            posting.eVerifyRequired) && (
-            <Card sx={{ ...cardBaseSx }} elevation={2}>
-              <CardContent sx={{ p: 0 }}>
-                <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
-                  {t('jobs.requirements')}
-                </Typography>
-                {user?.uid && applicationDocId && (
-                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                    Green = met (profile or application). Red = not met — use Add to answer Yes/No and update your application.
+          {/* Requirements — guided flow: required-to-apply summary first, tiers, collapse completed */}
+          {(() => {
+            const eligibility = eligibilitySummary ?? getEligibilitySummary(posting, userProfile, applicationData);
+            const allCategories = allRequirementsCategories;
+            const hasAnyRequirement = allCategories.length > 0;
+            const showInteraction = !!user?.uid && !!applicationDocId;
+            const additionalScreeningsData = applicationData?.data?.requirements?.additionalScreenings || {};
+            const missingCount = eligibility.missingRequired.length;
+
+            const getMissingActionLabel = (m: { category: string; itemLabel: string; item: { requiresUpload?: boolean } }) => {
+              const label = m.itemLabel;
+              if (m.category === 'skills') return t('jobs.requirementsActionConfirmSkill', { label });
+              if (m.category === 'languages') return t('jobs.requirementsActionConfirmLanguage', { label });
+              if (m.category === 'educationLevels') return t('jobs.requirementsActionConfirmEducation', { label });
+              if (m.category === 'experienceLevels') return t('jobs.requirementsActionConfirmExperience', { label });
+              if (m.category === 'additionalScreenings') return t('jobs.requirementsActionConfirmScreening', { label });
+              if (m.category === 'licensesCerts' && m.item.requiresUpload) return t('jobs.requirementsActionAddCert', { label });
+              if (m.category === 'licensesCerts') return t('jobs.requirementsActionConfirmCert', { label });
+              return t('jobs.requirementsActionConfirmOther', { label });
+            };
+
+            const tierOrder: Array<'requiredToApply' | 'jobPreparation' | 'recommended'> = ['requiredToApply', 'jobPreparation', 'recommended'];
+            const tierLabelKey: Record<string, string> = {
+              requiredToApply: 'jobs.requirementsTierRequiredNow',
+              jobPreparation: 'jobs.requirementsTierBeforeAssignment',
+              recommended: 'jobs.requirementsTierRecommended',
+            };
+            const byTier = tierOrder.map((tier) => ({ tier, categories: allCategories.filter((c) => c.tier === tier) }));
+
+            if (!hasAnyRequirement) return null;
+            return (
+              <Card sx={{ ...cardBaseSx }} elevation={2}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom sx={{ fontWeight: 'bold' }}>
+                    {t('jobs.requirements')}
                   </Typography>
-                )}
-                <Stack spacing={2}>
-                  {getRequirementsWithStatus(posting, userProfile, applicationData).map((cat) => (
-                    <Box key={cat.category}>
-                      <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                        {cat.categoryLabel}
+
+                  {/* Top block: only missing application-blocking steps */}
+                  {missingCount > 0 && (
+                    <Box sx={{ mb: 2, p: 1.5, bgcolor: 'primary.50', borderRadius: 1, border: 1, borderColor: 'primary.light' }}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                        {t('jobs.requirementsToApplySummary', { count: missingCount })}
                       </Typography>
-                      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-                        {cat.items.map((item, index) => (
-                          <JobRequirementChip
-                            key={`${cat.category}-${index}`}
-                            item={item}
-                            categoryLabel={cat.categoryLabel}
-                            showFixAction={!!user?.uid && !!applicationDocId}
-                            onFix={
-                              item.ackKey
-                                ? (answer) =>
-                                    handleRequirementFix(item.ackKey!, answer, cat.category, item.label)
-                                : undefined
-                            }
-                          />
+                      <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+                        {eligibility.missingRequired.map((m, idx) => (
+                          <Typography key={`${m.category}-${idx}`} component="li" variant="body2" sx={{ mb: 0.25 }}>
+                            {getMissingActionLabel(m)}
+                          </Typography>
                         ))}
                       </Box>
                     </Box>
-                  ))}
-                  {posting.showCustomUniformRequirements &&
-                    posting.customUniformRequirements &&
-                    posting.customUniformRequirements.trim() && (
-                      <Box>
-                        <Typography variant="subtitle2" color="text.secondary" gutterBottom>
-                          Custom Uniform Requirements
+                  )}
+
+                  <Typography variant="subtitle1" sx={{ mb: 0.5, fontWeight: 600 }}>
+                    {t('jobs.requirementsCompleteTheseSteps')}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: missingCount > 0 ? 0.5 : 1 }}>
+                    {t('jobs.requirementsEligiblePercent', { percent: eligibility.percent })}
+                  </Typography>
+                  {missingCount > 0 && (
+                    <Typography variant="body2" color="primary.main" sx={{ fontWeight: 500, mb: 1 }}>
+                      {t('jobs.requirementsStepsRemaining', { count: missingCount })}
+                    </Typography>
+                  )}
+                  <LinearProgress
+                    variant="determinate"
+                    value={eligibility.totalCount > 0 ? Math.round((eligibility.metCount / eligibility.totalCount) * 100) : 100}
+                    sx={{ height: 8, borderRadius: 1, mb: 2 }}
+                    color={eligibility.percent >= 100 ? 'success' : 'primary'}
+                  />
+
+                  {/* Missing required items: inline interactions (only requiredToApply missing) */}
+                  {missingCount > 0 && (
+                    <Box sx={{ mb: 2 }}>
+                      <Stack spacing={1.5}>
+                        {eligibility.missingRequired.map((m, idx) => (
+                          <Box key={`${m.category}-${idx}`} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, bgcolor: 'grey.50' }}>
+                            <RequirementInteraction
+                              item={m.item}
+                              categoryLabel={m.categoryLabel}
+                              category={m.category}
+                              categoryItems={eligibility.categories.find((c) => c.category === m.category)?.items}
+                              onFix={
+                                !m.item.requiresUpload && m.item.ackKey
+                                  ? (answer) => handleRequirementFix(m.item.ackKey!, answer, m.category, m.item.label)
+                                  : undefined
+                              }
+                              onUploadClick={
+                                m.item.requiresUpload ? () => navigate('/c1/workers/profile?tab=Qualifications') : undefined
+                              }
+                              onEducationSelect={m.category === 'educationLevels' ? handleEducationSelect : undefined}
+                              onFollowUpFix={
+                                m.category === 'additionalScreenings' && /covid|vaccine|vaccination/i.test(m.item.label)
+                                  ? (answer) =>
+                                      handleRequirementFix(
+                                        `additionalScreenings_${m.item.label.replace(/[^a-zA-Z0-9]+/g, '_')}_willing`,
+                                        answer,
+                                        'additionalScreenings',
+                                        m.item.label
+                                      )
+                                  : undefined
+                              }
+                              showHealthFollowUp={
+                                m.category === 'additionalScreenings' && additionalScreeningsData[m.item.label] === 'No'
+                              }
+                              showInteraction={showInteraction}
+                              initialEducationLevel={m.category === 'educationLevels' ? userProfile?.educationLevel : undefined}
+                            />
+                          </Box>
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+
+                  {/* Grouped by tier: Required now, Required before assignment, Recommended — completed sections collapsed */}
+                  {byTier.map(({ tier, categories: tierCategories }) =>
+                    tierCategories.length === 0 ? null : (
+                      <Box key={tier} sx={{ mb: 2 }}>
+                        <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600, mb: 0.5 }}>
+                          {t(tierLabelKey[tier])}
                         </Typography>
-                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
-                          {posting.customUniformRequirements}
-                        </Typography>
+                        {tierCategories.map((cat) => {
+                          const allMet = cat.items.every((i) => i.met);
+                          const expanded = requirementsExpanded[cat.category] ?? !allMet;
+                          return (
+                            <Accordion
+                              key={cat.category}
+                              expanded={expanded}
+                              onChange={(_, isExpanded) =>
+                                setRequirementsExpanded((prev) => ({ ...prev, [cat.category]: isExpanded }))
+                              }
+                              disableGutters
+                              sx={{
+                                boxShadow: 'none',
+                                '&:before': { display: 'none' },
+                                borderBottom: 1,
+                                borderColor: 'divider',
+                              }}
+                            >
+                              <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 48, '& .MuiAccordionSummary-content': { my: 1 } }}>
+                                <Stack direction="row" alignItems="center" spacing={1}>
+                                  {allMet ? (
+                                    <CheckCircle fontSize="small" color="success" />
+                                  ) : null}
+                                  <Typography variant="subtitle2">
+                                    {allMet ? `✔ ${cat.categoryLabel} complete` : cat.categoryLabel}
+                                  </Typography>
+                                </Stack>
+                              </AccordionSummary>
+                              <AccordionDetails sx={{ pt: 0 }}>
+                                <Stack spacing={2}>
+                                  {cat.items.map((item, index) => (
+                                    <Box key={`${cat.category}-${index}`} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, bgcolor: item.met ? 'success.50' : 'grey.50' }}>
+                                      <RequirementInteraction
+                                        item={item}
+                                        categoryLabel={cat.categoryLabel}
+                                        category={cat.category}
+                                        categoryItems={cat.items}
+                                        onFix={
+                                          !item.requiresUpload && item.ackKey
+                                            ? (answer) => handleRequirementFix(item.ackKey!, answer, cat.category, item.label)
+                                            : undefined
+                                        }
+                                        onUploadClick={
+                                          item.requiresUpload ? () => navigate('/c1/workers/profile?tab=Qualifications') : undefined
+                                        }
+                                        onEducationSelect={cat.category === 'educationLevels' ? handleEducationSelect : undefined}
+                                        onFollowUpFix={
+                                          cat.category === 'additionalScreenings' && /covid|vaccine|vaccination/i.test(item.label)
+                                            ? (answer) =>
+                                                handleRequirementFix(
+                                                  `additionalScreenings_${item.label.replace(/[^a-zA-Z0-9]+/g, '_')}_willing`,
+                                                  answer,
+                                                  'additionalScreenings',
+                                                  item.label
+                                                )
+                                            : undefined
+                                        }
+                                        showHealthFollowUp={
+                                          cat.category === 'additionalScreenings' && additionalScreeningsData[item.label] === 'No'
+                                        }
+                                        showInteraction={showInteraction}
+                                        initialEducationLevel={cat.category === 'educationLevels' ? userProfile?.educationLevel : undefined}
+                                      />
+                                    </Box>
+                                  ))}
+                                </Stack>
+                              </AccordionDetails>
+                            </Accordion>
+                          );
+                        })}
                       </Box>
-                    )}
+                    )
+                  )}
                   {posting.eVerifyRequired && (
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 1 }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 2 }}>
                       <Box
                         component="img"
                         src="/img/everify.png"
@@ -1938,10 +2534,10 @@ const JobPostingDetail: React.FC = () => {
                       />
                     </Box>
                   )}
-                </Stack>
-              </CardContent>
-            </Card>
-          )}
+                </CardContent>
+              </Card>
+            );
+          })()}
         </Box>
 
         {/* Sidebar - Only show for non-gig jobs or gig jobs without shifts */}
@@ -1973,6 +2569,12 @@ const JobPostingDetail: React.FC = () => {
                       ? t('jobs.acceptThisPosition')
                       : t('jobs.applyForThisPosition')}
                 </Typography>
+
+                {eligibilitySummary && eligibilitySummary.totalCount > 0 && statusButtonProps?.label !== 'confirmed_special' && !isAssignmentResponseMode && (
+                  <Typography variant="body2" color={stepsToApply === 0 ? 'success.main' : 'text.secondary'} sx={{ fontWeight: 500, mb: 1 }}>
+                    {stepsToApply === 0 ? t('jobs.youQualifyForThisJob') : t('jobs.completeStepsToApply', { count: stepsToApply })}
+                  </Typography>
+                )}
 
                 <Divider sx={{ my: 2 }} />
 
@@ -2198,6 +2800,76 @@ const JobPostingDetail: React.FC = () => {
           </Box>
         )}
       </Box>
+
+      {/* Mobile-only sticky Apply footer — appears when scrolled past header and a shift is available to apply */}
+      {showStickyApply &&
+        posting &&
+        (() => {
+          const isGigWithShifts = posting.jobType === 'gig' && dynamicShifts.length > 0;
+          const payLabel = posting.showPayRate && posting.payRate != null ? `$${Number(posting.payRate)}/hr` : null;
+          let nextLabel = '';
+          if (isGigWithShifts && dynamicShifts.length > 0) {
+            const first = dynamicShifts.find((s: any) => !appliedShifts.includes(s.shiftId) && ((s.spotsRemaining ?? 1) > 0)) ?? dynamicShifts[0];
+            const d = first?.shiftDate?.toDate ? first.shiftDate.toDate() : first?.shiftDate ? new Date(first.shiftDate) : null;
+            const timeStr = first?.startTime && first?.endTime
+              ? (() => {
+                  try {
+                    const s = first.startTime.includes(':') ? first.startTime : `${first.startTime}:00`;
+                    const e = first.endTime.includes(':') ? first.endTime : `${first.endTime}:00`;
+                    const sd = new Date(`2000-01-01T${s}`);
+                    const ed = new Date(`2000-01-01T${e}`);
+                    return `${format(sd, 'ha')}–${format(ed, 'ha')}`.toLowerCase().replace(/\s/g, '');
+                  } catch {
+                    return '';
+                  }
+                })()
+              : '';
+            nextLabel = d && !isNaN(d.getTime()) ? `${format(d, 'EEE MMM d')}${timeStr ? ` ${timeStr}` : ''}` : 'Next shift';
+          } else if (posting.startDate) {
+            nextLabel = `Starts ${formatDate(posting.startDate)}`;
+          } else {
+            nextLabel = 'Apply now';
+          }
+          return (
+            <Box
+              sx={{
+                position: 'fixed',
+                bottom: 0,
+                left: 0,
+                right: 0,
+                zIndex: 1100,
+                bgcolor: 'background.paper',
+                boxShadow: 8,
+                borderTop: 1,
+                borderColor: 'divider',
+                px: 2,
+                py: 1.5,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+              }}
+            >
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                {payLabel && (
+                  <Typography variant="subtitle2" fontWeight={700} color="success.dark">
+                    {payLabel}
+                  </Typography>
+                )}
+                <Typography variant="body2" color="text.secondary" noWrap>
+                  {nextLabel}
+                </Typography>
+              </Box>
+              <Button
+                variant="contained"
+                size="medium"
+                onClick={isGigWithShifts ? () => { const s = dynamicShifts.find((x: any) => !appliedShifts.includes(x.shiftId) && ((x.spotsRemaining ?? 1) > 0)); if (s) handleApplyToShift(s.shiftId); } : handleApply}
+                sx={{ flexShrink: 0, fontWeight: 600, borderRadius: '999px', px: 2.5 }}
+              >
+                Apply
+              </Button>
+            </Box>
+          );
+        })()}
 
       {/* Share Snackbar */}
       <Snackbar

@@ -64,26 +64,17 @@ const BioStep: React.FC<Props> = ({ value, onChange, jobPosting, titleOverride, 
   return (
     <Box>
       <Box sx={{ mb: 2.5 }}>
+        <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 0.5 }}>
+          {t('apply.profileImprovementOptional')}
+        </Typography>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
           ✍️ {titleOverride || t('profile.tellUsAboutYourself')}
         </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
           {subtitleOverride || t('profile.bioOptional')}
         </Typography>
-
-        <Alert 
-          severity="info" 
-          sx={{ 
-            mb: 2,
-            bgcolor: 'info.50',
-            '& .MuiAlert-message': {
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1
-            }
-          }}
-        >
-          💡 Candidates with bios get contacted 3× more often.
+        <Alert severity="info" sx={{ mb: 2 }} icon={false}>
+          {t('apply.microcopyBio')}
         </Alert>
 
         <TextField

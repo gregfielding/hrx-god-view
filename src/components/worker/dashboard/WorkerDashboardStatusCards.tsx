@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Grid, Card, CardActionArea, CardContent, Typography } from '@mui/material';
+import { Grid, Card, CardActionArea, CardContent, Typography, LinearProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import StarIcon from '@mui/icons-material/Star';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -95,9 +95,16 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardActionArea onClick={() => navigate(c.to)} sx={{ display: 'block' }}>
                 <CardContent sx={{ py: 2, px: 2 }}>
-                  <Typography variant="subtitle2" color="text.secondary">
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontSize: 18, fontWeight: 600 }}>
                     {c.label}
                   </Typography>
+                  {c.label === t('dashboard.jobReadiness') && readinessPercent != null && !hideMetric && (
+                    <LinearProgress
+                      variant="determinate"
+                      value={Math.min(100, Math.max(0, Number(readinessPercent) || 0))}
+                      sx={{ mt: 1, mb: 0.5, height: 6, borderRadius: 3, bgcolor: 'action.hover', '& .MuiLinearProgress-bar': { borderRadius: 3 } }}
+                    />
+                  )}
                   {!hideMetric && (
                     <Typography variant="h6" sx={{ fontWeight: 600, mt: 0.5 }}>
                       {c.metric}

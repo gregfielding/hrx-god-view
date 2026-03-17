@@ -289,8 +289,15 @@ const RecentActivityWidget: React.FC<{ location: any; tenantId: string }> = ({ l
 const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   const [center, setCenter] = useState<{ lat: number; lng: number } | null>(null);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const [mapsReady, setMapsReady] = useState(() => typeof (window as any).google?.maps?.Map === 'function');
+  useEffect(() => {
+    if (mapsReady) return;
+    const t = setInterval(() => {
+      if (typeof (window as any).google?.maps?.Map === 'function') setMapsReady(true);
+    }, 200);
+    return () => clearInterval(t);
+  }, [mapsReady]);
   // Using MarkerF for reliable rendering within React
-  
   // Fallback center (Las Vegas area based on the image)
   const fallbackCenter = { lat: 36.1699, lng: -115.1398 };
 
@@ -322,7 +329,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
       
       console.log('LocationMap: Geocoding address:', address);
       
-      if (address) {
+      if (address && typeof (window as any).google?.maps?.Geocoder === 'function') {
         const geocoder = new google.maps.Geocoder();
         geocoder.geocode({ address }, (results, status) => {
           console.log('LocationMap: Geocoding result:', status, results);
@@ -339,7 +346,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
 
   // Marker is rendered via MarkerF in JSX
 
-  if (!(window as any).google) {
+  if (!mapsReady) {
     return (
       <Box sx={{ height: 360, bgcolor: 'grey.100', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <CircularProgress />

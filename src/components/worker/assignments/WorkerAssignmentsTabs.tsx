@@ -16,6 +16,8 @@ export interface WorkerAssignmentsTabsProps {
   /** Controlled tab index: 0 = Upcoming, 1 = Past */
   tabIndex: number;
   onTabChange: (index: number) => void;
+  /** When provided, upcoming cards show Cancel Shift and call this on confirm */
+  onCancelShift?: (assignment: WorkerAssignmentItem) => void;
 }
 
 const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
@@ -23,6 +25,7 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
   past,
   tabIndex,
   onTabChange,
+  onCancelShift,
 }) => {
   const t = useT();
   return (
@@ -52,6 +55,8 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
                   key={a.assignmentId}
                   assignment={a}
                   showViewDetails
+                  isUpcoming
+                  onCancelShift={onCancelShift}
                 />
               ))
             )}
@@ -75,6 +80,7 @@ const WorkerAssignmentsTabs: React.FC<WorkerAssignmentsTabsProps> = ({
                   key={a.assignmentId}
                   assignment={a}
                   showViewDetails
+                  isUpcoming={false}
                 />
               ))
             )}

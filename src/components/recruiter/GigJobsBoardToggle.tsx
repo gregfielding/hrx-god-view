@@ -329,11 +329,14 @@ const GigJobsBoardToggle: React.FC<GigJobsBoardToggleProps> = ({ jobOrder, onPos
 
       await updateDoc(jobOrderRef, updateData);
 
-      // If there's an active posting, update it too
-      if (connectedPost && isActive) {
+      // If there's a connected posting (draft or active), keep its requirements in sync with the job order
+      if (connectedPost) {
         const jobsBoardService = JobsBoardService.getInstance();
         const postData = buildPostData();
-        await jobsBoardService.updatePost(tenantId, connectedPost.id, { ...postData, status: 'active' });
+        await jobsBoardService.updatePost(tenantId, connectedPost.id, {
+          ...postData,
+          status: (connectedPost.status as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired') || postData.status,
+        });
         const updatedPost = await jobsBoardService.getPost(tenantId, connectedPost.id);
         if (updatedPost) {
           setConnectedPost(updatedPost);

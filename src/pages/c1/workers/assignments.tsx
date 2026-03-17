@@ -7,7 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Stack, Typography, Button, CircularProgress } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
-import { collection, doc, query, where, getDocs, getDoc } from 'firebase/firestore';
+import { collection, doc, query, where, getDocs, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
@@ -137,6 +137,29 @@ const WorkerAssignments: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleCancelShift = React.useCallback(
+    async (assignment: WorkerAssignmentItem) => {
+      if (!tenantId || !assignment.assignmentId) return;
+      const confirmed = window.confirm(
+        t('assignments.cancelShiftConfirm') || 'Are you sure you want to cancel this shift?'
+      );
+      if (!confirmed) return;
+      try {
+        const ref = doc(db, 'tenants', tenantId, 'assignments', assignment.assignmentId);
+        await updateDoc(ref, {
+          status: 'cancelled',
+          updatedAt: serverTimestamp(),
+        });
+        setRefreshKey((k) => k + 1);
+      } catch (err) {
+        console.error('Failed to cancel shift:', err);
+        window.alert(t('assignments.cancelShiftError') || 'Failed to cancel shift. Please try again.');
+      }
+    },
+    [tenantId, t]
+  );
 
   useEffect(() => {
     if (!user?.uid || !tenantId) {
@@ -257,7 +280,7 @@ const WorkerAssignments: React.FC = () => {
 
     load();
     return () => { cancelled = true; };
-  }, [user?.uid, tenantId]);
+  }, [user?.uid, tenantId, refreshKey]);
 
   return (
     <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
@@ -297,6 +320,7 @@ const WorkerAssignments: React.FC = () => {
             past={past}
             tabIndex={tabIndex}
             onTabChange={setTabIndex}
+            onCancelShift={handleCancelShift}
           />
         )}
       </Stack>

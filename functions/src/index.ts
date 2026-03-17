@@ -598,6 +598,7 @@ export const generateJobDescription = onCall({
     prompt += `- Is engaging and attracts qualified candidates\n`;
     prompt += `- ONLY includes information marked as "SHOW THIS IN DESCRIPTION" above\n`;
     prompt += `- NEVER mentions information marked as "DO NOT MENTION IN DESCRIPTION"\n`;
+    prompt += `- Do not include the number of workers needed or positions unless explicitly marked "SHOW THIS IN DESCRIPTION"\n`;
     prompt += `- Always says "C1 is hiring" or "C1 Staffing is hiring" (never mention the actual company or worksite name)\n`;
     prompt += `- You can mention the zip code if provided\n`;
     prompt += `- Uses clear, professional language\n`;
@@ -8632,7 +8633,10 @@ export const logAssignmentCreated = onDocumentCreated(
 
   try {
     logger.info(`Assignment created: ${assignmentId} for worker ${assignment.userId || assignment.candidateId}`);
-    
+    // Bulk create (All days): callable sends one notification per user; skip per-doc notification
+    if (assignment.suppressInitialNotification) {
+      return { success: true };
+    }
     // Send worker notification if assignment was newly proposed/confirmed (SMS + email with full assignment details)
     if (assignment.userId && (assignment.status === 'proposed' || assignment.status === 'confirmed')) {
       try {

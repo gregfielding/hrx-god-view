@@ -147,7 +147,7 @@ const WorkerAppBar: React.FC = () => {
           color: 'text.primary',
         }}
       >
-        <Toolbar variant="dense" sx={{ justifyContent: 'flex-end', gap: 0, minHeight: { xs: 40, sm: 48 } }}>
+        <Toolbar variant="dense" sx={{ justifyContent: 'flex-end', gap: 1.5, minHeight: { xs: 40, sm: 48 } }}>
           <Tooltip title={unreadCount > 0 ? `${unreadCount} ${t('nav.unread')}` : t('nav.notifications')}>
             <IconButton
               color="inherit"

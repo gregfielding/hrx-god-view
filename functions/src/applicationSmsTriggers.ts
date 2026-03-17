@@ -268,6 +268,12 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return { success: true };
       }
 
+      // Do not send any notifications when recruiter removes application (Remove Application sets status to deleted)
+      if (newStatus === 'deleted') {
+        logger.info(`Application ${applicationId} status changed to deleted - skipping all notifications`);
+        return { success: true };
+      }
+
       // When recruiter cancels assignment (Red X), application is reverted to submitted. Skip "Thank you for applying" — assignment_status_cancelled already sent the correct message.
       if (newStatus === 'submitted' && (after.statusChangeReason === 'assignment_cancelled' || after.revertedFromAssignmentCancel === true)) {
         logger.info(`Application ${applicationId} reverted to submitted due to assignment cancel - skipping application_received`);
@@ -347,6 +353,34 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return false;
       };
 
+      // Skip waitlisted when this user has an assignment in good standing for this application's shift (placement flow: assignment is created before application is updated to accepted, so status=waitlisted can fire before assignmentId is set).
+      const skipWaitlistedWhenUserHasAssignmentForThisShift = async () => {
+        const userId = after.userId || after.candidateId;
+        const shiftId = (after.shiftId || '').trim();
+        const shiftIds = Array.isArray(after.shiftIds) ? after.shiftIds.map((s: unknown) => String(s || '').trim()).filter(Boolean) : [];
+        const shiftsToCheck = shiftId ? [shiftId, ...shiftIds].filter((s, i, a) => a.indexOf(s) === i) : shiftIds;
+        if (!userId || shiftsToCheck.length === 0) return false;
+        try {
+          const assignSnap = await admin.firestore()
+            .collection(`tenants/${tenantId}/assignments`)
+            .where('userId', '==', userId)
+            .where('shiftId', 'in', shiftsToCheck.length > 10 ? shiftsToCheck.slice(0, 10) : shiftsToCheck)
+            .limit(5)
+            .get();
+          const hasGoodStanding = assignSnap.docs.some((d) => {
+            const s = (d.data()?.status || '').toLowerCase();
+            return ['proposed', 'confirmed', 'active'].includes(s);
+          });
+          if (hasGoodStanding) {
+            logger.info(`Application ${applicationId} status=waitlisted but user ${userId} has an assignment for this shift; skipping waitlisted notification`);
+            return true;
+          }
+        } catch (err) {
+          logger.warn(`Could not check assignments for shift(s) for application ${applicationId}:`, err);
+        }
+        return false;
+      };
+
       if (newStatus === 'rejected' && (await skipStatusNotificationWhenAssigned('skipping rejection notification'))) {
         return { success: true };
       }
@@ -360,6 +394,9 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return { success: true };
       }
       if (newStatus === 'waitlisted' && (await skipWaitlistedWhenOtherApplicationAcceptedForSameJob())) {
+        return { success: true };
+      }
+      if (newStatus === 'waitlisted' && (await skipWaitlistedWhenUserHasAssignmentForThisShift())) {
         return { success: true };
       }
 

@@ -301,6 +301,14 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
   // Always render a marker; start at fallback and then snap to real coordinates when available.
   const [center, setCenter] = useState<{ lat: number; lng: number }>(fallbackCenter);
   const [mapInstance, setMapInstance] = useState<google.maps.Map | null>(null);
+  const [mapsReady, setMapsReady] = useState(() => typeof (window as any).google?.maps?.Map === 'function');
+  useEffect(() => {
+    if (mapsReady) return;
+    const t = setInterval(() => {
+      if (typeof (window as any).google?.maps?.Map === 'function') setMapsReady(true);
+    }, 200);
+    return () => clearInterval(t);
+  }, [mapsReady]);
   // Using MarkerF for reliable rendering within React
   
   useEffect(() => {
@@ -356,7 +364,7 @@ const LocationMap: React.FC<{ location: LocationData }> = ({ location }) => {
 
   // Marker is rendered via MarkerF in JSX
 
-  if (!(window as any).google) {
+  if (!mapsReady) {
     return (
       <Box sx={{ height: 360, bgcolor: 'grey.100', borderRadius: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <CircularProgress />

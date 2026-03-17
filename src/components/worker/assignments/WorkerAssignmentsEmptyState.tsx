@@ -33,14 +33,11 @@ const WorkerAssignmentsEmptyState: React.FC<WorkerAssignmentsEmptyStateProps> = 
             <Typography variant="h6" sx={{ fontWeight: 600 }}>
               {t('assignments.emptyNoUpcomingTitle')}
             </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {t('empty.checkJobsBoard')}
-            </Typography>
             <Button
               variant="contained"
               onClick={() => navigate('/c1/jobs-board')}
             >
-              {t('nav.findWork')}
+              {t('assignments.findWork')}
             </Button>
           </Stack>
         </CardContent>

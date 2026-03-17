@@ -439,7 +439,7 @@ function resolveJobPostTitle(context: TemplateVariableContext): string {
 }
 
 function resolveLocationCity(context: TemplateVariableContext): string {
-  // Prefer job posting / job order worksite (where the job is) over user's home address
+  // Job/worksite location only — never use user's home address (e.g. "Alamo" where they live) as job location
   return (
     context.jobPostData?.worksiteAddress?.city ||
     context.jobPostData?.locationCity ||
@@ -463,7 +463,6 @@ function resolveLocationCity(context: TemplateVariableContext): string {
     context.assignmentData?.worksiteCity ||
     context.shiftData?.locationCity ||
     context.shiftData?.worksiteCity ||
-    context.userData?.address?.city ||
     ''
   );
 }

@@ -81,12 +81,13 @@ import {
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, limit, type DocumentSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, limit, deleteField, type DocumentSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
 import { p } from '../data/firestorePaths';
+import { getDateScheduleEntriesWithHours, type DateSchedule } from '../utils/dateSchedule';
 import { JobOrder } from '../types/recruiter/jobOrder';
 import PageHeader from '../components/PageHeader';
 import JobOrderForm from '../components/JobOrderForm';
@@ -173,6 +174,10 @@ interface ShiftOption {
   defaultJobTitle?: string;
   startTime?: string;
   endTime?: string;
+  /** Multi-day gig: per-date schedule (keys YYYY-MM-DD) */
+  dateSchedule?: Record<string, { startTime?: string; endTime?: string; workersNeeded?: number; overstaff?: number }>;
+  /** Multi-day gig: last date of shift range */
+  endDate?: string | { toDate?: () => Date } | Date;
 }
 
 interface Applicant {
@@ -222,9 +227,10 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
   const defaultSortAppliedRef = useRef(false);
 
-  // Shift selector (for Gig jobs - filter applicants by shift)
+  // Shift and day selectors (for Gig jobs - filter applicants by shift and optionally by day)
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<string>('');
+  const [selectedDay, setSelectedDay] = useState<string>('');
   const appsStorageKey = `applications_shift_${tenantId}_${jobOrderId}`;
 
   // Default sort by Job Score when this job has a requirement pack (once jobOrder is available)
@@ -397,14 +403,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       try {
         const shiftsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts');
         const snap = await getDocs(shiftsRef);
-        const todayStr = new Date().toISOString().split('T')[0];
+        // Show all shifts (same as Placements tab) so Shift/Day filters always appear for Gigs
         const loaded = snap.docs
           .map((d) => ({ id: d.id, ...d.data() } as ShiftOption))
-          .filter((s) => {
-            const dateVal = s.shiftDate;
-            const dateStr = typeof dateVal === 'string' ? dateVal?.split('T')[0] : (dateVal && typeof (dateVal as any).toDate === 'function' ? (dateVal as any).toDate()?.toISOString?.()?.split('T')[0] : null);
-            return dateStr && dateStr >= todayStr;
-          })
           .sort((a, b) => {
             const toDateStr = (val: ShiftOption['shiftDate']) =>
               typeof val === 'string' ? val : (val && typeof (val as any).toDate === 'function' ? (val as any).toDate()?.toISOString?.() || '' : '');
@@ -413,18 +414,27 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             return da.localeCompare(db_);
           });
         setShifts(loaded);
-        // Restore persisted selection
+        // Restore persisted selection, or default to first shift (same as Placements) so Day filter can show
         try {
           const saved = localStorage.getItem(appsStorageKey);
           if (saved) {
             const parsed = JSON.parse(saved);
             if (parsed?.shiftId && loaded.some((s) => s.id === parsed.shiftId)) {
               setSelectedShiftId(parsed.shiftId);
+              if (typeof parsed?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.day)) {
+                setSelectedDay(parsed.day);
+              }
               return;
             }
           }
         } catch {}
-        if (loaded.length > 0 && !selectedShiftId) setSelectedShiftId('');
+        if (loaded.length > 0) {
+          if (selectedShiftId && !loaded.some((s) => s.id === selectedShiftId)) {
+            setSelectedShiftId(loaded[0].id);
+          } else if (!selectedShiftId) {
+            setSelectedShiftId(loaded[0].id);
+          }
+        }
       } catch (err) {
         console.warn('Error loading shifts for Applications:', err);
         setShifts([]);
@@ -435,9 +445,42 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   useEffect(() => {
     try {
-      localStorage.setItem(appsStorageKey, JSON.stringify({ shiftId: selectedShiftId }));
+      localStorage.setItem(appsStorageKey, JSON.stringify({ shiftId: selectedShiftId, day: selectedDay || undefined }));
     } catch {}
-  }, [selectedShiftId, appsStorageKey]);
+  }, [selectedShiftId, selectedDay, appsStorageKey]);
+
+  // Selected shift (full object) and multi-day day options
+  const selectedShift = selectedShiftId ? shifts.find((s) => s.id === selectedShiftId) ?? null : null;
+  const toDateStr = (val: ShiftOption['shiftDate'] | ShiftOption['endDate']): string => {
+    if (!val) return '';
+    if (typeof val === 'string') return val.split('T')[0];
+    if (val instanceof Date) return val.toISOString().split('T')[0];
+    if (typeof (val as { toDate?: () => Date }).toDate === 'function') return (val as { toDate: () => Date }).toDate().toISOString().split('T')[0] ?? '';
+    return '';
+  };
+  const isGigMultiDay = Boolean(
+    selectedShift &&
+    selectedShift.dateSchedule &&
+    selectedShift.endDate &&
+    toDateStr(selectedShift.endDate) !== toDateStr(selectedShift.shiftDate),
+  );
+  const dayOptions = useMemo(() => {
+    if (!isGigMultiDay || !selectedShift) return [];
+    return getDateScheduleEntriesWithHours(
+      selectedShift.dateSchedule as unknown as DateSchedule | undefined,
+      toDateStr(selectedShift.shiftDate),
+      toDateStr(selectedShift.endDate),
+    );
+  }, [isGigMultiDay, selectedShift]);
+  useEffect(() => {
+    if (dayOptions.length === 0) {
+      if (selectedDay) setSelectedDay('');
+      return;
+    }
+    if (!selectedDay) return;
+    const valid = dayOptions.some((d) => d.date === selectedDay);
+    if (!valid) setSelectedDay('');
+  }, [selectedShiftId, selectedDay, dayOptions]);
 
   // Filter applicants by selected shift (Gig jobs only)
   const filteredApplicants = useMemo(() => {
@@ -455,18 +498,19 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     });
   }, [applicants, selectedShiftId, isGigJob]);
 
-  // Notify parent of count changes (use filtered count)
-  useEffect(() => {
-    if (onCountChange) onCountChange(filteredApplicants.length);
-  }, [filteredApplicants.length, onCountChange]);
-  useEffect(() => {
-    if (onCandidateCountChange) {
-      const candidateCount = filteredApplicants.filter(
-        (a) => a.applicationData?.candidate === true
-      ).length;
-      onCandidateCountChange(candidateCount);
-    }
-  }, [filteredApplicants, onCandidateCountChange]);
+  // When a specific day is selected (multi-day gig), show only applicants who applied for that day (applyDate/applyDates).
+  // When "All days", show all applicants for the shift (no duplicates). Applicants without applyDate/applyDates only show on "All days".
+  const filteredByShiftAndDay = useMemo(() => {
+    if (!selectedDay || !isGigMultiDay) return filteredApplicants;
+    return filteredApplicants.filter((a) => {
+      const app = a.applicationData || {};
+      const appDate = app.applyDate;
+      const appDates = app.applyDates;
+      if (appDate && /^\d{4}-\d{2}-\d{2}$/.test(appDate) && appDate === selectedDay) return true;
+      if (Array.isArray(appDates) && appDates.includes(selectedDay)) return true;
+      return false;
+    });
+  }, [filteredApplicants, selectedDay, isGigMultiDay]);
 
   const handleRefreshScores = useCallback(async () => {
     const requirementPackId = (jobOrder as any)?.requirementPackId;
@@ -620,7 +664,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
-      const data = [...filteredApplicants];
+      const data = [...filteredByShiftAndDay];
       data.sort((a, b) => {
         const aM = toMillis(a.scoreSummary?.interviewLastAt);
         const bM = toMillis(b.scoreSummary?.interviewLastAt);
@@ -630,7 +674,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'jobScore') {
-      const data = [...filteredApplicants];
+      const data = [...filteredByShiftAndDay];
       data.sort((a, b) => {
         const aScore = a.jobScoreSummary?.jobScore ?? -1;
         const bScore = b.jobScoreSummary?.jobScore ?? -1;
@@ -639,10 +683,23 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
-    return filteredApplicants;
-  }, [filteredApplicants, applicantsSortBy, applicantsSortDirection]);
+    return filteredByShiftAndDay;
+  }, [filteredByShiftAndDay, applicantsSortBy, applicantsSortDirection]);
 
-  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredApplicants;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByShiftAndDay;
+
+  // Notify parent of count changes (use displayed count)
+  useEffect(() => {
+    if (onCountChange) onCountChange(displayedApplicants.length);
+  }, [displayedApplicants.length, onCountChange]);
+  useEffect(() => {
+    if (onCandidateCountChange) {
+      const candidateCount = displayedApplicants.filter(
+        (a) => a.applicationData?.candidate === true
+      ).length;
+      onCandidateCountChange(candidateCount);
+    }
+  }, [displayedApplicants, onCandidateCountChange]);
   const isAllSelected = displayedApplicants.length > 0 && selectedApplicantIds.size === displayedApplicants.length;
   const isSomeSelected = selectedApplicantIds.size > 0;
 
@@ -710,15 +767,21 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
-      const jobId = applicant.applicationData?.jobId || '';
+      const jobId = applicant.applicationData?.jobId || applicant.applicationData?.postId || '';
       const tenantAppDocId = applicant.applicationData?.id || `${applicant.uid}_${jobId}`;
 
       // Canonical write: tenant application doc
       const applicationRef = doc(db, 'tenants', tenantId, 'applications', tenantAppDocId);
-      await updateDoc(applicationRef, {
+      const updateData: Record<string, unknown> = {
         status: newStatus,
-        updatedAt: serverTimestamp()
-      });
+        updatedAt: serverTimestamp(),
+      };
+      // When reverting to submitted, clear deleted flags so application is no longer treated as removed
+      if (newStatus === 'submitted') {
+        updateData.deletedAt = deleteField();
+        updateData.deletedBy = deleteField();
+      }
+      await updateDoc(applicationRef, updateData);
 
       setApplicants(prev =>
         prev.map(a =>
@@ -729,6 +792,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       handleCloseStatusMenu(applicant.uid);
     } catch (error) {
       console.error('❌ Error changing application status:', error);
+      alert('Failed to update status. Check the console for details.');
     }
   };
 
@@ -797,27 +861,53 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return;
     }
 
+    if (!tenantId || !applicant.uid) {
+      alert('Missing tenant or applicant info.');
+      return;
+    }
+
     try {
-      // Canonical write: mark tenant application deleted so it disappears from recruiter view
-      const tenantAppDocId = applicant.applicationData?.id;
-      if (tenantId && tenantAppDocId) {
-        try {
-          const tenantAppRef = doc(db, 'tenants', tenantId, 'applications', tenantAppDocId);
-          const tenantAppDoc = await getDoc(tenantAppRef);
-          if (tenantAppDoc.exists()) {
-            await updateDoc(tenantAppRef, {
-              status: 'deleted',
-              deletedAt: serverTimestamp(),
-              deletedBy: user?.uid,
-              updatedAt: serverTimestamp(),
-            });
-          }
-        } catch (tenantAppErr) {
-          console.warn('Tenant application update failed (non-fatal):', tenantAppErr);
+      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+      const docIdsToUpdate: string[] = [];
+
+      // Find all application docs for this user + this job (by jobOrderId or by jobId in connected posts)
+      const byOrderQ = query(
+        applicationsRef,
+        where('userId', '==', applicant.uid),
+        where('jobOrderId', '==', jobOrderId),
+      );
+      const byOrderSnap = await getDocs(byOrderQ);
+      byOrderSnap.docs.forEach((d) => docIdsToUpdate.push(d.id));
+
+      const jobPostIds = (connectedJobPosts || []).map((p) => p.id).filter(Boolean);
+      if (jobPostIds.length > 0) {
+        const IN_LIMIT = 10;
+        for (let i = 0; i < jobPostIds.length; i += IN_LIMIT) {
+          const slice = jobPostIds.slice(i, i + IN_LIMIT);
+          const byPostQ = query(
+            applicationsRef,
+            where('userId', '==', applicant.uid),
+            where('jobId', 'in', slice),
+          );
+          const byPostSnap = await getDocs(byPostQ);
+          byPostSnap.docs.forEach((d) => docIdsToUpdate.push(d.id));
         }
       }
 
-      // Remove from local state so the row disappears immediately
+      const uniqueIds = Array.from(new Set(docIdsToUpdate));
+      if (uniqueIds.length === 0) {
+        console.warn('No application doc(s) found to remove for', applicant.uid);
+      }
+      for (const appDocId of uniqueIds) {
+        const tenantAppRef = doc(db, 'tenants', tenantId, 'applications', appDocId);
+        await updateDoc(tenantAppRef, {
+          status: 'deleted',
+          deletedAt: serverTimestamp(),
+          deletedBy: user?.uid,
+          updatedAt: serverTimestamp(),
+        });
+      }
+
       setApplicants((prev) => prev.filter((a) => a.uid !== applicant.uid));
       handleCloseActionMenu(applicant.uid);
     } catch (error) {
@@ -1122,7 +1212,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     <>
       <Card>
         <CardHeader 
-          title={`Applications (${filteredApplicants.length})`}
+          title={`Applications (${displayedApplicants.length})`}
           action={
             <Stack direction="row" alignItems="center" spacing={1}>
               {jobOrder?.requirementPackId && (
@@ -1149,13 +1239,16 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         />
         <CardContent sx={{ p: 0 }}>
           {isGigJob && shifts.length > 0 && (
-            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider' }}>
+            <Box sx={{ px: 2, py: 1.5, borderBottom: 1, borderColor: 'divider', display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
               <FormControl size="small" sx={{ minWidth: 280 }}>
                 <InputLabel>Shift</InputLabel>
                 <Select
                   value={selectedShiftId}
                   label="Shift"
-                  onChange={(e) => setSelectedShiftId(e.target.value)}
+                  onChange={(e) => {
+                    setSelectedShiftId(e.target.value);
+                    setSelectedDay('');
+                  }}
                 >
                   <MenuItem value="">
                     <em>All shifts</em>
@@ -1181,6 +1274,26 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   })}
                 </Select>
               </FormControl>
+              {isGigMultiDay && dayOptions.length > 0 && (
+                <FormControl size="small" sx={{ minWidth: 200 }}>
+                  <InputLabel>Day</InputLabel>
+                  <Select
+                    value={selectedDay || '__all__'}
+                    label="Day"
+                    onChange={(e) => setSelectedDay(e.target.value === '__all__' ? '' : e.target.value)}
+                    renderValue={(v) => (v === '__all__' || !v ? 'All days' : dayOptions.find((d) => d.date === v)?.dayLabel ?? v)}
+                  >
+                    <MenuItem value="__all__">
+                      <em>All days</em>
+                    </MenuItem>
+                    {dayOptions.map((opt) => (
+                      <MenuItem key={opt.date} value={opt.date}>
+                        {opt.dayLabel}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              )}
             </Box>
           )}
           {isSomeSelected && (
@@ -1239,7 +1352,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 transformOrigin={{ vertical: 'top', horizontal: 'left' }}
               >
                 <MenuItem onClick={() => handleBulkChangeStatus('submitted')}>Submitted</MenuItem>
-                <MenuItem onClick={() => handleBulkChangeStatus('accepted')}>Accepted</MenuItem>
                 <MenuItem onClick={() => handleBulkChangeStatus('waitlisted')}>Waitlisted</MenuItem>
                 <MenuItem onClick={() => handleBulkChangeStatus('rejected')}>Rejected</MenuItem>
               </Menu>
@@ -1308,7 +1420,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       {applicants.length === 0
                         ? 'No applications received yet for this job order.'
                         : isGigJob && selectedShiftId
-                        ? 'No applicants for this shift. Select "All shifts" to see all applicants.'
+                        ? selectedDay
+                          ? 'No applicants for this shift and day. Try "All days" to see everyone who applied to this shift.'
+                          : 'No applicants for this shift. Select "All shifts" to see all applicants.'
                         : 'No applicants.'}
                     </Alert>
                   </TableCell>
@@ -1421,14 +1535,14 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                             if (id && !ids.includes(id)) ids.push(id);
                           });
                         }
-                        const shiftLabels = ids
-                          .map((id) => shifts.find((s) => s.id === id)?.shiftTitle || id)
-                          .filter(Boolean);
-                        if (shiftLabels.length === 0) return <Typography variant="caption" color="text.secondary">—</Typography>;
+                        const shiftEntries = ids
+                          .map((id, index) => ({ id, label: shifts.find((s) => s.id === id)?.shiftTitle || id }))
+                          .filter((e) => e.label);
+                        if (shiftEntries.length === 0) return <Typography variant="caption" color="text.secondary">—</Typography>;
                         return (
                           <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ maxWidth: 180 }}>
-                            {shiftLabels.map((label) => (
-                              <Chip key={label} label={label} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
+                            {shiftEntries.map((e, index) => (
+                              <Chip key={`${e.id}-${index}`} label={e.label} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
                             ))}
                           </Stack>
                         );
@@ -1588,8 +1702,11 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       const isAssigned = placementStatus && ['proposed', 'accepted'].includes(placementStatus);
                       const isDeclined = placementStatus === 'declined';
                       const isCancelled = placementStatus === 'cancelled' || placementStatus === 'canceled';
-                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Accepted' : isDeclined ? 'Declined' : isCancelled ? 'Cancelled' : (applicant.applicationStatus || 'submitted');
-                      const displayColor = isConfirmed ? 'success' : isAssigned ? undefined : isDeclined || isCancelled ? 'error' :
+                      const appStatus = (applicant.applicationStatus || 'submitted').toLowerCase();
+                      // When assignment is cancelled, show submitted if application was reverted (so status change is visible). Use same label/case as backend: 'submitted'.
+                      const displayLabel = isConfirmed ? 'Confirmed' : isAssigned ? 'Accepted' : isDeclined ? 'Declined' : (isCancelled && appStatus === 'submitted') ? 'submitted' : isCancelled ? 'Cancelled' : (applicant.applicationStatus || 'submitted');
+                      // Submitted (any source) uses default color; only cancelled when not reverted to submitted uses error
+                      const displayColor = isConfirmed ? 'success' : isAssigned ? undefined : isDeclined || (isCancelled && appStatus !== 'submitted') ? 'error' :
                         applicant.applicationStatus === 'accepted' ? 'success' :
                         applicant.applicationStatus === 'rejected' ? 'error' :
                         applicant.applicationStatus === 'waitlisted' ? 'warning' : 'default';
@@ -1620,9 +1737,6 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     >
                       <MenuItem onClick={() => handleChangeStatus(applicant, 'submitted')}>
                         Submitted
-                      </MenuItem>
-                      <MenuItem onClick={() => handleChangeStatus(applicant, 'accepted')}>
-                        Accepted
                       </MenuItem>
                       <MenuItem onClick={() => handleChangeStatus(applicant, 'waitlisted')}>
                         Waitlisted
@@ -2256,21 +2370,23 @@ const JobOrderJobsBoardTab: React.FC<{
     const positionForPrefill = position ?? firstPosition;
 
     // Combine requiredLicenses and requiredCertifications
-    // Check both top-level and scoping structure, deduplicated
+    // JobOrderForm (Overview) saves to deal.stageData.scoping.compliance; also check scoping and top-level
     const topLevelLicenses = jobOrder.requiredLicenses || [];
     const topLevelCerts = jobOrder.requiredCertifications || [];
+    const complianceLicensesCerts = Array.isArray(compliance.licensesCerts) ? compliance.licensesCerts : [];
     const scopingLicensesCerts = scoping.licensesCerts || [];
     const allLicensesCerts = Array.from(new Set([
       ...topLevelLicenses,
       ...topLevelCerts,
-      ...scopingLicensesCerts
-    ])); // Remove duplicates
+      ...complianceLicensesCerts,
+      ...scopingLicensesCerts,
+    ]));
 
-    // Skills are stored in deal.stageData.scoping.skills, not top-level
-    // Prefer scoping, but merge and deduplicate
+    // Skills: Overview tab saves to scoping.compliance.skills; merge with scoping and top-level
+    const skillsFromCompliance = Array.isArray(compliance.skills) ? compliance.skills : [];
     const skillsFromScoping = Array.isArray(scoping.skills) ? scoping.skills : [];
     const skillsFromTopLevel = Array.isArray(jobOrder.skillsRequired) ? jobOrder.skillsRequired : [];
-    const allSkills = Array.from(new Set([...skillsFromScoping, ...skillsFromTopLevel])); // Remove duplicates
+    const allSkills = Array.from(new Set([...skillsFromCompliance, ...skillsFromScoping, ...skillsFromTopLevel]));
 
     // Uniform requirements are stored in deal.stageData.scoping.uniformRequirements
     // Prefer scoping, but merge and deduplicate
@@ -2332,47 +2448,51 @@ const JobOrderJobsBoardTab: React.FC<{
       showLicensesCerts: allLicensesCerts.length > 0,
       skills: allSkills,
       showSkills: allSkills.length > 0,
-      // Languages from scoping (preferred) or top-level, deduplicated
+      // Languages: Overview saves to scoping.compliance.languages; merge with scoping and top-level
       languages: (() => {
+        const complianceLanguages = Array.isArray(compliance.languages) ? compliance.languages : [];
         const scopingLanguages = Array.isArray(scoping.languages) ? scoping.languages : [];
         const topLevelLanguages = Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : [];
-        const combined = [...scopingLanguages, ...topLevelLanguages];
-        return Array.from(new Set(combined)); // Remove duplicates
+        return Array.from(new Set([...complianceLanguages, ...scopingLanguages, ...topLevelLanguages]));
       })(),
       showLanguages: (() => {
+        const complianceLanguages = Array.isArray(compliance.languages) ? compliance.languages : [];
         const scopingLanguages = Array.isArray(scoping.languages) ? scoping.languages : [];
         const topLevelLanguages = Array.isArray(jobOrder.languagesRequired) ? jobOrder.languagesRequired : [];
-        return scopingLanguages.length > 0 || topLevelLanguages.length > 0;
+        return complianceLanguages.length > 0 || scopingLanguages.length > 0 || topLevelLanguages.length > 0;
       })(),
-      // Experience from scoping or top-level
+      // Experience: Overview saves to compliance.experience; also scoping and top-level
       experienceLevels: (() => {
-        const expValue = scoping.experience || compliance.experience || jobOrder.experienceRequired;
+        const expValue = compliance.experience || scoping.experience || jobOrder.experienceRequired;
         if (!expValue) return [];
         const expOption = experienceOptions.find(opt => opt.value === expValue);
         return expOption ? [expOption.label] : [expValue];
       })(),
-      showExperience: !!(scoping.experience || compliance.experience || jobOrder.experienceRequired),
-      educationLevels: jobOrder.educationRequired ? (() => {
-        // Map education value to full label
-        const eduOption = educationOptions.find(opt => opt.value === jobOrder.educationRequired);
-        return eduOption ? [eduOption.label] : [jobOrder.educationRequired];
-      })() : [],
-      showEducation: !!jobOrder.educationRequired,
-      // Physical requirements from scoping (preferred) or top-level, deduplicated
+      showExperience: !!(compliance.experience || scoping.experience || jobOrder.experienceRequired),
+      // Education: Overview saves to compliance.education; also top-level jobOrder.educationRequired
+      educationLevels: (() => {
+        const eduValue = compliance.education || jobOrder.educationRequired;
+        if (!eduValue) return [];
+        const eduOption = educationOptions.find(opt => opt.value === eduValue);
+        return eduOption ? [eduOption.label] : [eduValue];
+      })(),
+      showEducation: !!(compliance.education || jobOrder.educationRequired),
+      // Physical requirements: Overview saves to compliance.physicalRequirements; merge with scoping and top-level
       physicalRequirements: (() => {
+        const compliancePhysical = Array.isArray(compliance.physicalRequirements) ? compliance.physicalRequirements : [];
         const scopingPhysical = Array.isArray(scoping.physicalRequirements) ? scoping.physicalRequirements : [];
-        const topLevelPhysical = jobOrder.physicalRequirements 
+        const topLevelPhysical = jobOrder.physicalRequirements
           ? (Array.isArray(jobOrder.physicalRequirements) ? jobOrder.physicalRequirements : [jobOrder.physicalRequirements])
           : [];
-        const combined = [...scopingPhysical, ...topLevelPhysical];
-        return Array.from(new Set(combined)); // Remove duplicates
+        return Array.from(new Set([...compliancePhysical, ...scopingPhysical, ...topLevelPhysical]));
       })(),
       showPhysicalRequirements: (() => {
+        const compliancePhysical = Array.isArray(compliance.physicalRequirements) ? compliance.physicalRequirements : [];
         const scopingPhysical = Array.isArray(scoping.physicalRequirements) ? scoping.physicalRequirements : [];
-        const topLevelPhysical = jobOrder.physicalRequirements 
+        const topLevelPhysical = jobOrder.physicalRequirements
           ? (Array.isArray(jobOrder.physicalRequirements) ? jobOrder.physicalRequirements : [jobOrder.physicalRequirements])
           : [];
-        return scopingPhysical.length > 0 || topLevelPhysical.length > 0;
+        return compliancePhysical.length > 0 || scopingPhysical.length > 0 || topLevelPhysical.length > 0;
       })(),
       // Uniform requirements from scoping (preferred) or top-level
       uniformRequirements: allUniformRequirements,
@@ -2380,22 +2500,24 @@ const JobOrderJobsBoardTab: React.FC<{
       // Custom uniform requirements from scoping or top-level
       customUniformRequirements: scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements || '',
       showCustomUniformRequirements: !!(scoping.customUniformRequirements || (jobOrder as any).customUniformRequirements),
-      // PPE requirements from scoping (preferred) or top-level, deduplicated
+      // PPE requirements: Overview saves to scoping.compliance.ppe; merge with scoping and top-level
       requiredPpe: (() => {
+        const compliancePpe = Array.isArray(compliance.ppe) ? compliance.ppe : [];
         const scopingPpe = Array.isArray(scoping.ppe) ? scoping.ppe : [];
-        const topLevelPpe = jobOrder.ppeRequirements 
+        const topLevelPpe = jobOrder.ppeRequirements
           ? (Array.isArray(jobOrder.ppeRequirements) ? jobOrder.ppeRequirements : [jobOrder.ppeRequirements])
           : [];
-        const combined = [...scopingPpe, ...topLevelPpe];
-        return Array.from(new Set(combined)); // Remove duplicates
+        return Array.from(new Set([...compliancePpe, ...scopingPpe, ...topLevelPpe]));
       })(),
       showRequiredPpe: (() => {
+        const compliancePpe = Array.isArray(compliance.ppe) ? compliance.ppe : [];
         const scopingPpe = Array.isArray(scoping.ppe) ? scoping.ppe : [];
-        const topLevelPpe = jobOrder.ppeRequirements 
+        const topLevelPpe = jobOrder.ppeRequirements
           ? (Array.isArray(jobOrder.ppeRequirements) ? jobOrder.ppeRequirements : [jobOrder.ppeRequirements])
           : [];
-        return scopingPpe.length > 0 || topLevelPpe.length > 0;
+        return compliancePpe.length > 0 || scopingPpe.length > 0 || topLevelPpe.length > 0;
       })(),
+      ppeProvidedBy: compliance.ppeProvidedBy || (jobOrder as any).ppeProvidedBy || 'company',
       // Map shiftType from job order to shift array for job post
       shift: (jobOrder as any).shiftType ? (Array.isArray((jobOrder as any).shiftType) ? (jobOrder as any).shiftType : [(jobOrder as any).shiftType]) : [],
       showShift: !!(jobOrder as any).shiftType,
@@ -2403,11 +2525,12 @@ const JobOrderJobsBoardTab: React.FC<{
       showPayRate: (jobOrder as any).showPayRate !== undefined ? (jobOrder as any).showPayRate : true,
       showStart: (jobOrder as any).showStartDate ?? (jobOrder as any).showStart ?? false,
       showEnd: (jobOrder as any).showEnd ?? false,
-      showWorkersNeeded: (jobOrder as any).showWorkersNeeded !== undefined ? (jobOrder as any).showWorkersNeeded : true,
+      showWorkersNeeded: (jobOrder as any).showWorkersNeeded !== undefined ? (jobOrder as any).showWorkersNeeded : false,
       expDate: formatDateForInput((jobOrder as any).expDate) || '',
-      showBackgroundChecks: ((jobOrder as any).backgroundCheckPackages || []).length > 0,
-      showDrugScreening: ((jobOrder as any).drugScreeningPanels || []).length > 0,
-      showAdditionalScreenings: ((jobOrder as any).additionalScreenings || []).length > 0,
+      // Show toggles: use compliance (Overview) and top-level so Jobs Board post defaults match what was set on the job order
+      showBackgroundChecks: (Array.isArray(compliance.backgroundCheckPackages) ? compliance.backgroundCheckPackages.length : 0) > 0 || ((jobOrder as any).backgroundCheckPackages || []).length > 0,
+      showDrugScreening: (Array.isArray(compliance.drugScreeningPanels) ? compliance.drugScreeningPanels.length : 0) > 0 || ((jobOrder as any).drugScreeningPanels || []).length > 0,
+      showAdditionalScreenings: (Array.isArray(compliance.additionalScreenings) ? compliance.additionalScreenings.length : 0) > 0 || ((jobOrder as any).additionalScreenings || []).length > 0,
       status: 'draft' as const,
       visibility: 'public' as const,
     };

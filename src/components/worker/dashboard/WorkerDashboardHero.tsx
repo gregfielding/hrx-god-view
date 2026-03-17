@@ -39,10 +39,10 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
   const tertiaryLine = nextShift ? (nextShift.addressShort || nextShift.locationCity || '') : null;
 
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-      <CardContent sx={{ py: 2.5, px: 2.5 }}>
-        <Stack spacing={1.5}>
-          <Typography variant="h5" sx={{ fontWeight: 600 }}>
+    <Card variant="outlined" className="worker-hero-card">
+      <CardContent sx={{ '&:last-child': { pb: 0 } }}>
+        <Stack spacing={2}>
+          <Typography variant="h5" sx={{ fontWeight: 700 }}>
             {t('dashboard.welcomeBack', { firstName })}
           </Typography>
           {nextShift ? (
@@ -61,7 +61,7 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
                   {tertiaryLine}
                 </Typography>
               )}
-              <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
+              <Stack direction="row" spacing={2} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
                 <Button
                   variant="contained"
                   onClick={() =>
@@ -85,7 +85,7 @@ const WorkerDashboardHero: React.FC<WorkerDashboardHeroProps> = ({ firstName, ne
               <Typography variant="body2" color="text.secondary">
                 {t('empty.checkJobsBoard')}
               </Typography>
-              <Stack direction="row" spacing={1.5} sx={{ mt: 1 }}>
+              <Stack direction="row" spacing={2} sx={{ mt: 2 }} flexWrap="wrap" useFlexGap>
                 <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
                   {t('nav.findWork')}
                 </Button>

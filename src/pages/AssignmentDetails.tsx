@@ -38,6 +38,7 @@ import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage'
 import { useT } from '../i18n';
 import { getShiftDisplayText } from '../utils/shiftI18n';
 import { parseCalendarDateLocal } from '../utils/dateUtils';
+import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
 import { format } from 'date-fns';
 
 interface AssignmentDetails {
@@ -91,6 +92,8 @@ interface AssignmentDetails {
   customUniformRequirements?: string;
   /** Required PPE (from job order); string or array joined */
   ppeRequirements?: string;
+  /** Physical requirements (from job order); shown in Job preparation section */
+  physicalRequirements?: string;
 }
 
 const AssignmentDetails: React.FC = () => {
@@ -108,6 +111,7 @@ const AssignmentDetails: React.FC = () => {
     shiftDate?: string;
     endDate?: string;
     weeklySchedule?: Record<string, { enabled: boolean; startTime: string; endTime: string }>;
+    dateSchedule?: Record<string, { startTime: string; endTime: string }>;
     defaultStartTime?: string;
     defaultEndTime?: string;
     shiftDescription?: string;
@@ -151,6 +155,7 @@ const AssignmentDetails: React.FC = () => {
             shiftDate: typeof d.shiftDate === 'string' ? d.shiftDate : undefined,
             endDate: typeof d.endDate === 'string' ? d.endDate : undefined,
             weeklySchedule: d.weeklySchedule as Record<string, { enabled: boolean; startTime: string; endTime: string }> | undefined,
+            dateSchedule: d.dateSchedule as Record<string, { startTime: string; endTime: string }> | undefined,
             defaultStartTime: typeof d.defaultStartTime === 'string' ? d.defaultStartTime : undefined,
             defaultEndTime: typeof d.defaultEndTime === 'string' ? d.defaultEndTime : undefined,
             shiftDescription: typeof d.shiftDescription === 'string' ? d.shiftDescription : undefined,
@@ -509,6 +514,11 @@ const AssignmentDetails: React.FC = () => {
           : typeof data.ppeRequirements === 'string'
             ? data.ppeRequirements
             : undefined,
+        physicalRequirements: Array.isArray(data.physicalRequirements)
+          ? data.physicalRequirements.filter(Boolean).join(', ')
+          : typeof data.physicalRequirements === 'string'
+            ? data.physicalRequirements
+            : undefined,
       });
     } catch (err: any) {
       console.error('Error loading assignment:', err);
@@ -608,6 +618,11 @@ const AssignmentDetails: React.FC = () => {
           ? jobOrderData.ppeRequirements.filter(Boolean).join(', ')
           : typeof jobOrderData.ppeRequirements === 'string'
             ? jobOrderData.ppeRequirements
+            : undefined,
+        physicalRequirements: Array.isArray(jobOrderData.physicalRequirements)
+          ? jobOrderData.physicalRequirements.filter(Boolean).join(', ')
+          : typeof jobOrderData.physicalRequirements === 'string'
+            ? jobOrderData.physicalRequirements
             : undefined,
       });
     } catch (err: any) {
@@ -823,6 +838,10 @@ const AssignmentDetails: React.FC = () => {
                         )}
                     </Box>
                   </Stack>
+                  {/* Job preparation — uniform, PPE, physical (moved from job post to assignment) */}
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600, mt: 0.5 }}>
+                    {t('jobs.jobPreparation')}
+                  </Typography>
                   <Stack direction="row" spacing={2} alignItems="flex-start">
                     <CheckroomIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                     <Box>
@@ -843,6 +862,17 @@ const AssignmentDetails: React.FC = () => {
                       </Typography>
                     </Box>
                   </Stack>
+                  {assignment.physicalRequirements && (
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <WorkIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">Physical requirements</Typography>
+                        <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
+                          {assignment.physicalRequirements}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                  )}
                 </Stack>
               </Grid>
             </Grid>
@@ -856,7 +886,37 @@ const AssignmentDetails: React.FC = () => {
               {t('assignment.mySchedule')}
             </Typography>
             <Stack spacing={2}>
-              {scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
+              {scheduleShift?.shiftMode === 'multi' && scheduleShift?.dateSchedule && scheduleShift?.shiftDate && (() => {
+                const entries = getDateScheduleEntriesWithHours(scheduleShift.dateSchedule, scheduleShift.shiftDate, scheduleShift.endDate);
+                return entries.length > 0;
+              })() ? (
+                <>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
+                    <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
+                      {getDateScheduleEntriesWithHours(scheduleShift!.dateSchedule!, scheduleShift!.shiftDate!, scheduleShift!.endDate).map((e) => (
+                        <Typography key={e.date} component="li" variant="body2">
+                          {e.dayLabel}: {formatTime(e.startTime)} – {formatTime(e.endTime)}
+                        </Typography>
+                      ))}
+                    </Stack>
+                  </Box>
+                  {assignment.startDate && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
+                      <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
+                    </Box>
+                  )}
+                  {assignment.jobOrderType === 'gig' && (assignment.endDate || scheduleShift.endDate) && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
+                      <Typography variant="body1">
+                        {assignment.endDate ? formatDate(assignment.endDate) : (scheduleShift.endDate ? new Date(scheduleShift.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
+                      </Typography>
+                    </Box>
+                  )}
+                </>
+              ) : scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
                 <>
                   <Box>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>

@@ -8,6 +8,7 @@ import { db } from '../firebase';
 import { CalendarEvent } from '../types/calendar';
 import { eachDayOfInterval, format, isValid, parse, parseISO } from 'date-fns';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
+import { getDateScheduleEntriesWithHours, formatDateScheduleEntry } from '../utils/dateSchedule';
 
 function parseLocalYyyyMmDd(dateStr: string): Date | null {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
@@ -33,7 +34,9 @@ function shiftToRangeBarEvent(shift: any, jobOrder: any, jobOrderColor: string):
   endExclusive.setDate(endExclusive.getDate() + 1);
 
   const title = jobOrder?.jobOrderName || jobOrder?.jobTitle || shift.shiftTitle || 'Gig Shift';
-  const scheduleSummary = formatWeeklyScheduleSummary(shift.weeklySchedule);
+  const scheduleSummary = (shift as any).dateSchedule
+    ? getDateScheduleEntriesWithHours((shift as any).dateSchedule, start, end).map((e) => formatDateScheduleEntry(e.date, e.startTime, e.endTime)).join('; ')
+    : formatWeeklyScheduleSummary(shift.weeklySchedule);
   const description = scheduleSummary ? `Schedule: ${scheduleSummary}` : undefined;
 
   return {
@@ -422,17 +425,25 @@ export function useGigJobOrdersCalendar({
             const endD = parseLocalYyyyMmDd((shift as any).endDate);
             if (!startD || !endD || !isValid(startD) || !isValid(endD)) continue;
 
-            for (const day of eachDayOfInterval({ start: startD, end: endD })) {
-              const dateStr = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
-              const dowKey = String(day.getDay()); // 0=Sun..6=Sat
-              const sched = (shift as any).weeklySchedule?.[dowKey];
-              if (sched && sched.enabled === false) continue;
+            const dateSched = (shift as any).dateSchedule;
+            if (dateSched && typeof dateSched === 'object') {
+              const entries = getDateScheduleEntriesWithHours(dateSched, shift.shiftDate, (shift as any).endDate);
+              for (const e of entries) {
+                occurrences.push({ dateStr: e.date, startTime: e.startTime, endTime: e.endTime });
+              }
+            } else {
+              for (const day of eachDayOfInterval({ start: startD, end: endD })) {
+                const dateStr = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+                const dowKey = String(day.getDay()); // 0=Sun..6=Sat
+                const sched = (shift as any).weeklySchedule?.[dowKey];
+                if (sched && sched.enabled === false) continue;
 
-              occurrences.push({
-                dateStr,
-                startTime: (sched?.startTime || shift.defaultStartTime || '00:00') as string,
-                endTime: (sched?.endTime || shift.defaultEndTime || '23:59') as string,
-              });
+                occurrences.push({
+                  dateStr,
+                  startTime: (sched?.startTime || shift.defaultStartTime || '00:00') as string,
+                  endTime: (sched?.endTime || shift.defaultEndTime || '23:59') as string,
+                });
+              }
             }
           } else {
             occurrences.push({

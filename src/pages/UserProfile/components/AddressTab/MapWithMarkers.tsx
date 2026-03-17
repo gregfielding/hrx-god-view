@@ -35,8 +35,19 @@ const MapWithMarkers: React.FC<Props> = ({
   homeMarkerLabel = 'Home',
   homeMarkerTitle,
 }) => {
-  // Maps script is loaded globally in App via LoadScript; assume available here
-  const isLoaded = !!(window as any).google?.maps;
+  // Only render GoogleMap when the Maps API is fully ready (Map constructor available).
+  // Poll until ready so we show the map when LoadScript finishes loading after mount.
+  const [mapsReady, setMapsReady] = useState(() => typeof (window as any).google?.maps?.Map === 'function');
+  useEffect(() => {
+    if (mapsReady) return;
+    const t = setInterval(() => {
+      if (typeof (window as any).google?.maps?.Map === 'function') {
+        setMapsReady(true);
+      }
+    }, 200);
+    return () => clearInterval(t);
+  }, [mapsReady]);
+  const isLoaded = mapsReady;
 
   const [center, setCenter] = useState<LatLng | null>(null);
 

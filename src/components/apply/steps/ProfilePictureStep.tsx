@@ -92,6 +92,9 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
 
   return (
     <Box>
+      <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 0.5 }}>
+        {t('apply.profileImprovementOptional')}
+      </Typography>
       <Typography
         variant="h6"
         gutterBottom
@@ -99,14 +102,12 @@ const ProfilePictureStep: React.FC<Props> = ({ value, onChange }) => {
       >
         {t('apply.profilePictureTitle')}
       </Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: isMobile ? 2 : 3 }}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
         {t('apply.profilePictureSubtext')}
       </Typography>
-      {!value.profilePicture && (
-        <Alert severity="info" sx={{ mb: 2 }}>
-          {t('apply.photoRequired')}
-        </Alert>
-      )}
+      <Alert severity="info" sx={{ mb: 2 }} icon={false}>
+        {t('apply.microcopyProfilePhoto')}
+      </Alert>
 
       {/* Current Profile Picture */}
       {value.profilePicture && (

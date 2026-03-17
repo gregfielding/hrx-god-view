@@ -32,6 +32,8 @@ import { doc, onSnapshot, updateDoc, arrayUnion, arrayRemove, serverTimestamp } 
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../../../firebase';
 import credentialsSeed from '../../../data/credentialsSeed.json';
+import { isUploadRequiredCert, getCertificationVerificationStatus } from '../../../utils/certificationVerification';
+import { useT } from '../../../i18n';
 
 type Props = {
   uid: string;
@@ -44,6 +46,8 @@ interface Certification {
   uploadedAt?: Date;
   issuer?: string;
   expirationDate?: string;
+  /** For upload-required certs: pending | verified (set by recruiter/admin). */
+  verificationStatus?: string;
 }
 
 const quickAddCertifications = [
@@ -70,6 +74,7 @@ const licenseOptions = credentialsSeed
 const allCertificationOptions = Array.from(new Set([...certificationOptions, ...licenseOptions])).sort();
 
 const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
+  const t = useT();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [certifications, setCertifications] = useState<Certification[]>([]);
@@ -271,15 +276,20 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
         {certifications.length > 0 ? (
           <>
             <Stack spacing={1.5} sx={{ mb: 2 }}>
-              {certifications.map((entry: Certification, idx: number) => (
+              {certifications.map((entry: Certification, idx: number) => {
+                const uploadRequired = isUploadRequiredCert(entry.name);
+                const certStatus = uploadRequired
+                  ? getCertificationVerificationStatus(entry)
+                  : null;
+                return (
                 <Box
                   key={idx}
                   sx={{
                     p: 1.5,
                     borderRadius: 1,
                     border: '1px solid',
-                    borderColor: 'divider',
-                    bgcolor: 'white',
+                    borderColor: certStatus === 'expired' ? 'error.light' : certStatus === 'verified' ? 'success.light' : 'divider',
+                    bgcolor: certStatus === 'expired' ? 'error.50' : 'white',
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
@@ -291,10 +301,37 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
                   }}
                 >
                   <Box sx={{ flex: 1 }}>
-                    <Typography variant="body1" sx={{ fontWeight: 500 }}>
-                      {entry.name || 'Certification'}
-                      {entry.issuer && ` (${entry.issuer})`}
-                    </Typography>
+                    <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+                      <Typography variant="body1" sx={{ fontWeight: 500 }}>
+                        {entry.name || 'Certification'}
+                        {entry.issuer && ` (${entry.issuer})`}
+                      </Typography>
+                      {uploadRequired && certStatus && (
+                        <Chip
+                          size="small"
+                          label={
+                            certStatus === 'missing'
+                              ? t('jobs.certStatusMissing')
+                              : certStatus === 'uploaded'
+                                ? t('jobs.certStatusUploaded')
+                                : certStatus === 'verified'
+                                  ? t('jobs.certStatusVerified')
+                                  : t('jobs.certStatusExpired')
+                          }
+                          color={
+                            certStatus === 'verified'
+                              ? 'success'
+                              : certStatus === 'uploaded'
+                                ? 'warning'
+                                : certStatus === 'expired'
+                                  ? 'error'
+                                  : 'default'
+                          }
+                          variant="outlined"
+                          sx={{ fontSize: '0.7rem' }}
+                        />
+                      )}
+                    </Stack>
                     {entry.fileUrl && entry.fileName && (
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                         {entry.fileName} • {entry.uploadedAt ? `Uploaded ${formatDate(entry.uploadedAt)}` : 'File attached'}
@@ -303,6 +340,11 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
                     {entry.expirationDate && (
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                         Expires: {entry.expirationDate}
+                        {certStatus === 'expired' && (
+                          <Typography component="span" variant="body2" color="error.main" sx={{ ml: 1 }}>
+                            (Expired)
+                          </Typography>
+                        )}
                       </Typography>
                     )}
                   </Box>
@@ -328,7 +370,8 @@ const LicensesAndCertsTab: React.FC<Props> = ({ uid }) => {
                     </IconButton>
                   </Stack>
                 </Box>
-              ))}
+              );
+              })}
             </Stack>
           </>
         ) : (

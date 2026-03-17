@@ -58,6 +58,11 @@ import {
   checkMultipleShiftDateConflicts,
   extractDateFromShiftDate,
 } from '../../utils/gigShiftApplicationLimits';
+import {
+  getDateScheduleEntriesWithHours,
+  formatDayAndDate,
+  type DateSchedule,
+} from '../../utils/dateSchedule';
 import { logJobApplicationActivity } from '../../utils/activityLogger';
 import { updateUserSmartGroupOnApply } from '../../services/smartGroupService';
 import { computeJobScoreSummary } from '../../utils/jobScore';
@@ -175,6 +180,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return [];
   }, [searchParams]);
 
+  // Apply date (YYYY-MM-DD) when worker applied for a specific day of a multi-day gig (from jobs board Apply button)
+  const applyDateFromUrl = useMemo(() => {
+    const d = searchParams.get('applyDate');
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : null;
+  }, [searchParams]);
+
   const baseSessionKey = `${tenantId || 'na'}-${jobId || 'na'}`;
   const sessionIdStorageKey = `app-wizard-session-id:${baseSessionKey}`;
   const [clientSessionId] = useState(() => {
@@ -253,6 +264,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [hasMissingRequiredCerts, setHasMissingRequiredCerts] = useState(false);
+  const [submittedSuccess, setSubmittedSuccess] = useState(false);
+  const [shiftSummaryData, setShiftSummaryData] = useState<{
+    dateLabel: string;
+    timeLabel: string;
+    pay: string;
+    location: string;
+  } | null>(null);
 
   // Step indices to show - skip empty steps (Preferences for Gig jobs; Work Eligibility for C1 Events LLC / contractors)
   const visibleStepIndices = useMemo(() => {
@@ -272,7 +290,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
-  const steps = visibleStepIndices.map((i) => allStepLabels[i]);
+
+  // Grouped progress: Personal (0-2), Skills (3-5), Experience (6-9), Verification (10), Final (11)
+  const progressGroupIndex = (step: number) =>
+    step <= 2 ? 0 : step <= 5 ? 1 : step <= 9 ? 2 : step === 10 ? 3 : 4;
+  const progressGroupLabels = [
+    t('apply.progressPersonal'),
+    t('apply.progressSkills'),
+    t('apply.progressExperience'),
+    t('apply.progressVerification'),
+    t('apply.progressFinal'),
+  ];
+  const progressCompleted = progressGroupIndex(actualStep);
+  const progressTotal = 5;
+  const steps = progressGroupLabels;
 
   // Clamp activeStep when visible steps shrink (e.g. posting loads and we skip Preferences)
   useEffect(() => {
@@ -526,6 +557,71 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     resolve();
     return () => { cancelled = true; };
   }, [tenantId, jobId, posting]);
+
+  // Load shift summary for final step card (when on step 11 and have posting)
+  useEffect(() => {
+    if (!posting || actualStep !== 11) {
+      setShiftSummaryData(null);
+      return;
+    }
+    let cancelled = false;
+    const jobOrderId = posting.jobOrderId || jobId;
+    const pay =
+      typeof posting.payRate === 'number'
+        ? `$${posting.payRate}/hr`
+        : posting.payRate
+          ? `$${posting.payRate}/hr`
+          : '';
+    const location =
+      posting.worksiteName ||
+      (posting.city && posting.state ? `${posting.city}, ${posting.state}` : '') ||
+      posting.city ||
+      posting.state ||
+      '';
+
+    if (posting.jobType === 'gig' && selectedShifts.length > 0 && tenantId && jobOrderId) {
+      const shiftId = selectedShifts[0];
+      const shiftRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', shiftId);
+      getDoc(shiftRef).then((snap) => {
+        if (cancelled || !snap.exists()) {
+          if (!cancelled) setShiftSummaryData({ dateLabel: '', timeLabel: '', pay, location });
+          return;
+        }
+        const shiftData = snap.data() as any;
+        const shiftDate = extractDateFromShiftDate(shiftData.shiftDate) || '';
+        const endDate = shiftData.endDate
+          ? (typeof shiftData.endDate === 'string'
+              ? shiftData.endDate.split('T')[0]
+              : null) || shiftDate
+          : shiftDate;
+        const dateSchedule = (shiftData.dateSchedule || {}) as DateSchedule;
+        const entries = getDateScheduleEntriesWithHours(dateSchedule, shiftDate, endDate);
+        const first = entries[0];
+        const dateLabel = first ? formatDayAndDate(first.date) : formatDayAndDate(shiftDate) || '';
+        const timeLabel = first
+          ? `${formatTime(first.startTime)} – ${formatTime(first.endTime)}`
+          : '';
+        if (!cancelled)
+          setShiftSummaryData({ dateLabel, timeLabel, pay, location });
+      });
+    } else {
+      const startDate = posting.startDate;
+      const dateLabel =
+        startDate && typeof startDate === 'string'
+          ? formatDayAndDate(startDate.split('T')[0])
+          : '';
+      setShiftSummaryData({ dateLabel, timeLabel: '', pay, location });
+    }
+    return () => { cancelled = true; };
+  }, [posting, actualStep, selectedShifts, tenantId, jobId]);
+
+  function formatTime(hhmm: string): string {
+    if (!hhmm || !/^\d{1,2}:\d{2}$/.test(hhmm)) return hhmm || '';
+    const [hh, mm] = hhmm.split(':').map(Number);
+    const hour = hh % 12 || 12;
+    const ampm = hh >= 12 ? 'PM' : 'AM';
+    return `${hour}:${String(mm).padStart(2, '0')} ${ampm}`;
+  }
 
   // Load user profile for validation
   useEffect(() => {
@@ -1438,6 +1534,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         return;
       }
 
+      // Minimum to apply: at least one skill
+      const quals = formData?.qualifications || {};
+      const skills = Array.isArray(quals.skills)
+        ? quals.skills.map((s: any) => (typeof s === 'string' ? s : s?.name)).filter(Boolean)
+        : [];
+      if (skills.length < 1) {
+        alert(t('apply.addAtLeastOneSkill'));
+        setSaving(false);
+        const skillsStepIndex = visibleStepIndices.indexOf(5);
+        if (skillsStepIndex >= 0) setActiveStep(skillsStepIndex);
+        return;
+      }
+
       // Final guard: ensure all required requirement fields are answered
       const m = computeMissing();
       if (m.drug || m.background || m.everify || (m.additional && m.additional.length > 0)) {
@@ -1629,12 +1738,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
       const eligibility = formData.eligibility || {};
       const profilePicture = formData.profilePicture || {};
-      const quals = formData.qualifications || {};
       const normalizedLanguages = normalizeLanguageList(quals.languages || []);
       const certifications = Array.isArray(quals.certifications) ? quals.certifications : [];
-      const skills = Array.isArray(quals.skills)
-        ? quals.skills.map((s: any) => (typeof s === 'string' ? s : s?.name)).filter(Boolean)
-        : [];
       const profileUpdate: any = {
         updatedAt: serverTimestamp(),
       };
@@ -1805,6 +1910,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const tidAppId = `${effectiveUid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
 
+          // When worker applied for a specific day (applyDate in URL), merge into applyDate/applyDates for day filtering
+          let applyDatePayload: string | null = null;
+          let applyDatesPayload: string[] | null = null;
+          if (applyDateFromUrl) {
+            const existingSnap = await getDoc(tRef);
+            const existing = existingSnap.exists() ? existingSnap.data() : null;
+            const existingDates: string[] = existing?.applyDates
+              ? [...(existing.applyDates as string[])]
+              : existing?.applyDate && /^\d{4}-\d{2}-\d{2}$/.test(String(existing.applyDate))
+                ? [String(existing.applyDate)]
+                : [];
+            const merged = [...new Set([...existingDates, applyDateFromUrl])].sort();
+            applyDatePayload = applyDateFromUrl;
+            applyDatesPayload = merged;
+          }
+
           // Get shift dates for gig jobs (for one-shift-per-day validation)
           let shiftDate: string | null = null;
           const shiftDates: string[] = [];
@@ -1916,6 +2037,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               // Store shift date(s) for one-shift-per-day validation
               ...(shiftDate ? { shiftDate } : {}),
               ...(shiftDates.length > 0 ? { shiftDates: [...new Set(shiftDates)] } : {}),
+              // Day(s) applied for (multi-day gig): used by Applications tab day filter
+              ...(applyDatePayload ? { applyDate: applyDatePayload } : {}),
+              ...(applyDatesPayload && applyDatesPayload.length > 0 ? { applyDates: applyDatesPayload } : {}),
             },
             { merge: true },
           );
@@ -2178,21 +2302,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         console.warn('Failed to clear wizard storage keys:', cleanupError);
       }
 
-      // Redirect to the job post they applied to (or explicit returnTo), otherwise jobs board.
-      const redirectPath =
-        returnTo ||
-        (tenantSlug && jobId
-          ? `/${tenantSlug}/jobs-board/${jobId}`
-          : tenantSlug
-            ? `/${tenantSlug}/jobs-board`
-            : '/c1/jobs-board');
-      try {
-        window.location.replace(redirectPath);
-        return;
-      } catch {
-        navigate(redirectPath, { replace: true });
-        return;
-      }
+      // Show confirmation screen instead of redirecting immediately
+      setSubmittedSuccess(true);
+      setSaving(false);
+      return;
     } catch (err: any) {
       console.error('Submit error:', err);
       try {
@@ -2240,11 +2353,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       case 4:
         return (
-          <ResumeStep
+          <Box>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
+              {t('apply.profileImprovementOptional')}
+            </Typography>
+            <ResumeStep
             value={{ ...(formData.resume || {}), userId: uid || '' }}
             onChange={(v) => persist({ resume: v })}
             tenantId={tenantId}
           />
+          </Box>
         );
       case 5:
         return (
@@ -2259,7 +2377,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       case 6:
         return (
-          <EducationStep
+          <Box>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
+              {t('apply.profileImprovementOptional')}
+            </Typography>
+            <EducationStep
             value={formData.qualifications || {}}
             onChange={(v) => persist({ qualifications: v })}
             context="application"
@@ -2268,10 +2390,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             jobPosting={posting}
             showOnly="education"
           />
+          </Box>
         );
       case 7:
         return (
-          <EducationStep
+          <Box>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
+              {t('apply.profileImprovementOptional')}
+            </Typography>
+            <EducationStep
             value={formData.qualifications || {}}
             onChange={(v) => persist({ qualifications: v })}
             context="application"
@@ -2281,10 +2408,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             showOnly="certifications"
             onRequiredCertsStatusChange={setHasMissingRequiredCerts}
           />
+          </Box>
         );
       case 8:
         return (
-          <WorkExperienceStep
+          <Box>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
+              {t('apply.profileImprovementOptional')}
+            </Typography>
+            <WorkExperienceStep
             value={formData.qualifications || {}}
             onChange={(v) => persist({ qualifications: v })}
             context="application"
@@ -2292,6 +2424,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             jobId={jobId}
             jobPosting={posting}
           />
+          </Box>
         );
       case 9:
         return (
@@ -2303,15 +2436,61 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       case 10:
         return (
-          <JobPreferencesStep
+          <Box>
+            <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
+              {t('apply.profileImprovementOptional')}
+            </Typography>
+            <JobPreferencesStep
             value={formData.preferences || {}}
             onChange={(v) => persist({ preferences: v })}
             jobPosting={posting}
           />
+          </Box>
         );
       case 11:
         return (
           <Box>
+            {shiftSummaryData && (shiftSummaryData.dateLabel || shiftSummaryData.pay || shiftSummaryData.location) && (
+              <Paper
+                variant="outlined"
+                sx={{
+                  p: 2,
+                  mb: 2,
+                  borderRadius: 2,
+                  bgcolor: 'grey.50',
+                }}
+              >
+                <Stack spacing={1}>
+                  {(shiftSummaryData.dateLabel || shiftSummaryData.timeLabel) && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                        {t('apply.shiftSummary')}
+                      </Typography>
+                      <Typography variant="body1">
+                        {shiftSummaryData.dateLabel}
+                        {shiftSummaryData.timeLabel ? `\n${shiftSummaryData.timeLabel}` : ''}
+                      </Typography>
+                    </Box>
+                  )}
+                  {shiftSummaryData.pay && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                        {t('apply.pay')}
+                      </Typography>
+                      <Typography variant="body1">{shiftSummaryData.pay}</Typography>
+                    </Box>
+                  )}
+                  {shiftSummaryData.location && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                        {t('apply.location')}
+                      </Typography>
+                      <Typography variant="body1">{shiftSummaryData.location}</Typography>
+                    </Box>
+                  )}
+                </Stack>
+              </Paper>
+            )}
             <RequirementsAcknowledgementStep
               requirements={requirements}
               profile={userProfile}
@@ -2486,6 +2665,46 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     });
   }
 
+  const applicationsPath = tenantSlug ? `/${tenantSlug}/applications` : '/c1/applications';
+  const jobsBoardPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';
+
+  if (submittedSuccess) {
+    return (
+      <Box sx={{ px: 0, py: 0, display: 'flex', flexDirection: 'column' }}>
+        <Paper
+          elevation={0}
+          sx={{
+            maxWidth: 480,
+            mx: 'auto',
+            mt: { xs: 4, md: 6 },
+            p: 3,
+            textAlign: 'center',
+          }}
+        >
+          <Typography variant="h6" sx={{ mb: 2, fontWeight: 600 }}>
+            {t('apply.applicationSubmittedMessage')}
+          </Typography>
+          <Stack direction="column" spacing={2} alignItems="stretch" sx={{ mt: 3 }}>
+            <Button
+              variant="contained"
+              fullWidth
+              onClick={() => navigate(applicationsPath)}
+            >
+              {t('apply.viewMyApplications')}
+            </Button>
+            <Button
+              variant="outlined"
+              fullWidth
+              onClick={() => navigate(jobsBoardPath)}
+            >
+              {t('apply.browseMoreJobs')}
+            </Button>
+          </Stack>
+        </Paper>
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -2559,10 +2778,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             backgroundColor: 'background.paper',
           }}
         >
-          {/* Full-bleed sticky progress under top bar (no side spacing) */}
+          {/* Full-bleed sticky progress under top bar (grouped: Personal, Skills, Experience, Verification, Final) */}
           <MilestoneProgress
-            total={visibleStepIndices.length}
-            completed={activeStep}
+            total={progressTotal}
+            completed={progressCompleted}
             labels={steps}
             sticky="top"
             onJump={undefined}
@@ -2631,13 +2850,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                         (password.length < 6 || password !== confirmPassword)))) ||
                   (actualStep === 1 && !addressValid) ||
                   (actualStep === 2 && formData?.eligibility?.workAuthorized !== true) ||
-                  (actualStep === 3 && !hasProfilePicture) ||
                   saving
                 }
               >
                 {isLastVisibleStep
                   ? t('apply.submitApplication')
-                  : actualStep === 4
+                  : actualStep === 3 || actualStep === 4
                   ? t('apply.skip')
                   : actualStep === 7 && hasMissingRequiredCerts
                   ? t('apply.skipForNow')

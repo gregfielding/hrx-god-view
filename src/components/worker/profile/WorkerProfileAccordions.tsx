@@ -32,6 +32,10 @@ const accordionSx = {
   borderRadius: '8px !important',
   mb: 1,
   boxShadow: 'none',
+  '& .MuiAccordionSummary-root': {
+    transition: 'background-color 0.2s ease',
+    '&:hover': { bgcolor: 'action.hover' },
+  },
 };
 
 const summarySx = { '& .MuiAccordionSummary-content': { my: 1.5 } };

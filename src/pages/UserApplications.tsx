@@ -11,9 +11,14 @@ import {
   Paper,
   Chip,
   CircularProgress,
-  Alert
+  Alert,
+  Button,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
+import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -30,6 +35,8 @@ interface Application {
   payRate?: number;
   status: string;
   submittedAt: Date;
+  /** When present, display as Shift Date (e.g. Mar 22, 5:00 PM) */
+  shiftStart?: Date;
 }
 
 /** Set of "tenantId_jobPostId" for which the user has a proposed (offer sent) assignment */
@@ -100,6 +107,7 @@ const UserApplications: React.FC = () => {
             let companyName = '';
             let location = '';
             let payRate = undefined;
+            let shiftStart: Date | undefined;
 
             // First, try to get cached data from user's applicationData
             const userRef = doc(db, 'users', user.uid);
@@ -134,7 +142,15 @@ const UserApplications: React.FC = () => {
                   postTitle = postTitle || jobData.postTitle || '';
                   companyName = companyName || jobData.companyName || '';
                   payRate = payRate !== undefined ? payRate : jobData.payRate;
-                  
+                  // Shift date: startDate or first shift start
+                  if (jobData.startDate?.toDate) {
+                    shiftStart = jobData.startDate.toDate();
+                  } else if (jobData.startDate) {
+                    shiftStart = new Date(jobData.startDate);
+                  } else if (Array.isArray(jobData.shifts) && jobData.shifts[0]?.startTime) {
+                    const s = jobData.shifts[0];
+                    shiftStart = s.startTime?.toDate ? s.startTime.toDate() : new Date(s.startTime);
+                  }
                   // Try multiple location fields
                   if (!location) {
                     if (jobData.city && jobData.state) {
@@ -162,6 +178,7 @@ const UserApplications: React.FC = () => {
               payRate,
               status: appData.status || 'submitted',
               submittedAt: appData.submittedAt?.toDate() || new Date(),
+              shiftStart,
             });
           }
         } catch (appErr) {
@@ -219,9 +236,39 @@ const UserApplications: React.FC = () => {
 
   const getStatusLabel = (app: Application): string => {
     const key = `${app.tenantId}_${app.jobId}`;
+    const status = app.status.toLowerCase();
     if (hiredOfferKeys.has(key)) return t('applications.statusHired');
-    if (app.status.toLowerCase() === 'submitted' && pendingOfferKeys.has(key)) return t('applications.acceptOffer');
-    return app.status.charAt(0).toUpperCase() + app.status.slice(1);
+    if (status === 'withdrawn') return t('applications.statusWithdrawn');
+    if (status === 'rejected' || status === 'declined') return t('applications.statusDeclined');
+    if (status === 'expired' || status === 'cancelled') return t('applications.statusExpired');
+    if (status === 'submitted' && pendingOfferKeys.has(key)) return t('applications.statusUnderReview');
+    if (status === 'submitted') return t('applications.statusApplied');
+    if (status === 'reviewed' || status === 'pending') return t('applications.statusUnderReview');
+    if (status === 'accepted' || status === 'confirmed' || status === 'hired') return t('applications.statusHired');
+    return t('applications.statusApplied');
+  };
+
+  const canWithdraw = (app: Application): boolean => {
+    const label = getStatusLabel(app);
+    return label === t('applications.statusApplied') || label === t('applications.statusUnderReview');
+  };
+
+  const handleWithdraw = async (e: React.MouseEvent, app: Application) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to withdraw your application?')) return;
+    try {
+      const appRef = doc(db, 'tenants', app.tenantId, 'applications', app.id);
+      await updateDoc(appRef, {
+        status: 'withdrawn',
+        withdrawnAt: new Date(),
+        withdrawnBy: user?.uid || null,
+        updatedAt: serverTimestamp(),
+      });
+      await loadApplications();
+    } catch (err) {
+      console.error('Failed to withdraw application:', err);
+      alert('We were unable to withdraw your application. Please try again.');
+    }
   };
 
   const getStatusColor = (app: Application): 'default' | 'primary' | 'success' | 'error' | 'warning' => {
@@ -256,6 +303,16 @@ const UserApplications: React.FC = () => {
       minute: '2-digit',
     }).format(date);
   };
+  const formatShiftDate = (date: Date): string => {
+    return new Intl.DateTimeFormat(locale, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }).format(date);
+  };
+
+  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
 
   if (loading) {
     return (
@@ -279,10 +336,13 @@ const UserApplications: React.FC = () => {
         {t('applications.title')}
       </Typography>
       {applications.length === 0 ? (
-        <Box sx={{ p: 3 }}>
-          <Alert severity="info">
-            {t('empty.noApplications')}
-          </Alert>
+        <Box sx={{ p: 4, textAlign: 'center' }}>
+          <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+            {t('applications.emptyMessage')}
+          </Typography>
+          <Button variant="contained" color="primary" onClick={() => navigate('/c1/jobs-board')}>
+            {t('applications.browseJobs')}
+          </Button>
         </Box>
       ) : (
         <TableContainer 
@@ -294,10 +354,13 @@ const UserApplications: React.FC = () => {
             <TableHead>
               <TableRow sx={{ backgroundColor: 'grey.100' }}>
                 <TableCell sx={{ fontWeight: 600 }}>{t('applications.jobTitle')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.company')}</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>{t('applications.location')}</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>{t('applications.shiftDate')}</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>{t('applications.payRate')}</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>{t('applications.dateApplied')}</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>{t('applications.status')}</TableCell>
+                <TableCell sx={{ fontWeight: 600, width: 140 }} />
               </TableRow>
             </TableHead>
             <TableBody>
@@ -305,30 +368,32 @@ const UserApplications: React.FC = () => {
                 <TableRow 
                   key={app.id}
                   hover
+                  onMouseEnter={() => setHoveredRowId(app.id)}
+                  onMouseLeave={() => setHoveredRowId(null)}
                   sx={{ 
                     cursor: 'pointer',
-                    '&:hover': {
-                      backgroundColor: 'action.hover'
-                    }
+                    '&:hover': { backgroundColor: 'action.hover' },
                   }}
-                  onClick={() => {
-                    // Navigate to job posting under worker layout (/c1/jobs-board/:postId)
-                    navigate(`/c1/jobs-board/${app.jobId}`);
-                  }}
+                  onClick={() => navigate(`/c1/jobs-board/${app.jobId}`)}
                 >
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 600 }}>
                       {app.postTitle || app.jobTitle || t('applications.untitledJob')}
                     </Typography>
-                    {app.companyName && (
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {app.companyName}
-                      </Typography>
-                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {app.companyName || t('applications.na')}
+                    </Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
                       {app.location || t('applications.na')}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {app.shiftStart ? formatShiftDate(app.shiftStart) : t('applications.na')}
                     </Typography>
                   </TableCell>
                   <TableCell>
@@ -349,11 +414,46 @@ const UserApplications: React.FC = () => {
                       sx={
                         getStatusLabel(app) === t('applications.statusHired')
                           ? { fontWeight: 600 }
-                          : getStatusLabel(app) === t('applications.acceptOffer') || app.status.toLowerCase() === 'submitted'
+                          : getStatusLabel(app) === t('applications.statusUnderReview') || getStatusLabel(app) === t('applications.statusApplied')
                             ? { backgroundColor: '#FFC700', color: '#000', fontWeight: 600 }
                             : undefined
                       }
                     />
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()} sx={{ py: 0.5 }}>
+                    <Box
+                      sx={{
+                        opacity: hoveredRowId === app.id ? 1 : 0,
+                        transition: 'opacity 0.15s',
+                        display: 'flex',
+                        alignItems: 'center',
+                                        gap: 0.5,
+                      }}
+                    >
+                      <Tooltip title={t('applications.viewJob')}>
+                        <IconButton
+                          size="small"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/c1/jobs-board/${app.jobId}`);
+                          }}
+                          color="primary"
+                        >
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      {canWithdraw(app) && (
+                        <Tooltip title={t('applications.withdrawApplication')}>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => handleWithdraw(e, app)}
+                            color="error"
+                          >
+                            <CancelOutlinedIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Box>
                   </TableCell>
                 </TableRow>
               ))}

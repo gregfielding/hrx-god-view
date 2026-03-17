@@ -1,6 +1,6 @@
 /**
- * Worker Dashboard Quick Actions — compact links to main worker areas.
- * Spec: HRX Worker Dashboard Layout Spec — Section 4
+ * Worker Dashboard Quick Actions — compact quick-nav row.
+ * Find Work | Assignments | Applications | Messages | Profile
  */
 
 import React from 'react';
@@ -9,14 +9,16 @@ import { Link as RouterLink } from 'react-router-dom';
 import WorkIcon from '@mui/icons-material/Work';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import FolderIcon from '@mui/icons-material/Folder';
+import MessageIcon from '@mui/icons-material/Message';
+import PersonIcon from '@mui/icons-material/Person';
 import { useT } from '../../../i18n';
 
 const ACTIONS = [
   { key: 'nav.findWork', to: '/c1/jobs-board', icon: <WorkIcon fontSize="small" /> },
   { key: 'nav.myAssignments', to: '/c1/workers/assignments', icon: <AssignmentIcon fontSize="small" /> },
   { key: 'nav.myApplications', to: '/c1/workers/applications', icon: <ListAltIcon fontSize="small" /> },
-  { key: 'nav.myDocuments', to: '/c1/workers/documents', icon: <FolderIcon fontSize="small" /> },
+  { key: 'nav.inbox', to: '/c1/workers/inbox', icon: <MessageIcon fontSize="small" /> },
+  { key: 'nav.myProfile', to: '/c1/workers/profile', icon: <PersonIcon fontSize="small" /> },
 ] as const;
 
 const WorkerDashboardQuickActions: React.FC = () => {

@@ -90,7 +90,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     payRate: '',
     showPayRate: true,
     workersNeeded: 1,
-    showWorkersNeeded: true,
+    showWorkersNeeded: false,
     eVerifyRequired: false,
     backgroundCheckPackages: [],
     showBackgroundChecks: false,
@@ -591,7 +591,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               ? firstPosition.payRate 
               : jobOrderData.payRate?.toString()) || '',
             workersNeeded: jobOrderData.workersNeeded || 1,
-            showWorkersNeeded: jobOrderData.showWorkersNeeded !== undefined ? jobOrderData.showWorkersNeeded : true,
+            showWorkersNeeded: jobOrderData.showWorkersNeeded !== undefined ? jobOrderData.showWorkersNeeded : false,
             showPayRate: jobOrderData.showPayRate !== undefined ? jobOrderData.showPayRate : true,
             showStart: jobOrderData.showStartDate ?? jobOrderData.showStart ?? false,
             showEnd: jobOrderData.showEnd ?? false,
@@ -925,28 +925,30 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 helperText="When this posting will automatically expire"
               />
             </Grid>
-            <Grid item xs={12} sm={6}>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                <TextField
-                  label="Workers Needed"
-                  type="number"
-                  value={formData.workersNeeded}
-                  onChange={(e) => setFormData({ ...formData, workersNeeded: parseInt(e.target.value) || 1 })}
-                  fullWidth
-                  inputProps={{ min: 1 }}
-                  helperText="Number of workers needed"
-                />
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Typography variant="body2" color="text.secondary">
-                    Show Workers Needed on Public Jobs Board
-                  </Typography>
-                  <Switch
-                    checked={formData.showWorkersNeeded}
-                    onChange={(e) => setFormData({ ...formData, showWorkersNeeded: e.target.checked })}
+            {formData.jobType !== 'gig' && (
+              <Grid item xs={12} sm={6}>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  <TextField
+                    label="Workers Needed"
+                    type="number"
+                    value={formData.workersNeeded}
+                    onChange={(e) => setFormData({ ...formData, workersNeeded: parseInt(e.target.value) || 1 })}
+                    fullWidth
+                    inputProps={{ min: 1 }}
+                    helperText="Number of workers needed"
                   />
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Show Workers Needed on Public Jobs Board
+                    </Typography>
+                    <Switch
+                      checked={formData.showWorkersNeeded}
+                      onChange={(e) => setFormData({ ...formData, showWorkersNeeded: e.target.checked })}
+                    />
+                  </Box>
                 </Box>
-              </Box>
-            </Grid>
+              </Grid>
+            )}
           </Grid>
         </Box>
 
@@ -1154,8 +1156,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           </Box>
         )}
 
-        {/* Time Section - Only show for Gig job type */}
-        {formData.jobType === 'gig' && (
+        {/* Time Section - Only show for Career job type; GIG uses per-shift times */}
+        {formData.jobType === 'career' && (
           <Box sx={{ mt: 2 }}>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} sm={3}>
