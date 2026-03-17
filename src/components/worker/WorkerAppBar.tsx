@@ -116,6 +116,7 @@ const WorkerAppBar: React.FC = () => {
     const url = n.deepLink?.trim() ? n.deepLink.trim() : await getNotificationUrlAsync(n, uid);
     if (url?.startsWith('/')) navigate(url);
     else if (url) window.location.href = url;
+    else navigate(`/${tenantSlug}/workers/notifications`);
   };
 
   const savePreferredLanguage = async (lang: 'en' | 'es') => {
@@ -280,7 +281,7 @@ const WorkerAppBar: React.FC = () => {
             size="small"
             onClick={() => {
               handleClose();
-              navigate('/c1/workers/notifications');
+              navigate(`/${tenantSlug}/workers/notifications`);
             }}
           >
             {t('nav.viewAllNotifications')}
@@ -348,12 +349,14 @@ const WorkerAppBar: React.FC = () => {
             if (preferredLanguage === 'en') return;
             setPreferredLanguage('en');
             setLanguage('en');
+            setGuestLanguage('en');
             if (user?.uid) {
               try {
                 await updateDoc(doc(db, 'users', user.uid), { preferredLanguage: 'en', updatedAt: new Date() });
               } catch (err) {
                 console.error('Failed to update preferred language:', err);
                 setPreferredLanguage(preferredLanguage);
+                setGuestLanguage(preferredLanguage);
               }
             }
           }}
@@ -367,12 +370,14 @@ const WorkerAppBar: React.FC = () => {
             if (preferredLanguage === 'es') return;
             setPreferredLanguage('es');
             setLanguage('es');
+            setGuestLanguage('es');
             if (user?.uid) {
               try {
                 await updateDoc(doc(db, 'users', user.uid), { preferredLanguage: 'es', updatedAt: new Date() });
               } catch (err) {
                 console.error('Failed to update preferred language:', err);
                 setPreferredLanguage(preferredLanguage);
+                setGuestLanguage(preferredLanguage);
               }
             }
           }}

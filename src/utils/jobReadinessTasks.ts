@@ -4,8 +4,7 @@
  */
 
 import type { OnboardingChecklist } from '../types/onboarding';
-import { getReadinessPrompts } from '../components/worker/profile/readinessPrompts';
-import { READINESS_SECTION_IDS } from '../components/worker/profile/readinessPrompts';
+import { getReadinessPrompts, READINESS_SECTION_IDS } from '../components/worker/profile/readinessPrompts';
 
 export type ImprovementTaskType = 'certification' | 'education' | 'background_check';
 
@@ -47,6 +46,7 @@ export function getImprovementTasks(
   userDoc: Record<string, unknown> | null,
   checklist: OnboardingChecklist
 ): ImprovementTask[] {
+  void checklist;
   const out: ImprovementTask[] = [];
 
   if (!userDoc || typeof userDoc !== 'object') {
@@ -58,20 +58,27 @@ export function getImprovementTasks(
   }
 
   const prompts = getReadinessPrompts(userDoc);
+  const jobReadinessResponses = (userDoc.jobReadinessResponses ?? {}) as Record<string, unknown>;
+  const wasAnswered = (taskId: string): boolean => {
+    const response = jobReadinessResponses[taskId];
+    if (!response || typeof response !== 'object') return false;
+    const value = (response as Record<string, unknown>).value;
+    return value !== undefined && value !== null && String(value).trim().length > 0;
+  };
   const certs = userDoc.certifications;
   const hasCerts = Array.isArray(certs) && certs.length > 0;
-  const needsCert = !hasCerts;
+  const needsCert = !hasCerts && !wasAnswered('certification-food-handler');
 
   const educationLevel = userDoc.educationLevel as string | undefined;
   const hasEducation = typeof educationLevel === 'string' && educationLevel.trim().length > 0;
-  const needsEducation = !hasEducation;
+  const needsEducation = !hasEducation && !wasAnswered('education');
 
   const bg = userDoc.backgroundCheckComfort ?? userDoc.backgroundCheck;
   const hasBackgroundAnswer =
     (typeof bg === 'boolean' && bg !== undefined) ||
     (typeof bg === 'object' && bg != null && (bg as Record<string, unknown>).comfortable != null) ||
     (typeof bg === 'string' && bg.trim().length > 0);
-  const needsBackground = !hasBackgroundAnswer;
+  const needsBackground = !hasBackgroundAnswer && !wasAnswered('background-check');
 
   if (needsCert) {
     out.push(certificationTask());
@@ -86,7 +93,7 @@ export function getImprovementTasks(
   // If we have fewer than 3, add from a secondary list (e.g. availability, work experience) so we always show up to 3
   const availabilityMissing = prompts.some((p) => p.id === 'availability');
   const workExpMissing = prompts.some((p) => p.id === 'work-experience');
-  if (out.length < MAX_TASKS && availabilityMissing) {
+  if (out.length < MAX_TASKS && availabilityMissing && !wasAnswered('availability')) {
     out.push({
       id: 'availability',
       type: 'certification',
@@ -97,7 +104,7 @@ export function getImprovementTasks(
       profileSectionId: READINESS_SECTION_IDS.availability,
     });
   }
-  if (out.length < MAX_TASKS && workExpMissing) {
+  if (out.length < MAX_TASKS && workExpMissing && !wasAnswered('work-experience')) {
     out.push({
       id: 'work-experience',
       type: 'certification',

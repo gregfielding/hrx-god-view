@@ -29,6 +29,8 @@ import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { setLanguage } from '../../../i18n';
+import { writeLocalLanguage } from '../../../utils/languagePreference';
 
 interface PrivacySettingsTabProps {
   uid: string;
@@ -164,6 +166,9 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
         const lang = data.preferredLanguage === 'es' ? 'es' : 'en';
         setPreferredLanguage(lang);
         setOriginalPreferredLanguage(lang);
+        if (user?.uid === uid) {
+          writeLocalLanguage(lang);
+        }
         setSettings(currentSettings);
         setOriginalSettings(currentSettings);
       }
@@ -228,6 +233,10 @@ const PrivacySettingsTab: React.FC<PrivacySettingsTabProps> = ({ uid }) => {
         preferredLanguage,
         updatedAt: new Date(),
       });
+      if (user?.uid === uid) {
+        setLanguage(preferredLanguage);
+        writeLocalLanguage(preferredLanguage, { markChangedThisSession: true });
+      }
 
       setMessage('Privacy settings updated successfully');
       setShowToast(true);

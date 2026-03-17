@@ -211,6 +211,12 @@ export const checkOtp = onCall(
         phoneE164,
         phoneVerified: true,
         phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+        phoneVerification: {
+          verified: true,
+          phoneNumber: phoneE164,
+          verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          method: 'firebase_auth_phone',
+        },
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
       logger.info(`Updated user ${uid} with verified phone: ${phoneE164}`);
@@ -226,6 +232,12 @@ export const checkOtp = onCall(
         await userDoc.ref.update({
           phoneVerified: true,
           phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+          phoneVerification: {
+            verified: true,
+            phoneNumber: phoneE164,
+            verifiedAt: admin.firestore.FieldValue.serverTimestamp(),
+            method: 'firebase_auth_phone',
+          },
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         logger.info(`Updated user ${userDoc.id} with verified phone: ${phoneE164}`);

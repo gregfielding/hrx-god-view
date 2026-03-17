@@ -20,6 +20,7 @@ import { JobBoardShift } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { formatDateScheduleSummary, getDateScheduleEntriesWithHours, formatDateScheduleEntry } from '../utils/dateSchedule';
 import { getShiftDisplayText } from '../utils/shiftI18n';
+import { hasDaySpecificKeyForShift } from '../utils/gigShiftState';
 import { useT } from '../i18n';
 
 interface ShiftSelectorProps {
@@ -165,8 +166,16 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
           return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
         })();
     const isPast = shiftDateISO < todayISO;
-    const hasApplied = appliedShifts.includes(shift.shiftId) || appliedShifts.includes(rowKey);
-    const shiftStatus = shiftStatuses[rowKey] || shiftStatuses[shift.shiftId] || (hasApplied ? 'submitted' : null);
+    const hasAnyDaySpecificForShift = hasDaySpecificKeyForShift(appliedShifts, shift.shiftId);
+    const hasAnyDaySpecificStatusForShift = hasDaySpecificKeyForShift(Object.keys(shiftStatuses), shift.shiftId);
+    const hasApplied =
+      item.type === 'day'
+        ? appliedShifts.includes(rowKey) || (!hasAnyDaySpecificForShift && appliedShifts.includes(shift.shiftId))
+        : appliedShifts.includes(shift.shiftId) || appliedShifts.includes(rowKey);
+    const shiftStatus =
+      item.type === 'day'
+        ? shiftStatuses[rowKey] || (!hasAnyDaySpecificStatusForShift ? shiftStatuses[shift.shiftId] : undefined) || (hasApplied ? 'submitted' : null)
+        : shiftStatuses[shift.shiftId] || shiftStatuses[rowKey] || (hasApplied ? 'submitted' : null);
     const isOffered = shiftStatus === 'accepted';
     const isConfirmed = shiftStatus === 'confirmed';
     const isFull = shift.spotsRemaining <= 0;

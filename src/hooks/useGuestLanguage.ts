@@ -6,24 +6,12 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-
-const STORAGE_KEY = 'hrx_guest_preferred_language';
+import { readLocalLanguage, writeLocalLanguage } from '../utils/languagePreference';
 
 export type GuestLanguage = 'en' | 'es';
 
-function detectDefault(): GuestLanguage {
-  if (typeof navigator === 'undefined') return 'en';
-  return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
-}
-
 function readStored(): GuestLanguage {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw === 'en' || raw === 'es') return raw;
-  } catch {
-    // ignore
-  }
-  return detectDefault();
+  return readLocalLanguage();
 }
 
 /**
@@ -41,11 +29,7 @@ export function useGuestLanguage(): [GuestLanguage, (lang: GuestLanguage) => voi
 
   const setLanguage = useCallback((lang: GuestLanguage) => {
     setLanguageState(lang);
-    try {
-      localStorage.setItem(STORAGE_KEY, lang);
-    } catch {
-      // ignore
-    }
+    writeLocalLanguage(lang, { markChangedThisSession: true });
   }, []);
 
   return [language, setLanguage];

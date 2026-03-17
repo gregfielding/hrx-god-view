@@ -41,6 +41,8 @@ import { logSMSConsent, getUserAgent } from '../utils/consentLogging';
 import { useAuth } from '../contexts/AuthContext';
 import { executeRecaptcha, waitForRecaptcha } from '../utils/recaptchaEnterprise';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { setLanguage } from '../i18n';
+import { readLocalLanguage, writeLocalLanguage } from '../utils/languagePreference';
 
 interface AuthDialogProps {
   open: boolean;
@@ -50,10 +52,7 @@ interface AuthDialogProps {
   initialPreferredLanguage?: 'en' | 'es';
 }
 
-const detectDefaultLanguage = (): 'en' | 'es' => {
-  if (typeof navigator === 'undefined') return 'en';
-  return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
-};
+const detectDefaultLanguage = (): 'en' | 'es' => readLocalLanguage();
 
 const AUTH_COPY: Record<'en' | 'es', Record<string, string>> = {
   en: {
@@ -201,8 +200,16 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
   useEffect(() => {
     if (open && initialPreferredLanguage !== undefined) {
       setPreferredLanguage(initialPreferredLanguage);
+      setLanguage(initialPreferredLanguage);
+      writeLocalLanguage(initialPreferredLanguage, { markChangedThisSession: true });
     }
   }, [open, initialPreferredLanguage]);
+
+  const applyPreferredLanguage = (lang: 'en' | 'es') => {
+    setPreferredLanguage(lang);
+    setLanguage(lang);
+    writeLocalLanguage(lang, { markChangedThisSession: true });
+  };
   
   // Refs for focus management
   const emailRef = useRef<HTMLInputElement>(null);
@@ -668,7 +675,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
           <Button
             size="small"
             variant={preferredLanguage === 'en' ? 'contained' : 'outlined'}
-            onClick={() => setPreferredLanguage('en')}
+            onClick={() => applyPreferredLanguage('en')}
             sx={{ minWidth: 56, textTransform: 'none' }}
           >
             EN
@@ -676,7 +683,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
           <Button
             size="small"
             variant={preferredLanguage === 'es' ? 'contained' : 'outlined'}
-            onClick={() => setPreferredLanguage('es')}
+            onClick={() => applyPreferredLanguage('es')}
             sx={{ minWidth: 56, textTransform: 'none' }}
           >
             ES
@@ -851,7 +858,7 @@ const AuthDialog: React.FC<AuthDialogProps> = ({ open, onClose, onAuthSuccess, i
                 select
                 label={t.preferredLanguage}
                 value={preferredLanguage}
-                onChange={(e) => setPreferredLanguage(e.target.value as 'en' | 'es')}
+                onChange={(e) => applyPreferredLanguage(e.target.value as 'en' | 'es')}
                 disabled={loading}
                 helperText={t.preferredLanguageHelp}
                 size={isMobile ? 'medium' : 'medium'}

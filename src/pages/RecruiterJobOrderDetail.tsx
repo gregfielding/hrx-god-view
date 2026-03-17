@@ -88,6 +88,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { db, storage } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { getDateScheduleEntriesWithHours, type DateSchedule } from '../utils/dateSchedule';
+import {
+  applicationMatchesSelectedDay,
+  applicationMatchesShift,
+  isIsoGigDay,
+} from '../utils/gigShiftState';
 import { JobOrder } from '../types/recruiter/jobOrder';
 import PageHeader from '../components/PageHeader';
 import JobOrderForm from '../components/JobOrderForm';
@@ -421,7 +426,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             const parsed = JSON.parse(saved);
             if (parsed?.shiftId && loaded.some((s) => s.id === parsed.shiftId)) {
               setSelectedShiftId(parsed.shiftId);
-              if (typeof parsed?.day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.day)) {
+              if (isIsoGigDay(parsed?.day)) {
                 setSelectedDay(parsed.day);
               }
               return;
@@ -487,14 +492,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     if (!isGigJob || !selectedShiftId) return applicants;
     return applicants.filter((a) => {
       const app = a.applicationData || {};
-      if (app.shiftId === selectedShiftId) return true;
-      if (Array.isArray(app.shiftIds) && app.shiftIds.includes(selectedShiftId)) return true;
-      if (Array.isArray(app.selectedShifts)) {
-        return app.selectedShifts.some((s: any) =>
-          (typeof s === 'string' ? s : s?.shiftId || s?.id) === selectedShiftId
-        );
-      }
-      return false;
+      return applicationMatchesShift(app, selectedShiftId);
     });
   }, [applicants, selectedShiftId, isGigJob]);
 
@@ -504,11 +502,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     if (!selectedDay || !isGigMultiDay) return filteredApplicants;
     return filteredApplicants.filter((a) => {
       const app = a.applicationData || {};
-      const appDate = app.applyDate;
-      const appDates = app.applyDates;
-      if (appDate && /^\d{4}-\d{2}-\d{2}$/.test(appDate) && appDate === selectedDay) return true;
-      if (Array.isArray(appDates) && appDates.includes(selectedDay)) return true;
-      return false;
+      return applicationMatchesSelectedDay(app, selectedDay);
     });
   }, [filteredApplicants, selectedDay, isGigMultiDay]);
 

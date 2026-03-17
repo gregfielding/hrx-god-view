@@ -65,6 +65,14 @@ import { format } from 'date-fns';
 import { db, functions } from '../../firebase';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
 import { getDateScheduleEntriesWithHours } from '../../utils/dateSchedule';
+import {
+  applicationHasShiftMetadata,
+  applicationMatchesAnyShift,
+  applicationMatchesSelectedDay,
+  applicationMatchesShift,
+  assignmentMatchesSelectedDay,
+  isIsoGigDay,
+} from '../../utils/gigShiftState';
 import MessageDrawer, { type MessageRecipient } from '../MessageDrawer';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
@@ -464,6 +472,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
 
       const jobType = String((jobOrder as any)?.jobType || '').toLowerCase();
       const isGig = jobType === 'gig';
+      const currentSelectedShift = shifts.find((s) => s.id === selectedShiftId);
+      const isSelectedShiftGigMultiDay = Boolean(
+        isGig &&
+        currentSelectedShift &&
+        (currentSelectedShift as any).dateSchedule &&
+        (currentSelectedShift as any).endDate &&
+        (currentSelectedShift as any).endDate !== (currentSelectedShift as any).shiftDate,
+      );
       // Normalize legacy persisted values for Gig: applicants -> shift_applicants, candidates -> shift_candidates
       const workforce =
         isGig && selectedWorkforce === 'applicants'
@@ -478,27 +494,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         let workforceUsers: Worker[] = [];
 
         const isCareerJob = jobType === 'career';
-        const hasShiftMetadata = (applicationData: any) =>
-          Boolean(
-            applicationData?.shiftId ||
-              (Array.isArray(applicationData?.shiftIds) && applicationData.shiftIds.length > 0) ||
-              (Array.isArray(applicationData?.selectedShifts) && applicationData.selectedShifts.length > 0),
-          );
-
-        const matchesSelectedShift = (applicationData: any) =>
-          applicationData.shiftId === selectedShiftId ||
-          (Array.isArray(applicationData.shiftIds) && applicationData.shiftIds.includes(selectedShiftId)) ||
-          (Array.isArray(applicationData.selectedShifts) &&
-            applicationData.selectedShifts.some((s: any) => s.shiftId === selectedShiftId || s.id === selectedShiftId));
+        const hasSelectedDayApplication = (applicationData: any): boolean => {
+          if (!isSelectedShiftGigMultiDay || !selectedDay) return true;
+          return applicationMatchesSelectedDay(applicationData, selectedDay);
+        };
 
         /** For gig "All Applicants" / "All Candidates": include if application matches any shift (any day) for this job. */
         const allShiftIds = shifts.map((s) => s.id);
-        const matchesAnyShiftInJob = (applicationData: any) =>
-          allShiftIds.length > 0 &&
-          (allShiftIds.includes(applicationData?.shiftId) ||
-            (Array.isArray(applicationData?.shiftIds) && applicationData.shiftIds.some((sid: string) => allShiftIds.includes(sid))) ||
-            (Array.isArray(applicationData?.selectedShifts) &&
-              applicationData.selectedShifts.some((s: any) => allShiftIds.includes(s?.shiftId) || allShiftIds.includes(s?.id))));
 
         const loadApplicationDocs = async (): Promise<Array<{ id: string; data: any }>> => {
           const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
@@ -542,14 +544,28 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         // Gig applicants are shift-specific: filter by selected shift when using shift_applicants / shift_candidates.
         const includeApplicantByShift = (data: any) => {
           if (isCareerJob) return true;
-          const hasShift = matchesSelectedShift(data);
-          const allowWithoutShift = !hasShiftMetadata(data);
-          return hasShift || allowWithoutShift;
+          const hasShift = applicationMatchesShift(data, selectedShiftId);
+          const allowWithoutShift = !applicationHasShiftMetadata(data);
+          if (!hasShift && !allowWithoutShift) return false;
+          // For multi-day gig with a specific day selected, only include applicants
+          // who explicitly applied for that selected day.
+          if (isSelectedShiftGigMultiDay && selectedDay) {
+            if (!hasShift) return false;
+            return hasSelectedDayApplication(data);
+          }
+          return true;
         };
 
         // For gig "All Applicants" / "All Candidates": show everyone who applied to any day (any shift) for this job, without duplicates.
-        const includeApplicantForAllDays = (data: any) =>
-          allShiftIds.length === 0 || !hasShiftMetadata(data) || matchesAnyShiftInJob(data);
+        const includeApplicantForAllDays = (data: any) => {
+          const base =
+            allShiftIds.length === 0 ||
+            !applicationHasShiftMetadata(data) ||
+            applicationMatchesAnyShift(data, allShiftIds);
+          if (!base) return false;
+          if (isSelectedShiftGigMultiDay && selectedDay) return hasSelectedDayApplication(data);
+          return true;
+        };
 
         if (workforce === 'all_applicants' || workforce === 'shift_applicants') {
           const applicationDocs = await loadApplicationDocs();
@@ -666,7 +682,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     };
 
     loadWorkforce();
-  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, jobOrder, connectedJobPostIds, shifts]);
+  }, [tenantId, jobOrderId, selectedWorkforce, selectedShiftId, selectedDay, jobOrder, connectedJobPostIds, shifts]);
 
   // Real-time assignment status map for the selected shift.
   useEffect(() => {
@@ -733,7 +749,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
     const filtered =
       isMultiDay && selectedDay
-        ? assignmentRows.filter((r) => r.startDate === selectedDay)
+        ? assignmentRows.filter((r) => assignmentMatchesSelectedDay(r, selectedDay, true))
         : assignmentRows;
     const statusByUser = new Map<string, string>();
     const idByUser = new Map<string, string>();
@@ -1048,7 +1064,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         (selectedShift as any).endDate &&
         (selectedShift as any).endDate !== (selectedShift as any).shiftDate;
       // When a specific day is selected, create assignment for that day only (never send applyDates).
-      const useSingleDay = Boolean(effectiveDay && /^\d{4}-\d{2}-\d{2}$/.test(effectiveDay));
+      const useSingleDay = Boolean(isIsoGigDay(effectiveDay));
       const bulkDates =
         !useSingleDay && !effectiveDay && isGigMultiDayForAssign && selectedShift
           ? getDateScheduleEntriesWithHours(
@@ -1747,7 +1763,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                     ? getCalendarDayLocal((shift as any).endDate)
                     : null;
                 const formatLocalDate = (dateStr: string) => {
-                  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr || 'Unknown date';
+                  if (!isIsoGigDay(dateStr)) return dateStr || 'Unknown date';
                   const [y, m, d] = dateStr.split('-').map(Number);
                   return format(new Date(y, m - 1, d), 'EEE, MMM d, yyyy');
                 };

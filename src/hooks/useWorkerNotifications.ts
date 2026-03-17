@@ -4,12 +4,12 @@
  */
 
 import { collection, query, where, orderBy, limit, onSnapshot, getDocs } from 'firebase/firestore';
-import { p } from '../data/firestorePaths';
 import { useEffect, useState } from 'react';
-import { db } from '../firebase';
-import { workerNotificationsPaths } from '../data/firestorePaths';
-import type { WorkerNotification, NotificationCategory, NotificationType } from '../types/unifiedWorkerNotifications';
 import type { Timestamp } from 'firebase/firestore';
+
+import { p, workerNotificationsPaths } from '../data/firestorePaths';
+import { db } from '../firebase';
+import type { WorkerNotification, NotificationCategory, NotificationType } from '../types/unifiedWorkerNotifications';
 
 function typeToCategory(type: NotificationType): NotificationCategory {
   switch (type) {
@@ -97,7 +97,68 @@ export function getNotificationUrl(n: WorkerNotification & { id: string }): stri
   if (n.entity?.kind === 'job_post' && n.entity?.id) {
     return `/c1/jobs-board/${n.entity.id}`;
   }
-  return n.ctaUrl ?? (n.threadId ? `/c1/workers/inbox/${n.threadId}` : '') ?? '';
+  return n.threadId ? `/c1/workers/inbox/${n.threadId}` : '';
+}
+
+export type WorkerNotificationFilterKey =
+  | 'all'
+  | 'unread'
+  | 'applications'
+  | 'assignments'
+  | 'reminders'
+  | 'documents'
+  | 'system';
+
+function normalizeText(v: unknown): string {
+  return String(v || '').toLowerCase();
+}
+
+function toRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+}
+
+function parseIdFromPath(url: string | undefined, segment: string): string | null {
+  if (!url) return null;
+  const m = url.match(new RegExp(`${segment}/([^/?#]+)`));
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}
+
+function extractAssignmentId(n: WorkerNotification & { id: string }): string | null {
+  const meta = toRecord(n.metadata);
+  if (typeof meta.assignmentId === 'string' && meta.assignmentId) return meta.assignmentId;
+  if (n.entity?.kind === 'assignment' && n.entity?.id) return n.entity.id;
+  if ((n.type === 'assignment' || n.type === 'shift') && n.entityId) return n.entityId;
+  const fromDeepLink = parseIdFromPath(n.deepLink || n.ctaUrl, '/workers/assignments');
+  return fromDeepLink;
+}
+
+function extractJobId(n: WorkerNotification & { id: string }): string | null {
+  const meta = toRecord(n.metadata);
+  if (typeof meta.jobId === 'string' && meta.jobId) return meta.jobId;
+  if (typeof meta.postId === 'string' && meta.postId) return meta.postId;
+  if (n.entity?.kind === 'job_post' && n.entity?.id) return n.entity.id;
+  if ((n.type === 'application' || n.type === 'opportunity') && n.entityId) return n.entityId;
+  return parseIdFromPath(n.deepLink || n.ctaUrl, '/jobs-board');
+}
+
+function extractApplicationId(n: WorkerNotification & { id: string }): string | null {
+  const meta = toRecord(n.metadata);
+  if (typeof meta.applicationId === 'string' && meta.applicationId) return meta.applicationId;
+  if (n.entity?.kind === 'application' && n.entity?.id) return n.entity.id;
+  if (n.type === 'application' && n.entityId) return n.entityId;
+  return null;
+}
+
+function extractThreadId(n: WorkerNotification & { id: string }): string | null {
+  if (n.threadId) return n.threadId;
+  const meta = toRecord(n.metadata);
+  if (typeof meta.conversationId === 'string' && meta.conversationId) return meta.conversationId;
+  if (n.entity?.kind === 'conversation' && n.entity?.id) return n.entity.id;
+  return parseIdFromPath(n.deepLink || n.ctaUrl, '/workers/inbox');
+}
+
+function getFallbackUrl(): string {
+  return '/c1/workers/notifications';
 }
 
 /**
@@ -108,15 +169,27 @@ export async function getNotificationUrlAsync(
   n: WorkerNotification & { id: string },
   uid: string | undefined
 ): Promise<string> {
-  let url = getNotificationUrl(n);
-  const applicationsPath = '/c1/workers/applications';
-  const isOldApplicationLink =
-    n.type === 'application' &&
-    (url === applicationsPath || url?.endsWith(applicationsPath)) &&
-    n.tenantId &&
-    uid;
+  // Priority 1: explicit deepLink
+  if (n.deepLink && n.deepLink.trim()) return n.deepLink.trim();
 
-  if (isOldApplicationLink) {
+  // Priority 2: related assignment detail
+  const assignmentId = extractAssignmentId(n);
+  if (assignmentId) return `/c1/workers/assignments/${assignmentId}`;
+
+  // Priority 3: related job detail
+  const directJobId = extractJobId(n);
+  if (directJobId) return `/c1/jobs-board/${directJobId}`;
+
+  // Priority 4: related application detail/list
+  const applicationId = extractApplicationId(n);
+  if (applicationId) return `/c1/workers/applications?applicationId=${encodeURIComponent(applicationId)}`;
+
+  // Priority 5: related inbox thread
+  const threadId = extractThreadId(n);
+  if (threadId) return `/c1/workers/inbox/${threadId}`;
+
+  // Additional compatibility lookup for old application notifications
+  if (n.type === 'application' && n.tenantId && uid) {
     try {
       const applicationsRef = collection(db, p.applications(n.tenantId));
       const q = query(applicationsRef, where('userId', '==', uid), limit(15));
@@ -124,19 +197,22 @@ export async function getNotificationUrlAsync(
       type AppRow = { id: string; jobId?: string; postId?: string; createdAt?: unknown };
       const byCreated = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as AppRow))
-        .filter((a) => a.jobId || a.postId)
         .sort((a, b) => {
           const at = (a.createdAt as { toMillis?: () => number })?.toMillis?.() ?? (a.createdAt as number) ?? 0;
           const bt = (b.createdAt as { toMillis?: () => number })?.toMillis?.() ?? (b.createdAt as number) ?? 0;
           return bt - at;
         });
-      const jobId = byCreated[0]?.jobId ?? byCreated[0]?.postId;
-      if (jobId) url = `/c1/jobs-board/${jobId}`;
+      const app = byCreated[0];
+      const jobId = app?.jobId ?? app?.postId;
+      if (jobId) return `/c1/jobs-board/${jobId}`;
+      if (app?.id) return `/c1/workers/applications?applicationId=${encodeURIComponent(app.id)}`;
     } catch {
-      // keep original url
+      // ignore lookup failures and use fallback
     }
   }
-  return url;
+
+  // Priority 6: fallback notifications page
+  return getFallbackUrl();
 }
 
 export async function getWorkerUnreadNotificationCount(uid: string): Promise<number> {
@@ -144,4 +220,17 @@ export async function getWorkerUnreadNotificationCount(uid: string): Promise<num
   const q = query(col, where('readAt', '==', null));
   const snap = await getDocs(q);
   return snap.size;
+}
+
+export function getWorkerNotificationFilterKey(n: WorkerNotification & { id: string }): Exclude<WorkerNotificationFilterKey, 'all' | 'unread'> {
+  const category = n.category ?? typeToCategory(n.type);
+  const text = `${normalizeText(n.title)} ${normalizeText(n.body)}`;
+  const isReminder = category === 'assignments' && (text.includes('reminder') || text.includes('starts in') || text.includes('tomorrow'));
+  if (isReminder) return 'reminders';
+  if (n.type === 'document' || category === 'profile' || text.includes('compliance') || text.includes('certification')) {
+    return 'documents';
+  }
+  if (category === 'applications') return 'applications';
+  if (category === 'assignments') return 'assignments';
+  return 'system';
 }

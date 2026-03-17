@@ -4,11 +4,12 @@
  */
 
 import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { Box, Stack } from '@mui/material';
+import { Box, Stack, useTheme, useMediaQuery } from '@mui/material';
 import type { ImprovementTask } from '../../../utils/jobReadinessTasks';
 import ImprovementTaskCard from './ImprovementTaskCard';
 
-const CARD_WIDTH_VW = 70;
+const MOBILE_CARD_WIDTH_PCT = 88;
+const DESKTOP_CARD_WIDTH_PCT = 92;
 const CARD_GAP_PX = 12;
 const SWIPE_THRESHOLD_PX = 60;
 
@@ -25,18 +26,21 @@ const JobReadinessCardRail: React.FC<JobReadinessCardRailProps> = ({
   onSkip,
   onOpenDetails,
 }) => {
+  const theme = useTheme();
+  const isDesktop = useMediaQuery(theme.breakpoints.up('sm'));
   const scrollRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const touchStartX = useRef(0);
   const touchStartY = useRef(0);
+  const cardWidthPct = isDesktop ? DESKTOP_CARD_WIDTH_PCT : MOBILE_CARD_WIDTH_PCT;
 
   const updateActiveIndex = useCallback(() => {
     const el = scrollRef.current;
     if (!el || tasks.length === 0) return;
-    const cardWidth = el.offsetWidth * (CARD_WIDTH_VW / 100) + CARD_GAP_PX;
+    const cardWidth = el.offsetWidth * (cardWidthPct / 100) + CARD_GAP_PX;
     const index = Math.round(el.scrollLeft / cardWidth);
     setActiveIndex(Math.min(Math.max(0, index), tasks.length - 1));
-  }, [tasks.length]);
+  }, [tasks.length, cardWidthPct]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -45,39 +49,35 @@ const JobReadinessCardRail: React.FC<JobReadinessCardRailProps> = ({
     return () => el.removeEventListener('scroll', updateActiveIndex);
   }, [updateActiveIndex]);
 
+  useEffect(() => {
+    setActiveIndex((prev) => Math.min(prev, Math.max(0, tasks.length - 1)));
+  }, [tasks.length]);
+
   const goToIndex = useCallback((i: number) => {
     setActiveIndex(i);
     const el = scrollRef.current;
     if (!el) return;
-    const cardWidth = el.offsetWidth * (CARD_WIDTH_VW / 100) + CARD_GAP_PX;
+    const cardWidth = el.offsetWidth * (cardWidthPct / 100) + CARD_GAP_PX;
     el.scrollTo({ left: i * cardWidth, behavior: 'smooth' });
-  }, []);
+  }, [cardWidthPct]);
 
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     touchStartX.current = e.touches[0].clientX;
     touchStartY.current = e.touches[0].clientY;
   }, []);
 
-  const advanceOrStay = useCallback(() => {
-    if (activeIndex < tasks.length - 1) {
-      goToIndex(activeIndex + 1);
-    }
-  }, [activeIndex, tasks.length, goToIndex]);
-
   const handleComplete = useCallback(
     (taskId: string, value?: string) => {
       onComplete(taskId, value);
-      if (value !== 'upload') advanceOrStay();
     },
-    [onComplete, advanceOrStay]
+    [onComplete]
   );
 
   const handleSkip = useCallback(
     (taskId: string) => {
       onSkip(taskId);
-      advanceOrStay();
     },
-    [onSkip, advanceOrStay]
+    [onSkip]
   );
 
   const handleTouchEnd = useCallback(
@@ -113,18 +113,18 @@ const JobReadinessCardRail: React.FC<JobReadinessCardRailProps> = ({
           scrollSnapType: 'x mandatory',
           scrollBehavior: 'smooth',
           gap: `${CARD_GAP_PX}px`,
-          px: '5vw',
+          px: { xs: '5vw', sm: 0 },
           py: 1,
-          mx: -1,
+          mx: 0,
           '&::-webkit-scrollbar': { height: 6 },
           '&::-webkit-scrollbar-thumb': { borderRadius: 3, bgcolor: 'action.selected' },
         }}
       >
-        {tasks.map((task, i) => (
+        {tasks.map((task) => (
           <Box
             key={task.id}
             sx={{
-              flex: `0 0 calc(${CARD_WIDTH_VW}vw - ${CARD_GAP_PX}px)`,
+              flex: `0 0 calc(${cardWidthPct}% - ${CARD_GAP_PX}px)`,
               minWidth: 0,
               scrollSnapAlign: 'center',
               scrollSnapStop: 'always',

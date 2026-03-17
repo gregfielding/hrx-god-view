@@ -5,10 +5,12 @@ import { Box, Button, TextField, Typography, Paper, Alert, CircularProgress } fr
 
 import { auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { setLanguage } from '../i18n';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
 
 
 const Login = () => {
-  const { user, role, loading, securityLevel, activeTenant } = useAuth();
+  const { user, loading, securityLevel, activeTenant } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -17,8 +19,25 @@ const Login = () => {
   const [localLoading, setLocalLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
   const didRedirectRef = useRef(false);
   const didConsumeLocationStateRef = useRef(false);
+
+  const copy = guestLanguage === 'es'
+    ? {
+        title: 'Iniciar sesión',
+        email: 'Correo electrónico',
+        password: 'Contraseña',
+        submit: 'Iniciar sesión',
+        language: 'Idioma',
+      }
+    : {
+        title: 'Platform Login',
+        email: 'Email',
+        password: 'Password',
+        submit: 'Login',
+        language: 'Language',
+      };
 
   // Redirect once fully authenticated and role is loaded
   useEffect(() => {
@@ -74,11 +93,34 @@ const Login = () => {
     }
   };
 
+  useEffect(() => {
+    setLanguage(guestLanguage);
+  }, [guestLanguage]);
+
   return (
     <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
       <Paper elevation={3} sx={{ p: 4, width: 400 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'flex-end', mb: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            {copy.language}
+          </Typography>
+          <Button
+            size="small"
+            variant={guestLanguage === 'en' ? 'contained' : 'outlined'}
+            onClick={() => setGuestLanguage('en')}
+          >
+            EN
+          </Button>
+          <Button
+            size="small"
+            variant={guestLanguage === 'es' ? 'contained' : 'outlined'}
+            onClick={() => setGuestLanguage('es')}
+          >
+            ES
+          </Button>
+        </Box>
         <Typography variant="h5" gutterBottom>
-          Platform Login
+          {copy.title}
         </Typography>
 
         {successMessage && (
@@ -95,7 +137,7 @@ const Login = () => {
 
         <form onSubmit={handleLogin}>
           <TextField
-            label="Email"
+            label={copy.email}
             type="email"
             name="email"
             fullWidth
@@ -104,7 +146,7 @@ const Login = () => {
             margin="normal"
           />
           <TextField
-            label="Password"
+            label={copy.password}
             type="password"
             fullWidth
             value={password}
@@ -120,7 +162,7 @@ const Login = () => {
             sx={{ mt: 2 }}
             disabled={localLoading || loading}
           >
-            {localLoading || loading ? <CircularProgress size={24} /> : 'Login'}
+            {localLoading || loading ? <CircularProgress size={24} /> : copy.submit}
           </Button>
         </form>
       </Paper>

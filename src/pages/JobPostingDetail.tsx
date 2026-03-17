@@ -25,6 +25,8 @@ import {
   AccordionSummary,
   AccordionDetails,
   LinearProgress,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import CheckCircle from '@mui/icons-material/CheckCircle';
@@ -46,7 +48,7 @@ import {
   Directions as DirectionsIcon,
 } from '@mui/icons-material';
 import IconButton from '@mui/material/IconButton';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, arrayRemove, serverTimestamp, deleteField } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, arrayUnion, arrayRemove, serverTimestamp, deleteField, setDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
 import { db, functions } from '../firebase';
@@ -58,6 +60,12 @@ import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { getDateScheduleEntriesWithHours, getLastShiftDateFromShifts } from '../utils/dateSchedule';
+import {
+  buildAppliedKeysForApplication,
+  getApplicationAppliedDays,
+  getApplicationShiftIds,
+  isGigMultiDayShift,
+} from '../utils/gigShiftState';
 import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import { getRequirementsWithStatus, getRequirementsWithStatusForJobPost, getEligibilitySummary } from '../utils/jobRequirementStatus';
@@ -65,6 +73,7 @@ import { RequirementInteraction } from '../components/RequirementInteraction';
 import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
 import AuthDialog from '../components/AuthDialog';
+import WorkerBottomSheet from '../components/worker/WorkerBottomSheet';
 
 const JobPostingDetail: React.FC = () => {
   const { postId, tenantSlug } = useParams<{ postId: string; tenantSlug?: string }>();
@@ -96,6 +105,13 @@ const JobPostingDetail: React.FC = () => {
   const [assignmentData, setAssignmentData] = useState<any>(null); // full assignment doc when in accept/decline mode
   const [scheduleShiftData, setScheduleShiftData] = useState<any>(null); // shift doc for schedule card
   const [assignmentDecisionLoading, setAssignmentDecisionLoading] = useState(false); // prevent double-clicks on I Accept / Decline
+  const [offerConfirmationOpen, setOfferConfirmationOpen] = useState(false);
+  const [offerConfirmationShiftId, setOfferConfirmationShiftId] = useState<string | undefined>(undefined);
+  const [offerConfirmSubmitting, setOfferConfirmSubmitting] = useState(false);
+  const [offerConfirmError, setOfferConfirmError] = useState<string | null>(null);
+  const [ackOnTimeArrival, setAckOnTimeArrival] = useState(false);
+  const [ackUniformAndRequirements, setAckUniformAndRequirements] = useState(false);
+  const [ackNoShowConsequence, setAckNoShowConsequence] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [applicationData, setApplicationData] = useState<any>(null);
@@ -715,23 +731,11 @@ const JobPostingDetail: React.FC = () => {
         const statuses: Record<string, string> = {};
         const seenDocs = new Set<string>();
 
-        // Dates the user applied for (multi-day gig): from applyDate or applyDates; fallback to shiftDate/shiftDates for legacy
-        const getAppliedDates = (data: Record<string, unknown>): string[] => {
-          const ad = data.applyDate;
-          const ads = data.applyDates;
-          if (Array.isArray(ads) && ads.length > 0) {
-            return ads.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
-          }
-          if (ad && typeof ad === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(ad)) return [ad];
-          // Legacy: application may have shiftDate (single) or shiftDates (array) from the shift
-          const sd = data.shiftDate;
-          const sds = data.shiftDates;
-          if (Array.isArray(sds) && sds.length > 0) {
-            return sds.filter((d): d is string => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d));
-          }
-          if (sd && typeof sd === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(sd)) return [sd];
-          return [];
-        };
+        const multiDayShiftIds = new Set(
+          dynamicShifts
+            .filter((s: any) => isGigMultiDayShift(s))
+            .map((s: any) => String(s.shiftId))
+        );
 
         snapshots.forEach((snapshot) => {
           snapshot.forEach((doc) => {
@@ -745,38 +749,18 @@ const JobPostingDetail: React.FC = () => {
             if (appStatus === 'deleted' || appStatus === 'withdrawn' || appStatus === 'cancelled') return;
 
             const statusForDisplay = data.status || 'submitted';
-            const appliedDates = getAppliedDates(data);
-            const hasDaySpecific = appliedDates.length > 0;
-
-            const shiftIds: string[] = data.shiftId ? [data.shiftId] : Array.isArray(data.shiftIds) ? data.shiftIds : [];
-
+            const shiftIds = getApplicationShiftIds(data as Record<string, unknown>);
             if (shiftIds.length === 0) return;
-
-            if (hasDaySpecific) {
-              // Multi-day gig: mark the specific day(s) they applied to (shiftId__date)
-              shiftIds.forEach((shiftId: string) => {
-                appliedDates.forEach((dateStr: string) => {
-                  const rowKey = `${shiftId}__${dateStr}`;
-                  applied.push(rowKey);
-                  if (!statuses[rowKey] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
-                    statuses[rowKey] = statusForDisplay;
-                  }
-                });
-                // Also mark whole shift so a single shift row (when UI does not show day breakdown) shows Application Submitted
-                applied.push(shiftId);
-                if (!statuses[shiftId] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
-                  statuses[shiftId] = statusForDisplay;
-                }
-              });
-            } else {
-              // No applyDate/applyDates: whole-shift application – mark whole shift(s) as applied
-              shiftIds.forEach((shiftId: string) => {
-                applied.push(shiftId);
-                if (!statuses[shiftId] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
-                  statuses[shiftId] = statusForDisplay;
-                }
-              });
-            }
+            const appliedKeys = buildAppliedKeysForApplication(
+              data as Record<string, unknown>,
+              multiDayShiftIds,
+            );
+            applied.push(...appliedKeys);
+            appliedKeys.forEach((key) => {
+              if (!statuses[key] || statusForDisplay === 'confirmed' || statusForDisplay === 'accepted') {
+                statuses[key] = statusForDisplay;
+              }
+            });
           });
         });
 
@@ -1115,11 +1099,7 @@ const JobPostingDetail: React.FC = () => {
 
       if (date) {
         // Remove this day from applyDates (or clear applyDate)
-        const applyDates = Array.isArray(data.applyDates)
-          ? [...(data.applyDates as string[])]
-          : data.applyDate && /^\d{4}-\d{2}-\d{2}$/.test(String(data.applyDate))
-            ? [String(data.applyDate)]
-            : [];
+        const applyDates = getApplicationAppliedDays(data as Record<string, unknown>);
         const remaining = applyDates.filter((d) => d !== date);
         if (remaining.length === 0) {
           await updateDoc(applicationRef, {
@@ -1324,6 +1304,96 @@ const JobPostingDetail: React.FC = () => {
     }
   };
 
+  const formatAddressText = (address: any): string => {
+    if (!address) return '';
+    return [address.street, address.city, address.state, address.zipCode || address.zip]
+      .filter(Boolean)
+      .join(', ');
+  };
+
+  const getOfferSnapshotForShift = (shiftId?: string) => {
+    const shift = shiftId ? dynamicShifts.find((s: any) => String(s.shiftId) === String(shiftId)) : null;
+    const worksiteAddress = assignmentData?.worksiteAddress || posting?.worksiteAddress || null;
+    const shiftDateRaw = assignmentData?.startDate || assignmentStartDate || shift?.shiftDate || posting?.startDate || null;
+    const startTimeRaw = assignmentData?.startTime || shift?.startTime || scheduleShiftData?.defaultStartTime || null;
+    const endTimeRaw = assignmentData?.endTime || shift?.endTime || scheduleShiftData?.defaultEndTime || null;
+
+    const jobTitle = assignmentData?.jobTitle || shift?.defaultJobTitle || posting?.postTitle || posting?.jobTitle || '';
+    const companyName = assignmentData?.companyName || posting?.companyName || '';
+    const locationName = assignmentData?.worksiteName || assignmentData?.location || posting?.worksiteName || posting?.location || '';
+    const address = formatAddressText(worksiteAddress);
+    const uniformSummary =
+      assignmentData?.uniformRequirements ||
+      assignmentData?.customUniformRequirements ||
+      posting?.uniformRequirements ||
+      posting?.customUniformRequirements ||
+      '';
+    const keyRequirementParts = [
+      posting?.showBackgroundChecks ? 'Background check required' : null,
+      posting?.showDrugScreening ? 'Drug screening required' : null,
+      posting?.eVerifyRequired ? 'E-Verify required' : null,
+      posting?.requiredPpe ? `Required PPE: ${String(posting.requiredPpe)}` : null,
+    ].filter(Boolean) as string[];
+
+    return {
+      jobTitle,
+      companyName,
+      shiftDateRaw,
+      shiftDateText: shiftDateRaw ? formatDate(shiftDateRaw) : '',
+      startTimeRaw,
+      startTimeText: startTimeRaw ? formatTime(startTimeRaw) : '',
+      endTimeRaw,
+      endTimeText: endTimeRaw ? formatTime(endTimeRaw) : '',
+      locationName,
+      address,
+      uniformSummary: String(uniformSummary || ''),
+      keyRequirementsSummary: keyRequirementParts.join(' | '),
+    };
+  };
+
+  const recordOfferConfirmationOpened = async (shiftId?: string) => {
+    if (!resolvedTenantId || !applicationDocId) return;
+    const snapshot = getOfferSnapshotForShift(shiftId);
+    const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
+    await setDoc(
+      appRef,
+      {
+        workerOfferConfirmation: {
+          openedAt: serverTimestamp(),
+          shiftSnapshot: {
+            jobTitle: snapshot.jobTitle,
+            companyName: snapshot.companyName,
+            locationName: snapshot.locationName,
+            address: snapshot.address,
+            shiftDate: snapshot.shiftDateRaw || snapshot.shiftDateText || '',
+            startTime: snapshot.startTimeRaw || snapshot.startTimeText || '',
+            endTime: snapshot.endTimeRaw || snapshot.endTimeText || '',
+          },
+          version: 1,
+        },
+      },
+      { merge: true }
+    );
+  };
+
+  const openOfferConfirmationSheet = (shiftId?: string) => {
+    setOfferConfirmationShiftId(shiftId);
+    setAckOnTimeArrival(false);
+    setAckUniformAndRequirements(false);
+    setAckNoShowConsequence(false);
+    setOfferConfirmError(null);
+    setOfferConfirmationOpen(true);
+    recordOfferConfirmationOpened(shiftId).catch((err) => {
+      console.warn('Failed to record offer confirmation openedAt:', err);
+    });
+  };
+
+  const closeOfferConfirmationSheet = () => {
+    if (offerConfirmSubmitting || assignmentDecisionLoading) return;
+    setOfferConfirmationOpen(false);
+    setOfferConfirmError(null);
+  };
+
   const findAssignmentIdForShift = async (shiftId: string): Promise<string | null> => {
     if (!resolvedTenantId || !user?.uid) return null;
     const assignmentsRef = collection(db, 'tenants', resolvedTenantId, 'assignments');
@@ -1359,14 +1429,32 @@ const JobPostingDetail: React.FC = () => {
     return (preferred || snapshot.docs[0]).id;
   };
 
-  const handleAssignmentDecision = async (decision: 'accept' | 'decline', shiftId?: string) => {
+  type AssignmentDecisionOptions = {
+    skipConfirmPrompt?: boolean;
+    suppressAlerts?: boolean;
+    redirectOnAccept?: boolean;
+  };
+
+  const handleAssignmentDecision = async (
+    decision: 'accept' | 'decline',
+    shiftId?: string,
+    options: AssignmentDecisionOptions = {}
+  ) => {
     if (!resolvedTenantId || !user?.uid) return;
 
-    const confirmMessage =
-      decision === 'accept'
-        ? 'Are you sure you want to accept this job?'
-        : 'Are you sure you want to decline this job?';
-    if (!window.confirm(confirmMessage)) return;
+    const {
+      skipConfirmPrompt = false,
+      suppressAlerts = false,
+      redirectOnAccept = true,
+    } = options;
+
+    if (!skipConfirmPrompt) {
+      const confirmMessage =
+        decision === 'accept'
+          ? 'Are you sure you want to accept this job?'
+          : 'Are you sure you want to decline this job?';
+      if (!window.confirm(confirmMessage)) return;
+    }
 
     setAssignmentDecisionLoading(true);
     try {
@@ -1403,11 +1491,19 @@ const JobPostingDetail: React.FC = () => {
             console.warn('Failed to log assignment confirmed activity:', e)
           );
         }
-        alert('Assignment accepted! We sent your first-day details.');
+        if (!suppressAlerts) {
+          alert('Assignment accepted! We sent your first-day details.');
+        }
+        if (redirectOnAccept) {
+          navigate(`/c1/workers/assignments/${assignmentId}`);
+          return;
+        }
       } else {
         if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'withdrawn' }));
         setApplicationStatus('withdrawn');
-        alert('You declined this job. Your application has been withdrawn.');
+        if (!suppressAlerts) {
+          alert('You declined this job. Your application has been withdrawn.');
+        }
         const jobsBoardUrl = typeof window !== 'undefined' && window.location.origin
           ? `${window.location.origin}/c1/jobs-board`
           : 'https://hrxone.com/c1/jobs-board';
@@ -1416,18 +1512,23 @@ const JobPostingDetail: React.FC = () => {
       }
     } catch (err) {
       console.error(`Failed to ${decision} assignment:`, err);
-      alert(`We were unable to ${decision} this assignment. Please try again.`);
+      if (!suppressAlerts) {
+        alert(`We were unable to ${decision} this assignment. Please try again.`);
+      }
+      if (suppressAlerts) {
+        throw err;
+      }
     } finally {
       setAssignmentDecisionLoading(false);
     }
   };
 
   const handleConfirmAssignment = async () => {
-    await handleAssignmentDecision('accept');
+    openOfferConfirmationSheet();
   };
 
   const handleConfirmAssignmentForShift = async (shiftId: string) => {
-    await handleAssignmentDecision('accept', shiftId);
+    openOfferConfirmationSheet(shiftId);
   };
 
   const handleDeclineAssignment = async () => {
@@ -1436,6 +1537,63 @@ const JobPostingDetail: React.FC = () => {
 
   const handleDeclineAssignmentForShift = async (shiftId: string) => {
     await handleAssignmentDecision('decline', shiftId);
+  };
+
+  const handleSubmitOfferConfirmation = async () => {
+    if (!resolvedTenantId || !applicationDocId) {
+      setOfferConfirmError('We could not find your application record. Please refresh and try again.');
+      return;
+    }
+    if (!(ackOnTimeArrival && ackUniformAndRequirements && ackNoShowConsequence)) {
+      setOfferConfirmError('Please check all required acknowledgements to continue.');
+      return;
+    }
+
+    setOfferConfirmSubmitting(true);
+    setOfferConfirmError(null);
+
+    try {
+      const snapshot = getOfferSnapshotForShift(offerConfirmationShiftId);
+      const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
+      await setDoc(
+        appRef,
+        {
+          workerOfferConfirmation: {
+            openedAt: serverTimestamp(),
+            submittedAt: serverTimestamp(),
+            acceptedAt: serverTimestamp(),
+            acknowledgements: {
+              onTimeArrival: true,
+              understandsUniformAndRequirements: true,
+              understandsNoShowConsequence: true,
+            },
+            shiftSnapshot: {
+              jobTitle: snapshot.jobTitle,
+              companyName: snapshot.companyName,
+              locationName: snapshot.locationName,
+              address: snapshot.address,
+              shiftDate: snapshot.shiftDateRaw || snapshot.shiftDateText || '',
+              startTime: snapshot.startTimeRaw || snapshot.startTimeText || '',
+              endTime: snapshot.endTimeRaw || snapshot.endTimeText || '',
+            },
+            version: 1,
+          },
+        },
+        { merge: true }
+      );
+
+      await handleAssignmentDecision('accept', offerConfirmationShiftId, {
+        skipConfirmPrompt: true,
+        suppressAlerts: true,
+        redirectOnAccept: true,
+      });
+      setOfferConfirmationOpen(false);
+    } catch (err) {
+      console.error('Failed to confirm offer acknowledgement:', err);
+      setOfferConfirmError('We were unable to confirm this shift right now. Please try again.');
+    } finally {
+      setOfferConfirmSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -1492,6 +1650,10 @@ const JobPostingDetail: React.FC = () => {
   const assignmentDetailsUrl = assignmentDetailsId
     ? `${typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com'}/c1/workers/assignments/${assignmentDetailsId}`
     : null;
+  const offerSnapshot = getOfferSnapshotForShift(offerConfirmationShiftId);
+  const offerConfirmReady = ackOnTimeArrival && ackUniformAndRequirements && ackNoShowConsequence;
+  const arrivalLocationText = offerSnapshot.locationName || offerSnapshot.address || 'the worksite';
+  const arrivalStartTimeText = offerSnapshot.startTimeText || 'the scheduled start time';
 
   // Generate Google Jobs structured data
   const generateJobPostingSchema = () => {
@@ -2360,11 +2522,17 @@ const JobPostingDetail: React.FC = () => {
 
             const getMissingActionLabel = (m: { category: string; itemLabel: string; item: { requiresUpload?: boolean } }) => {
               const label = m.itemLabel;
+              if (m.category === 'backgroundCheckPackages') return `Background check verification required (${label})`;
+              if (m.category === 'drugScreeningPanels') return `Drug screening verification required (${label})`;
+              if (m.category === 'eVerify') return 'E-Verify verification required';
+              if (m.category === 'additionalScreenings') {
+                if (/covid|vaccine|vaccination/i.test(label)) return 'Vaccination requirement verification required';
+                return `Additional screening verification required (${label})`;
+              }
               if (m.category === 'skills') return t('jobs.requirementsActionConfirmSkill', { label });
               if (m.category === 'languages') return t('jobs.requirementsActionConfirmLanguage', { label });
               if (m.category === 'educationLevels') return t('jobs.requirementsActionConfirmEducation', { label });
               if (m.category === 'experienceLevels') return t('jobs.requirementsActionConfirmExperience', { label });
-              if (m.category === 'additionalScreenings') return t('jobs.requirementsActionConfirmScreening', { label });
               if (m.category === 'licensesCerts' && m.item.requiresUpload) return t('jobs.requirementsActionAddCert', { label });
               if (m.category === 'licensesCerts') return t('jobs.requirementsActionConfirmCert', { label });
               return t('jobs.requirementsActionConfirmOther', { label });
@@ -2893,6 +3061,116 @@ const JobPostingDetail: React.FC = () => {
             </Box>
           );
         })()}
+
+      <WorkerBottomSheet
+        open={offerConfirmationOpen}
+        onClose={closeOfferConfirmationSheet}
+        title="Confirm your shift"
+        footer={
+          <Stack direction="row" spacing={1.25}>
+            <Button
+              variant="outlined"
+              fullWidth
+              onClick={closeOfferConfirmationSheet}
+              disabled={offerConfirmSubmitting || assignmentDecisionLoading}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              fullWidth
+              onClick={handleSubmitOfferConfirmation}
+              disabled={!offerConfirmReady || offerConfirmSubmitting || assignmentDecisionLoading}
+              startIcon={offerConfirmSubmitting ? <CircularProgress size={18} color="inherit" /> : null}
+            >
+              {offerConfirmSubmitting ? 'Confirming…' : 'Confirm Shift'}
+            </Button>
+          </Stack>
+        }
+      >
+        <Box
+          sx={{
+            mt: 1,
+            p: 1.5,
+            borderRadius: 2,
+            border: 1,
+            borderColor: 'divider',
+            bgcolor: 'grey.50',
+          }}
+        >
+          <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
+            {offerSnapshot.jobTitle || 'Shift'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {offerSnapshot.companyName || 'Company'}
+          </Typography>
+          {offerSnapshot.shiftDateText && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              Date: {offerSnapshot.shiftDateText}
+            </Typography>
+          )}
+          {offerSnapshot.startTimeText && (
+            <Typography variant="body2">
+              Start: {offerSnapshot.startTimeText}
+              {offerSnapshot.endTimeText ? `  |  End: ${offerSnapshot.endTimeText}` : ''}
+            </Typography>
+          )}
+          {(offerSnapshot.locationName || offerSnapshot.address) && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              Location: {[offerSnapshot.locationName, offerSnapshot.address].filter(Boolean).join(' - ')}
+            </Typography>
+          )}
+          {offerSnapshot.uniformSummary && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              Uniform: {offerSnapshot.uniformSummary}
+            </Typography>
+          )}
+          {offerSnapshot.keyRequirementsSummary && (
+            <Typography variant="body2" sx={{ mt: 0.75 }}>
+              Key requirements: {offerSnapshot.keyRequirementsSummary}
+            </Typography>
+          )}
+        </Box>
+
+        <Stack spacing={1.25} sx={{ mt: 2 }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={ackOnTimeArrival}
+                onChange={(e) => setAckOnTimeArrival(e.target.checked)}
+                disabled={offerConfirmSubmitting || assignmentDecisionLoading}
+              />
+            }
+            label={`I will arrive at ${arrivalLocationText} by ${arrivalStartTimeText} ready to work.`}
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={ackUniformAndRequirements}
+                onChange={(e) => setAckUniformAndRequirements(e.target.checked)}
+                disabled={offerConfirmSubmitting || assignmentDecisionLoading}
+              />
+            }
+            label="I understand the uniform and job requirements for this shift."
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={ackNoShowConsequence}
+                onChange={(e) => setAckNoShowConsequence(e.target.checked)}
+                disabled={offerConfirmSubmitting || assignmentDecisionLoading}
+              />
+            }
+            label="I understand that if I fail to show up for this confirmed shift, my ability to apply for or work future shifts may be restricted for up to 2 weeks."
+          />
+        </Stack>
+
+        {offerConfirmError ? (
+          <Alert severity="error" sx={{ mt: 2 }}>
+            {offerConfirmError}
+          </Alert>
+        ) : null}
+      </WorkerBottomSheet>
 
       {/* Share Snackbar */}
       <Snackbar

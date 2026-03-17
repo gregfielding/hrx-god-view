@@ -15,16 +15,20 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useWorkerNotifications, getNotificationUrlAsync } from '../../../hooks/useWorkerNotifications';
+import {
+  useWorkerNotifications,
+  getNotificationUrlAsync,
+  getWorkerNotificationFilterKey,
+  type WorkerNotificationFilterKey,
+} from '../../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../../api/workerNotificationsApi';
-import type { NotificationCategory } from '../../../types/unifiedWorkerNotifications';
 import WorkerNotificationListItem from '../../../components/worker/WorkerNotificationListItem';
 
-const categoryLabels: Record<NotificationCategory, string> = {
-  assignments: 'Assignments',
+const filterLabels: Record<Exclude<WorkerNotificationFilterKey, 'all' | 'unread'>, string> = {
   applications: 'Applications',
-  opportunities: 'Opportunities',
-  profile: 'Profile',
+  assignments: 'Assignments',
+  reminders: 'Reminders',
+  documents: 'Documents / Compliance',
   system: 'System',
 };
 
@@ -33,14 +37,13 @@ const C1WorkerNotifications: React.FC = () => {
   const uid = user?.uid ?? undefined;
   const navigate = useNavigate();
   const { notifications, unreadCount, loading } = useWorkerNotifications(uid);
-  const [filter, setFilter] = useState<'all' | 'unread' | NotificationCategory>('all');
+  const [filter, setFilter] = useState<WorkerNotificationFilterKey>('all');
   const [markingId, setMarkingId] = useState<string | null>(null);
 
   const filtered = notifications.filter((n) => {
     if (filter === 'unread') return !n.readAt;
     if (filter === 'all') return true;
-    const cat = n.category ?? (n.type === 'opportunity' ? 'opportunities' : n.type === 'assignment' || n.type === 'shift' ? 'assignments' : n.type === 'application' ? 'applications' : n.type === 'profile_action' ? 'profile' : 'system');
-    return cat === filter;
+    return getWorkerNotificationFilterKey(n) === filter;
   });
 
   const handleMarkRead = async (id: string) => {
@@ -63,8 +66,9 @@ const C1WorkerNotifications: React.FC = () => {
   const handleClick = async (n: (typeof notifications)[0]) => {
     if (!n.readAt) await handleMarkRead(n.id);
     const url = n.deepLink ? n.deepLink : await getNotificationUrlAsync(n, uid);
-    if (url.startsWith('/')) navigate(url);
+    if (url?.startsWith('/')) navigate(url);
     else if (url) window.location.href = url;
+    else navigate('/c1/workers/notifications');
   };
 
   return (
@@ -87,10 +91,10 @@ const C1WorkerNotifications: React.FC = () => {
           variant={filter === 'unread' ? 'filled' : 'outlined'}
           size="small"
         />
-        {(['assignments', 'applications', 'opportunities', 'profile', 'system'] as const).map((cat) => (
+        {(['applications', 'assignments', 'reminders', 'documents', 'system'] as const).map((cat) => (
           <Chip
             key={cat}
-            label={categoryLabels[cat]}
+            label={filterLabels[cat]}
             onClick={() => setFilter(cat)}
             color={filter === cat ? 'primary' : 'default'}
             variant={filter === cat ? 'filled' : 'outlined'}

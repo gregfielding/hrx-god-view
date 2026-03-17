@@ -4,6 +4,16 @@ import { logger } from './utils/logger';
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
+const ALLOWED_ORIGINS = new Set([
+  'http://localhost:3000',
+  'https://hrxone.com',
+  'https://www.hrxone.com',
+]);
+
+function resolveCorsOrigin(originHeader: string | undefined): string {
+  const origin = originHeader ?? '';
+  return ALLOWED_ORIGINS.has(origin) ? origin : 'https://hrxone.com';
+}
 
 // Deal detection patterns
 const DEAL_PATTERNS = [
@@ -48,19 +58,21 @@ export const enhancedChatWithGPT = onRequest({
   minInstances: 1 
 }, async (req, res): Promise<void> => {
   const startedAt = Date.now();
+  const corsOrigin = resolveCorsOrigin(req.headers.origin as string | undefined);
+  res.set('Access-Control-Allow-Origin', corsOrigin);
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.set('Access-Control-Max-Age', '3600');
+  res.set('Vary', 'Origin');
   
   try {
     if (req.method === 'OPTIONS') {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
-      res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-      res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
       res.status(204).send('');
       return;
     }
 
     const { tenantId, userId, threadId, messages, toolMode } = req.body || {};
     if (!tenantId || !userId || !threadId || !Array.isArray(messages)) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
       res.status(400).json({ error: 'Missing required fields' });
       return;
     }
@@ -128,7 +140,6 @@ export const enhancedChatWithGPT = onRequest({
     // Call OpenAI with enhanced context
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
       res.status(500).json({ error: 'OpenAI API key not configured' });
       return;
     }
@@ -169,12 +180,10 @@ export const enhancedChatWithGPT = onRequest({
       }
     }
 
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
     res.json({ reply, latencyMs: Date.now() - startedAt });
 
   } catch (error) {
     console.error('enhancedChatWithGPT error:', error);
-    res.set('Access-Control-Allow-Origin', 'https://hrxone.com');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

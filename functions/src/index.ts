@@ -11548,6 +11548,14 @@ export { onApplicationCreated, onApplicationStatusChanged } from './applicationS
 // FCM push on application created / assignment updated (test automated push delivery)
 export { onApplicationCreatedPush } from './triggers/onApplicationCreatedPush';
 export { onAssignmentUpdatedPush } from './triggers/onAssignmentUpdatedPush';
+export {
+  syncAssignmentScheduledNotifications,
+  dispatchScheduledAssignmentNotifications,
+} from './workerShiftReminders';
+export {
+  onAssignmentConfirmedScheduleReminders,
+  dispatchScheduledWorkerReminders,
+} from './workerShiftRemindersV2';
 
 // Mentions Functions
 export { mentionSearch } from './mentions/mentionSearch';

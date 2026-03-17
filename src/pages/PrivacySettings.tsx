@@ -18,7 +18,6 @@ import {
   Snackbar,
   Chip,
   FormControl,
-  InputLabel,
   Select,
   MenuItem,
 } from '@mui/material';
@@ -38,7 +37,8 @@ import { doc, updateDoc, getDoc } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
-import { useT } from '../i18n';
+import { setLanguage, useT } from '../i18n';
+import { writeLocalLanguage } from '../utils/languagePreference';
 
 interface NotificationSettings {
   emailNotifications: boolean;
@@ -133,6 +133,9 @@ const PrivacySettings: React.FC = () => {
         // Load preferred message language
         if (userData.preferredLanguage === 'es' || userData.preferredLanguage === 'en') {
           setPreferredLanguage(userData.preferredLanguage);
+          if (user?.uid === userData.uid) {
+            writeLocalLanguage(userData.preferredLanguage);
+          }
         }
       }
     } catch (error) {
@@ -159,6 +162,8 @@ const PrivacySettings: React.FC = () => {
         updates.smsBlockedSystem = false; // Re-enabling from UI clears STOP state
       }
       await updateDoc(userRef, updates);
+      setLanguage(preferredLanguage);
+      writeLocalLanguage(preferredLanguage, { markChangedThisSession: true });
       
       showSnackbar(t('workerSettings.savedSuccess'), 'success');
     } catch (error) {

@@ -34,6 +34,8 @@ export interface RequirementItemStatus {
   expirationDate?: string;
   /** When true, do not show yes/no self-attest dialog; show upload CTA or status only. */
   requiresUpload?: boolean;
+  /** For willingness-style responses that are NOT verified completion. */
+  attestationState?: 'willing' | 'unwilling' | 'unknown';
 }
 
 export interface CategoryRequirementStatus {
@@ -113,6 +115,126 @@ function appUploaded(applicationData: any, name: string): boolean {
   return !!uploaded[name];
 }
 
+function normalizeStatus(v: unknown): string {
+  return String(v || '').toLowerCase().trim();
+}
+
+function isVerifiedResult(status: unknown, result?: unknown): boolean {
+  const s = normalizeStatus(status);
+  const r = normalizeStatus(result);
+  const deniedTokens = ['cancelled', 'canceled', 'failed', 'denied', 'rejected', 'expired', 'incomplete'];
+  if (deniedTokens.some((t) => s.includes(t) || r.includes(t))) return false;
+  const verifiedTokens = [
+    'verified',
+    'complete',
+    'completed',
+    'passed',
+    'clear',
+    'employment authorized',
+    'authorized',
+    'negative',
+  ];
+  return verifiedTokens.some((t) => s.includes(t) || r.includes(t));
+}
+
+function matchesLabel(candidate: unknown, label: string): boolean {
+  const c = normalizeForMatch(String(candidate || ''));
+  const l = normalizeForMatch(label);
+  return !!c && (c.includes(l) || l.includes(c));
+}
+
+function hasVerifiedChecklistItem(userProfile: any, matcher: (key: string, item: any) => boolean): boolean {
+  const checklist = userProfile?.onboarding?.checklist;
+  if (!checklist || typeof checklist !== 'object') return false;
+  return Object.entries(checklist).some(([key, item]) => {
+    const row = item as any;
+    return normalizeStatus(row?.status) === 'verified' && matcher(key, row);
+  });
+}
+
+function hasVerifiedBackground(userProfile: any, label: string): boolean {
+  const normalized = normalizeForMatch(label);
+  const compliance = userProfile?.workerCompliance?.backgroundCheck;
+  if (compliance && isVerifiedResult(compliance.status, compliance.result)) {
+    if (!compliance.packageName) return true;
+    if (matchesLabel(compliance.packageName, label)) return true;
+  }
+  const orders = Array.isArray(userProfile?.backgroundCheckOrders) ? userProfile.backgroundCheckOrders : [];
+  if (
+    orders.some(
+      (o: any) =>
+        isVerifiedResult(o?.status, o?.result) &&
+        (!o?.typeLabel && !o?.type ? true : matchesLabel(o?.typeLabel || o?.type, label))
+    )
+  ) {
+    return true;
+  }
+  return hasVerifiedChecklistItem(userProfile, (key, item) => {
+    const k = normalizeForMatch(key);
+    const labelMatch =
+      matchesLabel(item?.label || item?.name || item?.externalId, label) ||
+      k.includes(normalized) ||
+      normalized.includes(k);
+    return (k.includes('background') || k.includes('criminal')) && (labelMatch || !label);
+  });
+}
+
+function hasVerifiedDrug(userProfile: any, label: string): boolean {
+  const compliance = userProfile?.workerCompliance?.drugScreen;
+  if (compliance && isVerifiedResult(compliance.status, compliance.result)) {
+    if (!compliance.panelName) return true;
+    if (matchesLabel(compliance.panelName, label)) return true;
+  }
+  const orders = Array.isArray(userProfile?.drugScreeningOrders) ? userProfile.drugScreeningOrders : [];
+  if (
+    orders.some(
+      (o: any) =>
+        isVerifiedResult(o?.status, o?.result) &&
+        (!o?.typeLabel && !o?.type ? true : matchesLabel(o?.typeLabel || o?.type, label))
+    )
+  ) {
+    return true;
+  }
+  return hasVerifiedChecklistItem(userProfile, (key, item) => {
+    const k = normalizeForMatch(key);
+    return k.includes('drug') && (matchesLabel(item?.label || item?.name || item?.externalId, label) || !label);
+  });
+}
+
+function hasVerifiedEVerify(userProfile: any): boolean {
+  const compliance = userProfile?.workerCompliance?.eVerify;
+  if (compliance && isVerifiedResult(compliance.status, compliance.result)) return true;
+  const orders = Array.isArray(userProfile?.eVerifyOrders) ? userProfile.eVerifyOrders : [];
+  if (orders.some((o: any) => isVerifiedResult(o?.status, o?.result))) return true;
+  return hasVerifiedChecklistItem(userProfile, (key) => normalizeForMatch(key).includes('everify'));
+}
+
+function hasVerifiedAdditionalScreening(userProfile: any, label: string): boolean {
+  const slug = normalizeForMatch(label).replace(/[^a-z0-9]+/g, '_');
+  const additional = userProfile?.workerCompliance?.additionalScreenings?.[slug];
+  if (additional && isVerifiedResult(additional.status, additional.result)) return true;
+  const vaccination = userProfile?.workerCompliance?.vaccination?.[slug];
+  if (vaccination && isVerifiedResult(vaccination.status, vaccination.result)) return true;
+  const orders = Array.isArray(userProfile?.additionalScreeningOrders) ? userProfile.additionalScreeningOrders : [];
+  if (
+    orders.some(
+      (o: any) =>
+        isVerifiedResult(o?.status, o?.result) &&
+        (!o?.typeLabel && !o?.type ? true : matchesLabel(o?.typeLabel || o?.type, label))
+    )
+  ) {
+    return true;
+  }
+  return hasVerifiedChecklistItem(userProfile, (key, item) => {
+    const k = normalizeForMatch(key);
+    const detail = item?.label || item?.name || item?.externalId;
+    return (
+      (k.includes('vaccin') || k.includes('screen') || k.includes(slug)) &&
+      (!detail || matchesLabel(detail, label))
+    );
+  });
+}
+
 // Certification verification (upload-required vs self-attest)
 import {
   isUploadRequiredCert,
@@ -137,16 +259,24 @@ export function getRequirementsWithStatus(
 
   if (posting.showBackgroundChecks && Array.isArray(posting.backgroundCheckPackages) && posting.backgroundCheckPackages.length > 0) {
     const backgroundComfort = applicationData?.data?.requirements?.backgroundScreeningComfort ?? userProfile?.comfortablePassBackground;
+    const attestationState: RequirementItemStatus['attestationState'] =
+      backgroundComfort === 'Yes' || backgroundComfort === 'Maybe'
+        ? 'willing'
+        : backgroundComfort === 'No'
+          ? 'unwilling'
+          : 'unknown';
     result.push({
       category: 'backgroundCheckPackages',
       categoryLabel: 'Background Check Packages',
       tier: tierRequired,
       items: posting.backgroundCheckPackages.map((pkg: string, idx: number) => {
-        const met = backgroundComfort === 'Yes' || backgroundComfort === 'Maybe';
+        // Phase 1: green completion must come from verified compliance sources only.
+        const met = hasUser ? hasVerifiedBackground(userProfile, pkg) : false;
         return {
           label: pkg,
           met: hasUser ? met : false,
           ackKey: idx === 0 ? 'backgroundScreeningComfort' : undefined,
+          attestationState,
         };
       }),
     });
@@ -154,16 +284,24 @@ export function getRequirementsWithStatus(
 
   if (posting.showDrugScreening && Array.isArray(posting.drugScreeningPanels) && posting.drugScreeningPanels.length > 0) {
     const drugComfort = applicationData?.data?.requirements?.drugScreeningComfort ?? userProfile?.comfortablePassDrug;
+    const attestationState: RequirementItemStatus['attestationState'] =
+      drugComfort === 'Yes' || drugComfort === 'Maybe'
+        ? 'willing'
+        : drugComfort === 'No'
+          ? 'unwilling'
+          : 'unknown';
     result.push({
       category: 'drugScreeningPanels',
       categoryLabel: 'Drug Screening Panels',
       tier: tierRequired,
       items: posting.drugScreeningPanels.map((panel: string, idx: number) => {
-        const met = drugComfort === 'Yes' || drugComfort === 'Maybe';
+        // Phase 1: green completion must come from verified compliance sources only.
+        const met = hasUser ? hasVerifiedDrug(userProfile, panel) : false;
         return {
           label: panel,
           met: hasUser ? met : false,
           ackKey: idx === 0 ? 'drugScreeningComfort' : undefined,
+          attestationState,
         };
       }),
     });
@@ -171,7 +309,6 @@ export function getRequirementsWithStatus(
 
   if (posting.showAdditionalScreenings && Array.isArray(posting.additionalScreenings) && posting.additionalScreenings.length > 0) {
     const additionalScreeningsApp = applicationData?.data?.requirements?.additionalScreenings || {};
-    const additionalScreeningsProfile = userProfile?.additionalScreenings || {};
     result.push({
       category: 'additionalScreenings',
       categoryLabel: 'Additional Screenings',
@@ -179,25 +316,34 @@ export function getRequirementsWithStatus(
       items: posting.additionalScreenings.map((screening: string) => {
         const slug = screening.replace(/[^a-zA-Z0-9]+/g, '_');
         const key = `additionalScreenings_${slug}`;
-        const mainVal = additionalScreeningsApp[screening] ?? additionalScreeningsProfile[screening] ?? appAck(applicationData, key);
-        const isHealthWithFollowUp = /covid|vaccine|vaccination/i.test(screening);
-        const willingKey = `additionalScreenings_${slug}_willing`;
-        const willingVal = isHealthWithFollowUp ? reqAck(applicationData, userProfile, willingKey) : undefined;
-        const met = mainVal === 'Yes' || mainVal === 'Maybe' ||
-          (isHealthWithFollowUp && mainVal === 'No' && willingVal === 'Yes');
-        return { label: screening, met: hasUser ? met : false, ackKey: key };
+        const mainVal = additionalScreeningsApp[screening] ?? appAck(applicationData, key);
+        const attestationState: RequirementItemStatus['attestationState'] =
+          mainVal === 'Yes' || mainVal === 'Maybe'
+            ? 'willing'
+            : mainVal === 'No'
+              ? 'unwilling'
+              : 'unknown';
+        // Phase 1: additional/vaccine willingness does not mark completion.
+        const met = hasUser ? hasVerifiedAdditionalScreening(userProfile, screening) : false;
+        return { label: screening, met: hasUser ? met : false, ackKey: key, attestationState };
       }),
     });
   }
 
   if (posting.eVerifyRequired) {
     const eVerifyComfort = applicationData?.data?.requirements?.eVerifyComfort ?? userProfile?.comfortableEVerify;
-    const met = hasUser && (eVerifyComfort === 'Yes' || eVerifyComfort === 'Maybe');
+    const attestationState: RequirementItemStatus['attestationState'] =
+      eVerifyComfort === 'Yes' || eVerifyComfort === 'Maybe'
+        ? 'willing'
+        : eVerifyComfort === 'No'
+          ? 'unwilling'
+          : 'unknown';
+    const met = hasUser && hasVerifiedEVerify(userProfile);
     result.push({
       category: 'eVerify',
       categoryLabel: 'E-Verify',
       tier: tierRequired,
-      items: [{ label: 'E-Verify', met: !!met, ackKey: 'eVerifyComfort' }],
+      items: [{ label: 'E-Verify', met: !!met, ackKey: 'eVerifyComfort', attestationState }],
     });
   }
 

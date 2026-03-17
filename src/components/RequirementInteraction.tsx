@@ -91,6 +91,11 @@ export const RequirementInteraction: React.FC<RequirementInteractionProps> = ({
   const isCertWithUpload = item.requiresUpload && item.certificationVerification != null;
   const certStatus = item.certificationVerification;
   const uploadRequiredCert = category === 'licensesCerts' && isUploadRequiredCert(item.label);
+  const isAttestationOnlyCategory =
+    category === 'backgroundCheckPackages' ||
+    category === 'drugScreeningPanels' ||
+    category === 'eVerify' ||
+    category === 'additionalScreenings';
 
   const handleAnswer = async (answer: 'Yes' | 'No') => {
     if (!onFix) return;
@@ -206,9 +211,29 @@ export const RequirementInteraction: React.FC<RequirementInteractionProps> = ({
   // 1. HEALTH SCREENING (additionalScreenings)
   if (category === 'additionalScreenings') {
     const isCovid = isHealthScreeningWithFollowUp(item.label);
-    const mainQuestion = isCovid ? t('jobs.requirementsHealthQuestionCovid') : t('jobs.requirementsHealthQuestionGeneric', { screening: item.label });
+    const mainQuestion = isCovid
+      ? 'Willing to meet vaccination requirement?'
+      : `Willing to complete ${item.label}?`;
+    const attestationLabel = (() => {
+      if (item.attestationState === 'willing') {
+        return isCovid ? 'Willing to meet vaccination requirement' : `Willing to complete ${item.label}`;
+      }
+      if (item.attestationState === 'unwilling') {
+        return isCovid ? 'Not willing to meet vaccination requirement' : `Not willing to complete ${item.label}`;
+      }
+      return '';
+    })();
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {attestationLabel ? (
+          <Chip
+            size="small"
+            label={attestationLabel}
+            variant="outlined"
+            color={item.attestationState === 'willing' ? 'warning' : 'default'}
+            sx={{ alignSelf: 'flex-start' }}
+          />
+        ) : null}
         <Typography variant="body2" color="text.secondary">
           {mainQuestion}
         </Typography>
@@ -318,6 +343,50 @@ export const RequirementInteraction: React.FC<RequirementInteractionProps> = ({
   }
 
   // 7. Default: generic Yes/No (background, drug, eVerify, physical, uniform, requiredPpe)
+  if (isAttestationOnlyCategory) {
+    const attestationCopy = (() => {
+      if (category === 'backgroundCheckPackages') {
+        if (item.attestationState === 'willing') return 'Willing to complete background check';
+        if (item.attestationState === 'unwilling') return 'Not willing to complete background check';
+        return '';
+      }
+      if (category === 'drugScreeningPanels') {
+        if (item.attestationState === 'willing') return 'Willing to complete drug screening';
+        if (item.attestationState === 'unwilling') return 'Not willing to complete drug screening';
+        return '';
+      }
+      if (category === 'eVerify') {
+        if (item.attestationState === 'willing') return 'Willing to complete E-Verify';
+        if (item.attestationState === 'unwilling') return 'Not willing to complete E-Verify';
+        return '';
+      }
+      return '';
+    })();
+    const question = (() => {
+      if (category === 'backgroundCheckPackages') return 'Willing to complete background check?';
+      if (category === 'drugScreeningPanels') return 'Willing to complete drug screening?';
+      if (category === 'eVerify') return 'Willing to complete E-Verify?';
+      return `Willing to complete ${item.label}?`;
+    })();
+    return (
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+        {attestationCopy ? (
+          <Chip
+            size="small"
+            label={attestationCopy}
+            variant="outlined"
+            color={item.attestationState === 'willing' ? 'warning' : 'default'}
+            sx={{ alignSelf: 'flex-start' }}
+          />
+        ) : null}
+        <Typography variant="body2" color="text.secondary">
+          {question}
+        </Typography>
+        {onFix && renderYesNo('')}
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
       <Typography variant="body2" color="text.secondary">

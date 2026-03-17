@@ -3,7 +3,7 @@
  * Uses tenant-scoped conversations (tenants/{tenantId}/conversations).
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Typography,
@@ -24,9 +24,18 @@ import { useConversationsForUser } from '../../../hooks/useConversationsForUser'
 import { useConversationMessages } from '../../../hooks/useConversationMessages';
 import { markConversationReadCallable, sendConversationMessageCallable } from '../../../api/conversationsApi';
 
+type TimestampLike = { toDate?: () => Date; seconds?: number } | null | undefined;
+
+function toDate(ts: TimestampLike): Date | null {
+  if (!ts) return null;
+  if (typeof ts.toDate === 'function') return ts.toDate();
+  if (typeof ts.seconds === 'number') return new Date(ts.seconds * 1000);
+  return null;
+}
+
 function formatTime(ts: { toDate?: () => Date } | null): string {
-  if (!ts) return '';
-  const d = typeof (ts as any).toDate === 'function' ? (ts as any).toDate() : new Date((ts as any).seconds * 1000);
+  const d = toDate(ts);
+  if (!d) return '';
   return d.toLocaleDateString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
@@ -48,6 +57,22 @@ const C1WorkerInbox: React.FC = () => {
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
 
+  const selectedConversation = conversationId ? conversations.find((c) => c.id === conversationId) : null;
+  const unreadTotal = useMemo(() => (uid ? conversations.reduce((sum, c) => sum + (c.unreadByUid?.[uid] ?? 0), 0) : 0), [conversations, uid]);
+
+  useEffect(() => {
+    if (!conversationId || !selectedConversation || !uid || !resolvedTenantId) return;
+    const unread = selectedConversation.unreadByUid?.[uid] ?? 0;
+    if (unread > 0) {
+      markConversationReadCallable({ tenantId: resolvedTenantId, conversationId }).catch(() => {});
+    }
+  }, [conversationId, selectedConversation, uid, resolvedTenantId]);
+
+  const getConversationTitle = (c: (typeof conversations)[number]) =>
+    c.topic?.label || (c.type === 'support' ? 'Support' : c.type === 'system' ? 'System updates' : 'Recruiting');
+  const getConversationSenderLabel = (c: (typeof conversations)[number]) =>
+    c.type === 'system' ? 'System' : c.type === 'support' ? 'Support' : 'Recruiter';
+
   if (!tenantId) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 4, px: 2 }}>
@@ -60,8 +85,6 @@ const C1WorkerInbox: React.FC = () => {
       </Box>
     );
   }
-
-  const selectedConversation = conversationId ? conversations.find((c) => c.id === conversationId) : null;
 
   const handleSelectConversation = (id: string) => {
     navigate(`/c1/workers/inbox/${id}`);
@@ -105,24 +128,40 @@ const C1WorkerInbox: React.FC = () => {
       ) : (
         conversations.map((c) => {
           const unread = uid ? (c.unreadByUid?.[uid] ?? 0) : 0;
+          const preview = c.lastMessagePreview || 'No messages yet';
           return (
             <ListItemButton
               key={c.id}
               selected={c.id === conversationId}
-              onClick={() => handleSelectConversation(c.id!)}
+              onClick={() => (c.id ? handleSelectConversation(c.id) : undefined)}
+              sx={{ alignItems: 'flex-start', py: 1.25 }}
             >
               <ListItemText
                 primary={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    {c.topic?.label ?? c.type ?? 'Conversation'}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, justifyContent: 'space-between' }}>
+                    <Typography variant="body2" sx={{ fontWeight: unread > 0 ? 700 : 600 }} noWrap>
+                      {getConversationTitle(c)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ ml: 1, flexShrink: 0 }}>
+                      {formatTime(c.lastMessageAt)}
+                    </Typography>
+                  </Box>
+                }
+                secondary={
+                  <Box sx={{ mt: 0.25 }}>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }} noWrap>
+                      {getConversationSenderLabel(c)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" noWrap>
+                      {preview}
+                    </Typography>
                     {unread > 0 && (
-                      <Typography component="span" variant="caption" color="primary" fontWeight={600}>
+                      <Typography component="span" variant="caption" color="primary" fontWeight={700}>
                         {unread}
                       </Typography>
                     )}
                   </Box>
                 }
-                secondary={c.lastMessagePreview || formatTime(c.lastMessageAt)}
                 primaryTypographyProps={{ noWrap: true }}
                 secondaryTypographyProps={{ noWrap: true }}
               />
@@ -142,7 +181,10 @@ const C1WorkerInbox: React.FC = () => {
           </Button>
         )}
         <Typography variant="subtitle1" sx={{ flex: 1 }}>
-          {selectedConversation?.topic?.label ?? selectedConversation?.type ?? 'Conversation'}
+          {selectedConversation ? getConversationTitle(selectedConversation) : 'Conversation'}
+        </Typography>
+        <Typography variant="caption" color="text.secondary">
+          {selectedConversation ? getConversationSenderLabel(selectedConversation) : ''}
         </Typography>
       </Box>
       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
@@ -197,7 +239,12 @@ const C1WorkerInbox: React.FC = () => {
           multiline
           maxRows={3}
         />
-        <Button variant="contained" onClick={handleSend} disabled={!reply.trim() || sending} endIcon={<SendIcon />}>
+        <Button
+          variant="contained"
+          onClick={handleSend}
+          disabled={!reply.trim() || sending || selectedConversation?.status === 'closed'}
+          endIcon={<SendIcon />}
+        >
           Send
         </Button>
       </Box>
@@ -219,6 +266,11 @@ const C1WorkerInbox: React.FC = () => {
       )}
       <Typography variant="h5" sx={{ mb: 2 }}>
         Inbox
+        {unreadTotal > 0 ? (
+          <Typography component="span" variant="caption" color="primary" sx={{ ml: 1 }}>
+            ({unreadTotal} unread)
+          </Typography>
+        ) : null}
       </Typography>
       <Box sx={{ display: 'flex', flex: 1, minHeight: 400, border: 1, borderColor: 'divider', borderRadius: 1 }}>
         {isDesktop ? (
