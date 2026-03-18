@@ -77,11 +77,11 @@ interface AssignmentDetails {
   updatedAt?: Date;
   // Staff instructions from job order
   staffInstructions?: {
-    uniform?: { text?: string; files?: any[] };
-    checkIn?: { text?: string; files?: any[] };
-    firstDay?: { text?: string; files?: any[] };
-    parking?: { text?: string; files?: any[] };
-    [key: string]: { text?: string; files?: any[] } | undefined;
+    uniform?: { text?: unknown; files?: any[] };
+    checkIn?: { text?: unknown; files?: any[] };
+    firstDay?: { text?: unknown; files?: any[] };
+    parking?: { text?: unknown; files?: any[] };
+    [key: string]: { text?: unknown; files?: any[] } | undefined;
   };
   /** Bilingual staff instruction text (worker-facing): section -> { en, es }. Fallback to staffInstructions.*.text */
   staffInstructions_i18n?: Record<string, { en?: string; es?: string }>;
@@ -94,7 +94,65 @@ interface AssignmentDetails {
   ppeRequirements?: string;
   /** Physical requirements (from job order); shown in Job preparation section */
   physicalRequirements?: string;
+  /** Critical requirement flags for worker readiness on this assignment */
+  showBackgroundChecks?: boolean;
+  showDrugScreening?: boolean;
+  eVerifyRequired?: boolean;
 }
+
+type StaffInstructionSection = { text?: unknown; files?: any[] };
+type StaffInstructionMap = Record<string, StaffInstructionSection | undefined>;
+type StaffInstructionI18nMap = Record<string, { en?: string; es?: string } | undefined>;
+
+const STAFF_SECTION_KEYS = ['firstDay', 'parking', 'checkIn', 'uniform', 'credentials', 'other', 'attachments'];
+
+const normalizeStaffInstructionMap = (input: unknown): StaffInstructionMap => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const map = input as Record<string, unknown>;
+  const out: StaffInstructionMap = {};
+  STAFF_SECTION_KEYS.forEach((key) => {
+    const value = map[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const section = value as Record<string, unknown>;
+    out[key] = {
+      text: section.text,
+      files: Array.isArray(section.files) ? section.files : [],
+    };
+  });
+  return out;
+};
+
+const normalizeStaffInstructionI18nMap = (input: unknown): StaffInstructionI18nMap => {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const map = input as Record<string, unknown>;
+  const out: StaffInstructionI18nMap = {};
+  STAFF_SECTION_KEYS.forEach((key) => {
+    const value = map[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const section = value as Record<string, unknown>;
+    const en = typeof section.en === 'string' ? section.en : undefined;
+    const es = typeof section.es === 'string' ? section.es : undefined;
+    if (en || es) out[key] = { en, es };
+  });
+  return out;
+};
+
+const hasStaffTextValue = (value: unknown): boolean => {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  const en = typeof obj.en === 'string' ? obj.en : '';
+  const es = typeof obj.es === 'string' ? obj.es : '';
+  return en.trim().length > 0 || es.trim().length > 0;
+};
+
+const toIsoDayLocal = (date: Date | undefined): string => {
+  if (!date || Number.isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
 
 const AssignmentDetails: React.FC = () => {
   const { assignmentId } = useParams<{ assignmentId: string }>();
@@ -118,6 +176,13 @@ const AssignmentDetails: React.FC = () => {
     emailIntro?: string;
     shiftDescription_i18n?: { en?: string; es?: string };
     emailIntro_i18n?: { en?: string; es?: string };
+    staffInstructions?: StaffInstructionMap;
+    staffInstructions_i18n?: StaffInstructionI18nMap;
+    checkInInstructions?: string;
+    uniformRequirements?: string;
+    customUniformRequirements?: string;
+    ppeRequirements?: string;
+    physicalRequirements?: string;
   } | null>(null);
 
   /** Looked-up company name, worksite name, and worksite address when assignment has IDs */
@@ -176,6 +241,25 @@ const AssignmentDetails: React.FC = () => {
             emailIntro: typeof d.emailIntro === 'string' ? d.emailIntro : undefined,
             shiftDescription_i18n: d.shiftDescription_i18n as { en?: string; es?: string } | undefined,
             emailIntro_i18n: d.emailIntro_i18n as { en?: string; es?: string } | undefined,
+            staffInstructions: normalizeStaffInstructionMap(d.staffInstructions),
+            staffInstructions_i18n: normalizeStaffInstructionI18nMap(d.staffInstructions_i18n),
+            checkInInstructions: typeof d.checkInInstructions === 'string' ? d.checkInInstructions : undefined,
+            uniformRequirements: typeof d.uniformRequirements === 'string'
+              ? d.uniformRequirements
+              : Array.isArray(d.uniformRequirements)
+                ? d.uniformRequirements.filter(Boolean).join(', ')
+                : undefined,
+            customUniformRequirements: typeof d.customUniformRequirements === 'string' ? d.customUniformRequirements : undefined,
+            ppeRequirements: typeof d.ppeRequirements === 'string'
+              ? d.ppeRequirements
+              : Array.isArray(d.ppeRequirements)
+                ? d.ppeRequirements.filter(Boolean).join(', ')
+                : undefined,
+            physicalRequirements: typeof d.physicalRequirements === 'string'
+              ? d.physicalRequirements
+              : Array.isArray(d.physicalRequirements)
+                ? d.physicalRequirements.filter(Boolean).join(', ')
+                : undefined,
           });
         } else {
           setScheduleShift(null);
@@ -235,6 +319,31 @@ const AssignmentDetails: React.FC = () => {
             list.push({ id: uid, displayName: 'Your recruiter' });
           }
         }
+        if (list.length === 0) {
+          const fallbackName = String(
+            (assignment as any)?.recruiterName ||
+            (assignment as any)?.assignedRecruiterName ||
+            ''
+          ).trim();
+          const fallbackEmail = String(
+            (assignment as any)?.recruiterEmail ||
+            (assignment as any)?.assignedRecruiterEmail ||
+            ''
+          ).trim();
+          const fallbackPhone = String(
+            (assignment as any)?.recruiterPhone ||
+            (assignment as any)?.assignedRecruiterPhone ||
+            ''
+          ).trim();
+          if (fallbackName || fallbackEmail || fallbackPhone) {
+            list.push({
+              id: 'assignment_fallback',
+              displayName: fallbackName || 'Recruiter',
+              email: fallbackEmail || undefined,
+              phone: fallbackPhone || undefined,
+            });
+          }
+        }
         if (!cancelled) setRecruiters(list);
       } catch (_) {
         if (!cancelled) setRecruiters([]);
@@ -242,7 +351,7 @@ const AssignmentDetails: React.FC = () => {
     };
     loadRecruiters();
     return () => { cancelled = true; };
-  }, [assignment?.tenantId, assignment?.jobOrderId]);
+  }, [assignment?.tenantId, assignment?.jobOrderId, assignment]);
 
   useEffect(() => {
     if (!assignment?.tenantId) {
@@ -511,7 +620,7 @@ const AssignmentDetails: React.FC = () => {
         tenantId: resolvedTenantId || '',
         jobOrderId: data.jobOrderId,
         companyId: data.companyId,
-        worksiteId: data.locationId,
+        worksiteId: data.worksiteId || data.locationId,
         shiftId: data.shiftId,
         jobTitle,
         companyName,
@@ -543,6 +652,9 @@ const AssignmentDetails: React.FC = () => {
           : typeof data.physicalRequirements === 'string'
             ? data.physicalRequirements
             : undefined,
+        showBackgroundChecks: Boolean(data.showBackgroundChecks ?? data.backgroundCheckRequired),
+        showDrugScreening: Boolean(data.showDrugScreening ?? data.drugScreenRequired),
+        eVerifyRequired: Boolean(data.eVerifyRequired),
       });
       console.debug('[AssignmentDetails] fetch success', {
         assignmentId: assignmentSnap.id,
@@ -579,6 +691,161 @@ const AssignmentDetails: React.FC = () => {
       }
 
       const jobOrderData = jobOrderSnap.data();
+
+      // Resolve downhill staff instructions with explicit precedence:
+      // parent account defaults < account defaults < location defaults < job order < shift < assignment.
+      const accountId = sourceData.accountId || sourceData.companyId || jobOrderData.accountId || jobOrderData.companyId;
+      const parentAccountId = sourceData.parentAccountId || jobOrderData.parentAccountId;
+      const locationId = sourceData.locationId || sourceData.worksiteId || jobOrderData.locationId || jobOrderData.worksiteId;
+      const locationKeyCandidates = [
+        typeof jobOrderData.locationKey === 'string' ? jobOrderData.locationKey : '',
+        accountId && locationId ? `${accountId}_${locationId}` : '',
+        jobOrderData.companyId && locationId ? `${jobOrderData.companyId}_${locationId}` : '',
+      ].filter(Boolean);
+
+      let parentAccountStaff: StaffInstructionMap = {};
+      let accountStaff: StaffInstructionMap = {};
+      let locationStaff: StaffInstructionMap = {};
+      let shiftStaff: StaffInstructionMap = {};
+      const assignmentStaff: StaffInstructionMap = normalizeStaffInstructionMap(sourceData.staffInstructions);
+      let parentAccountStaffI18n: StaffInstructionI18nMap = {};
+      let accountStaffI18n: StaffInstructionI18nMap = {};
+      let locationStaffI18n: StaffInstructionI18nMap = {};
+      let shiftStaffI18n: StaffInstructionI18nMap = {};
+      const assignmentStaffI18n: StaffInstructionI18nMap = normalizeStaffInstructionI18nMap(sourceData.staffInstructions_i18n);
+      let shiftCheckInInstructions = '';
+      let shiftUniformRequirements = '';
+      let shiftCustomUniformRequirements = '';
+      let shiftPpeRequirements = '';
+      let shiftPhysicalRequirements = '';
+
+      try {
+        if (parentAccountId) {
+          const parentSnap = await getDoc(doc(db, 'tenants', tenantId, 'accounts', parentAccountId));
+          if (parentSnap.exists()) {
+            const parentData = parentSnap.data() as Record<string, unknown>;
+            parentAccountStaff = normalizeStaffInstructionMap((parentData.orderDefaults as any)?.staffInstructions);
+            parentAccountStaffI18n = normalizeStaffInstructionI18nMap((parentData.orderDefaults as any)?.staffInstructions_i18n);
+          }
+        }
+      } catch (_) {
+        // Keep best effort; worker page must not fail when account defaults are inaccessible.
+      }
+
+      try {
+        if (accountId) {
+          const accountSnap = await getDoc(doc(db, 'tenants', tenantId, 'accounts', accountId));
+          if (accountSnap.exists()) {
+            const accountData = accountSnap.data() as Record<string, unknown>;
+            accountStaff = normalizeStaffInstructionMap((accountData.orderDefaults as any)?.staffInstructions);
+            accountStaffI18n = normalizeStaffInstructionI18nMap((accountData.orderDefaults as any)?.staffInstructions_i18n);
+          }
+        }
+      } catch (_) {}
+
+      try {
+        if (accountId && locationKeyCandidates.length > 0) {
+          for (const key of locationKeyCandidates) {
+            const locationDefaultsSnap = await getDoc(
+              doc(db, 'tenants', tenantId, 'accounts', accountId, 'location_defaults', key)
+            );
+            if (!locationDefaultsSnap.exists()) continue;
+            const locationDefaultsData = locationDefaultsSnap.data() as Record<string, unknown>;
+            locationStaff = normalizeStaffInstructionMap((locationDefaultsData.orderDefaults as any)?.staffInstructions);
+            locationStaffI18n = normalizeStaffInstructionI18nMap((locationDefaultsData.orderDefaults as any)?.staffInstructions_i18n);
+            break;
+          }
+        }
+      } catch (_) {}
+
+      try {
+        if (sourceData.shiftId) {
+          const shiftSnap = await getDoc(
+            doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', String(sourceData.shiftId))
+          );
+          if (shiftSnap.exists()) {
+            const shiftData = shiftSnap.data() as Record<string, unknown>;
+            shiftStaff = normalizeStaffInstructionMap(shiftData.staffInstructions);
+            shiftStaffI18n = normalizeStaffInstructionI18nMap(shiftData.staffInstructions_i18n);
+            shiftCheckInInstructions = typeof shiftData.checkInInstructions === 'string' ? shiftData.checkInInstructions : '';
+            shiftUniformRequirements = typeof shiftData.uniformRequirements === 'string'
+              ? shiftData.uniformRequirements
+              : Array.isArray(shiftData.uniformRequirements)
+                ? (shiftData.uniformRequirements as unknown[]).map((v) => String(v || '').trim()).filter(Boolean).join(', ')
+                : '';
+            shiftCustomUniformRequirements = typeof shiftData.customUniformRequirements === 'string' ? shiftData.customUniformRequirements : '';
+            shiftPpeRequirements = typeof shiftData.ppeRequirements === 'string'
+              ? shiftData.ppeRequirements
+              : Array.isArray(shiftData.ppeRequirements)
+                ? (shiftData.ppeRequirements as unknown[]).map((v) => String(v || '').trim()).filter(Boolean).join(', ')
+                : '';
+            shiftPhysicalRequirements = typeof shiftData.physicalRequirements === 'string'
+              ? shiftData.physicalRequirements
+              : Array.isArray(shiftData.physicalRequirements)
+                ? (shiftData.physicalRequirements as unknown[]).map((v) => String(v || '').trim()).filter(Boolean).join(', ')
+                : '';
+          }
+        }
+      } catch (_) {}
+
+      const jobOrderStaff = normalizeStaffInstructionMap(jobOrderData.staffInstructions);
+      const jobOrderStaffI18n = normalizeStaffInstructionI18nMap(jobOrderData.staffInstructions_i18n);
+
+      const staffSources: StaffInstructionMap[] = [
+        parentAccountStaff,
+        accountStaff,
+        locationStaff,
+        jobOrderStaff,
+        shiftStaff,
+        assignmentStaff,
+      ];
+      const staffI18nSources: StaffInstructionI18nMap[] = [
+        parentAccountStaffI18n,
+        accountStaffI18n,
+        locationStaffI18n,
+        jobOrderStaffI18n,
+        shiftStaffI18n,
+        assignmentStaffI18n,
+      ];
+
+      const resolvedStaff: StaffInstructionMap = {};
+      const resolvedStaffI18n: StaffInstructionI18nMap = {};
+      STAFF_SECTION_KEYS.forEach((sectionKey) => {
+        let pickedText: unknown = undefined;
+        let pickedFiles: any[] | undefined = undefined;
+        let pickedI18n: { en?: string; es?: string } | undefined = undefined;
+
+        for (let i = staffSources.length - 1; i >= 0; i -= 1) {
+          const candidate = staffSources[i]?.[sectionKey];
+          if (!candidate) continue;
+          if (pickedText === undefined && hasStaffTextValue(candidate.text)) {
+            pickedText = candidate.text;
+          }
+          if (pickedFiles === undefined && Array.isArray(candidate.files) && candidate.files.length > 0) {
+            pickedFiles = candidate.files;
+          }
+        }
+        for (let i = staffI18nSources.length - 1; i >= 0; i -= 1) {
+          const candidate = staffI18nSources[i]?.[sectionKey];
+          if (!candidate) continue;
+          if (!pickedI18n && ((candidate.en && candidate.en.trim()) || (candidate.es && candidate.es.trim()))) {
+            pickedI18n = candidate;
+          }
+        }
+        if (pickedText !== undefined || (pickedFiles && pickedFiles.length > 0)) {
+          resolvedStaff[sectionKey] = { text: pickedText, files: pickedFiles || [] };
+        }
+        if (pickedI18n) {
+          resolvedStaffI18n[sectionKey] = pickedI18n;
+        }
+      });
+
+      const resolvedCheckInInstructions = String(
+        sourceData.checkInInstructions ||
+        shiftCheckInInstructions ||
+        jobOrderData.checkInInstructions ||
+        ''
+      ).trim();
       
       // Parse dates: prefer assignment (shift) start/end when present
       let startDate: Date | undefined;
@@ -642,22 +909,32 @@ const AssignmentDetails: React.FC = () => {
         notes: sourceData.notes || jobOrderData.jobOrderDescription,
         createdAt,
         updatedAt,
-        // Load staff instructions (legacy + i18n for worker portal language)
-        staffInstructions: jobOrderData.staffInstructions || {},
-        staffInstructions_i18n: jobOrderData.staffInstructions_i18n || undefined,
-        checkInInstructions: jobOrderData.checkInInstructions,
-        uniformRequirements: Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined),
-        customUniformRequirements: typeof jobOrderData.customUniformRequirements === 'string' ? jobOrderData.customUniformRequirements : undefined,
-        ppeRequirements: Array.isArray(jobOrderData.ppeRequirements)
+        staffInstructions: resolvedStaff,
+        staffInstructions_i18n: resolvedStaffI18n,
+        checkInInstructions: resolvedCheckInInstructions,
+        uniformRequirements: sourceData.uniformRequirements ||
+          shiftUniformRequirements ||
+          (Array.isArray(jobOrderData.uniformRequirements) ? jobOrderData.uniformRequirements.filter(Boolean).join(', ') : (typeof jobOrderData.uniformRequirements === 'string' ? jobOrderData.uniformRequirements : undefined)),
+        customUniformRequirements: sourceData.customUniformRequirements ||
+          shiftCustomUniformRequirements ||
+          (typeof jobOrderData.customUniformRequirements === 'string' ? jobOrderData.customUniformRequirements : undefined),
+        ppeRequirements: sourceData.ppeRequirements ||
+          shiftPpeRequirements ||
+          (Array.isArray(jobOrderData.ppeRequirements)
           ? jobOrderData.ppeRequirements.filter(Boolean).join(', ')
           : typeof jobOrderData.ppeRequirements === 'string'
             ? jobOrderData.ppeRequirements
-            : undefined,
-        physicalRequirements: Array.isArray(jobOrderData.physicalRequirements)
+            : undefined),
+        physicalRequirements: sourceData.physicalRequirements ||
+          shiftPhysicalRequirements ||
+          (Array.isArray(jobOrderData.physicalRequirements)
           ? jobOrderData.physicalRequirements.filter(Boolean).join(', ')
           : typeof jobOrderData.physicalRequirements === 'string'
             ? jobOrderData.physicalRequirements
-            : undefined,
+            : undefined),
+        showBackgroundChecks: Boolean(sourceData.showBackgroundChecks ?? jobOrderData.showBackgroundChecks ?? jobOrderData.backgroundCheckRequired),
+        showDrugScreening: Boolean(sourceData.showDrugScreening ?? jobOrderData.showDrugScreening ?? jobOrderData.drugScreenRequired),
+        eVerifyRequired: Boolean(sourceData.eVerifyRequired ?? jobOrderData.eVerifyRequired),
       });
     } catch (err: any) {
       console.error('Error loading job order:', err);
@@ -728,6 +1005,26 @@ const AssignmentDetails: React.FC = () => {
     5: t('assignment.friday'),
     6: t('assignment.saturday'),
   };
+
+  const assignmentIsoDay = toIsoDayLocal(assignment?.startDate);
+  const assignmentDateScheduleEntry = useMemo(() => {
+    if (!assignmentIsoDay || !scheduleShift?.dateSchedule || !scheduleShift?.shiftDate) return null;
+    const entries = getDateScheduleEntriesWithHours(
+      scheduleShift.dateSchedule,
+      scheduleShift.shiftDate,
+      scheduleShift.endDate,
+    );
+    return entries.find((entry) => entry.date === assignmentIsoDay) || null;
+  }, [assignmentIsoDay, scheduleShift?.dateSchedule, scheduleShift?.shiftDate, scheduleShift?.endDate]);
+
+  const effectiveStartTime = assignment?.startTime || assignmentDateScheduleEntry?.startTime || scheduleShift?.defaultStartTime || '';
+  const effectiveEndTime = assignment?.endTime || assignmentDateScheduleEntry?.endTime || scheduleShift?.defaultEndTime || '';
+
+  const criticalRequirementLabels = [
+    assignment?.showBackgroundChecks ? 'Background check' : null,
+    assignment?.showDrugScreening ? 'Drug screening' : null,
+    assignment?.eVerifyRequired ? 'E-Verify' : null,
+  ].filter(Boolean) as string[];
 
   if (loading) {
     return (
@@ -822,6 +1119,15 @@ const AssignmentDetails: React.FC = () => {
                     </Box>
                   </Stack>
                   <Stack direction="row" spacing={2} alignItems="center">
+                    <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Time</Typography>
+                      <Typography variant="body1">
+                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ') || '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
+                  <Stack direction="row" spacing={2} alignItems="center">
                     <MoneyIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
@@ -907,6 +1213,15 @@ const AssignmentDetails: React.FC = () => {
                       </Box>
                     </Stack>
                   )}
+                  <Stack direction="row" spacing={2} alignItems="flex-start">
+                    <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Critical requirements</Typography>
+                      <Typography variant="body1">
+                        {criticalRequirementLabels.length > 0 ? criticalRequirementLabels.join(', ') : '—'}
+                      </Typography>
+                    </Box>
+                  </Stack>
                 </Stack>
               </Grid>
             </Grid>
@@ -920,103 +1235,56 @@ const AssignmentDetails: React.FC = () => {
               {t('assignment.mySchedule')}
             </Typography>
             <Stack spacing={2}>
-              {scheduleShift?.shiftMode === 'multi' && scheduleShift?.dateSchedule && scheduleShift?.shiftDate && (() => {
-                const entries = getDateScheduleEntriesWithHours(scheduleShift.dateSchedule, scheduleShift.shiftDate, scheduleShift.endDate);
-                return entries.length > 0;
-              })() ? (
+              {assignment.startDate ? (
                 <>
                   <Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
-                    <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
-                      {getDateScheduleEntriesWithHours(scheduleShift!.dateSchedule!, scheduleShift!.shiftDate!, scheduleShift!.endDate).map((e) => (
-                        <Typography key={e.date} component="li" variant="body2">
-                          {e.dayLabel}: {formatTime(e.startTime)} – {formatTime(e.endTime)}
-                        </Typography>
-                      ))}
-                    </Stack>
+                    <Typography variant="body2" color="text.secondary">Date</Typography>
+                    <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
                   </Box>
-                  {assignment.startDate && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
-                      <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
-                    </Box>
-                  )}
-                  {assignment.jobOrderType === 'gig' && (assignment.endDate || scheduleShift.endDate) && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
-                      <Typography variant="body1">
-                        {assignment.endDate ? formatDate(assignment.endDate) : (scheduleShift.endDate ? new Date(scheduleShift.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
-                      </Typography>
-                    </Box>
-                  )}
-                </>
-              ) : scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
-                <>
-                  <Box>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>{t('assignment.weeklySchedule')}</Typography>
-                    <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
-                      {DOW_ORDER.map((dow) => {
-                        const entry = scheduleShift.weeklySchedule![String(dow)];
-                        if (!entry?.enabled) return null;
-                        const start = formatTime(entry.startTime);
-                        const end = formatTime(entry.endTime);
-                        return (
-                          <Typography key={dow} component="li" variant="body2">
-                            {DOW_LABELS[dow]}: {start} – {end}
-                          </Typography>
-                        );
-                      })}
-                    </Stack>
-                  </Box>
-                  {assignment.startDate && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('common.startDate')}</Typography>
-                      <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
-                    </Box>
-                  )}
-                  {assignment.jobOrderType === 'gig' && (assignment.endDate || scheduleShift.endDate) && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
-                      <Typography variant="body1">
-                        {assignment.endDate ? formatDate(assignment.endDate) : (scheduleShift.endDate ? new Date(scheduleShift.endDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—')}
-                      </Typography>
-                    </Box>
-                  )}
-                  {assignment.jobOrderType === 'career' && !assignment.endDate && !scheduleShift.endDate && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">Duration</Typography>
-                      <Typography variant="body1">Ongoing</Typography>
-                    </Box>
-                  )}
-                </>
-              ) : (
-                <>
-                  {assignment.startDate && (
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">Date</Typography>
-                      <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
-                    </Box>
-                  )}
-                  {(assignment.startTime || assignment.endTime || scheduleShift?.defaultStartTime || scheduleShift?.defaultEndTime) && (
+                  {(effectiveStartTime || effectiveEndTime) && (
                     <Box>
                       <Typography variant="body2" color="text.secondary">Time</Typography>
                       <Typography variant="body1">
-                        {[
-                          formatTime(assignment.startTime || scheduleShift?.defaultStartTime),
-                          formatTime(assignment.endTime || scheduleShift?.defaultEndTime),
-                        ]
-                          .filter(Boolean)
-                          .join(' – ')}
+                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
                       </Typography>
                     </Box>
                   )}
                   {assignment.endDate && (
                     <Box>
-                      <Typography variant="body2" color="text.secondary">End date</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
                       <Typography variant="body1">{formatDate(assignment.endDate)}</Typography>
                     </Box>
                   )}
-                  {!assignment.startDate && !assignment.startTime && !assignment.endTime && !scheduleShift?.defaultStartTime && (
+                </>
+              ) : (
+                <>
+                  {scheduleShift?.shiftMode === 'multi' && scheduleShift?.weeklySchedule && Object.keys(scheduleShift.weeklySchedule).length > 0 ? (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                        {t('assignment.weeklySchedule')}
+                      </Typography>
+                      <Stack spacing={0.5} component="ul" sx={{ pl: 2.5, m: 0 }}>
+                        {DOW_ORDER.map((dow) => {
+                          const entry = scheduleShift.weeklySchedule![String(dow)];
+                          if (!entry?.enabled) return null;
+                          return (
+                            <Typography key={dow} component="li" variant="body2">
+                              {DOW_LABELS[dow]}: {formatTime(entry.startTime)} – {formatTime(entry.endTime)}
+                            </Typography>
+                          );
+                        })}
+                      </Stack>
+                    </Box>
+                  ) : null}
+                  {(effectiveStartTime || effectiveEndTime) && (
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">Time</Typography>
+                      <Typography variant="body1">
+                        {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
+                      </Typography>
+                    </Box>
+                  )}
+                  {!effectiveStartTime && !effectiveEndTime && !scheduleShift?.weeklySchedule && (
                     <Typography variant="body2" color="text.secondary">No schedule details available.</Typography>
                   )}
                 </>
