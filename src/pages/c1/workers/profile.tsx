@@ -78,7 +78,7 @@ const WorkerProfile: React.FC = () => {
   ).trim();
   const fullName = String(
     `${String(userDoc?.firstName || '').trim()} ${String(userDoc?.lastName || '').trim()}`
-  ).trim() || 'Your profile';
+  ).trim() || t('profile.yourProfile');
   const city = String(
     (userDoc?.addressInfo as Record<string, unknown> | undefined)?.city ||
       userDoc?.city ||
@@ -89,7 +89,7 @@ const WorkerProfile: React.FC = () => {
       userDoc?.state ||
       ''
   ).trim();
-  const locationLabel = city && state ? `${city}, ${state}` : city || state || 'Add your location';
+  const locationLabel = city && state ? `${city}, ${state}` : city || state || t('profile.addLocation');
 
   const profileStatus: 'complete' | 'action_required' | 'recommended' =
     readinessModel.readinessPercent >= 90
@@ -98,7 +98,12 @@ const WorkerProfile: React.FC = () => {
         ? 'action_required'
         : 'recommended';
   const profileStatusColor = profileStatus === 'complete' ? 'success' : profileStatus === 'action_required' ? 'warning' : 'default';
-  const profileStatusLabel = profileStatus === 'complete' ? 'Complete' : profileStatus === 'action_required' ? 'Action required' : 'Recommended';
+  const profileStatusLabel =
+    profileStatus === 'complete'
+      ? t('profile.statusComplete')
+      : profileStatus === 'action_required'
+        ? t('profile.statusActionRequired')
+        : t('profile.statusRecommended');
 
   const workEligibilityValueFromDoc = useMemo(() => {
     const a = userDoc?.workEligibilityAttestation as Record<string, unknown> | undefined;
@@ -168,7 +173,7 @@ const WorkerProfile: React.FC = () => {
     <Container maxWidth="md" sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-          My Profile
+          {t('nav.myProfile')}
         </Typography>
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
@@ -183,7 +188,11 @@ const WorkerProfile: React.FC = () => {
                   {locationLabel}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                  {readinessModel.completedCount} of {readinessModel.requiredCount} key items complete ({readinessModel.readinessPercent}%)
+                  {t('profile.keyItemsComplete', {
+                    completed: readinessModel.completedCount,
+                    total: readinessModel.requiredCount,
+                    percent: readinessModel.readinessPercent,
+                  })}
                 </Typography>
               </Box>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
@@ -198,7 +207,7 @@ const WorkerProfile: React.FC = () => {
                   endIcon={<OpenInNewIcon fontSize="small" />}
                   onClick={() => navigate('/c1/workers/dashboard')}
                 >
-                  Return to Home
+                  {t('profile.returnToHome')}
                 </Button>
               </Box>
             )}
@@ -213,7 +222,7 @@ const WorkerProfile: React.FC = () => {
           sx={accordionSx}
         >
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography fontWeight={600}>Basic Info</Typography>
+            <Typography fontWeight={600}>{t('profile.basicIdentity')}</Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
             <WorkerBasicIdentityCard
@@ -233,11 +242,11 @@ const WorkerProfile: React.FC = () => {
           sx={accordionSx}
         >
           <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography fontWeight={600}>Work Eligibility</Typography>
+            <Typography fontWeight={600}>{t('profile.workEligibility')}</Typography>
           </AccordionSummary>
           <AccordionDetails sx={{ pt: 0 }}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Confirm your authorization details so recruiters can place you in eligible roles.
+              {t('profile.workEligibilityConfirmDetails')}
             </Typography>
             <WorkEligibilityStep
               value={workEligibilityLocal}

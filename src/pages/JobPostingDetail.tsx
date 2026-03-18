@@ -2200,11 +2200,11 @@ const JobPostingDetail: React.FC = () => {
                   {applicationStatus && applicationJobScore != null && (
                     <Card variant="outlined" sx={{ mt: 2, p: 1.5, borderRadius: 2 }}>
                       <Typography variant="caption" color="text.secondary" display="block">
-                        Your job fit
+                        {t('jobs.yourJobFit')}
                       </Typography>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
                         {'version' in applicationJobScore && applicationJobScore.version === 'v1' && !applicationJobScore.eligible && (
-                          <Chip size="small" label="Not Eligible" color="error" />
+                          <Chip size="small" label={t('jobs.notEligible')} color="error" />
                         )}
                         <Chip
                           size="small"
@@ -2217,11 +2217,11 @@ const JobPostingDetail: React.FC = () => {
                             : ((applicationJobScore as JobScoreSummary).missingLabels ?? []);
                           return missing.length ? (
                             <Typography variant="caption" color="text.secondary">
-                              Missing: {missing.slice(0, 3).join(', ')}
+                              {t('jobs.missing')}: {missing.slice(0, 3).join(', ')}
                               {missing.length > 3 ? '…' : ''}
                             </Typography>
                           ) : applicationJobScore.eligible ? (
-                            <Typography variant="caption" color="success.main">Eligible</Typography>
+                            <Typography variant="caption" color="success.main">{t('jobs.eligible')}</Typography>
                           ) : null;
                         })()}
                       </Box>
@@ -2304,7 +2304,7 @@ const JobPostingDetail: React.FC = () => {
             <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
               <CardContent sx={{ p: 0 }}>
                 <Typography variant="h6" gutterBottom sx={{ fontWeight: 700 }}>
-                  Location
+                  {t('jobs.location')}
                 </Typography>
                 {(() => {
                   const wa = posting.worksiteAddress;
@@ -2314,7 +2314,7 @@ const JobPostingDetail: React.FC = () => {
                   return (
                     <>
                       <Typography variant="body1" sx={{ mb: 1 }}>
-                        {posting.worksiteName ? `${posting.worksiteName} — ` : ''}{addressStr || 'Address TBD'}
+                        {posting.worksiteName ? `${posting.worksiteName} — ` : ''}{addressStr || t('jobs.addressTbd')}
                       </Typography>
                       {addressStr && (
                         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center', mb: 2 }}>
@@ -2327,20 +2327,22 @@ const JobPostingDetail: React.FC = () => {
                             rel="noopener noreferrer"
                             sx={{ textTransform: 'none' }}
                           >
-                            Get Directions
+                            {t('assignment.openInGoogleMaps')}
                           </Button>
                           {distanceMiles != null && (
                             <Typography variant="body2" color="text.secondary">
-                              {distanceMiles < 0.1 ? '< 0.1 miles away' : `${distanceMiles.toFixed(1)} miles away`}
+                              {distanceMiles < 0.1
+                                ? t('jobs.distanceUnderPointOne')
+                                : t('jobs.distanceMilesAway', { miles: distanceMiles.toFixed(1) })}
                             </Typography>
                           )}
                           {locationPermission === 'prompt' && jobCoords && (
                             <Button size="small" variant="outlined" onClick={requestLocationForDistance} sx={{ textTransform: 'none' }}>
-                              Show distance from me
+                              {t('jobs.showDistanceFromMe')}
                             </Button>
                           )}
                           {locationPermission === 'denied' && (
-                            <Typography variant="caption" color="text.secondary">Enable location to see distance</Typography>
+                            <Typography variant="caption" color="text.secondary">{t('jobs.enableLocationToSeeDistance')}</Typography>
                           )}
                         </Box>
                       )}
@@ -2481,7 +2483,7 @@ const JobPostingDetail: React.FC = () => {
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent>
                   <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
-                    Schedule
+                    {t('assignment.mySchedule')}
                   </Typography>
                   <Stack spacing={2}>
                     {scheduleShiftData?.shiftMode === 'multi' && (scheduleShiftData as any)?.dateSchedule && scheduleShiftData?.shiftDate && (() => {
@@ -2551,13 +2553,13 @@ const JobPostingDetail: React.FC = () => {
                       <>
                         {assignmentData.startDate && (
                           <Box>
-                            <Typography variant="body2" color="text.secondary">Date</Typography>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.date')}</Typography>
                             <Typography variant="body1">{formatDate(assignmentData.startDate)}</Typography>
                           </Box>
                         )}
                         {(assignmentData.startTime || assignmentData.endTime || scheduleShiftData?.defaultStartTime || scheduleShiftData?.defaultEndTime) && (
                           <Box>
-                            <Typography variant="body2" color="text.secondary">Time</Typography>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
                             <Typography variant="body1">
                               {[formatTime(assignmentData.startTime || scheduleShiftData?.defaultStartTime), formatTime(assignmentData.endTime || scheduleShiftData?.defaultEndTime)].filter(Boolean).join(' – ')}
                             </Typography>
@@ -2565,12 +2567,12 @@ const JobPostingDetail: React.FC = () => {
                         )}
                         {assignmentData.endDate && (
                           <Box>
-                            <Typography variant="body2" color="text.secondary">End date</Typography>
+                            <Typography variant="body2" color="text.secondary">{t('assignment.endDate')}</Typography>
                             <Typography variant="body1">{formatDate(assignmentData.endDate)}</Typography>
                           </Box>
                         )}
                         {!assignmentData.startDate && !assignmentData.startTime && !assignmentData.endTime && !scheduleShiftData?.defaultStartTime && (
-                          <Typography variant="body2" color="text.secondary">No schedule details available.</Typography>
+                          <Typography variant="body2" color="text.secondary">{t('assignment.noScheduleDetails')}</Typography>
                         )}
                       </>
                     )}
@@ -2603,8 +2605,7 @@ const JobPostingDetail: React.FC = () => {
                   />
                 ) : posting.jobOrderId ? (
                   <Alert severity="info">
-                    No upcoming shifts available at this time. New shifts are added regularly, so
-                    check back soon!
+                    {t('jobs.noUpcomingShifts')}
                   </Alert>
                 ) : null}
               </CardContent>
@@ -2806,7 +2807,7 @@ const JobPostingDetail: React.FC = () => {
                         },
                       }}
                     >
-                      {assignmentDecisionLoading ? 'Accepting…' : 'I Accept'}
+                      {assignmentDecisionLoading ? t('jobs.accepting') : t('jobs.acceptOfferCta')}
                     </Button>
                     <Button
                       variant="contained"
@@ -2817,7 +2818,7 @@ const JobPostingDetail: React.FC = () => {
                       onClick={handleDeclineAssignment}
                       sx={{ fontWeight: 'bold' }}
                     >
-                      Decline Job
+                      {t('jobs.declineJob')}
                     </Button>
                   </Box>
                 ) : statusButtonProps?.label === 'confirmed_special' ? (
@@ -2838,7 +2839,7 @@ const JobPostingDetail: React.FC = () => {
                           '&:hover': { backgroundColor: '#45a049' },
                         }}
                       >
-                        View Assignment Details
+                        {t('assignment.viewAssignment')}
                       </Button>
                     </Box>
                   ) : null
@@ -2884,11 +2885,11 @@ const JobPostingDetail: React.FC = () => {
                       {applicationStatus && applicationJobScore != null && (
                         <Card variant="outlined" sx={{ mt: 2, p: 1.5, borderRadius: 2 }}>
                           <Typography variant="caption" color="text.secondary" display="block">
-                            Your job fit
+                            {t('jobs.yourJobFit')}
                           </Typography>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 0.5 }}>
                             {'version' in applicationJobScore && applicationJobScore.version === 'v1' && !applicationJobScore.eligible && (
-                              <Chip size="small" label="Not Eligible" color="error" />
+                              <Chip size="small" label={t('jobs.notEligible')} color="error" />
                             )}
                             <Chip
                               size="small"
@@ -2901,11 +2902,11 @@ const JobPostingDetail: React.FC = () => {
                                 : ((applicationJobScore as JobScoreSummary).missingLabels ?? []);
                               return missing.length ? (
                                 <Typography variant="caption" color="text.secondary">
-                                  Missing: {missing.slice(0, 3).join(', ')}
+                                  {t('jobs.missing')}: {missing.slice(0, 3).join(', ')}
                                   {missing.length > 3 ? '…' : ''}
                                 </Typography>
                               ) : applicationJobScore.eligible ? (
-                                <Typography variant="caption" color="success.main">Eligible</Typography>
+                                <Typography variant="caption" color="success.main">{t('jobs.eligible')}</Typography>
                               ) : null;
                             })()}
                           </Box>
@@ -2927,13 +2928,13 @@ const JobPostingDetail: React.FC = () => {
 
                 {posting.status === 'expired' && (
                   <Alert severity="warning" sx={{ mt: 2 }}>
-                    This posting has expired
+                    {t('jobs.postingExpired')}
                   </Alert>
                 )}
 
                 {posting.status === 'paused' && (
                   <Alert severity="info" sx={{ mt: 2 }}>
-                    This posting is currently paused
+                    {t('jobs.postingPaused')}
                   </Alert>
                 )}
               </CardContent>
@@ -3015,7 +3016,7 @@ const JobPostingDetail: React.FC = () => {
       <WorkerBottomSheet
         open={offerConfirmationOpen}
         onClose={closeOfferConfirmationSheet}
-        title="Confirm your shift"
+            title={t('jobs.confirmYourShift')}
         footer={
           <Stack direction="row" spacing={1.25}>
             <Button
@@ -3033,7 +3034,7 @@ const JobPostingDetail: React.FC = () => {
               disabled={!offerConfirmReady || offerConfirmSubmitting || assignmentDecisionLoading}
               startIcon={offerConfirmSubmitting ? <CircularProgress size={18} color="inherit" /> : null}
             >
-              {offerConfirmSubmitting ? 'Confirming…' : 'Confirm Shift'}
+              {offerConfirmSubmitting ? t('jobs.confirmingShift') : t('jobs.confirmShift')}
             </Button>
           </Stack>
         }
@@ -3049,35 +3050,35 @@ const JobPostingDetail: React.FC = () => {
           }}
         >
           <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-            {offerSnapshot.jobTitle || 'Shift'}
+            {offerSnapshot.jobTitle || t('jobs.shift')}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {offerSnapshot.companyName || 'Company'}
+            {offerSnapshot.companyName || t('applications.company')}
           </Typography>
           {offerSnapshot.shiftDateText && (
             <Typography variant="body2" sx={{ mt: 0.75 }}>
-              Date: {offerSnapshot.shiftDateText}
+              {t('assignment.date')}: {offerSnapshot.shiftDateText}
             </Typography>
           )}
           {offerSnapshot.startTimeText && (
             <Typography variant="body2">
-              Start: {offerSnapshot.startTimeText}
-              {offerSnapshot.endTimeText ? `  |  End: ${offerSnapshot.endTimeText}` : ''}
+              {t('jobs.startDate')}: {offerSnapshot.startTimeText}
+              {offerSnapshot.endTimeText ? `  |  ${t('assignment.endDate')}: ${offerSnapshot.endTimeText}` : ''}
             </Typography>
           )}
           {(offerSnapshot.locationName || offerSnapshot.address) && (
             <Typography variant="body2" sx={{ mt: 0.75 }}>
-              Location: {[offerSnapshot.locationName, offerSnapshot.address].filter(Boolean).join(' - ')}
+              {t('jobs.location')}: {[offerSnapshot.locationName, offerSnapshot.address].filter(Boolean).join(' - ')}
             </Typography>
           )}
           {offerSnapshot.uniformSummary && (
             <Typography variant="body2" sx={{ mt: 0.75 }}>
-              Uniform: {offerSnapshot.uniformSummary}
+              {t('assignment.requiredUniform')}: {offerSnapshot.uniformSummary}
             </Typography>
           )}
           {offerSnapshot.keyRequirementsSummary && (
             <Typography variant="body2" sx={{ mt: 0.75 }}>
-              Key requirements: {offerSnapshot.keyRequirementsSummary}
+              {t('jobs.keyRequirements')}: {offerSnapshot.keyRequirementsSummary}
             </Typography>
           )}
         </Box>
@@ -3101,7 +3102,7 @@ const JobPostingDetail: React.FC = () => {
                 disabled={offerConfirmSubmitting || assignmentDecisionLoading}
               />
             }
-            label="I understand the uniform and job requirements for this shift."
+            label={t('jobs.offerAckUniformAndRequirements')}
           />
           <FormControlLabel
             control={
@@ -3111,7 +3112,7 @@ const JobPostingDetail: React.FC = () => {
                 disabled={offerConfirmSubmitting || assignmentDecisionLoading}
               />
             }
-            label="I understand that if I fail to show up for this confirmed shift, my ability to apply for or work future shifts may be restricted for up to 2 weeks."
+            label={t('jobs.offerAckNoShowConsequence')}
           />
         </Stack>
 
@@ -3127,7 +3128,7 @@ const JobPostingDetail: React.FC = () => {
         open={shareSnackbarOpen}
         autoHideDuration={3000}
         onClose={() => setShareSnackbarOpen(false)}
-        message="Link copied to clipboard!"
+        message={t('jobs.linkCopied')}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       />
     </Box>

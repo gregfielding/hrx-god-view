@@ -1043,7 +1043,7 @@ const AssignmentDetails: React.FC = () => {
           onClick={() => navigate(-1)}
           sx={{ mt: 2 }}
         >
-          Go Back
+          {t('common.back')}
         </Button>
       </Box>
     );
@@ -1052,13 +1052,13 @@ const AssignmentDetails: React.FC = () => {
   if (!assignment) {
     return (
       <Box sx={{ p: 3 }}>
-        <Alert severity="info">Assignment not found</Alert>
+        <Alert severity="info">{t('assignment.notFound')}</Alert>
         <Button
           startIcon={<ArrowBackIcon />}
           onClick={() => navigate(-1)}
           sx={{ mt: 2 }}
         >
-          Go Back
+          {t('common.back')}
         </Button>
       </Box>
     );
@@ -1069,7 +1069,7 @@ const AssignmentDetails: React.FC = () => {
       {/* Header */}
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }}>
         <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>
-          Assignment Details
+          {t('assignment.detailsTitle')}
         </Typography>
         <Chip
           icon={getStatusIcon(assignment.status)}
@@ -1082,7 +1082,7 @@ const AssignmentDetails: React.FC = () => {
           onClick={() => navigate(-1)}
           variant="outlined"
         >
-          Back
+          {t('common.back')}
         </Button>
       </Stack>
 
@@ -1121,7 +1121,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="center">
                     <ScheduleIcon color="action" sx={{ flexShrink: 0 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Time</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
                       <Typography variant="body1">
                         {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ') || '—'}
                       </Typography>
@@ -1206,7 +1206,7 @@ const AssignmentDetails: React.FC = () => {
                     <Stack direction="row" spacing={2} alignItems="flex-start">
                       <WorkIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                       <Box>
-                        <Typography variant="body2" color="text.secondary">Physical requirements</Typography>
+                        <Typography variant="body2" color="text.secondary">{t('assignment.physicalRequirements')}</Typography>
                         <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>
                           {assignment.physicalRequirements}
                         </Typography>
@@ -1216,7 +1216,7 @@ const AssignmentDetails: React.FC = () => {
                   <Stack direction="row" spacing={2} alignItems="flex-start">
                     <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Critical requirements</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.criticalRequirements')}</Typography>
                       <Typography variant="body1">
                         {criticalRequirementLabels.length > 0 ? criticalRequirementLabels.join(', ') : '—'}
                       </Typography>
@@ -1238,12 +1238,12 @@ const AssignmentDetails: React.FC = () => {
               {assignment.startDate ? (
                 <>
                   <Box>
-                    <Typography variant="body2" color="text.secondary">Date</Typography>
+                    <Typography variant="body2" color="text.secondary">{t('assignment.date')}</Typography>
                     <Typography variant="body1">{formatDate(assignment.startDate)}</Typography>
                   </Box>
                   {(effectiveStartTime || effectiveEndTime) && (
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Time</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
                       <Typography variant="body1">
                         {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
                       </Typography>
@@ -1278,28 +1278,28 @@ const AssignmentDetails: React.FC = () => {
                   ) : null}
                   {(effectiveStartTime || effectiveEndTime) && (
                     <Box>
-                      <Typography variant="body2" color="text.secondary">Time</Typography>
+                      <Typography variant="body2" color="text.secondary">{t('assignment.time')}</Typography>
                       <Typography variant="body1">
                         {[formatTime(effectiveStartTime), formatTime(effectiveEndTime)].filter(Boolean).join(' – ')}
                       </Typography>
                     </Box>
                   )}
                   {!effectiveStartTime && !effectiveEndTime && !scheduleShift?.weeklySchedule && (
-                    <Typography variant="body2" color="text.secondary">No schedule details available.</Typography>
+                    <Typography variant="body2" color="text.secondary">{t('assignment.noScheduleDetails')}</Typography>
                   )}
                 </>
               )}
 
               {getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage).trim() && (
                 <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Shift-Specific Details or Job Description</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftDetailsOrJobDescription')}</Typography>
                   <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage)}</Typography>
                 </Box>
               )}
 
               {getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage).trim() && (
                 <Box>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>Shift Info to Email Staff</Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftInfoToEmailStaff')}</Typography>
                   <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage)}</Typography>
                 </Box>
               )}

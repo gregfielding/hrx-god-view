@@ -1897,7 +1897,7 @@ const PublicJobsBoard: React.FC = () => {
                       {job.jobType === 'gig' && (
                         <Chip
                           icon={<Event sx={{ fontSize: 16 }} />}
-                          label="Gig"
+                          label={t('jobs.gig')}
                           size="small"
                           color="primary"
                           sx={{ 
@@ -1931,14 +1931,14 @@ const PublicJobsBoard: React.FC = () => {
                           toggleFavorite={toggleFavorite}
                           size="small"
                           tooltipText={{
-                            favorited: 'Remove from favorites',
-                            notFavorited: 'Add to favorites'
+                            favorited: t('jobs.removeFromFavorites'),
+                            notFavorited: t('jobs.addToFavorites')
                           }}
                         />
                       )}
                       <IconButton
                         size="small"
-                        aria-label="Open job details"
+                        aria-label={t('jobs.openJobDetails')}
                         onClick={(e) => {
                           e.stopPropagation();
                           navigateToJobDetails(job, 'grid_chevron');

@@ -8,6 +8,7 @@ import InfoIcon from '@mui/icons-material/Info';
 import PersonIcon from '@mui/icons-material/Person';
 import NotificationsActiveIcon from '@mui/icons-material/NotificationsActive';
 import type { NotificationType, WorkerNotification } from '../../types/unifiedWorkerNotifications';
+import { t } from '../../i18n';
 
 type WorkerNotificationWithId = WorkerNotification & { id: string };
 
@@ -29,8 +30,8 @@ function defaultFormatTime(ts: { toDate?: () => Date } | null): string {
   const d = typeof (ts as any).toDate === 'function' ? (ts as any).toDate() : new Date((ts as any).seconds * 1000);
   const now = new Date();
   const diff = now.getTime() - d.getTime();
-  if (diff < 60000) return 'Just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 60000) return t('dashboard.timeAgo.justNow');
+  if (diff < 3600000) return t('dashboard.timeAgo.minutesAgo', { count: Math.floor(diff / 60000) });
   if (diff < 86400000) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   return d.toLocaleDateString();
 }
@@ -84,7 +85,7 @@ const WorkerNotificationListItem: React.FC<WorkerNotificationListItemProps> = ({
             onMarkRead(notification.id);
           }}
           disabled={isMarkingRead}
-          aria-label="Mark read"
+          aria-label={t('notifications.markRead')}
         >
           <NotificationsActiveIcon fontSize="small" />
         </IconButton>

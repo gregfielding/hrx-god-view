@@ -422,20 +422,20 @@ const WorkerDashboard: React.FC = () => {
   };
   const primaryCtaLabel =
     effectiveReadinessPercent <= 0
-      ? 'Start getting job-ready'
+      ? t('dashboard.startGettingJobReady')
       : effectiveReadinessPercent >= 85 || !nextIncompleteStep
-        ? 'Finish setup'
-        : `Next: ${nextIncompleteStep.title}`;
+        ? t('dashboard.finishSetup')
+        : t('dashboard.nextStepCta', { step: nextIncompleteStep.title });
   const readinessMessage =
     effectiveReadinessPercent <= 10
-      ? "You're just getting started."
+      ? t('dashboard.readinessJustGettingStarted')
       : effectiveReadinessPercent <= 45
-        ? "You're building momentum."
+        ? t('dashboard.readinessBuildingMomentum')
         : effectiveReadinessPercent <= 75
-          ? "You're halfway there."
+          ? t('dashboard.readinessHalfwayThere')
           : effectiveReadinessPercent < 100
-            ? "You're almost done."
-            : 'You are job-ready.';
+            ? t('dashboard.readinessAlmostDone')
+            : t('dashboard.readinessJobReady');
   const needsApplicationAttention = applications.some((app) =>
     APPLICATION_NEEDS_RESPONSE.includes(String(app.status || '').toLowerCase())
   );
@@ -451,7 +451,7 @@ const WorkerDashboard: React.FC = () => {
             {t('dashboard.welcomeBack', { firstName: displayFirstName })}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            Complete a few quick steps to unlock more jobs and improve your matches.
+            {t('dashboard.completeQuickSteps')}
           </Typography>
         </Stack>
 
@@ -477,10 +477,10 @@ const WorkerDashboard: React.FC = () => {
             {onboardingChecklistItems.length > 0 ? (
               <Stack spacing={1}>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  Onboarding tasks
+                  {t('dashboard.onboardingTasks')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  These are assignment onboarding items that need your attention.
+                  {t('dashboard.onboardingTasksSubtitle')}
                 </Typography>
                 <NextStepsChecklist
                   items={onboardingChecklistItems}
@@ -523,7 +523,7 @@ const WorkerDashboard: React.FC = () => {
       >
         <DialogContent sx={{ p: 0 }}>
           <Stack direction="row" justifyContent="flex-end" sx={{ p: 1 }}>
-            <IconButton onClick={closeReadinessFlow} aria-label="Close setup">
+            <IconButton onClick={closeReadinessFlow} aria-label={t('dashboard.closeSetup')}>
               <CloseIcon />
             </IconButton>
           </Stack>

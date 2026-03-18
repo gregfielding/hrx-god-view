@@ -32,6 +32,7 @@ import {
 import { InsertDriveFile as FileIcon, OpenInNew as OpenInNewIcon } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useT } from '../../../i18n';
 import DocRecordCard from '../../../components/worker/documents/DocRecordCard';
 import WorkerDocumentsSummary from '../../../components/worker/documents/WorkerDocumentsSummary';
 import WorkerDocumentsRequired from '../../../components/worker/documents/WorkerDocumentsRequired';
@@ -48,13 +49,13 @@ import { WORK_ELIGIBILITY_CHECKLIST_KEY, deriveWorkEligibilityFromAttestation } 
 
 /** Human labels for checklist item keys */
 const CHECKLIST_ITEM_LABELS: Record<string, string> = {
-  everee_identity: 'Identity verification',
-  everee_i9: 'I-9',
-  direct_deposit: 'Direct deposit',
-  driver_license: 'Driver license',
-  resume: 'Resume',
-  certifications: 'Certifications',
-  [WORK_ELIGIBILITY_CHECKLIST_KEY]: 'Work Eligibility',
+  everee_identity: 'documents.checklist.identityVerification',
+  everee_i9: 'documents.checklist.i9',
+  direct_deposit: 'documents.checklist.directDeposit',
+  driver_license: 'documents.checklist.driverLicense',
+  resume: 'documents.checklist.resume',
+  certifications: 'documents.checklist.certifications',
+  [WORK_ELIGIBILITY_CHECKLIST_KEY]: 'documents.checklist.workEligibility',
 };
 
 /** CTA label: attestation = "Review answers"; HRX docs = Upload/View/Replace. Everee items show no CTA for v1. */
@@ -62,17 +63,19 @@ function getCtaLabel(
   key: string,
   status: string,
   provider: 'everee' | 'hrx',
-  kind?: 'document' | 'attestation'
+  kind?: 'document' | 'attestation',
+  t?: (k: string) => string
 ): string {
-  if (kind === 'attestation') return 'Review answers';
-  if (provider === 'everee') return 'Not available yet';
-  if (status === 'missing') return 'Upload';
-  if (status === 'verified' || status === 'expiring_soon' || status === 'expired') return 'Replace';
-  return 'View';
+  if (kind === 'attestation') return t ? t('documents.reviewAnswers') : 'Review answers';
+  if (provider === 'everee') return t ? t('dashboard.notAvailableYet') : 'Not available yet';
+  if (status === 'missing') return t ? t('documents.upload') : 'Upload';
+  if (status === 'verified' || status === 'expiring_soon' || status === 'expired') return t ? t('documents.replace') : 'Replace';
+  return t ? t('common.view') : 'View';
 }
 
 const WorkerDocuments: React.FC = () => {
   const navigate = useNavigate();
+  const t = useT();
   const { user } = useAuth();
   const { checklist, summary: complianceSummary, loading: onboardingLoading, hasOnboarding } = useOnboarding(user?.uid);
   const { files: assignmentFiles, loading: assignmentFilesLoading, error: assignmentFilesError } = useAssignmentFiles(user?.uid);
@@ -85,7 +88,7 @@ const WorkerDocuments: React.FC = () => {
   const { requiredDocs, optionalDocs, summary } = useMemo(() => {
     const resumeStatus: SummaryStatus = credentials.resume ? 'verified' : 'missing';
     const requiredDocs: WorkerDocumentItem[] = [
-      { key: 'resume', label: 'Resume', status: resumeStatus, fileUrl: credentials.resume?.downloadUrl ?? undefined },
+      { key: 'resume', label: t('documents.checklist.resume'), status: resumeStatus, fileUrl: credentials.resume?.downloadUrl ?? undefined },
     ];
     const optionalDocs: WorkerDocumentItem[] = [];
     const eligibilityStatus: SummaryStatus = credentials.workEligibility ? 'verified' : 'missing';
@@ -99,7 +102,7 @@ const WorkerDocuments: React.FC = () => {
         backgroundLabel: credentials.backgroundSummary,
       },
     };
-  }, [credentials.resume, credentials.workEligibility, credentials.certCount, credentials.backgroundSummary]);
+  }, [credentials.resume, credentials.workEligibility, credentials.certCount, credentials.backgroundSummary, t]);
 
   /** Compliance checklist with work_eligibility merged in (provider=hrx, kind=attestation). */
   const complianceChecklistWithWorkEligibility = useMemo((): OnboardingChecklist => {
@@ -147,18 +150,18 @@ const WorkerDocuments: React.FC = () => {
         >
           <Box>
             <Typography variant="h4" sx={{ fontWeight: 600 }}>
-              Documents
+              {t('dashboard.documents')}
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Compliance, credentials, and job files.
+              {t('documents.subtitle')}
             </Typography>
           </Box>
           <Stack direction="row" spacing={1} flexWrap="wrap">
             <Button variant="outlined" onClick={() => navigate('/c1/workers/profile')}>
-              Job Readiness
+              {t('dashboard.jobReadiness')}
             </Button>
             <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
-              Find Work
+              {t('nav.findWork')}
             </Button>
           </Stack>
         </Stack>
@@ -168,7 +171,7 @@ const WorkerDocuments: React.FC = () => {
           <CardContent sx={{ py: 2, px: 2 }}>
             <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center" flexWrap="wrap" useFlexGap>
               <Typography variant="body2" color="text.secondary">
-                Compliance
+                {t('documents.compliance')}
               </Typography>
               {hasOnboarding && Object.keys(checklist).length > 0 ? (
                 <>
@@ -179,23 +182,23 @@ const WorkerDocuments: React.FC = () => {
                     sx={{ fontWeight: 600 }}
                   />
                   {complianceSummary.expiringSoonCount > 0 && (
-                    <Chip size="small" label={`${complianceSummary.expiringSoonCount} expiring soon`} color="warning" />
+                    <Chip size="small" label={t('documents.expiringSoonCount', { count: complianceSummary.expiringSoonCount })} color="warning" />
                   )}
                   {complianceSummary.expiredCount > 0 && (
-                    <Chip size="small" label={`${complianceSummary.expiredCount} expired`} color="error" />
+                    <Chip size="small" label={t('documents.expiredCount', { count: complianceSummary.expiredCount })} color="error" />
                   )}
                 </>
               ) : (
-                <Chip size="medium" label="Not started" color="default" sx={{ fontWeight: 600 }} />
+                <Chip size="medium" label={t('documents.notStarted')} color="default" sx={{ fontWeight: 600 }} />
               )}
             </Stack>
           </CardContent>
         </Card>
 
         <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)}>
-          <Tab label="Compliance" id="worker-docs-tab-0" />
-          <Tab label="Credentials" id="worker-docs-tab-1" />
-          <Tab label="Job Files" id="worker-docs-tab-2" />
+          <Tab label={t('documents.compliance')} id="worker-docs-tab-0" />
+          <Tab label={t('documents.credentials')} id="worker-docs-tab-1" />
+          <Tab label={t('documents.jobFiles')} id="worker-docs-tab-2" />
         </Tabs>
 
         {/* Tab 1: Compliance — checklist-driven; empty state when no checklist */}
@@ -204,23 +207,23 @@ const WorkerDocuments: React.FC = () => {
             {!onboardingLoading && Object.keys(complianceChecklistWithWorkEligibility).length === 0 ? (
               <>
                 <Typography variant="body2" color="text.secondary">
-                  Compliance checklist not available yet.
+                  {t('documents.checklistUnavailable')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Your recruiter will request anything needed.
+                  {t('documents.recruiterWillRequest')}
                 </Typography>
               </>
             ) : (
               <>
                 <Typography variant="body2" color="text.secondary">
-                  Required compliance and onboarding items. Upload or complete items below. Expiration: &gt;30 days = verified, ≤30 days = expiring soon, past = expired.
+                  {t('documents.complianceDescription')}
                 </Typography>
                 <Stack spacing={1.5}>
                   {Object.entries(complianceChecklistWithWorkEligibility).map(([key, item]) => {
                     const expiresAt = parseExpiresAt(item.expiresAt ?? item.nextExpiringAt);
                     const displayStatus = getDisplayStatus(item.status, expiresAt);
-                    const label = CHECKLIST_ITEM_LABELS[key] ?? key;
-                    const ctaLabel = getCtaLabel(key, displayStatus, item.provider, item.kind);
+                    const label = t(CHECKLIST_ITEM_LABELS[key] ?? key);
+                    const ctaLabel = getCtaLabel(key, displayStatus, item.provider, item.kind, t);
                     const viewUrl = item.provider === 'everee' ? undefined : (item.viewUrl ?? (item.fileUrl ? '#' : undefined));
                     return (
                       <DocRecordCard
@@ -245,7 +248,7 @@ const WorkerDocuments: React.FC = () => {
         {tabIndex === 1 && (
           <Stack spacing={4}>
             {credentialsLoading ? (
-              <Typography variant="body2" color="text.secondary">Loading…</Typography>
+              <Typography variant="body2" color="text.secondary">{t('common.loading')}…</Typography>
             ) : (
               <>
             <WorkerDocumentsSummary
@@ -261,11 +264,11 @@ const WorkerDocuments: React.FC = () => {
                 severity="warning"
                 action={
                   <Button color="inherit" size="small" onClick={scrollToRequired}>
-                    Upload now
+                    {t('documents.uploadNow')}
                   </Button>
                 }
               >
-                <strong>Action needed.</strong> Upload your required documents to become shift-ready.
+                <strong>{t('profile.statusActionRequired')}.</strong> {t('documents.uploadRequiredToBeShiftReady')}
               </Alert>
             )}
             <div id="worker-docs-required">
@@ -287,25 +290,25 @@ const WorkerDocuments: React.FC = () => {
               <Card variant="outlined" sx={{ borderRadius: 2, boxShadow: 'none' }}>
                 <CardContent>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
-                    Screening orders
+                    {t('documents.screeningOrders')}
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    Ordered by your employer. Results appear here when updated.
+                    {t('documents.screeningOrdersDescription')}
                   </Typography>
                   <Stack spacing={0.5}>
                     {credentials.backgroundCheckOrders.map((o) => (
                       <Typography key={o.id} variant="body2">
-                        Background: {o.typeLabel || o.type || 'Check'} — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
+                        {t('documents.screeningBackground')}: {o.typeLabel || o.type || t('documents.screeningCheck')} — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
                       </Typography>
                     ))}
                     {credentials.drugScreeningOrders.map((o) => (
                       <Typography key={o.id} variant="body2">
-                        Drug: {o.typeLabel || o.type || 'Panel'} — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
+                        {t('documents.screeningDrug')}: {o.typeLabel || o.type || t('documents.screeningPanel')} — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
                       </Typography>
                     ))}
                     {credentials.additionalScreeningOrders.map((o) => (
                       <Typography key={o.id} variant="body2">
-                        Other: {o.typeLabel || o.type || 'Screening'} — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
+                        {t('documents.screeningOther')}: {o.typeLabel || o.type || t('documents.screeningGeneric')} — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
                       </Typography>
                     ))}
                     {credentials.eVerifyOrders.map((o) => (
@@ -326,7 +329,7 @@ const WorkerDocuments: React.FC = () => {
         {tabIndex === 2 && (
           <Stack spacing={2}>
             <Typography variant="body2" color="text.secondary">
-              Read-only files from your job orders (Staff Instructions): first day materials, site maps, safety procedures, orientation packets.
+              {t('documents.jobFilesDescription')}
             </Typography>
             {assignmentFilesError && (
               <Alert severity="warning">{assignmentFilesError}</Alert>
@@ -337,7 +340,7 @@ const WorkerDocuments: React.FC = () => {
               </Box>
             ) : assignmentFiles.length === 0 ? (
               <Alert severity="info">
-                No assignment files yet. When recruiters add documents to a job order’s Staff Instructions (e.g. First Day Instructions), they’ll appear here for jobs you’ve applied to.
+                {t('documents.noAssignmentFiles')}
               </Alert>
             ) : (
               <Stack spacing={1.5}>
@@ -360,7 +363,7 @@ const WorkerDocuments: React.FC = () => {
                           rel="noopener noreferrer"
                           sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}
                         >
-                          View
+                          {t('common.view')}
                           <OpenInNewIcon sx={{ fontSize: 16 }} />
                         </Link>
                       </Stack>
@@ -374,14 +377,14 @@ const WorkerDocuments: React.FC = () => {
       </Stack>
 
       <Dialog open={comingSoonOpen} onClose={() => setComingSoonOpen(false)}>
-        <DialogTitle>Not available yet</DialogTitle>
+        <DialogTitle>{t('dashboard.notAvailableYet')}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            This action is not available yet. Your recruiter can request documents as needed.
+            {t('documents.actionNotAvailable')}
           </Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setComingSoonOpen(false)}>OK</Button>
+          <Button onClick={() => setComingSoonOpen(false)}>{t('common.ok')}</Button>
         </DialogActions>
       </Dialog>
     </Container>

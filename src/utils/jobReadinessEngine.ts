@@ -5,6 +5,7 @@ import {
   type TargetIndustry,
 } from './jobReadinessOpportunityMap';
 import { buildJobReadinessReadModel, type JobReadinessReadModel } from './jobReadinessReadModel';
+import { t as i18nT } from '../i18n';
 
 export type ReadinessLifecycleState =
   | 'unknown'
@@ -88,29 +89,37 @@ export function getLifecycleStatePresentation(state: ReadinessLifecycleState): {
 } {
   switch (state) {
     case 'unknown':
-      return { label: 'Not started', color: 'default' };
+      return { label: i18nT('jobReadiness.stateNotStarted'), color: 'default' };
     case 'attested':
-      return { label: 'Self-reported', color: 'warning' };
+      return { label: i18nT('jobReadiness.stateSelfReported'), color: 'warning' };
     case 'proof_uploaded':
-      return { label: 'Under review', color: 'info' };
+      return { label: i18nT('jobReadiness.stateUnderReview'), color: 'info' };
     case 'verified':
-      return { label: 'Verified', color: 'success' };
+      return { label: i18nT('jobReadiness.stateVerified'), color: 'success' };
     case 'blocked':
-      return { label: 'Action required', color: 'error' };
+      return { label: i18nT('jobReadiness.stateActionRequired'), color: 'error' };
     case 'missing':
-      return { label: 'Action required', color: 'error' };
+      return { label: i18nT('jobReadiness.stateActionRequired'), color: 'error' };
     case 'complete':
-      return { label: 'Verified', color: 'success' };
+      return { label: i18nT('jobReadiness.stateVerified'), color: 'success' };
     default:
-      return { label: 'Not started', color: 'default' };
+      return { label: i18nT('jobReadiness.stateNotStarted'), color: 'default' };
   }
 }
 
+function industryLabel(industry: TargetIndustry): string {
+  if (industry === 'industrial') return i18nT('jobReadiness.industrial').toLowerCase();
+  return i18nT('jobReadiness.hospitality').toLowerCase();
+}
+
 function supportsCategoryLabel(categories: TargetIndustry[]): string {
-  const labels = categories.map((c) => READINESS_OPPORTUNITY_MAP[c].label.toLowerCase());
-  if (labels.length === 0) return 'more roles';
-  if (labels.length === 1) return `${labels[0]} shifts`;
-  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]} shifts`;
+  const labels = categories.map((c) => industryLabel(c));
+  if (labels.length === 0) return i18nT('jobReadiness.moreRoles');
+  if (labels.length === 1) return i18nT('jobReadiness.categoryShifts', { category: labels[0] });
+  return i18nT('jobReadiness.categoryShiftsPair', {
+    categories: labels.slice(0, -1).join(', '),
+    last: labels[labels.length - 1],
+  });
 }
 
 function estimatedUnlockedJobsFromImpact(impact: number): number {
@@ -208,16 +217,16 @@ function buildQuestionCard(req: OpportunityRequirement): ReadinessCard {
       id: `question__${req.id}`,
       requirementId: req.id,
       type: 'question',
-      title: 'Add your profile photo',
-      body: 'Employers are more likely to choose workers with a clear photo.',
+      title: i18nT('jobReadiness.addProfilePhoto'),
+      body: i18nT('jobReadiness.photoHelps'),
       actions: [
-        { id: 'upload_photo', label: 'Upload Photo', value: 'upload_photo', variant: 'contained' },
-        { id: 'webcam_capture', label: 'Use Camera', value: 'webcam_capture', variant: 'outlined' },
-        { id: 'open_profile', label: 'Open Profile', value: 'open_profile', variant: 'text' },
+        { id: 'upload_photo', label: i18nT('apply.uploadPhoto'), value: 'upload_photo', variant: 'contained' },
+        { id: 'webcam_capture', label: i18nT('apply.takePhoto'), value: 'webcam_capture', variant: 'outlined' },
+        { id: 'open_profile', label: i18nT('jobReadiness.openProfile'), value: 'open_profile', variant: 'text' },
       ],
       profileSectionId: req.uploadSectionId,
       whyThisMatters: req.explanation,
-      whatThisUnlocks: 'Improves trust and selection visibility across hospitality and industrial shifts.',
+      whatThisUnlocks: i18nT('jobReadiness.photoUnlocks'),
     };
   }
 
@@ -230,12 +239,12 @@ function buildQuestionCard(req: OpportunityRequirement): ReadinessCard {
     title: req.cardTitle,
     body: req.cardQuestion,
     actions: [
-      { id: 'yes', label: 'Yes', value: 'yes', variant: 'contained' },
-      { id: 'no', label: 'No', value: 'no', variant: 'outlined' },
+      { id: 'yes', label: i18nT('common.yes'), value: 'yes', variant: 'contained' },
+      { id: 'no', label: i18nT('common.no'), value: 'no', variant: 'outlined' },
     ],
     profileSectionId: req.uploadSectionId,
     whyThisMatters: req.explanation,
-    whatThisUnlocks: `Can unlock about ${jobsUnlocked} more job matches and stronger access to ${categoryAccess}.`,
+    whatThisUnlocks: i18nT('jobReadiness.unlocksAboutMatches', { count: jobsUnlocked, categories: categoryAccess }),
   };
 }
 
@@ -247,15 +256,15 @@ function buildFollowUpCard(req: OpportunityRequirement, answer: string): Readine
       id: `upload__${req.id}`,
       requirementId: req.id,
       type: 'upload_proof',
-      title: 'Great - add proof to unlock more jobs',
-      body: 'Upload or confirm your documentation in your profile so recruiters can verify it.',
+      title: i18nT('jobReadiness.followUpUploadTitle'),
+      body: i18nT('jobReadiness.followUpUploadBody'),
       actions: [
-        { id: 'open_profile', label: 'Open Profile Section', value: 'open_profile', variant: 'contained' },
-        { id: 'done', label: 'I will do this later', value: 'done', variant: 'text' },
+        { id: 'open_profile', label: i18nT('jobReadiness.openProfileSection'), value: 'open_profile', variant: 'contained' },
+        { id: 'done', label: i18nT('jobReadiness.iWillDoLater'), value: 'done', variant: 'text' },
       ],
       profileSectionId: req.uploadSectionId,
       whyThisMatters: req.explanation,
-      whatThisUnlocks: `Can unlock about ${jobsUnlocked} more job matches and stronger access to ${categoryAccess}.`,
+      whatThisUnlocks: i18nT('jobReadiness.unlocksAboutMatches', { count: jobsUnlocked, categories: categoryAccess }),
     };
   }
 
@@ -263,27 +272,27 @@ function buildFollowUpCard(req: OpportunityRequirement, answer: string): Readine
     id: `resource__${req.id}`,
     requirementId: req.id,
     type: 'resource_help',
-    title: 'This can unlock more jobs',
+    title: i18nT('jobReadiness.resourceHelpTitle'),
     body: `${req.explanation} ${req.resourceText}.`,
     actions: [
-      { id: 'open_resource', label: 'See guidance', value: 'open_resource', variant: 'outlined' },
-      { id: 'continue', label: 'Continue', value: 'continue', variant: 'contained' },
+      { id: 'open_resource', label: i18nT('jobReadiness.seeGuidance'), value: 'open_resource', variant: 'outlined' },
+      { id: 'continue', label: i18nT('common.next'), value: 'continue', variant: 'contained' },
     ],
     resourceUrl: req.resourceUrl,
     profileSectionId: req.uploadSectionId,
     whyThisMatters: req.explanation,
-    whatThisUnlocks: `Can unlock about ${jobsUnlocked} more job matches and stronger access to ${categoryAccess}.`,
+    whatThisUnlocks: i18nT('jobReadiness.unlocksAboutMatches', { count: jobsUnlocked, categories: categoryAccess }),
   };
 }
 
 export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessEngineOutput {
   const userDoc = input.userDoc || {};
   const readModel = buildJobReadinessReadModel(userDoc);
-  const industries = input.targetIndustries.length
+  const industries: TargetIndustry[] = input.targetIndustries.length
     ? input.targetIndustries
     : (readModel.durableProfile.targetIndustries?.length
       ? readModel.durableProfile.targetIndustries
-      : ['hospitality', 'industrial']);
+      : (['hospitality', 'industrial'] as TargetIndustry[]));
   const desiredWorkType = input.desiredWorkType === 'any'
     ? (readModel.durableProfile.desiredWorkType || 'any')
     : input.desiredWorkType;
@@ -326,7 +335,7 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
     profileSectionId: m.req.uploadSectionId,
   }));
 
-  const eligibleIndustries = industries.filter((industry) => {
+  const eligibleIndustries: TargetIndustry[] = industries.filter((industry): industry is TargetIndustry => {
     const rows = requirementRows.filter((r) => r.industry === industry);
     const metCount = rows.filter((r) => ['verified', 'complete'].includes(r.evaluation.state)).length;
     return rows.length > 0 && metCount >= Math.max(1, Math.floor(rows.length / 2));
@@ -334,15 +343,15 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
 
   const eligibilitySummary =
     eligibleIndustries.length > 0
-      ? `You are currently eligible for stronger matches in ${eligibleIndustries
-          .map((i) => READINESS_OPPORTUNITY_MAP[i].label.toLowerCase())
-          .join(' and ')}.`
-      : 'You are currently best matched for entry-level opportunities while we strengthen your profile.';
+      ? i18nT('jobReadiness.eligibleStrongerMatches', {
+          categories: eligibleIndustries.map((i) => industryLabel(i)).join(` ${i18nT('jobReadiness.andWord')} `),
+        })
+      : i18nT('jobReadiness.bestMatchedEntryLevel');
 
   const topLimiting = missing.slice(0, 2).map((m) => m.req.label.toLowerCase());
   const limitingSummary = topLimiting.length
-    ? `Main limiting factors right now: ${topLimiting.join(' and ')}.`
-    : 'No major readiness blockers detected right now.';
+    ? i18nT('jobReadiness.mainLimitingFactors', { factors: topLimiting.join(` ${i18nT('jobReadiness.andWord')} `) })
+    : i18nT('jobReadiness.noMajorBlockers');
 
   const totalImpact = uniqueRequirementRows.reduce((sum, r) => sum + r.req.impact, 0);
   const metImpact = uniqueRequirementRows
@@ -350,22 +359,31 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
     .reduce((sum, r) => sum + r.req.impact, 0);
   const readinessScore = totalImpact > 0 ? metImpact / totalImpact : 0;
   const readinessScorePercent = Math.max(0, Math.min(100, Math.round(readinessScore * 100)));
-  const headlineIndustry = READINESS_OPPORTUNITY_MAP[industries[0] || 'hospitality'].label.toLowerCase();
-  const readinessScoreSummary = `You're ${readinessScorePercent}% ready for ${headlineIndustry} work.`;
+  const headlineIndustry = industryLabel(industries[0] || 'hospitality');
+  const readinessScoreSummary = i18nT('jobReadiness.scoreSummaryForIndustry', {
+    percent: readinessScorePercent,
+    industry: headlineIndustry,
+  });
   const unlockSummary = topLimitingFactors.length
-    ? `Closing your top blockers could unlock about ${topLimitingFactors.reduce((sum, r) => sum + estimatedUnlockedJobsFromImpact(uniqueRequirementRows.find((x) => x.req.id === r.requirementId)?.req.impact || 0), 0)} additional matches across ${headlineIndustry} and related categories.`
-    : 'Your profile is in strong shape for current target categories.';
+    ? i18nT('jobReadiness.unlockSummaryDetailed', {
+        count: topLimitingFactors.reduce((sum, r) => sum + estimatedUnlockedJobsFromImpact(uniqueRequirementRows.find((x) => x.req.id === r.requirementId)?.req.impact || 0), 0),
+        industry: headlineIndustry,
+      })
+    : i18nT('jobReadiness.profileStrongShape');
 
-  const summary = `Based on your profile, ${eligibilitySummary} ${limitingSummary} Let’s improve that.`;
+  const summary = i18nT('jobReadiness.summaryWrapper', {
+    eligibilitySummary,
+    limitingSummary,
+  });
 
   let nextCard: ReadinessCard | null = null;
   if (desiredWorkType === 'any') {
     nextCard = {
       id: 'preference__desired_work_type',
       type: 'preference',
-      title: 'Refine your work intent',
-      body: 'Choosing a specific work type can improve match quality and recommendation priority.',
-      actions: [{ id: 'done', label: 'Got it', value: 'done', variant: 'contained' }],
+      title: i18nT('jobReadiness.refineWorkIntent'),
+      body: i18nT('jobReadiness.refineWorkIntentBody'),
+      actions: [{ id: 'done', label: i18nT('jobReadiness.gotIt'), value: 'done', variant: 'contained' }],
     };
   }
 
@@ -384,9 +402,9 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
       id: 'all_ready',
       lifecycleState: 'complete',
       type: 'explanation',
-      title: 'You are building strong readiness momentum',
-      body: 'Your highest-impact readiness items are in good shape. Keep profile details current for better job matching.',
-      actions: [{ id: 'done', label: 'Done', value: 'done', variant: 'contained' }],
+      title: i18nT('jobReadiness.strongMomentumTitle'),
+      body: i18nT('jobReadiness.strongMomentumBody'),
+      actions: [{ id: 'done', label: i18nT('jobReadiness.done'), value: 'done', variant: 'contained' }],
     };
   }
 

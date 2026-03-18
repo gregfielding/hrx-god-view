@@ -7,6 +7,7 @@ import {
   Typography,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import { t } from '../../i18n';
 
 interface WorkerBottomSheetProps {
   open: boolean;
@@ -52,7 +53,7 @@ const WorkerBottomSheet: React.FC<WorkerBottomSheetProps> = ({
           <Typography variant="h6" sx={{ fontWeight: 700 }}>
             {title}
           </Typography>
-          <IconButton aria-label="Close" onClick={onClose} size="small">
+          <IconButton aria-label={t('common.close')} onClick={onClose} size="small">
             <CloseIcon />
           </IconButton>
         </Stack>

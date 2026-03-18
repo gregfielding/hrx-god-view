@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Box, 
   Typography, 
@@ -7,45 +7,107 @@ import {
   ListItem, 
   Alert,
   Link,
-  Paper
+  Paper,
+  Menu,
+  MenuItem,
+  Tooltip,
 } from '@mui/material';
+import LanguageIcon from '@mui/icons-material/Language';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { useT, setLanguage } from '../i18n';
 
 const Communications: React.FC = () => {
+  const [languageMenuAnchorEl, setLanguageMenuAnchorEl] = useState<null | HTMLElement>(null);
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
+  const t = useT();
+
+  React.useEffect(() => {
+    setLanguage(guestLanguage);
+  }, [guestLanguage]);
+
   return (
-    <Container maxWidth="md" sx={{ py: 5, pb: 10 }}>
+    <Container maxWidth="md" sx={{ py: 5, pb: 10, pt: 2 }}>
+      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+        <Tooltip title={guestLanguage === 'es' ? t('nav.messageLanguageEs') : t('nav.messageLanguageEn')}>
+          <Box
+            component="button"
+            onClick={(e) => setLanguageMenuAnchorEl(e.currentTarget)}
+            aria-label={t('nav.language')}
+            sx={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 0.5,
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+              px: 1,
+              py: 0.75,
+              bgcolor: 'background.paper',
+              color: 'text.secondary',
+              cursor: 'pointer',
+              '&:hover': { bgcolor: 'action.hover', color: 'text.primary' },
+            }}
+          >
+            <LanguageIcon sx={{ fontSize: 20 }} />
+            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+              {guestLanguage === 'es' ? 'ES' : 'EN'}
+            </Typography>
+          </Box>
+        </Tooltip>
+      </Box>
+      <Menu
+        anchorEl={languageMenuAnchorEl}
+        open={Boolean(languageMenuAnchorEl)}
+        onClose={() => setLanguageMenuAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+      >
+        <MenuItem
+          selected={guestLanguage === 'en'}
+          onClick={() => { setLanguageMenuAnchorEl(null); setGuestLanguage('en'); }}
+        >
+          {t('nav.englishEn')}
+        </MenuItem>
+        <MenuItem
+          selected={guestLanguage === 'es'}
+          onClick={() => { setLanguageMenuAnchorEl(null); setGuestLanguage('es'); }}
+        >
+          {t('nav.espanolEs')}
+        </MenuItem>
+      </Menu>
       {/* Header */}
       <Box component="header" sx={{ mb: 3 }}>
         <Typography variant="h3" sx={{ fontWeight: 700, lineHeight: 1.2, mb: 1.5 }}>
-          SMS and Mobile Communications Consent Agreement
+          {t('legal.consent.title')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-          Effective Date: <time dateTime="2025-10-21">October 21, 2025</time> · Last Updated: <time dateTime="2025-10-21">October 21, 2025</time>
+          {t('legal.consent.effectiveDate')} <time dateTime="2025-10-21">October 21, 2025</time> · {t('legal.consent.lastUpdated')} <time dateTime="2025-10-21">October 21, 2025</time>
           <br />
-          Applies to: <Box component="span" sx={{ fontSize: '0.925rem' }}>C1 Staffing, LLC and its affiliates, including HRX One, HRX Companion, and related products ("we," "us," "our").</Box>
+          {t('legal.consent.appliesTo')}
         </Typography>
         
         <Alert severity="info" sx={{ mb: 4 }}>
           <Typography variant="body2">
-            <strong>Summary:</strong> By creating an account and selecting "I agree" during sign up, you consent to receive text messages (SMS/MMS), emails, and mobile app notifications about job opportunities, scheduling, onboarding, payroll, and related employment communications. Message & data rates may apply. Reply <strong>STOP</strong> to unsubscribe from SMS. You can manage push notifications in your device settings.
+            <strong>{t('legal.consent.summaryLabel')}</strong> {t('legal.consent.summaryBody')}
           </Typography>
         </Alert>
       </Box>
 
       {/* Table of Contents */}
       <Paper variant="outlined" sx={{ p: 2, mb: 4 }}>
-        <Typography variant="h6" sx={{ mb: 1 }}>Contents</Typography>
+        <Typography variant="h6" sx={{ mb: 1 }}>{t('legal.consent.contents')}</Typography>
         <List dense>
-          <ListItem sx={{ py: 0.5 }}><Link href="#purpose" underline="none">1. Purpose of This Consent</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#types" underline="none">2. Types of Messages</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#frequency" underline="none">3. Frequency</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#carrier" underline="none">4. Carrier & Cost Notice</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#opt-out" underline="none">5. Opt-Out & Preference Management</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#support" underline="none">6. Help & Support</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#authorization" underline="none">7. Authorization & Representations</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#privacy" underline="none">8. Privacy</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#changes" underline="none">9. Changes to This Consent</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#record" underline="none">10. Record of Consent</Link></ListItem>
-          <ListItem sx={{ py: 0.5 }}><Link href="#jurisdiction" underline="none">11. Jurisdiction & Compliance Notices</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#purpose" underline="none">{t('legal.consent.s1Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#types" underline="none">{t('legal.consent.s2Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#frequency" underline="none">{t('legal.consent.s3Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#carrier" underline="none">{t('legal.consent.s4Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#opt-out" underline="none">{t('legal.consent.s5Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#support" underline="none">{t('legal.consent.s6Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#authorization" underline="none">{t('legal.consent.s7Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#privacy" underline="none">{t('legal.consent.s8Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#changes" underline="none">{t('legal.consent.s9Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#record" underline="none">{t('legal.consent.s10Title')}</Link></ListItem>
+          <ListItem sx={{ py: 0.5 }}><Link href="#jurisdiction" underline="none">{t('legal.consent.s11Title')}</Link></ListItem>
         </List>
       </Paper>
 
@@ -53,114 +115,114 @@ const Communications: React.FC = () => {
 
       {/* Sections */}
       <Box component="section" id="purpose" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>1. Purpose of This Consent</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s1Title')}</Typography>
         <Typography paragraph>
-          This Consent authorizes us to send you communications via <strong>SMS/MMS text messages, email, and mobile app push notifications</strong> relating to your application, job opportunities, onboarding, scheduling, timekeeping, payroll, benefits, HR updates, security alerts (including multi-factor codes), and other communications relevant to your engagement with us.
+          {t('legal.consent.s1P1')}
         </Typography>
         <Typography paragraph>
-          Consent to receive these messages is <strong>not a condition</strong> of applying for or obtaining employment. Where required, we may obtain separate consent for any marketing communications unrelated to your employment or job search.
+          {t('legal.consent.s1P2')}
         </Typography>
       </Box>
 
       <Box component="section" id="types" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>2. Types of Messages</Typography>
-        <Typography paragraph>You may receive, including but not limited to:</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s2Title')}</Typography>
+        <Typography paragraph>{t('legal.consent.s2Intro')}</Typography>
         <List sx={{ listStyleType: 'disc', pl: 3 }}>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Job openings, shift offers, assignment confirmations, and schedule changes</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Onboarding tasks, document reminders, I-9/E-Verify and compliance notices</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Timecard reminders, payroll notices, and benefits updates</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Account security alerts, verification codes, and app/service updates</ListItem>
-          <ListItem sx={{ display: 'list-item', py: 0.5 }}>Operational announcements required for workplace safety or policy changes</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.consent.s2L1')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.consent.s2L2')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.consent.s2L3')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.consent.s2L4')}</ListItem>
+          <ListItem sx={{ display: 'list-item', py: 0.5 }}>{t('legal.consent.s2L5')}</ListItem>
         </List>
         <Typography variant="body2" color="text.secondary">
-          We will not send unrelated promotional/marketing messages without a separate, explicit opt-in.
+          {t('legal.consent.s2P2')}
         </Typography>
       </Box>
 
       <Box component="section" id="frequency" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>3. Frequency</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s3Title')}</Typography>
         <Typography paragraph>
-          Message frequency varies based on your activity, location, and assignments, and may include multiple messages per week during active periods (e.g., onboarding or scheduled shifts).
+          {t('legal.consent.s3P1')}
         </Typography>
       </Box>
 
       <Box component="section" id="carrier" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>4. Carrier & Cost Notice</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s4Title')}</Typography>
         <Typography paragraph>
-          <strong>Message and data rates may apply</strong> according to your mobile plan and carrier. Carriers are not liable for delayed or undelivered messages. Availability may vary by carrier and device.
+          {t('legal.consent.s4P1')}
         </Typography>
       </Box>
 
       <Box component="section" id="opt-out" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>5. Opt-Out & Preference Management</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s5Title')}</Typography>
         <List sx={{ listStyleType: 'disc', pl: 3 }}>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>
-            <strong>SMS:</strong> You can opt out at any time by replying <strong>STOP</strong> to any text message from us. To get help, reply <strong>HELP</strong>.
+            {t('legal.consent.s5L1')}
           </ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>
-            <strong>Push Notifications:</strong> Manage or disable notifications in your device's settings or in the app's notification preferences.
+            {t('legal.consent.s5L2')}
           </ListItem>
           <ListItem sx={{ display: 'list-item', py: 0.5 }}>
-            <strong>Email:</strong> You may adjust email preferences using links in the footer where available. We may still send transactional or legally required emails.
+            {t('legal.consent.s5L3')}
           </ListItem>
         </List>
         <Typography variant="body2" color="text.secondary">
-          Opting out of SMS or push notifications will not stop communications we are legally permitted or required to send by email or within your account.
+          {t('legal.consent.s5P2')}
         </Typography>
       </Box>
 
       <Box component="section" id="support" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>6. Help & Support</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s6Title')}</Typography>
         <Typography paragraph>
-          For assistance with messaging, contact us at <Link href="mailto:support@c1staffing.com">support@c1staffing.com</Link>.
+          {t('legal.consent.s6P1')} <Link href="mailto:support@c1staffing.com">support@c1staffing.com</Link>.
         </Typography>
       </Box>
 
       <Box component="section" id="authorization" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>7. Authorization & Representations</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s7Title')}</Typography>
         <Typography paragraph>
-          By creating an account and selecting "I agree" on the sign-up screen, you confirm that (i) you are the owner or authorized user of the phone number and email you provide; (ii) you authorize us to contact you as described in this Consent; and (iii) you understand you may revoke consent at any time using the methods above.
+          {t('legal.consent.s7P1')}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          If your phone number or email changes, you agree to update your account information promptly to help ensure accurate delivery of communications.
+          {t('legal.consent.s7P2')}
         </Typography>
       </Box>
 
       <Box component="section" id="privacy" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>8. Privacy</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s8Title')}</Typography>
         <Typography paragraph>
-          We handle your personal information in accordance with our <Link href="/privacy">Privacy Policy</Link>. This includes how we collect, use, and retain your contact information, and your rights under applicable laws (e.g., CCPA/CPRA where applicable).
+          {t('legal.consent.s8P1')} <Link href="/privacy">{t('legal.terms.linksPrivacy')}</Link>.
         </Typography>
       </Box>
 
       <Box component="section" id="changes" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>9. Changes to This Consent</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s9Title')}</Typography>
         <Typography paragraph>
-          We may update this Consent from time to time. The "Last Updated" date above will reflect the latest version. Material changes will be posted in the app or website. Continued use of our services after an update constitutes acknowledgment of the updated Consent.
+          {t('legal.consent.s9P1')}
         </Typography>
       </Box>
 
       <Box component="section" id="record" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>10. Record of Consent</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s10Title')}</Typography>
         <Typography paragraph>
-          We maintain a record of your consent (including date/time, device, IP, and user account) for compliance purposes. You may request a copy of your consent record by contacting <Link href="mailto:support@c1staffing.com">support@c1staffing.com</Link>.
+          {t('legal.consent.s10P1')} <Link href="mailto:support@c1staffing.com">support@c1staffing.com</Link>.
         </Typography>
       </Box>
 
       <Box component="section" id="jurisdiction" sx={{ mb: 4 }}>
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>11. Jurisdiction & Compliance Notices</Typography>
+        <Typography variant="h5" sx={{ mb: 2, fontWeight: 600 }}>{t('legal.consent.s11Title')}</Typography>
         <Typography variant="body2" color="text.secondary">
-          This Consent is intended to comply with applicable laws and carrier policies, including the Telephone Consumer Protection Act (TCPA) and relevant state privacy laws. If any provision is found unenforceable in a particular jurisdiction, it will be enforced to the maximum extent permitted, and the remainder will continue in effect.
+          {t('legal.consent.s11P1')}
         </Typography>
       </Box>
 
       {/* Footer */}
       <Box component="footer" sx={{ mt: 5, pt: 3, borderTop: 1, borderColor: 'divider' }}>
         <Typography variant="body2" color="text.secondary">
-          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. All rights reserved. |{' '}
-          <Link href="/terms">Terms of Use</Link> |{' '}
-          <Link href="/privacy">Privacy Policy</Link> |{' '}
-          <Link href="/sms-privacy">SMS Privacy Notice</Link>
+          © {new Date().getFullYear()} C1 Staffing, LLC and affiliates. {t('legal.terms.footer')} |{' '}
+          <Link href="/terms">{t('legal.privacy.linksTerms')}</Link> |{' '}
+          <Link href="/privacy">{t('legal.terms.linksPrivacy')}</Link> |{' '}
+          <Link href="/sms-privacy">{t('legal.privacy.linksSMSPrivacy')}</Link>
         </Typography>
       </Box>
     </Container>

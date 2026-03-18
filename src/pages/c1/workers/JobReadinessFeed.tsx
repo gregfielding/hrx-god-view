@@ -18,6 +18,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { db, storage } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
+import { useT } from '../../../i18n';
 import ReadinessEngineCard from '../../../components/worker/jobReadiness/ReadinessEngineCard';
 import SkillsStep from '../../../components/apply/steps/SkillsStep';
 import ResumeUpload from '../../../components/ResumeUpload';
@@ -41,6 +42,7 @@ interface JobReadinessFeedProps {
 
 const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start' }) => {
   const { user } = useAuth();
+  const t = useT();
   const navigate = useNavigate();
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
   const [loadingUser, setLoadingUser] = useState(true);
@@ -474,11 +476,11 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
       setCertUploadSkipped((prev) => ({ ...prev, [key]: false }));
     } catch (error) {
       console.error('Failed to upload certification file:', error);
-      setCertUploadError('Could not upload that file. Please try again.');
+      setCertUploadError(t('jobReadiness.uploadCertError'));
     } finally {
       setCertUploadingKey(null);
     }
-  }, [certificationsValue.certifications, forkliftTypeDetail, otherCredentialKind, user?.uid]);
+  }, [certificationsValue.certifications, forkliftTypeDetail, otherCredentialKind, t, user?.uid]);
 
   const advanceToNextStep = useCallback(() => {
     if (!profilePhotoStepCompleted) {
@@ -883,7 +885,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
   const uploadProfilePhoto = useCallback(async (file: File) => {
     if (!user?.uid) return;
     if (!file.type.startsWith('image/')) {
-      setPhotoUploadError('Please choose an image file.');
+      setPhotoUploadError(t('jobReadiness.chooseImageFile'));
       return;
     }
 
@@ -909,11 +911,11 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
       }
     } catch (error) {
       console.error('Failed to upload profile photo from readiness card:', error);
-      setPhotoUploadError('Could not upload your photo. Please try again.');
+      setPhotoUploadError(t('jobReadiness.uploadPhotoError'));
     } finally {
       setPhotoUploading(false);
     }
-  }, [persistEngineResponse, showProfilePhotoStep, user?.uid]);
+  }, [persistEngineResponse, showProfilePhotoStep, t, user?.uid]);
 
   const handlePhotoInputChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -934,12 +936,12 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
     <Box sx={{ maxWidth: 700, mx: 'auto', px: 1, py: 2 }}>
       <Stack spacing={2.5}>
         <Typography variant="h4" sx={{ fontWeight: 800 }}>
-          Let&apos;s Help You Get Hired
+          {t('jobReadiness.letsHelpYouGetHired')}
         </Typography>
         <Box>
           <Stack direction="row" justifyContent="space-between" sx={{ mb: 0.75 }}>
             <Typography variant="caption" color="text.secondary">
-              Step {currentWizardStep} of {TOTAL_WIZARD_STEPS}
+              {t('jobReadiness.stepOf', { current: currentWizardStep, total: TOTAL_WIZARD_STEPS })}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               {Math.round((currentWizardStep / TOTAL_WIZARD_STEPS) * 100)}%
@@ -956,10 +958,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             {targetIndustries.length === 0 && (
               <Stack spacing={1.25}>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  What type of work are you interested in?
+                  {t('jobReadiness.whatTypeOfWork')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Select one or more.
+                  {t('jobReadiness.selectOneOrMore')}
                 </Typography>
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                   <Button
@@ -968,7 +970,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     color="primary"
                     onClick={() => handleIndustryToggle('hospitality')}
                   >
-                    Hospitality
+                    {t('jobReadiness.hospitality')}
                   </Button>
                   <Button
                     size="small"
@@ -976,7 +978,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     color="primary"
                     onClick={() => handleIndustryToggle('industrial')}
                   >
-                    Industrial
+                    {t('jobReadiness.industrial')}
                   </Button>
                   <Button
                     size="small"
@@ -988,7 +990,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     color="primary"
                     onClick={() => handleIndustryToggle('both')}
                   >
-                    Both
+                    {t('jobReadiness.both')}
                   </Button>
                 </Stack>
               </Stack>
@@ -997,10 +999,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             {targetIndustries.length > 0 && !intentReady && (
               <Stack spacing={1.25}>
                 <Typography variant="h6" sx={{ fontWeight: 700 }}>
-                  What kind of schedule are you looking for?
+                  {t('jobReadiness.whatSchedule')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  Select all that apply.
+                  {t('jobReadiness.selectAllThatApply')}
                 </Typography>
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                   <Button
@@ -1009,7 +1011,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     color="primary"
                     onClick={() => handleScheduleIntentToggle('full_time')}
                   >
-                    Full-Time
+                    {t('jobReadiness.fullTime')}
                   </Button>
                   <Button
                     size="small"
@@ -1017,7 +1019,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     color="primary"
                     onClick={() => handleScheduleIntentToggle('part_time')}
                   >
-                    Part-Time
+                    {t('jobReadiness.partTime')}
                   </Button>
                   <Button
                     size="small"
@@ -1025,7 +1027,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     color="primary"
                     onClick={() => handleScheduleIntentToggle('gig')}
                   >
-                    Gig Work
+                    {t('jobReadiness.gigWork')}
                   </Button>
                 </Stack>
               </Stack>
@@ -1034,7 +1036,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             {intentReady && showIntentReadyTransition && (
               <Fade in timeout={250}>
                 <Typography variant="body2" color="primary.main" sx={{ fontWeight: 700 }}>
-                  Great - now let&apos;s get you ready for work.
+                  {t('jobReadiness.greatLetsGetReady')}
                 </Typography>
               </Fade>
             )}
@@ -1046,14 +1048,14 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Add your profile photo
+                  {t('jobReadiness.addProfilePhoto')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  Employers are more likely to choose workers with a clear photo.
+                  {t('jobReadiness.photoHelps')}
                 </Typography>
                 {hasProfilePhoto && (
                   <Typography variant="caption" color="success.main" sx={{ display: 'block', mb: 1.5, fontWeight: 700 }}>
-                    Looks good - your profile photo is already set.
+                    {t('jobReadiness.photoAlreadySet')}
                   </Typography>
                 )}
                 {photoUploadError && (
@@ -1065,7 +1067,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                   <Box sx={{ mt: 1, mb: 1.5 }}>
                     <LinearProgress />
                     <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                      Uploading profile photo...
+                      {t('jobReadiness.uploadingProfilePhoto')}
                     </Typography>
                   </Box>
                 )}
@@ -1076,7 +1078,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     onClick={() => photoInputRef.current?.click()}
                     disabled={photoUploading}
                   >
-                    Upload photo
+                    {t('apply.uploadPhoto')}
                   </Button>
                   <Button
                     variant="outlined"
@@ -1084,7 +1086,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     onClick={() => cameraInputRef.current?.click()}
                     disabled={photoUploading}
                   >
-                    Use camera
+                    {t('apply.takePhoto')}
                   </Button>
                 </Stack>
                 <Stack direction="row" justifyContent="flex-end" sx={{ mt: 1 }}>
@@ -1099,7 +1101,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                       setResumeGateChoice('unknown');
                     }}
                   >
-                    Skip for now
+                    {t('apply.skipForNow')}
                   </Button>
                   <Button
                     variant="contained"
@@ -1113,7 +1115,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     }}
                     disabled={!hasProfilePhoto && !responses.profile_photo}
                   >
-                    Continue
+                    {t('common.next')}
                   </Button>
                 </Stack>
               </CardContent>
@@ -1126,10 +1128,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Want to upload a resume to speed things up?
+                  {t('jobReadiness.resumePromptTitle')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-                  This is optional. We&apos;ll still ask for structured details in the next steps.
+                  {t('jobReadiness.resumePromptSubtitle')}
                 </Typography>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 1.5 }}>
                   <Button
@@ -1137,14 +1139,14 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     variant={resumeGateChoice === 'yes' ? 'contained' : 'outlined'}
                     onClick={() => setResumeGateChoice('yes')}
                   >
-                    Yes, upload resume
+                    {t('jobReadiness.yesUploadResume')}
                   </Button>
                   <Button
                     size="small"
                     variant={resumeGateChoice === 'no' ? 'contained' : 'outlined'}
                     onClick={() => setResumeGateChoice('no')}
                   >
-                    No, continue without it
+                    {t('jobReadiness.noContinueWithoutResume')}
                   </Button>
                 </Stack>
                 {resumeGateChoice === 'yes' && (
@@ -1163,11 +1165,11 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                 {resumeProcessingActive && (
                   <Box sx={{ mt: 2 }}>
                     <Typography variant="body2" color="primary.main" sx={{ fontWeight: 700, mb: 0.75 }}>
-                      Parsing your resume...
+                      {t('jobReadiness.parsingResume')}
                     </Typography>
                     <LinearProgress />
                     <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block' }}>
-                      This can take around 10 seconds.
+                      {t('jobReadiness.resumeTakesTenSeconds')}
                     </Typography>
                   </Box>
                 )}
@@ -1186,7 +1188,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                         startPostResumeSequence();
                       }}
                     >
-                      Continue
+                      {t('common.next')}
                     </Button>
                   )}
                   <Button
@@ -1202,7 +1204,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                       startPostResumeSequence();
                     }}
                   >
-                    Continue for now
+                    {t('apply.skipForNow')}
                   </Button>
                 </Stack>
               </CardContent>
@@ -1215,16 +1217,16 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Work authorization
+                  {t('jobReadiness.workAuthorizationTitle')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Quick check so we can match you to shifts you can actually start.
+                  {t('jobReadiness.workAuthorizationSubtitle')}
                 </Typography>
                 <Stack spacing={1.25}>
                   {workAuthorizationSubstep === 'authorized' ? (
                     <>
                       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                        Are you legally authorized to work in the United States?
+                        {t('profile.authorizedToWork')}
                       </Typography>
                       <Stack direction="row" spacing={1}>
                         <Button
@@ -1232,28 +1234,28 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                           variant={workAuthorizationValue.workAuthorized === true ? 'contained' : 'outlined'}
                           onClick={() => setWorkAuthorizationValue((prev) => ({ ...prev, workAuthorized: true }))}
                         >
-                          Yes
+                          {t('common.yes')}
                         </Button>
                         <Button
                           size="small"
                           variant={workAuthorizationValue.workAuthorized === false ? 'contained' : 'outlined'}
                           onClick={() => setWorkAuthorizationValue((prev) => ({ ...prev, workAuthorized: false }))}
                         >
-                          No
+                          {t('common.no')}
                         </Button>
                         <Button
                           size="small"
                           variant={workAuthorizationValue.workAuthorized === 'unsure' ? 'contained' : 'outlined'}
                           onClick={() => setWorkAuthorizationValue((prev) => ({ ...prev, workAuthorized: 'unsure' }))}
                         >
-                          I&apos;m not sure
+                          {t('jobReadiness.notSure')}
                         </Button>
                       </Stack>
                     </>
                   ) : (
                     <>
                       <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                        Will you now or in the future require employer sponsorship?
+                        {t('profile.requireSponsorship')}
                       </Typography>
                       <Stack direction="row" spacing={1}>
                         <Button
@@ -1261,21 +1263,21 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                           variant={workAuthorizationValue.requireSponsorship === true ? 'contained' : 'outlined'}
                           onClick={() => setWorkAuthorizationValue((prev) => ({ ...prev, requireSponsorship: true }))}
                         >
-                          Yes
+                          {t('common.yes')}
                         </Button>
                         <Button
                           size="small"
                           variant={workAuthorizationValue.requireSponsorship === false ? 'contained' : 'outlined'}
                           onClick={() => setWorkAuthorizationValue((prev) => ({ ...prev, requireSponsorship: false }))}
                         >
-                          No
+                          {t('common.no')}
                         </Button>
                         <Button
                           size="small"
                           variant={workAuthorizationValue.requireSponsorship === 'unsure' ? 'contained' : 'outlined'}
                           onClick={() => setWorkAuthorizationValue((prev) => ({ ...prev, requireSponsorship: 'unsure' }))}
                         >
-                          I&apos;m not sure
+                          {t('jobReadiness.notSure')}
                         </Button>
                       </Stack>
                     </>
@@ -1302,7 +1304,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                       setShowCertificationsStep(true);
                     }}
                   >
-                    {workAuthorizationSubstep === 'authorized' ? 'Continue' : 'Save and continue'}
+                    {workAuthorizationSubstep === 'authorized' ? t('common.next') : t('jobReadiness.saveAndContinue')}
                   </Button>
                 </Stack>
               </CardContent>
@@ -1315,17 +1317,17 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Certifications
+                  {t('profile.certifications')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                   {includesHospitality && includesIndustrial
-                    ? 'If you have certifications (food safety, alcohol service, forklift, safety cards), add one now.'
+                    ? t('jobReadiness.certPromptBoth')
                     : includesHospitality
-                      ? 'Many hospitality shifts ask for food safety or alcohol service certifications.'
-                      : 'Many industrial shifts ask for forklift or safety certifications.'}
+                      ? t('jobReadiness.certPromptHospitality')
+                      : t('jobReadiness.certPromptIndustrial')}
                 </Typography>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-                  Do you want to upload any certifications now?
+                  {t('jobReadiness.uploadCertNowQuestion')}
                 </Typography>
                 <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} sx={{ mb: 1.5 }}>
                   <Button
@@ -1333,14 +1335,14 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     variant={certificationsIntent === 'yes' ? 'contained' : 'outlined'}
                     onClick={() => setCertificationsIntent('yes')}
                   >
-                    Yes
+                    {t('common.yes')}
                   </Button>
                   <Button
                     size="small"
                     variant={certificationsIntent === 'no' ? 'contained' : 'outlined'}
                     onClick={() => setCertificationsIntent('no')}
                   >
-                    No
+                    {t('common.no')}
                   </Button>
                 </Stack>
                 {certificationsIntent === 'yes' && (
@@ -1356,10 +1358,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     sx={{ p: 2, borderStyle: 'dashed' }}
                   >
                     <Typography variant="body2" sx={{ mb: 1 }}>
-                      Drag and drop a certification file, or choose one from your device.
+                      {t('jobReadiness.dragDropCert')}
                     </Typography>
                     <Button component="label" variant="outlined" size="small">
-                      Upload certification
+                      {t('jobReadiness.uploadCertification')}
                       <input
                         hidden
                         type="file"
@@ -1382,7 +1384,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                   <Box sx={{ mt: 1 }}>
                     <LinearProgress />
                     <Typography variant="caption" color="text.secondary">
-                      Uploading certification...
+                      {t('jobReadiness.uploadingCertification')}
                     </Typography>
                   </Box>
                 )}
@@ -1397,7 +1399,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                       setShowSkillsStep(true);
                     }}
                   >
-                    Continue
+                    {t('common.next')}
                   </Button>
                 </Stack>
               </CardContent>
@@ -1410,10 +1412,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>
                 <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Skills
+                  {t('apply.stepSkills')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Let&apos;s strengthen your profile with skills that match your target work.
+                  {t('jobReadiness.skillsSubtitle')}
                 </Typography>
                 <SkillsStep
                   value={skillsValue}
@@ -1426,7 +1428,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     size="small"
                     onClick={advanceFromSkills}
                   >
-                    Skip for now
+                    {t('apply.skipForNow')}
                   </Button>
                   <Button
                     variant="contained"
@@ -1434,7 +1436,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
                     disabled={!effectiveHasSkills}
                     onClick={advanceFromSkills}
                   >
-                    Continue
+                    {t('common.next')}
                   </Button>
                 </Stack>
               </CardContent>
@@ -1449,7 +1451,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <CircularProgress size={16} />
                 <Typography variant="caption" color="text.secondary">
-                  Uploading profile photo...
+                  {t('jobReadiness.uploadingProfilePhoto')}
                 </Typography>
               </Box>
             )}
@@ -1464,10 +1466,10 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             <Box>
               <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 0.75 }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                  Readiness Score: {engine.readinessScorePercent}%
+                  {t('jobReadiness.readinessScore', { percent: engine.readinessScorePercent })}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Impact-weighted progress
+                  {t('jobReadiness.impactWeightedProgress')}
                 </Typography>
               </Stack>
               <LinearProgress variant="determinate" value={engine.readinessScorePercent} sx={{ height: 9, borderRadius: 2 }} />
@@ -1518,7 +1520,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
             ) : (
               <Box sx={{ p: 2, border: '1px dashed', borderColor: 'divider', borderRadius: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                  You&apos;re all set for now. Keep your profile current to continue improving job matches.
+                  {t('jobReadiness.allSetForNow')}
                 </Typography>
               </Box>
             )}
@@ -1527,7 +1529,7 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
 
         {showReadinessContent && (
           <Button variant="text" onClick={() => navigate('/c1/workers/profile')}>
-            Open Full Profile
+            {t('jobReadiness.openFullProfile')}
           </Button>
         )}
         <input

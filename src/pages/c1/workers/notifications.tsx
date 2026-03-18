@@ -23,22 +23,23 @@ import {
 } from '../../../hooks/useWorkerNotifications';
 import { markNotificationReadCallable } from '../../../api/workerNotificationsApi';
 import WorkerNotificationListItem from '../../../components/worker/WorkerNotificationListItem';
-
-const filterLabels: Record<Exclude<WorkerNotificationFilterKey, 'all' | 'unread'>, string> = {
-  applications: 'Applications',
-  assignments: 'Assignments',
-  reminders: 'Reminders',
-  documents: 'Documents / Compliance',
-  system: 'System',
-};
+import { useT } from '../../../i18n';
 
 const C1WorkerNotifications: React.FC = () => {
+  const t = useT();
   const { user } = useAuth();
   const uid = user?.uid ?? undefined;
   const navigate = useNavigate();
   const { notifications, unreadCount, loading } = useWorkerNotifications(uid);
   const [filter, setFilter] = useState<WorkerNotificationFilterKey>('all');
   const [markingId, setMarkingId] = useState<string | null>(null);
+  const filterLabels: Record<Exclude<WorkerNotificationFilterKey, 'all' | 'unread'>, string> = {
+    applications: t('notifications.filterApplications'),
+    assignments: t('notifications.filterAssignments'),
+    reminders: t('notifications.filterReminders'),
+    documents: t('notifications.filterDocuments'),
+    system: t('notifications.filterSystem'),
+  };
 
   const filtered = notifications.filter((n) => {
     if (filter === 'unread') return !n.readAt;
@@ -74,18 +75,18 @@ const C1WorkerNotifications: React.FC = () => {
   return (
     <>
       <Typography variant="h5" sx={{ mb: 2 }}>
-        Notifications
+        {t('nav.notifications')}
       </Typography>
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2, alignItems: 'center' }}>
         <Chip
-          label="All"
+          label={t('notifications.filterAll')}
           onClick={() => setFilter('all')}
           color={filter === 'all' ? 'primary' : 'default'}
           variant={filter === 'all' ? 'filled' : 'outlined'}
           size="small"
         />
         <Chip
-          label={`Unread ${unreadCount > 0 ? `(${unreadCount})` : ''}`}
+          label={`${t('notifications.filterUnread')} ${unreadCount > 0 ? `(${unreadCount})` : ''}`.trim()}
           onClick={() => setFilter('unread')}
           color={filter === 'unread' ? 'primary' : 'default'}
           variant={filter === 'unread' ? 'filled' : 'outlined'}
@@ -103,7 +104,7 @@ const C1WorkerNotifications: React.FC = () => {
         ))}
         {unreadCount > 0 && (
           <Button size="small" onClick={handleMarkAllRead} sx={{ ml: 1 }}>
-            Mark all read
+            {t('notifications.markAllRead')}
           </Button>
         )}
       </Box>
@@ -114,10 +115,10 @@ const C1WorkerNotifications: React.FC = () => {
       ) : filtered.length === 0 ? (
         <Box>
           <Typography variant="body2" color="text.secondary" display="block">
-            No notifications yet.
+            {t('notifications.emptyTitle')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            We&apos;ll notify you about applications, documents, and shifts here.
+            {t('notifications.emptySubtitle')}
           </Typography>
         </Box>
       ) : (

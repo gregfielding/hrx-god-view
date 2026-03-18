@@ -127,7 +127,7 @@ const C1WorkerSupport: React.FC = () => {
     return (
       <Box sx={{ p: 2 }}>
         <Typography variant="body2" color="text.secondary">
-          Select your organization to use Help & Support.
+          {t('support.selectOrganization')}
         </Typography>
       </Box>
     );
@@ -186,10 +186,10 @@ const C1WorkerSupport: React.FC = () => {
               </Typography>
               <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 0.75 }}>
                 <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
-                  Confidence: {Math.round(Math.max(0, Math.min(1, reply.confidence)) * 100)}%
+                  {t('support.confidence')}: {Math.round(Math.max(0, Math.min(1, reply.confidence)) * 100)}%
                 </Typography>
                 {reply.escalate && (
-                  <Chip size="small" color="warning" variant="outlined" label="Escalation recommended" />
+                  <Chip size="small" color="warning" variant="outlined" label={t('support.escalationRecommended')} />
                 )}
               </Stack>
               {reply.suggestedActions.length > 0 && (
@@ -238,7 +238,7 @@ const C1WorkerSupport: React.FC = () => {
                 </Button>
               }
             >
-              This question may need recruiter support for a complete answer.
+              {t('support.mayNeedRecruiterSupport')}
             </Alert>
           )}
           {error && (
@@ -277,7 +277,7 @@ const C1WorkerSupport: React.FC = () => {
         <CardContent sx={{ pt: 2, pb: 2 }}>
           <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1}>
             <Typography variant="body2" color="text.secondary">
-              Can’t resolve your issue? Your recruiter can help.
+              {t('support.cantResolveRecruiterCanHelp')}
             </Typography>
             <Button
               variant="contained"

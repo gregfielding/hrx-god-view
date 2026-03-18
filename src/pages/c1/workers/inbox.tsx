@@ -25,6 +25,7 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useConversationsForUser } from '../../../hooks/useConversationsForUser';
 import { useConversationMessages } from '../../../hooks/useConversationMessages';
 import { markConversationReadCallable, sendConversationMessageCallable } from '../../../api/conversationsApi';
+import { useT } from '../../../i18n';
 
 type TimestampLike = { toDate?: () => Date; seconds?: number } | null | undefined;
 
@@ -48,6 +49,7 @@ const C1WorkerInbox: React.FC = () => {
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const { user, activeTenant } = useAuth();
+  const t = useT();
   const uid = user?.uid ?? null;
   const tenantId = activeTenant?.id ?? null;
   // Normalize C1 tenant ID typo (0 vs O) so list, messages, and callables use canonical path
@@ -113,18 +115,18 @@ const C1WorkerInbox: React.FC = () => {
   }, [conversations.length, conversationsLoading, effectiveConversationId, selectedConversation]);
 
   const getConversationTitle = (c: (typeof conversations)[number]) =>
-    c.topic?.label || (c.type === 'support' ? 'Support' : c.type === 'system' ? 'System updates' : 'Recruiting');
+    c.topic?.label || (c.type === 'support' ? t('inbox.support') : c.type === 'system' ? t('inbox.systemUpdates') : t('inbox.recruiting'));
   const getConversationSenderLabel = (c: (typeof conversations)[number]) =>
-    c.type === 'system' ? 'System' : c.type === 'support' ? 'Support' : 'Recruiter';
+    c.type === 'system' ? t('inbox.system') : c.type === 'support' ? t('inbox.support') : t('inbox.recruiter');
 
   if (!tenantId) {
     return (
       <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', py: 4, px: 2 }}>
         <Typography variant="h6" color="text.secondary" gutterBottom>
-          Inbox
+          {t('inbox.title')}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Please select your organization to view your inbox.
+          {t('inbox.selectOrganization')}
         </Typography>
       </Box>
     );
@@ -169,16 +171,16 @@ const C1WorkerInbox: React.FC = () => {
       {conversations.length === 0 ? (
         <Box sx={{ p: 2 }}>
           <Typography variant="body2" color="text.secondary" display="block">
-            No conversations yet.
+            {t('inbox.noConversations')}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-            If you need help, contact Support.
+            {t('inbox.contactSupportPrompt')}
           </Typography>
         </Box>
       ) : (
         conversations.map((c) => {
           const unread = uid ? (c.unreadByUid?.[uid] ?? 0) : 0;
-          const preview = c.lastMessagePreview || 'No messages yet';
+          const preview = c.lastMessagePreview || t('inbox.noMessagesYet');
           return (
             <ListItemButton
               key={c.id}
@@ -218,7 +220,7 @@ const C1WorkerInbox: React.FC = () => {
               <IconButton
                 edge="end"
                 size="small"
-                aria-label="Open conversation"
+                aria-label={t('inbox.openConversation')}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (c.id) handleSelectConversation(c.id);
@@ -238,11 +240,11 @@ const C1WorkerInbox: React.FC = () => {
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
         {!isDesktop && (
           <Button size="small" onClick={() => navigate('/c1/workers/inbox')}>
-            ← Back
+            {t('common.back')}
           </Button>
         )}
         <Typography variant="subtitle1" sx={{ flex: 1 }}>
-          {selectedConversation ? getConversationTitle(selectedConversation) : 'Conversation'}
+          {selectedConversation ? getConversationTitle(selectedConversation) : t('inbox.conversation')}
         </Typography>
         <Typography variant="caption" color="text.secondary">
           {selectedConversation ? getConversationSenderLabel(selectedConversation) : ''}
@@ -251,17 +253,17 @@ const C1WorkerInbox: React.FC = () => {
       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
         {!conversationsLoading && effectiveConversationId && !selectedConversation ? (
           <Alert severity="warning">
-            Conversation not found. It may have been removed or you may not have access.
+            {t('inbox.conversationNotFound')}
           </Alert>
         ) : messagesLoading ? (
           <CircularProgress size={24} />
         ) : messagesError ? (
           <Alert severity="error">
-            Failed to load messages for this conversation.
+            {t('inbox.failedToLoadMessages')}
           </Alert>
         ) : messages.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            No messages yet.
+            {t('inbox.noMessagesYet')}
           </Typography>
         ) : (
           messages.map((m) => {
@@ -286,7 +288,7 @@ const C1WorkerInbox: React.FC = () => {
                   }}
                 >
                   <Typography variant="caption" display="block" color={isMe ? 'inherit' : 'text.secondary'}>
-                    {isMe ? 'You' : 'Staff'} · {formatTime(m.createdAt)}
+                    {isMe ? t('inbox.you') : t('inbox.staff')} · {formatTime(m.createdAt)}
                   </Typography>
                   <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
                     {bodyText}
@@ -301,7 +303,7 @@ const C1WorkerInbox: React.FC = () => {
         <TextField
           fullWidth
           size="small"
-          placeholder="Type a message..."
+          placeholder={t('inbox.typeMessage')}
           value={reply}
           onChange={(e) => setReply(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
@@ -314,14 +316,14 @@ const C1WorkerInbox: React.FC = () => {
           disabled={!reply.trim() || sending || selectedConversation?.status === 'closed'}
           endIcon={<SendIcon />}
         >
-          Send
+          {t('inbox.send')}
         </Button>
       </Box>
     </Box>
   ) : (
     <Box sx={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4 }}>
       <Typography variant="body2" color="text.secondary">
-        Select a conversation
+        {t('inbox.selectConversation')}
       </Typography>
     </Box>
   );
@@ -330,14 +332,14 @@ const C1WorkerInbox: React.FC = () => {
     <>
       {conversationsError && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          Inbox error: {String((conversationsError as any)?.code || '')} {String((conversationsError as any)?.message || conversationsError)}
+          {t('inbox.errorPrefix')}: {String((conversationsError as any)?.code || '')} {String((conversationsError as any)?.message || conversationsError)}
         </Alert>
       )}
       <Typography variant="h5" sx={{ mb: 2 }}>
-        Inbox
+        {t('inbox.title')}
         {unreadTotal > 0 ? (
           <Typography component="span" variant="caption" color="primary" sx={{ ml: 1 }}>
-            ({unreadTotal} unread)
+            {t('inbox.unreadCount', { count: unreadTotal })}
           </Typography>
         ) : null}
       </Typography>

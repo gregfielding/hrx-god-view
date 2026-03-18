@@ -185,7 +185,7 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
         <CardActions sx={{ justifyContent: 'flex-end', flexWrap: 'wrap', gap: 0.5, px: 2, pt: 0, pb: 1.5 }} onClick={(e) => e.stopPropagation()}>
           <IconButton
             size="small"
-            aria-label="Open assignment details"
+            aria-label={t('assignments.viewDetails')}
             onClick={handleChevronClick}
           >
             <ChevronRightIcon fontSize="small" />
