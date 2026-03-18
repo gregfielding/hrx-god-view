@@ -272,7 +272,11 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
       const storageRef = ref(storage, `avatars/${uid}.jpg`);
       await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
       const downloadURL = await getDownloadURL(storageRef);
-      await updateDoc(doc(db, 'users', uid), { avatar: downloadURL, updatedAt: serverTimestamp() });
+      await updateDoc(doc(db, 'users', uid), {
+        avatar: downloadURL,
+        'workerProfile.photoUrl': downloadURL,
+        updatedAt: serverTimestamp(),
+      });
       onAvatarUpdated(downloadURL);
       setCropOpen(false);
       setPendingImageSrc(null);

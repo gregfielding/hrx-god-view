@@ -7,6 +7,11 @@ import { storage, db } from '../../../firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { arrayUnion, doc, serverTimestamp, updateDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { auth } from '../../../firebase';
+import {
+  buildCanonicalWorkerProfileWritePatch,
+  buildCertificationReplaceWritePatch,
+  buildCertificationUploadWritePatch,
+} from '../../../utils/workerReadinessWriteModel';
 
 type Props = {
   requirements: {
@@ -193,9 +198,10 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
 
   // Use batched updates instead of immediate writes (imported at top)
   const debouncedWriteUser = (partial: any) => {
+    const normalized = buildCanonicalWorkerProfileWritePatch(partial);
     // Queue each field for batched save
-    Object.keys(partial).forEach(key => {
-      queueProfileUpdate(key, partial[key]);
+    Object.keys(normalized).forEach(key => {
+      queueProfileUpdate(key, normalized[key]);
     });
   };
 
@@ -260,7 +266,7 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
         fileName: file.name,
         uploadedAt: new Date(),
       } as any;
-      await updateDoc(userRef, { certifications: arrayUnion(certObj), updatedAt: serverTimestamp() });
+      await updateDoc(userRef, buildCertificationUploadWritePatch(arrayUnion(certObj)));
 
       // Mark requirement satisfied
       setUploaded(pendingCert);
@@ -279,9 +285,13 @@ const RequirementsAcknowledgementStep: React.FC<Props> = ({ requirements, profil
       const userRef = doc(db, 'users', uid);
       const snap = await getDoc(userRef);
       const data = snap.exists() ? (snap.data() as any) : {};
-      const current: any[] = Array.isArray(data?.certifications) ? data.certifications : [];
+      const canonicalCerts = Array.isArray(data?.workerProfile?.credentials?.certifications)
+        ? data.workerProfile.credentials.certifications
+        : [];
+      const legacyCerts = Array.isArray(data?.certifications) ? data.certifications : [];
+      const current: any[] = canonicalCerts.length > 0 ? canonicalCerts : legacyCerts;
       const filtered = current.filter((c: any) => c?.fileUrl !== obj?.fileUrl);
-      await updateDoc(userRef, { certifications: filtered, updatedAt: serverTimestamp() });
+      await updateDoc(userRef, buildCertificationReplaceWritePatch(filtered));
     } catch (err) {
       console.warn('Certification delete failed:', err);
     } finally {
@@ -603,7 +613,10 @@ const AvailabilitySection: React.FC<{ value: any; onChange: (v: any) => void }> 
         const uid = auth.currentUser?.uid;
         if (!uid) return;
         const userRef = doc(db, 'users', uid);
-        await updateDoc(userRef, { ...data, updatedAt: serverTimestamp() });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({ ...data, updatedAt: serverTimestamp() }),
+        );
       } catch {}
     }, 2000); // Increased from 400ms to 2000ms to reduce Firestore writes
   };

@@ -584,7 +584,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         const unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
           if (docSnap.exists()) {
             const userData = docSnap.data();
-            const avatar = userData.avatar || '';
+            const avatar = userData.avatar || userData.workerProfile?.photoUrl || '';
             const userOrgType = userData.orgType || 'HRX';
 
             // --- NEW: Handle tenantRoles as a map ---

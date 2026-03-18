@@ -5,7 +5,8 @@
  */
 
 import React from 'react';
-import { Card, CardContent, CardActions, Typography, Stack, Chip, Button } from '@mui/material';
+import { Card, CardContent, CardActions, Typography, Stack, Chip, Button, IconButton } from '@mui/material';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { useNavigate } from 'react-router-dom';
 import { useT, getLanguage } from '../../../i18n';
 
@@ -111,13 +112,28 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
 
   const canCancelShift = isUpcoming && (assignment.status === 'scheduled' || assignment.status === 'confirmed') && !!onCancelShift;
 
+  const openAssignmentDetails = (source: 'card' | 'view_details' | 'chevron') => {
+    const route = `/c1/workers/assignments/${assignment.assignmentId}`;
+    console.debug('[WorkerAssignmentsNav] navigate', {
+      source,
+      route,
+      params: { assignmentId: assignment.assignmentId },
+    });
+    navigate(route);
+  };
+
   const handleCardClick = () => {
-    navigate(`/c1/workers/assignments/${assignment.assignmentId}`);
+    openAssignmentDetails('card');
   };
 
   const handleViewDetails = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate(`/c1/workers/assignments/${assignment.assignmentId}`);
+    openAssignmentDetails('view_details');
+  };
+
+  const handleChevronClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    openAssignmentDetails('chevron');
   };
 
   const handleCancelShift = (e: React.MouseEvent) => {
@@ -167,6 +183,13 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
       </CardContent>
       {showViewDetails && (
         <CardActions sx={{ justifyContent: 'flex-end', flexWrap: 'wrap', gap: 0.5, px: 2, pt: 0, pb: 1.5 }} onClick={(e) => e.stopPropagation()}>
+          <IconButton
+            size="small"
+            aria-label="Open assignment details"
+            onClick={handleChevronClick}
+          >
+            <ChevronRightIcon fontSize="small" />
+          </IconButton>
           <Button size="small" variant="text" onClick={handleViewDetails}>
             {t('assignments.viewDetails')} →
           </Button>

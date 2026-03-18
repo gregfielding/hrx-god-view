@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { queueProfileUpdate, flushProfileUpdates } from '../../../utils/userProfileBatching';
 import { 
   Box, 
@@ -24,11 +24,12 @@ import {
   Alert
 } from '@mui/material';
 import { AddCircle, Delete as DeleteIcon, ExpandMore, Business, CalendarToday } from '@mui/icons-material';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../../../firebase';
 import { useT } from '../../../i18n';
 import onetJobTitles from '../../../data/onetJobTitles.json';
 import { experienceOptions } from '../../../data/experienceOptions';
+import ResumeUpload from '../../../components/ResumeUpload';
 
 type Props = {
   value: any;
@@ -37,6 +38,7 @@ type Props = {
   tenantId?: string;
   jobId?: string;
   jobPosting?: any;
+  resumeData?: any;
 };
 
 const quickAddExperience = [
@@ -57,12 +59,17 @@ const commonJobTitles = [
   'Food Service Worker', 'Kitchen Helper', 'Barista', 'Delivery Driver'
 ];
 
-const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting }) => {
+const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting, resumeData }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
   const [experienceDialogOpen, setExperienceDialogOpen] = useState(false);
-  const [quickAddExperienceValue, setQuickAddExperienceValue] = useState<string | null>(null);
+  const [resumePromptChoice, setResumePromptChoice] = useState<'unknown' | 'upload' | 'skip'>(() => {
+    const existing = String(value?.resumePromptChoice || '').toLowerCase();
+    if (existing === 'upload' || existing === 'skip') return existing;
+    return 'unknown';
+  });
+  const [resumeUploadedThisStep, setResumeUploadedThisStep] = useState(false);
   
   const [newExperience, setNewExperience] = useState({
     jobTitle: '',
@@ -88,6 +95,13 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
   };
 
   const workExperience = value?.workExperience || value?.workHistory || [];
+  const hasExistingResume = Boolean(
+    resumeUploadedThisStep ||
+    resumeData?.fileName ||
+    resumeData?.storagePath ||
+    resumeData?.downloadUrl ||
+    resumeData?.parsed,
+  );
 
   // Get required experience from job posting (multiple possible fields)
   const requiredExperience = useMemo(() => {
@@ -180,7 +194,6 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
   const handleQuickAddExperience = (jobTitle: string, e?: React.MouseEvent) => {
     e?.preventDefault();
     e?.stopPropagation();
-    setQuickAddExperienceValue(jobTitle);
     setNewExperience({
       jobTitle: jobTitle,
       employer: '',
@@ -226,7 +239,6 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
       stillWorking: false,
       showDates: false,
     });
-    setQuickAddExperienceValue(null);
   };
 
   const handleDeleteExperience = (idx: number) => {
@@ -253,8 +265,12 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
       stillWorking: false,
       showDates: false,
     });
-    setQuickAddExperienceValue(null);
     setExperienceDialogOpen(true);
+  };
+
+  const handleResumeChoice = (choice: 'upload' | 'skip') => {
+    setResumePromptChoice(choice);
+    onChange({ ...value, resumePromptChoice: choice });
   };
 
   return (
@@ -268,11 +284,47 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
       {/* Work Experience Section */}
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          🧑‍🍳 Work Experience
+          Tell us about your recent work
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          The more experience you list, the more jobs & pay rates you'll qualify for.
+          Can you tell us about your last few jobs? This helps us match you to better opportunities.
         </Typography>
+
+        {!hasExistingResume && (
+          <Box sx={{ mb: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'grey.50' }}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+              Do you already have a resume?
+            </Typography>
+            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: resumePromptChoice === 'upload' ? 1.5 : 0 }}>
+              <Button
+                size="small"
+                variant={resumePromptChoice === 'upload' ? 'contained' : 'outlined'}
+                onClick={() => handleResumeChoice('upload')}
+              >
+                Yes, upload it
+              </Button>
+              <Button
+                size="small"
+                variant={resumePromptChoice === 'skip' ? 'contained' : 'outlined'}
+                onClick={() => handleResumeChoice('skip')}
+              >
+                Skip for now
+              </Button>
+            </Stack>
+            {resumePromptChoice === 'upload' && (
+              <ResumeUpload
+                userId={auth.currentUser?.uid || ''}
+                tenantId={tenantId}
+                onResumeParsed={() => setResumeUploadedThisStep(true)}
+              />
+            )}
+          </Box>
+        )}
+        {hasExistingResume && (
+          <Alert severity="success" sx={{ mb: 2 }}>
+            Resume found. You can still add work history manually below.
+          </Alert>
+        )}
 
         {workExperience.length > 0 ? (
           <>
@@ -454,7 +506,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
               renderInput={(params) => (
                 <TextField
                   {...params}
-                  label={t('profile.jobTitle')}
+                  label="What was your job title?"
                   fullWidth
                   required
                   InputProps={{
@@ -469,7 +521,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
               )}
             />
             <TextField
-              label={t('profile.company')}
+              label="Where did you work?"
               fullWidth
               required
               value={newExperience.employer}
@@ -491,7 +543,7 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
               <AccordionSummary expandIcon={<ExpandMore />}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                   <CalendarToday fontSize="small" color="action" />
-                  <Typography variant="body2">Add Dates (Optional)</Typography>
+                  <Typography variant="body2">When did you work there? (optional)</Typography>
                 </Box>
               </AccordionSummary>
               <AccordionDetails>

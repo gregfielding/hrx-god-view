@@ -19,7 +19,6 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import PersonIcon from '@mui/icons-material/Person';
 import FolderIcon from '@mui/icons-material/Folder';
 import InboxIcon from '@mui/icons-material/Inbox';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
@@ -32,7 +31,6 @@ const navConfig = [
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { key: 'nav.inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
-  { key: 'nav.jobReadiness', path: '/c1/workers/job-readiness', icon: <PersonIcon /> },
   { key: 'nav.myDocuments', path: '/c1/workers/documents', icon: <FolderIcon /> },
   { key: 'nav.helpSupport', path: '/c1/workers/support', icon: <HelpOutlineIcon /> },
 ];

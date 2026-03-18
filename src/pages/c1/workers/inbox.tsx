@@ -4,12 +4,13 @@
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Typography,
   Box,
   List,
   ListItemButton,
+  IconButton,
   ListItemText,
   TextField,
   Button,
@@ -19,6 +20,7 @@ import {
   useTheme,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useConversationsForUser } from '../../../hooks/useConversationsForUser';
 import { useConversationMessages } from '../../../hooks/useConversationMessages';
@@ -42,6 +44,7 @@ function formatTime(ts: { toDate?: () => Date } | null): string {
 const C1WorkerInbox: React.FC = () => {
   const { conversationId } = useParams<{ conversationId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('md'));
   const { user, activeTenant } = useAuth();
@@ -51,22 +54,63 @@ const C1WorkerInbox: React.FC = () => {
   const resolvedTenantId =
     tenantId === 'BCiP2bQ9CgV0CTfV6MhD' ? 'BCiP2bQ9CgVOCTfV6MhD' : tenantId;
 
+  const queryParams = useMemo(() => new URLSearchParams(location.search), [location.search]);
+  const queryConversationId = queryParams.get('conversationId') || queryParams.get('threadId');
+  const effectiveConversationId = conversationId ?? queryConversationId ?? null;
+
   const { conversations, loading: conversationsLoading, error: conversationsError } = useConversationsForUser(tenantId, uid);
-  const { messages, loading: messagesLoading } = useConversationMessages(resolvedTenantId, conversationId ?? null);
+  const {
+    messages,
+    loading: messagesLoading,
+    error: messagesError,
+  } = useConversationMessages(resolvedTenantId, effectiveConversationId);
 
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
 
-  const selectedConversation = conversationId ? conversations.find((c) => c.id === conversationId) : null;
+  const selectedConversation = effectiveConversationId
+    ? conversations.find((c) => c.id === effectiveConversationId)
+    : null;
   const unreadTotal = useMemo(() => (uid ? conversations.reduce((sum, c) => sum + (c.unreadByUid?.[uid] ?? 0), 0) : 0), [conversations, uid]);
 
   useEffect(() => {
-    if (!conversationId || !selectedConversation || !uid || !resolvedTenantId) return;
+    console.debug('[WorkerInboxDetail] init', {
+      route: location.pathname,
+      params: { conversationId },
+      queryConversationId,
+      effectiveConversationId,
+      tenantId: resolvedTenantId,
+      uid,
+    });
+  }, [conversationId, effectiveConversationId, location.pathname, queryConversationId, resolvedTenantId, uid]);
+
+  useEffect(() => {
+    if (conversationId || !queryConversationId) return;
+    console.debug('[WorkerInboxNav] normalize route param', {
+      from: location.pathname + location.search,
+      to: `/c1/workers/inbox/${queryConversationId}`,
+      params: { conversationId: queryConversationId },
+    });
+    navigate(`/c1/workers/inbox/${queryConversationId}`, { replace: true });
+  }, [conversationId, location.pathname, location.search, navigate, queryConversationId]);
+
+  useEffect(() => {
+    if (!effectiveConversationId || !selectedConversation || !uid || !resolvedTenantId) return;
     const unread = selectedConversation.unreadByUid?.[uid] ?? 0;
     if (unread > 0) {
-      markConversationReadCallable({ tenantId: resolvedTenantId, conversationId }).catch(() => {});
+      markConversationReadCallable({ tenantId: resolvedTenantId, conversationId: effectiveConversationId }).catch(() => {});
     }
-  }, [conversationId, selectedConversation, uid, resolvedTenantId]);
+  }, [effectiveConversationId, selectedConversation, uid, resolvedTenantId]);
+
+  useEffect(() => {
+    if (!effectiveConversationId) return;
+    if (conversationsLoading) return;
+    console.debug('[WorkerInboxDetail] conversation resolution', {
+      effectiveConversationId,
+      foundInList: Boolean(selectedConversation),
+      conversationsCount: conversations.length,
+    });
+  }, [conversations.length, conversationsLoading, effectiveConversationId, selectedConversation]);
 
   const getConversationTitle = (c: (typeof conversations)[number]) =>
     c.topic?.label || (c.type === 'support' ? 'Support' : c.type === 'system' ? 'System updates' : 'Recruiting');
@@ -87,7 +131,13 @@ const C1WorkerInbox: React.FC = () => {
   }
 
   const handleSelectConversation = (id: string) => {
-    navigate(`/c1/workers/inbox/${id}`);
+    const route = `/c1/workers/inbox/${id}`;
+    console.debug('[WorkerInboxNav] navigate', {
+      source: 'conversation_row',
+      route,
+      params: { conversationId: id },
+    });
+    navigate(route);
     const c = conversations.find((x) => x.id === id);
     if (c && uid && (c.unreadByUid?.[uid] ?? 0) > 0 && resolvedTenantId) {
       markConversationReadCallable({ tenantId: resolvedTenantId, conversationId: id }).catch(() => {});
@@ -96,17 +146,17 @@ const C1WorkerInbox: React.FC = () => {
 
   const handleSend = async () => {
     const text = reply.trim();
-    if (!text || !conversationId || !resolvedTenantId) return;
+    if (!text || !effectiveConversationId || !resolvedTenantId) return;
     setSending(true);
     try {
-      await sendConversationMessageCallable({ tenantId: resolvedTenantId, conversationId, text });
+      await sendConversationMessageCallable({ tenantId: resolvedTenantId, conversationId: effectiveConversationId, text });
       setReply('');
     } finally {
       setSending(false);
     }
   };
 
-  if (conversationsLoading && !conversationId) {
+  if (conversationsLoading && !effectiveConversationId) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
         <CircularProgress />
@@ -132,7 +182,7 @@ const C1WorkerInbox: React.FC = () => {
           return (
             <ListItemButton
               key={c.id}
-              selected={c.id === conversationId}
+              selected={c.id === effectiveConversationId}
               onClick={() => (c.id ? handleSelectConversation(c.id) : undefined)}
               sx={{ alignItems: 'flex-start', py: 1.25 }}
             >
@@ -165,6 +215,17 @@ const C1WorkerInbox: React.FC = () => {
                 primaryTypographyProps={{ noWrap: true }}
                 secondaryTypographyProps={{ noWrap: true }}
               />
+              <IconButton
+                edge="end"
+                size="small"
+                aria-label="Open conversation"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (c.id) handleSelectConversation(c.id);
+                }}
+              >
+                <ChevronRightIcon fontSize="small" />
+              </IconButton>
             </ListItemButton>
           );
         })
@@ -172,7 +233,7 @@ const C1WorkerInbox: React.FC = () => {
     </List>
   );
 
-  const messageView = conversationId ? (
+  const messageView = effectiveConversationId ? (
     <Box sx={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', alignItems: 'center', gap: 1 }}>
         {!isDesktop && (
@@ -188,8 +249,16 @@ const C1WorkerInbox: React.FC = () => {
         </Typography>
       </Box>
       <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
-        {messagesLoading ? (
+        {!conversationsLoading && effectiveConversationId && !selectedConversation ? (
+          <Alert severity="warning">
+            Conversation not found. It may have been removed or you may not have access.
+          </Alert>
+        ) : messagesLoading ? (
           <CircularProgress size={24} />
+        ) : messagesError ? (
+          <Alert severity="error">
+            Failed to load messages for this conversation.
+          </Alert>
         ) : messages.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No messages yet.
@@ -279,7 +348,7 @@ const C1WorkerInbox: React.FC = () => {
             {messageView}
           </>
         ) : (
-          conversationId ? (
+          effectiveConversationId ? (
             messageView
           ) : (
             conversationList

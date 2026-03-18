@@ -22,7 +22,7 @@ const GatewayCard: React.FC<GatewayCardProps> = ({ payload, onTap }) => {
 
   const handleSeeAll = (e: React.MouseEvent) => {
     e.stopPropagation();
-    navigate(payload.seeJobsTo);
+    navigate(payload.seeJobsTo || '/c1/jobs-board');
   };
 
   return (
@@ -66,7 +66,6 @@ const GatewayCard: React.FC<GatewayCardProps> = ({ payload, onTap }) => {
             fontWeight: 600,
             '&:hover': { bgcolor: GATEWAY_ACCENT, opacity: 0.92 },
           }}
-          onClickCapture={(e) => e.stopPropagation()}
         >
           {t('dashboard.seeAllJobs')}
         </Button>

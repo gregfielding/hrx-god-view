@@ -31,8 +31,8 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
 
   const handleApply = (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (payload.applyTo) navigate(payload.applyTo);
-    else navigate(payload.viewJobTo);
+    // Home recommendations should always open job posting details first.
+    navigate(payload.viewJobTo || payload.applyTo || '/c1/jobs-board');
   };
 
   return (
@@ -88,7 +88,6 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
             fontWeight: 600,
             '&:hover': { bgcolor: contrast, opacity: 0.92 },
           }}
-          onClickCapture={(e) => e.stopPropagation()}
         >
           {t('dashboard.cardApplyNow')}
         </Button>

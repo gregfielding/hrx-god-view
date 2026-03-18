@@ -1,17 +1,4 @@
-/**
- * Job Readiness — /c1/workers/profile
- *
- * Structural check: /c1/workers/profile does NOT reuse the same component as /users/:id.
- * Admin profile is UserProfile (pages/UserProfile/index.tsx); this is a separate worker-only
- * page. Refactor is done directly within the worker namespace. Existing forms are reused
- * via WorkerProfileAccordions (worker-specific wrapper that embeds apply steps + ShiftPreferencesCard).
- *
- * Phase 2A: Hero uses stored AI score (users/{uid}.scoreSummary.aiScore) via getUserScore().
- * Phase 2B: Unlock prompts are conditional from getReadinessPrompts(userDoc); "Fix now" scrolls and expands accordion.
- * Phase 2C: getUserScore() adapter in utils/scoreSummary.ts; score source-of-truth documented there.
- */
-
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Container,
   Typography,
@@ -19,38 +6,52 @@ import {
   Stack,
   Card,
   CardContent,
-  LinearProgress,
-  Alert,
+  Avatar,
+  Chip,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
   Button,
-  ToggleButtonGroup,
-  ToggleButton,
 } from '@mui/material';
-import ViewListIcon from '@mui/icons-material/ViewList';
-import ViewModuleIcon from '@mui/icons-material/ViewModule';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { useNavigate, useLocation } from 'react-router-dom';
+
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import { userProfileBatcher, flushProfileUpdates } from '../../../utils/userProfileBatching';
-import { getUserScore } from '../../../utils/scoreSummary';
-import WorkerProfileAccordions, { type ReadinessAccordionSection } from '../../../components/worker/profile/WorkerProfileAccordions';
+import { buildHomeReadinessModel } from '../../../utils/homeReadinessModel';
+import WorkerProfileAccordions, { type WorkerProfileEditorSection } from '../../../components/worker/profile/WorkerProfileAccordions';
 import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
-import WorkerProfileCardDeck from '../../../components/worker/profile/WorkerProfileCardDeck';
-import {
-  getReadinessPrompts,
-  READINESS_SECTION_IDS,
-} from '../../../components/worker/profile/readinessPrompts';
 import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
 import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
+
+type ProfileAccordionSection =
+  | 'basic-info'
+  | 'work-eligibility'
+  | WorkerProfileEditorSection;
+
+const accordionSx = {
+  '&:before': { display: 'none' },
+  borderColor: 'divider',
+  borderRadius: '8px !important',
+  boxShadow: 'none',
+  '& .MuiAccordionSummary-root': {
+    transition: 'background-color 0.2s ease',
+    '&:hover': { bgcolor: 'action.hover' },
+  },
+};
 
 const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, setAvatarUrl } = useAuth();
   const t = useT();
+  const navigate = useNavigate();
+  const location = useLocation();
   const uid = user?.uid;
-  const [userDoc, setUserDoc] = useState<any>(null);
-  const [expandedSection, setExpandedSection] = useState<ReadinessAccordionSection | false>('availability');
-  const [viewMode, setViewMode] = useState<'sections' | 'cards'>('sections');
-  const [deckIndex, setDeckIndex] = useState(0);
+  const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
+  const [expandedSection, setExpandedSection] = useState<ProfileAccordionSection | false>('basic-info');
 
   useEffect(() => {
     userProfileBatcher.initialize();
@@ -63,62 +64,65 @@ const WorkerProfile: React.FC = () => {
     if (!uid) return;
     const userRef = doc(db, 'users', uid);
     const unsubscribe = onSnapshot(userRef, (snap) => {
-      setUserDoc(snap.exists() ? snap.data() : null);
+      setUserDoc(snap.exists() ? (snap.data() as Record<string, unknown>) : null);
     });
     return () => unsubscribe();
   }, [uid]);
 
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.location.hash) return;
-    if (window.location.hash === '#work-eligibility') {
-      setTimeout(() => document.getElementById('work-eligibility')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
-    }
-  }, []);
+  const readinessModel = useMemo(() => buildHomeReadinessModel(userDoc), [userDoc]);
+  const resolvedProfilePhoto = String(
+    (userDoc?.workerProfile as Record<string, unknown> | undefined)?.photoUrl ||
+      userDoc?.avatar ||
+      avatarUrl ||
+      ''
+  ).trim();
+  const fullName = String(
+    `${String(userDoc?.firstName || '').trim()} ${String(userDoc?.lastName || '').trim()}`
+  ).trim() || 'Your profile';
+  const city = String(
+    (userDoc?.addressInfo as Record<string, unknown> | undefined)?.city ||
+      userDoc?.city ||
+      ''
+  ).trim();
+  const state = String(
+    (userDoc?.addressInfo as Record<string, unknown> | undefined)?.state ||
+      userDoc?.state ||
+      ''
+  ).trim();
+  const locationLabel = city && state ? `${city}, ${state}` : city || state || 'Add your location';
 
-  const score = getUserScore(userDoc);
-  const hasScore = typeof score === 'number' && Number.isFinite(score);
-  const prompts = userDoc ? getReadinessPrompts(userDoc) : [];
-  const topImprovements = (userDoc?.scoreSummary?.explainability?.nextActions ?? []).slice(0, 3);
-
-  const handleFixNow = useCallback((sectionId: keyof typeof READINESS_SECTION_IDS) => {
-    setExpandedSection(sectionId);
-    setViewMode('sections');
-    const id = READINESS_SECTION_IDS[sectionId];
-    setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
-  }, []);
-
-  const handleExpandProfileSection = useCallback((sectionId: ReadinessAccordionSection) => {
-    setExpandedSection(sectionId);
-    const id = READINESS_SECTION_IDS[sectionId];
-    setTimeout(() => {
-      document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 100);
-  }, []);
+  const profileStatus: 'complete' | 'action_required' | 'recommended' =
+    readinessModel.readinessPercent >= 90
+      ? 'complete'
+      : readinessModel.readinessPercent < 40
+        ? 'action_required'
+        : 'recommended';
+  const profileStatusColor = profileStatus === 'complete' ? 'success' : profileStatus === 'action_required' ? 'warning' : 'default';
+  const profileStatusLabel = profileStatus === 'complete' ? 'Complete' : profileStatus === 'action_required' ? 'Action required' : 'Recommended';
 
   const workEligibilityValueFromDoc = useMemo(() => {
-    const a = userDoc?.workEligibilityAttestation;
+    const a = userDoc?.workEligibilityAttestation as Record<string, unknown> | undefined;
     if (a && typeof a === 'object') {
       return {
         workAuthorized: a.authorizedToWorkUS === true,
         requireSponsorship: !!a.requireSponsorship,
-        gender: a.gender ?? '',
-        veteranStatus: a.veteranStatus ?? '',
-        disabilityStatus: a.disabilityStatus ?? '',
+        gender: String(a.gender || ''),
+        veteranStatus: String(a.veteranStatus || ''),
+        disabilityStatus: String(a.disabilityStatus || ''),
       };
     }
     return {
       workAuthorized: !!userDoc?.workEligibility,
       requireSponsorship: !!userDoc?.requireSponsorship,
-      gender: userDoc?.gender ?? '',
-      veteranStatus: userDoc?.veteranStatus ?? '',
-      disabilityStatus: userDoc?.disabilityStatus ?? '',
+      gender: String(userDoc?.gender || ''),
+      veteranStatus: String(userDoc?.veteranStatus || ''),
+      disabilityStatus: String(userDoc?.disabilityStatus || ''),
     };
-  }, [userDoc?.workEligibilityAttestation, userDoc?.workEligibility, userDoc?.requireSponsorship, userDoc?.gender, userDoc?.veteranStatus, userDoc?.disabilityStatus]);
-
+  }, [userDoc]);
   const [workEligibilityLocal, setWorkEligibilityLocal] = useState(workEligibilityValueFromDoc);
-  useEffect(() => { setWorkEligibilityLocal(workEligibilityValueFromDoc); }, [workEligibilityValueFromDoc]);
+  useEffect(() => {
+    setWorkEligibilityLocal(workEligibilityValueFromDoc);
+  }, [workEligibilityValueFromDoc]);
 
   const handleWorkEligibilityUpdate = useCallback(async (value: typeof workEligibilityValueFromDoc) => {
     if (!uid) return;
@@ -130,7 +134,7 @@ const WorkerProfile: React.FC = () => {
       veteranStatus: value.veteranStatus || null,
       disabilityStatus: value.disabilityStatus || null,
     };
-    const workEligibility = deriveWorkEligibilityFromAttestation(attestation as any);
+    const workEligibility = deriveWorkEligibilityFromAttestation(attestation as never);
     await updateDoc(doc(db, 'users', uid), {
       workEligibilityAttestation: attestation,
       workEligibility,
@@ -150,189 +154,109 @@ const WorkerProfile: React.FC = () => {
   }, [handleWorkEligibilityUpdate]);
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
 
+  if (!uid) {
+    return (
+      <Container maxWidth="md" sx={{ py: 2 }}>
+        <Typography variant="body2" color="text.secondary">
+          {t('profile.signInToComplete')}
+        </Typography>
+      </Container>
+    );
+  }
+
   return (
     <Container maxWidth="md" sx={{ py: 2 }}>
-      <Stack spacing={4}>
-        {/* Page title */}
-        <Box>
-          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-            {t('profile.pageTitle')}
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            {t('profile.pageSubtitle')}
-          </Typography>
-        </Box>
+      <Stack spacing={2}>
+        <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+          My Profile
+        </Typography>
 
-        {/* 0. Basic Identity — avatar, name, contact, address (replaces separate My Profile for workers) */}
-        {uid && (
-          <WorkerBasicIdentityCard
-            uid={uid}
-            userDoc={userDoc}
-            avatarUrl={avatarUrl || (userDoc?.avatar as string) || ''}
-            onAvatarUpdated={setAvatarUrl}
-          />
-        )}
-
-        {/* 1. Readiness Hero — same AI score as admin (worker-facing label: Hiring Score) */}
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-          <CardContent sx={{ py: 3, px: 3 }}>
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 2,
-              }}
-            >
-              <Box>
-                <Typography variant="h5" sx={{ fontWeight: 600 }}>
-                  ⭐ {t('profile.readinessTitle')}
-                </Typography>
-                <Typography variant="overline" color="text.secondary" display="block">
-                  {t('profile.hiringScore')}
-                </Typography>
-                <Typography
-                  variant="h5"
-                  sx={{
-                    fontWeight: 600,
-                    color: hasScore ? 'primary.main' : 'text.secondary',
-                    mt: 0.5,
-                  }}
-                >
-                  {hasScore ? `${Math.round(score)}%` : t('profile.scorePending')}
-                </Typography>
-              </Box>
-              <Box sx={{ flex: 1, minWidth: 200, maxWidth: 320 }}>
-                <LinearProgress
-                  variant="determinate"
-                  value={hasScore ? Math.min(100, Math.max(0, score)) : 0}
-                  sx={{
-                    height: 10,
-                    borderRadius: 1,
-                    bgcolor: hasScore ? undefined : 'action.hover',
-                  }}
-                />
-              </Box>
-            </Box>
-            {hasScore ? (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                {t('profile.eligibleRoles')}
-              </Typography>
-            ) : (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                {t('profile.scoreSync')}
-              </Typography>
-            )}
-            {topImprovements.length > 0 && (
-              <Box sx={{ mt: 2 }}>
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>
-                  {t('profile.topWaysToImprove')}
-                </Typography>
-                <Stack component="ul" sx={{ m: 0, pl: 2.5 }}>
-                  {topImprovements.map((a: { label?: string }, i: number) => (
-                    <Typography key={i} component="li" variant="body2" color="text.secondary">
-                      {a.label ?? ''}
-                    </Typography>
-                  ))}
-                </Stack>
-              </Box>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* 2. Unlock Prompts — conditional; Fix now scrolls and expands accordion */}
-        {prompts.length > 0 && (
-          <Stack spacing={1.5}>
-            {prompts.map((p) => (
-              <Alert
-                key={p.id}
-                variant="outlined"
-                severity="info"
-                icon={false}
-                action={
-                  <Button
-                    color="inherit"
-                    size="small"
-                    onClick={() => handleFixNow(p.id)}
-                  >
-                    {t('profile.fixNow')}
-                  </Button>
-                }
-                sx={{ py: 1.25 }}
-              >
-                <Typography variant="body2">
-                  <Box component="span" sx={{ mr: 1 }}>
-                    {p.icon}
-                  </Box>
-                  {t(p.textKey)}
-                </Typography>
-              </Alert>
-            ))}
-          </Stack>
-        )}
-
-        {/* Work Eligibility — attestation (deep link target #work-eligibility) */}
-        <Card id="work-eligibility" variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none', scrollMarginTop: 24 }}>
           <CardContent>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
-              {t('profile.workEligibility')}
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {t('profile.workEligibilityIntro')}
-            </Typography>
-            {uid ? (
-              <WorkEligibilityStep
-                value={workEligibilityLocal}
-                onChange={handleWorkEligibilityChange}
-              />
-            ) : null}
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ xs: 'flex-start', sm: 'center' }}>
+              <Avatar src={resolvedProfilePhoto || undefined} sx={{ width: 64, height: 64 }} />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  {fullName}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {locationLabel}
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
+                  {readinessModel.completedCount} of {readinessModel.requiredCount} key items complete ({readinessModel.readinessPercent}%)
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Chip size="small" variant="outlined" color={profileStatusColor} label={profileStatusLabel} />
+              </Stack>
+            </Stack>
+            {location.search.includes('from=readiness') && (
+              <Box sx={{ mt: 1.5 }}>
+                <Button
+                  size="small"
+                  variant="text"
+                  endIcon={<OpenInNewIcon fontSize="small" />}
+                  onClick={() => navigate('/c1/workers/dashboard')}
+                >
+                  Return to Home
+                </Button>
+              </Box>
+            )}
           </CardContent>
         </Card>
 
-        {/* 3. View toggle: Sections (accordion) | Cards (deck) */}
-        {uid && (
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <ToggleButtonGroup
-              value={viewMode}
-              exclusive
-              onChange={(_, v) => { if (v != null) setViewMode(v); setDeckIndex(0); }}
-              size="small"
-              aria-label={t('profile.viewMode')}
-            >
-              <ToggleButton value="sections" aria-label={t('profile.viewSections')}>
-                <ViewListIcon sx={{ mr: 0.5 }} /> {t('profile.viewSections')}
-              </ToggleButton>
-              <ToggleButton value="cards" aria-label={t('profile.viewCards')}>
-                <ViewModuleIcon sx={{ mr: 0.5 }} /> {t('profile.viewCards')}
-              </ToggleButton>
-            </ToggleButtonGroup>
-          </Box>
-        )}
-
-        {/* 4. Accordion (sections) or Card deck */}
-        {uid ? (
-          viewMode === 'cards' ? (
-            <WorkerProfileCardDeck
-              activeIndex={deckIndex}
-              onIndexChange={setDeckIndex}
-              onExpandSection={handleExpandProfileSection}
+        <Accordion
+          id="profile-basic-info"
+          expanded={expandedSection === 'basic-info'}
+          onChange={(_, expanded) => setExpandedSection(expanded ? 'basic-info' : false)}
+          variant="outlined"
+          sx={accordionSx}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography fontWeight={600}>Basic Info</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <WorkerBasicIdentityCard
+              uid={uid}
+              userDoc={userDoc}
+              avatarUrl={resolvedProfilePhoto}
+              onAvatarUpdated={setAvatarUrl}
             />
-          ) : null
-        ) : null}
+          </AccordionDetails>
+        </Accordion>
 
-        {/* 5. Accordion modules (existing forms) — always in DOM so Expand from deck can scroll here */}
-        {uid ? (
-          <WorkerProfileAccordions
-            uid={uid}
-            expandedSection={expandedSection}
-            onAccordionChange={setExpandedSection}
-          />
-        ) : (
-          <Typography variant="body2" color="text.secondary">
-            {t('profile.signInToComplete')}
-          </Typography>
-        )}
+        <Accordion
+          id="profile-work-eligibility"
+          expanded={expandedSection === 'work-eligibility'}
+          onChange={(_, expanded) => setExpandedSection(expanded ? 'work-eligibility' : false)}
+          variant="outlined"
+          sx={accordionSx}
+        >
+          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+            <Typography fontWeight={600}>Work Eligibility</Typography>
+          </AccordionSummary>
+          <AccordionDetails sx={{ pt: 0 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Confirm your authorization details so recruiters can place you in eligible roles.
+            </Typography>
+            <WorkEligibilityStep
+              value={workEligibilityLocal}
+              onChange={handleWorkEligibilityChange}
+            />
+          </AccordionDetails>
+        </Accordion>
+
+        <WorkerProfileAccordions
+          uid={uid}
+          expandedSection={
+            expandedSection === 'work-preferences' ||
+            expandedSection === 'skills-experience' ||
+            expandedSection === 'certifications-documents'
+              ? expandedSection
+              : false
+          }
+          onAccordionChange={(section) => setExpandedSection(section)}
+        />
       </Stack>
     </Container>
   );

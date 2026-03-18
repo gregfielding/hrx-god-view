@@ -31,6 +31,7 @@ function typeToCategory(type: NotificationType): NotificationCategory {
 function mapDoc(doc: import('firebase/firestore').DocumentSnapshot): WorkerNotification & { id: string } {
   const d = doc.data();
   const entity = d?.entity;
+  const routing = d?.routing && typeof d.routing === 'object' ? d.routing as Record<string, unknown> : {};
   const type = (d?.type ?? 'general') as NotificationType;
   const category = (d?.category ?? typeToCategory(type)) as NotificationCategory;
   return {
@@ -46,14 +47,18 @@ function mapDoc(doc: import('firebase/firestore').DocumentSnapshot): WorkerNotif
     readAt: (d?.readAt ?? null) as Timestamp | null,
     source: d?.source ?? 'system',
     channel: d?.channel ?? 'web',
-    deepLink: d?.deepLink ?? d?.ctaUrl,
-    entityId: d?.entityId ?? entity?.id,
+    deepLink: d?.deepLink ?? (routing.deepLink as string | undefined) ?? d?.ctaUrl ?? (routing.ctaUrl as string | undefined),
+    entityId: d?.entityId ?? (routing.entityId as string | undefined) ?? entity?.id,
     ctaLabel: d?.ctaLabel,
-    ctaUrl: d?.ctaUrl,
-    threadId: d?.threadId,
+    ctaUrl: d?.ctaUrl ?? (routing.ctaUrl as string | undefined),
+    threadId: d?.threadId ?? (routing.threadId as string | undefined),
     entity: d?.entity,
     metadata: d?.metadata,
     priority: d?.priority,
+    schemaVersion: d?.schemaVersion,
+    routing: d?.routing,
+    delivery: d?.delivery,
+    deliveryStatus: d?.deliveryStatus,
   };
 }
 

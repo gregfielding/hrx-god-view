@@ -29,6 +29,12 @@ export const READINESS_INPUT_DOMAIN_MAP: ReadinessInputFieldMapRow[] = [
     legacyFallbackPaths: ['workHistory', 'workExperience', 'previousRoles', 'skills'],
   },
   {
+    domain: 'durable_profile',
+    signal: 'profile photo',
+    canonicalPaths: ['workerProfile.photoUrl'],
+    legacyFallbackPaths: ['avatar'],
+  },
+  {
     domain: 'attestation_only',
     signal: 'readiness attestations',
     canonicalPaths: ['workerAttestations.*', 'workerProfile.attestations.*'],
@@ -55,6 +61,7 @@ interface DurableProfileReadModel {
   availabilityDays: string[];
   skills: string[];
   workHistoryText: string;
+  photoUrl?: string;
   preferences: {
     uniformReady: boolean;
     hasSteelToeBoots: boolean;
@@ -80,6 +87,7 @@ export interface JobReadinessReadModel {
   hasCertificationProofUploaded: (patterns: string[]) => boolean;
   hasWeekendAvailability: () => boolean;
   hasExperienceKeywords: (keywords: string[]) => boolean;
+  hasProfilePhoto: () => boolean;
 }
 
 function toRecord(value: unknown): Record<string, unknown> {
@@ -210,6 +218,11 @@ export function buildJobReadinessReadModel(userDocInput: Record<string, unknown>
     legacyFieldsUsed.push('skills');
   }
 
+  const photoUrl = String(workerProfile.photoUrl || userDoc.avatar || '').trim();
+  if (!workerProfile.photoUrl && userDoc.avatar) {
+    legacyFieldsUsed.push('avatar');
+  }
+
   const workHistoryParts = [
     ...toStringList(experience.workHistory),
     ...toStringList(experience.previousRoles),
@@ -243,6 +256,7 @@ export function buildJobReadinessReadModel(userDocInput: Record<string, unknown>
       availabilityDays,
       skills,
       workHistoryText: workHistoryParts.join(' ').toLowerCase(),
+      photoUrl,
       preferences: {
         uniformReady,
         hasSteelToeBoots,
@@ -280,6 +294,7 @@ export function buildJobReadinessReadModel(userDocInput: Record<string, unknown>
       const haystack = `${skills.join(' ')} ${workHistoryParts.join(' ')}`.toLowerCase();
       return keywords.some((k) => haystack.includes(k.toLowerCase()));
     },
+    hasProfilePhoto: () => Boolean(photoUrl),
   };
 
   return readModel;

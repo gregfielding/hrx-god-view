@@ -6,23 +6,42 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { Box, Stack, Typography, CircularProgress, useTheme, useMediaQuery, Link } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
+import {
+  Box,
+  Stack,
+  Typography,
+  CircularProgress,
+  useTheme,
+  useMediaQuery,
+  Dialog,
+  DialogContent,
+  IconButton,
+} from '@mui/material';
+import { useNavigate } from 'react-router-dom';
+
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useOnboarding } from '../../../hooks/useOnboarding';
-import WorkerDashboardCardRail from '../../../components/worker/dashboard/WorkerDashboardCardRail';
 import WorkerQuickNav from '../../../components/worker/WorkerQuickNav';
-import JobReadinessCompactCard from '../../../components/worker/dashboard/cards/JobReadinessCompactCard';
-import type { DashboardCardPayload, JobReadinessCardPayload } from '../../../components/worker/dashboard/cards';
+import ApplicationsAssignmentsSnapshot from '../../../components/worker/home/ApplicationsAssignmentsSnapshot';
+import NextStepsChecklist from '../../../components/worker/home/NextStepsChecklist';
+import ProfileNudgesSection from '../../../components/worker/home/ProfileNudgesSection';
+import ReadinessSummaryCard from '../../../components/worker/home/ReadinessSummaryCard';
+import RecommendedJobsSection from '../../../components/worker/home/RecommendedJobsSection';
+import type { HomeChecklistItem, HomeReadinessLaunchStep } from '../../../components/worker/home/types';
+import type { DashboardCardPayload } from '../../../components/worker/dashboard/cards';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
 import { UserApplicationsService } from '../../../services/userApplicationsService';
 import type { UserApplication } from '../../../services/userApplicationsService';
 import { JobsBoardService } from '../../../services/recruiter/jobsBoardService';
 import type { JobsBoardPost } from '../../../services/recruiter/jobsBoardService';
 import { getCategoryForTitle } from '../../../utils/dashboardCardCategory';
+import { buildHomeReadinessModel } from '../../../utils/homeReadinessModel';
 import { getImprovementTasks } from '../../../utils/jobReadinessTasks';
 import { useT, getLanguage } from '../../../i18n';
-import { useNavigate } from 'react-router-dom';
+
+import JobReadinessFeed from './JobReadinessFeed';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 /** Recommendation deck: exactly 3 job cards + 1 gateway card. */
@@ -30,9 +49,6 @@ const RECOMMENDATION_JOB_COUNT = 3;
 
 /** Statuses that require worker action (Accept/Decline) */
 const APPLICATION_NEEDS_RESPONSE = ['offer_extended', 'offer_pending', 'offer', 'hired_pending'];
-
-/** Job Readiness: compact when only a few items missing; full deck when significantly incomplete. */
-const JOB_READINESS_COMPACT_MAX_ITEMS = 1;
 
 function toStartAt(data: Record<string, unknown>): number {
   const startDate = data.startDate;
@@ -63,7 +79,7 @@ function rankRecommendedJobs(
   posts: JobsBoardPost[],
   _userDoc: Record<string, unknown> | null
 ): JobsBoardPost[] {
-  const now = Date.now();
+  void _userDoc;
   return [...posts].sort((a, b) => {
     // Nearest upcoming shift date first
     const aDate = a.nextShiftDate ? new Date(a.nextShiftDate).getTime() : 0;
@@ -139,7 +155,7 @@ const WorkerDashboard: React.FC = () => {
   const [applications, setApplications] = useState<UserApplication[]>([]);
   const [jobs, setJobs] = useState<JobsBoardPost[]>([]);
   const [cardsLoading, setCardsLoading] = useState(true);
-  const { checklist, summary: complianceSummary, hasOnboarding } = useOnboarding(user?.uid);
+  const { checklist, summary: complianceSummary } = useOnboarding(user?.uid);
   const improvementTasks = useMemo(
     () => getImprovementTasks(userDoc, checklist),
     [userDoc, checklist]
@@ -152,10 +168,6 @@ const WorkerDashboard: React.FC = () => {
     'there';
   const displayFirstName =
     firstName === 'there' ? firstName : firstName.charAt(0).toUpperCase() + firstName.slice(1).toLowerCase();
-
-  const profileIncomplete =
-    hasOnboarding &&
-    (complianceSummary.compliancePercent < 100 || complianceSummary.overallStatus !== 'compliant');
 
   useEffect(() => {
     if (!user?.uid) return;
@@ -262,7 +274,20 @@ const WorkerDashboard: React.FC = () => {
 
   const theme = useTheme();
   const isDesktop = useMediaQuery(theme.breakpoints.up('sm'));
+  const isMobile = !isDesktop;
   const navigate = useNavigate();
+  const [readinessFlowOpen, setReadinessFlowOpen] = useState(false);
+  const [readinessLaunchStep, setReadinessLaunchStep] = useState<HomeReadinessLaunchStep>('start');
+
+  const openReadinessFlow = (launchStep: HomeReadinessLaunchStep = 'start') => {
+    setReadinessLaunchStep(launchStep);
+    setReadinessFlowOpen(true);
+  };
+
+  const closeReadinessFlow = () => {
+    setReadinessFlowOpen(false);
+    setReadinessLaunchStep('start');
+  };
 
   const sections = useMemo(() => {
     // ——— Section 1: Assignment (active job / upcoming assignment or application needing action) ———
@@ -340,7 +365,6 @@ const WorkerDashboard: React.FC = () => {
         pay: post.payRate,
         spotsLeft: spotsLeft !== undefined && spotsLeft > 0 ? spotsLeft : undefined,
         viewJobTo: `/c1/jobs-board/${post.id}`,
-        applyTo: `/c1/jobs-board/${post.id}`,
         category: getCategoryForTitle(jobTitle),
       });
     }
@@ -351,48 +375,72 @@ const WorkerDashboard: React.FC = () => {
       seeJobsTo: '/c1/jobs-board',
     });
 
-    // ——— Section 3: Job Readiness (compact or full) ———
-    let jobReadinessPayload: JobReadinessCardPayload | null = null;
-    let jobReadinessCompact = true;
-    if (profileIncomplete && improvementTasks.length > 0) {
-      const blockingCount = improvementTasks.length;
-      jobReadinessPayload = {
-        type: 'job_readiness',
-        id: 'job-readiness-unlock',
-        label: t('dashboard.cardLabelUnlockMoreJobs'),
-        body: t('dashboard.unlockMoreJobsBody', { count: blockingCount }),
-        readinessPercent: complianceSummary.compliancePercent ?? 0,
-        blockingCount,
-        fixNowTo: '/c1/workers/job-readiness',
-      };
-      jobReadinessCompact = blockingCount <= JOB_READINESS_COMPACT_MAX_ITEMS;
-    }
-
     return {
       assignmentCards,
       jobsSectionHeader,
       jobsCards,
-      jobReadinessPayload,
-      jobReadinessCompact,
     };
   }, [
     nextShift,
     applications,
     jobs,
     userDoc,
-    profileIncomplete,
-    improvementTasks.length,
-    complianceSummary.compliancePercent,
     t,
     locale,
   ]);
 
+  const readinessPercent = Math.max(0, Math.min(100, complianceSummary.compliancePercent ?? 0));
+  const readinessModel = useMemo(() => buildHomeReadinessModel(userDoc), [userDoc]);
+  const checklistItems: HomeChecklistItem[] = readinessModel.orderedChecklist.map((item) => ({
+    id: item.id,
+    title: item.title,
+    benefit: item.benefit,
+    status: item.status,
+    priority: item.priority,
+    launchStep: item.launchStep,
+  }));
+  const requiredCount = readinessModel.requiredCount || complianceSummary.requiredCount || 0;
+  const completedCount = readinessModel.completedCount || complianceSummary.completedCount || 0;
+  const scoredPercent = readinessModel.readinessPercent;
+  const effectiveReadinessPercent =
+    readinessModel.source === 'snapshot' || readinessModel.source === 'computed'
+      ? scoredPercent
+      : readinessPercent;
+  const nextIncompleteStep = checklistItems.find((item) => item.status !== 'complete');
+  const primaryCtaLabel =
+    effectiveReadinessPercent <= 0
+      ? 'Start getting job-ready'
+      : effectiveReadinessPercent >= 85 || !nextIncompleteStep
+        ? 'Finish setup'
+        : `Next: ${nextIncompleteStep.title}`;
+  const readinessMessage =
+    effectiveReadinessPercent <= 10
+      ? "You're just getting started."
+      : effectiveReadinessPercent <= 45
+        ? "You're building momentum."
+        : effectiveReadinessPercent <= 75
+          ? "You're halfway there."
+          : effectiveReadinessPercent < 100
+            ? "You're almost done."
+            : 'You are job-ready.';
+  const needsApplicationAttention = applications.some((app) =>
+    APPLICATION_NEEDS_RESPONSE.includes(String(app.status || '').toLowerCase())
+  );
+  const upcomingAssignmentLabel = nextShift
+    ? `${nextShift.day}, ${nextShift.date} at ${nextShift.time}`
+    : null;
+
   return (
-    <Box sx={{ maxWidth: 480, mx: 'auto', px: 1 }}>
+    <Box sx={{ maxWidth: 760, mx: 'auto', px: 1 }}>
       <Stack spacing={4} sx={{ py: 2 }}>
-        <Typography variant="h5" sx={{ fontWeight: 700 }}>
-          {t('dashboard.welcomeBack', { firstName: displayFirstName })}
-        </Typography>
+        <Stack spacing={0.75}>
+          <Typography variant="h5" sx={{ fontWeight: 700 }}>
+            {t('dashboard.welcomeBack', { firstName: displayFirstName })}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            Complete a few quick steps to unlock more jobs and improve your matches.
+          </Typography>
+        </Stack>
 
         {cardsLoading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
@@ -400,69 +448,60 @@ const WorkerDashboard: React.FC = () => {
           </Box>
         ) : (
           <>
-            {/* Section 1: Active job / upcoming assignment */}
-            <Stack spacing={1.5}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {t('dashboard.sectionAssignment')}
-              </Typography>
-              {sections.assignmentCards.length > 0 ? (
-                <WorkerDashboardCardRail
-                  cards={sections.assignmentCards}
-                  showNavArrows={isDesktop}
-                />
-              ) : (
-                <Box sx={{ py: 2, px: 1, textAlign: 'center' }}>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                    {t('dashboard.noUpcomingAssignment')}
-                  </Typography>
-                  <Link
-                    component="button"
-                    variant="body2"
-                    onClick={() => navigate('/c1/jobs-board')}
-                    sx={{ fontWeight: 600 }}
-                  >
-                    {t('dashboard.viewJobs')}
-                  </Link>
-                </Box>
-              )}
-            </Stack>
+            <ReadinessSummaryCard
+              data={{ readinessPercent: effectiveReadinessPercent, completedCount, requiredCount }}
+              readinessMessage={readinessMessage}
+              primaryCtaLabel={primaryCtaLabel}
+              onContinueSetup={() => openReadinessFlow(nextIncompleteStep?.launchStep ?? 'start')}
+              onViewProfile={() => navigate('/c1/workers/profile')}
+            />
 
-            {/* Section 2: Recommended jobs */}
-            <Stack spacing={1.5}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {t('dashboard.sectionRecommendedJobs')}
-              </Typography>
-              <WorkerDashboardCardRail
-                cards={sections.jobsCards}
-                sectionHeader={sections.jobsSectionHeader}
-                showNavArrows={isDesktop}
-              />
-            </Stack>
+            <NextStepsChecklist
+              items={checklistItems}
+              onSelectItem={(item) => openReadinessFlow(item.launchStep)}
+            />
 
-            {/* Section 3: Job Readiness (profile improvements) */}
-            {sections.jobReadinessPayload && (
-              <Stack spacing={1.5}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  {t('dashboard.sectionJobReadiness')}
-                </Typography>
-                {sections.jobReadinessCompact ? (
-                  <JobReadinessCompactCard
-                    payload={sections.jobReadinessPayload}
-                    onTap={() => navigate(sections.jobReadinessPayload!.fixNowTo)}
-                  />
-                ) : (
-                  <WorkerDashboardCardRail
-                    cards={[sections.jobReadinessPayload]}
-                    showNavArrows={isDesktop}
-                  />
-                )}
-              </Stack>
-            )}
+            <RecommendedJobsSection
+              cards={sections.jobsCards.slice(0, 5)}
+              sectionHeader={sections.jobsSectionHeader}
+              showNavArrows={isDesktop}
+            />
+
+            <ApplicationsAssignmentsSnapshot
+              needsApplicationAttention={needsApplicationAttention}
+              upcomingAssignmentLabel={upcomingAssignmentLabel}
+              onOpenApplications={() => navigate('/c1/workers/applications')}
+              onOpenAssignments={() => navigate('/c1/workers/assignments')}
+            />
+
+            <ProfileNudgesSection
+              items={improvementTasks.slice(0, 3).map((task) => ({
+                id: task.id,
+                label: t(task.titleKey),
+              }))}
+              onSelectNudge={() => openReadinessFlow('start')}
+            />
 
             <WorkerQuickNav />
           </>
         )}
       </Stack>
+      <Dialog
+        fullScreen={isMobile}
+        maxWidth="md"
+        fullWidth
+        open={readinessFlowOpen}
+        onClose={closeReadinessFlow}
+      >
+        <DialogContent sx={{ p: 0 }}>
+          <Stack direction="row" justifyContent="flex-end" sx={{ p: 1 }}>
+            <IconButton onClick={closeReadinessFlow} aria-label="Close setup">
+              <CloseIcon />
+            </IconButton>
+          </Stack>
+          <JobReadinessFeed launchStep={readinessLaunchStep} />
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 };

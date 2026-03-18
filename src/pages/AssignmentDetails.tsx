@@ -133,7 +133,21 @@ const AssignmentDetails: React.FC = () => {
   }, [assignment?.worksiteAddress, resolvedWorksiteAddress]);
 
   useEffect(() => {
-    if (!assignmentId || !user?.uid) return;
+    console.debug('[AssignmentDetails] init', {
+      route: '/c1/workers/assignments/:assignmentId',
+      params: { assignmentId: assignmentId ?? null },
+      uid: user?.uid ?? null,
+    });
+    if (!assignmentId) {
+      setLoading(false);
+      setError('Missing assignmentId route parameter');
+      return;
+    }
+    if (!user?.uid) {
+      setLoading(false);
+      setError('You must be signed in to view assignment details');
+      return;
+    }
     loadAssignment();
   }, [assignmentId, user?.uid]);
 
@@ -332,6 +346,10 @@ const AssignmentDetails: React.FC = () => {
     try {
       setLoading(true);
       setError('');
+      console.debug('[AssignmentDetails] fetch start', {
+        assignmentId,
+        uid: user.uid,
+      });
 
       // Check if this is a confirmed application (prefixed with "app_")
       if (assignmentId.startsWith('app_')) {
@@ -420,6 +438,7 @@ const AssignmentDetails: React.FC = () => {
       }
 
       if (!assignmentSnap.exists()) {
+        console.warn('[AssignmentDetails] fetch missing', { assignmentId });
         setError('Assignment not found');
         setLoading(false);
         return;
@@ -438,6 +457,11 @@ const AssignmentDetails: React.FC = () => {
 
       // Verify this assignment belongs to the current user
       if ((data.userId || data.candidateId) !== user.uid) {
+        console.warn('[AssignmentDetails] fetch forbidden', {
+          assignmentId: assignmentSnap.id,
+          assignmentUserId: data.userId || data.candidateId || null,
+          uid: user.uid,
+        });
         setError('You do not have permission to view this assignment');
         setLoading(false);
         return;
@@ -520,8 +544,18 @@ const AssignmentDetails: React.FC = () => {
             ? data.physicalRequirements
             : undefined,
       });
+      console.debug('[AssignmentDetails] fetch success', {
+        assignmentId: assignmentSnap.id,
+        tenantId: resolvedTenantId || null,
+        hasJobOrderId: Boolean(data.jobOrderId),
+      });
     } catch (err: any) {
       console.error('Error loading assignment:', err);
+      console.error('[AssignmentDetails] fetch failure', {
+        assignmentId,
+        code: err?.code,
+        message: err?.message,
+      });
       setError(err.message || 'Failed to load assignment');
     } finally {
       setLoading(false);

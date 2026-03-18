@@ -7,7 +7,7 @@ export interface OpportunityRequirement {
   impact: number;
   cardTitle: string;
   cardQuestion: string;
-  requirementKind: 'certification' | 'availability' | 'experience' | 'gear' | 'preference';
+  requirementKind: 'certification' | 'availability' | 'experience' | 'gear' | 'preference' | 'identity';
   domain: 'durable_profile' | 'attestation_only' | 'verified_compliance';
   supportsCategories: TargetIndustry[];
   explanation: string;
@@ -30,6 +30,20 @@ export const READINESS_OPPORTUNITY_MAP: Record<TargetIndustry, IndustryOpportuni
     label: 'Hospitality',
     entrySummary: 'entry-level hospitality shifts',
     requirements: [
+      {
+        id: 'profile_photo',
+        label: 'Profile photo',
+        impact: 120,
+        cardTitle: 'Add your profile photo',
+        cardQuestion: 'Employers are more likely to choose workers with a clear photo.',
+        requirementKind: 'identity',
+        domain: 'durable_profile',
+        supportsCategories: ['hospitality', 'industrial'],
+        explanation: 'A clear profile photo helps employers trust who they are selecting for shifts.',
+        unlocksText: 'Improves shortlist visibility across shift types.',
+        resourceText: 'Upload or replace your photo in profile',
+        uploadSectionId: 'readiness-basic-identity',
+      },
       {
         id: 'food_handler_cert',
         label: 'Food Handler certification',
@@ -92,6 +106,20 @@ export const READINESS_OPPORTUNITY_MAP: Record<TargetIndustry, IndustryOpportuni
     label: 'Industrial',
     entrySummary: 'entry-level industrial shifts',
     requirements: [
+      {
+        id: 'profile_photo',
+        label: 'Profile photo',
+        impact: 120,
+        cardTitle: 'Add your profile photo',
+        cardQuestion: 'Employers are more likely to choose workers with a clear photo.',
+        requirementKind: 'identity',
+        domain: 'durable_profile',
+        supportsCategories: ['hospitality', 'industrial'],
+        explanation: 'A clear profile photo helps employers trust who they are selecting for shifts.',
+        unlocksText: 'Improves shortlist visibility across shift types.',
+        resourceText: 'Upload or replace your photo in profile',
+        uploadSectionId: 'readiness-basic-identity',
+      },
       {
         id: 'forklift_cert',
         label: 'Forklift certification',

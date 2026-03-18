@@ -58,6 +58,7 @@ import {
   FilterList,
   ViewList,
   ViewModule,
+  ChevronRight,
 } from '@mui/icons-material';
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -1244,9 +1245,23 @@ const PublicJobsBoard: React.FC = () => {
     }
   };
 
+  const navigateToJobDetails = (
+    job: Pick<PublicJobPosting, 'id' | 'tenantId'>,
+    source: 'grid_card' | 'grid_chevron' | 'feed_card' | 'deck_expand' | 'deck_card',
+    state?: Record<string, unknown>,
+  ) => {
+    const route = `/c1/jobs-board/${job.id}`;
+    console.debug('[JobsBoardNav] navigate', {
+      source,
+      route,
+      params: { postId: job.id, tenantId: job.tenantId },
+      state: state ?? null,
+    });
+    navigate(route, state ? { state } : undefined);
+  };
+
   const handleCardClick = (job: PublicJobPosting) => {
-    // Navigate to dedicated job posting detail page
-    navigate(`/c1/jobs-board/${job.id}`);
+    navigateToJobDetails(job, 'grid_card');
   };
 
   const handleCloseDialog = () => {
@@ -1794,8 +1809,9 @@ const PublicJobsBoard: React.FC = () => {
               }}
               onViewDetails={() => {
                 const job = feedQueue[0];
-                navigate(`/c1/jobs-board/${job.id}`, {
-                  state: { fromFeed: true, feedQueue: feedQueue.slice(1) },
+                navigateToJobDetails(job, 'feed_card', {
+                  fromFeed: true,
+                  feedQueue: feedQueue.slice(1),
                 });
               }}
             />
@@ -1810,7 +1826,7 @@ const PublicJobsBoard: React.FC = () => {
             const job = filteredJobs[deckIndex];
             if (job) {
               emitWorkerCardSignal({ type: 'job_expanded', entityId: job.id });
-              navigate(`/c1/jobs-board/${job.id}`);
+              navigateToJobDetails(job, 'deck_expand');
             }
           }}
           showSectionProgress={false}
@@ -1845,7 +1861,7 @@ const PublicJobsBoard: React.FC = () => {
                 showApplyButton={false}
                 onTap={() => {
                   emitWorkerCardSignal({ type: 'job_expanded', entityId: job.id });
-                  navigate(`/c1/jobs-board/${job.id}`);
+                  navigateToJobDetails(job, 'deck_card');
                 }}
               />
             );
@@ -1906,19 +1922,31 @@ const PublicJobsBoard: React.FC = () => {
                         </Stack>
                       )}
                     </Box>
-                    {user && (
-                      <FavoriteButton
-                        itemId={job.id}
-                        favoriteType="jobPosts"
-                        isFavorite={isFavorite}
-                        toggleFavorite={toggleFavorite}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                      {user && (
+                        <FavoriteButton
+                          itemId={job.id}
+                          favoriteType="jobPosts"
+                          isFavorite={isFavorite}
+                          toggleFavorite={toggleFavorite}
+                          size="small"
+                          tooltipText={{
+                            favorited: 'Remove from favorites',
+                            notFavorited: 'Add to favorites'
+                          }}
+                        />
+                      )}
+                      <IconButton
                         size="small"
-                        tooltipText={{
-                          favorited: 'Remove from favorites',
-                          notFavorited: 'Add to favorites'
+                        aria-label="Open job details"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToJobDetails(job, 'grid_chevron');
                         }}
-                      />
-                    )}
+                      >
+                        <ChevronRight fontSize="small" />
+                      </IconButton>
+                    </Box>
                   </Box>
 
                   {/* Hide pay rate for gig jobs - it's shown on individual shift cards instead */}

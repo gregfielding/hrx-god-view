@@ -350,7 +350,13 @@ const WorkerAssignments: React.FC = () => {
               const item = currentList[deckIndex];
               if (item) {
                 emitWorkerCardSignal({ type: 'assignment_viewed', entityId: item.assignmentId });
-                navigate(`/c1/workers/assignments/${item.assignmentId}`);
+                const route = `/c1/workers/assignments/${item.assignmentId}`;
+                console.debug('[WorkerAssignmentsNav] navigate', {
+                  source: 'card_deck_expand',
+                  route,
+                  params: { assignmentId: item.assignmentId },
+                });
+                navigate(route);
               }
             }}
             showSectionProgress={false}

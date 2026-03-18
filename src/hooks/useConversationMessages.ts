@@ -31,12 +31,25 @@ export function useConversationMessages(
     const unsub = onSnapshot(
       q,
       (snap) => {
+        console.debug('[WorkerInboxDetail] messages fetch success', {
+          tenantId,
+          conversationId,
+          count: snap.size,
+          routePath: `tenants/${tenantId}/conversations/${conversationId}/messages`,
+        });
         setMessages(
           snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ConversationMessage, 'id'>) }))
         );
         setLoading(false);
       },
       (err) => {
+        console.error('[WorkerInboxDetail] messages fetch failure', {
+          tenantId,
+          conversationId,
+          routePath: `tenants/${tenantId}/conversations/${conversationId}/messages`,
+          code: (err as any)?.code,
+          message: (err as any)?.message,
+        });
         setError(err);
         setLoading(false);
       }

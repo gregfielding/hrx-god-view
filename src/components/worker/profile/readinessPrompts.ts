@@ -4,10 +4,13 @@
  */
 
 export const READINESS_SECTION_IDS = {
+  'job-preferences': 'readiness-job-preferences',
   availability: 'readiness-availability',
   'work-experience': 'readiness-work-experience',
   certifications: 'readiness-certifications',
+  skills: 'readiness-skills',
   bio: 'readiness-bio',
+  education: 'readiness-education',
 } as const;
 
 export type ReadinessSectionId = keyof typeof READINESS_SECTION_IDS;

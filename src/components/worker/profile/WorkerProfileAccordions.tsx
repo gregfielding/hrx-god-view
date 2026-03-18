@@ -1,8 +1,5 @@
 /**
- * Worker Profile Accordions — embeds existing profile form components in accordion layout.
- * Reuses: JobPreferencesStep, ShiftPreferencesCard, WorkExperienceStep, EducationStep,
- * QualificationsStep, BioStep from apply steps and UserProfile. Does not modify admin views.
- * Spec: HRX / C1 Job Readiness Refactor Spec — Section 3
+ * Worker Profile Accordions — editor-focused groups for worker data only.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -12,19 +9,22 @@ import {
   AccordionDetails,
   Typography,
   Box,
+  Chip,
+  Stack,
+  Button,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { doc, onSnapshot } from 'firebase/firestore';
-import { db } from '../../../firebase';
-import { useT } from '../../../i18n';
+import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
 
-import JobPreferencesStep from '../../apply/steps/JobPreferencesStep';
+import { db } from '../../../firebase';
 import WorkExperienceStep from '../../apply/steps/WorkExperienceStep';
 import EducationStep from '../../apply/steps/EducationStep';
 import QualificationsStep from '../../apply/steps/QualificationsStep';
 import BioStep from '../../apply/steps/BioStep';
 import ShiftPreferencesCard from '../../../pages/UserProfile/components/ShiftPreferencesCard';
-import { READINESS_SECTION_IDS } from './readinessPrompts';
+import type { DesiredWorkType, TargetIndustry } from '../../../utils/jobReadinessOpportunityMap';
+import { buildReadinessIntentWritePatch } from '../../../utils/workerReadinessWriteModel';
+import ResumeUpload from '../../ResumeUpload';
 
 const accordionSx = {
   '&:before': { display: 'none' },
@@ -41,19 +41,21 @@ const accordionSx = {
 const summarySx = { '& .MuiAccordionSummary-content': { my: 1.5 } };
 const detailsSx = { pt: 0, pb: 2, px: 2 };
 
-export type ReadinessAccordionSection =
-  | 'availability'
-  | 'work-experience'
-  | 'certifications'
-  | 'skills'
-  | 'bio'
-  | 'education';
+export type WorkerProfileEditorSection =
+  | 'work-preferences'
+  | 'skills-experience'
+  | 'certifications-documents';
+
+// Backward-compatible alias for older imports.
+export type ReadinessAccordionSection = WorkerProfileEditorSection;
+
+type ScheduleIntentOption = 'full_time' | 'part_time' | 'gig';
+const ALL_SCHEDULE_OPTIONS: ScheduleIntentOption[] = ['full_time', 'part_time', 'gig'];
 
 type Props = {
   uid: string;
-  /** Controlled expanded section id; false = none expanded. */
-  expandedSection?: ReadinessAccordionSection | false;
-  onAccordionChange?: (section: ReadinessAccordionSection | false) => void;
+  expandedSection?: WorkerProfileEditorSection | false;
+  onAccordionChange?: (section: WorkerProfileEditorSection | false) => void;
 };
 
 const WorkerProfileAccordions: React.FC<Props> = ({
@@ -61,12 +63,14 @@ const WorkerProfileAccordions: React.FC<Props> = ({
   expandedSection = false,
   onAccordionChange,
 }) => {
-  const t = useT();
-  const [qualificationsData, setQualificationsData] = useState<any>({});
-  const [bioData, setBioData] = useState<any>({});
-  const [educationData, setEducationData] = useState<any>({});
-  const [workExperienceData, setWorkExperienceData] = useState<any>({});
-  const [preferencesData, setPreferencesData] = useState<any>({});
+  const [qualificationsData, setQualificationsData] = useState<Record<string, unknown>>({});
+  const [bioData, setBioData] = useState<Record<string, unknown>>({});
+  const [educationData, setEducationData] = useState<Record<string, unknown>>({});
+  const [workExperienceData, setWorkExperienceData] = useState<Record<string, unknown>>({});
+  const [targetIndustries, setTargetIndustries] = useState<TargetIndustry[]>([]);
+  const [selectedScheduleIntent, setSelectedScheduleIntent] = useState<ScheduleIntentOption[]>([]);
+  const [resumePresent, setResumePresent] = useState(false);
+  const [tenantId, setTenantId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (!uid) return;
@@ -95,117 +99,239 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         workExperience: data?.workExperience || data?.workHistory || [],
         workHistory: data?.workHistory || data?.workExperience || [],
       });
-      setPreferencesData({
-        availableToStartDate: data?.availableToStartDate || '',
-        availabilityNotes: data?.preferences?.availabilityNotes || '',
-        shiftPreferences: data?.preferences?.shiftPreferences || [],
-        industryPreferences: data?.preferences?.industryPreferences || [],
-        targetPay: data?.preferences?.targetPay || '',
-        shift: data?.preferences?.shift || '',
-      });
+      setResumePresent(Boolean(data?.resume?.fileUrl || data?.resumeUrl));
+      setTenantId(
+        typeof data?.tenantId === 'string'
+          ? data.tenantId
+          : typeof data?.activeTenantId === 'string'
+            ? data.activeTenantId
+            : undefined,
+      );
+      const workerProfile = (data?.workerProfile || {}) as Record<string, unknown>;
+      const workerPreferences = (workerProfile.preferences || {}) as Record<string, unknown>;
+      const persistedIndustries = (Array.isArray(workerPreferences.targetIndustries)
+        ? workerPreferences.targetIndustries
+        : [])
+        .map((v) => String(v || '').toLowerCase())
+        .filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial');
+      setTargetIndustries(persistedIndustries);
+
+      const hasPersistedScheduleOptions = Object.prototype.hasOwnProperty.call(
+        workerPreferences,
+        'scheduleIntentOptions',
+      );
+      const persistedScheduleOptions = (Array.isArray(workerPreferences.scheduleIntentOptions)
+        ? workerPreferences.scheduleIntentOptions
+        : [])
+        .map((v) => String(v || '').toLowerCase())
+        .filter((v): v is ScheduleIntentOption => v === 'full_time' || v === 'part_time' || v === 'gig');
+      if (hasPersistedScheduleOptions) {
+        setSelectedScheduleIntent(Array.from(new Set(persistedScheduleOptions)));
+      } else {
+        const persistedWorkType = String(workerPreferences.desiredWorkType || '').toLowerCase();
+        if (persistedWorkType === 'full_time' || persistedWorkType === 'part_time' || persistedWorkType === 'gig') {
+          setSelectedScheduleIntent([persistedWorkType as ScheduleIntentOption]);
+        } else if (persistedWorkType === 'any') {
+          setSelectedScheduleIntent([...ALL_SCHEDULE_OPTIONS]);
+        } else {
+          setSelectedScheduleIntent([]);
+        }
+      }
     });
     return () => unsubscribe();
   }, [uid]);
 
-  const handleQualificationsChange = (updated: any) =>
-    setQualificationsData((prev: any) => ({ ...prev, ...updated }));
-  const handleBioChange = (updated: any) =>
-    setBioData((prev: any) => ({ ...prev, ...updated }));
-  const handleEducationChange = (updated: any) =>
-    setEducationData((prev: any) => ({ ...prev, ...updated }));
-  const handleWorkExperienceChange = (updated: any) =>
-    setWorkExperienceData((prev: any) => ({ ...prev, ...updated }));
-  const handlePreferencesChange = (updated: any) =>
-    setPreferencesData((prev: any) => ({ ...prev, ...updated }));
+  const handleQualificationsChange = (updated: Record<string, unknown>) =>
+    setQualificationsData((prev) => ({ ...prev, ...updated }));
+  const handleBioChange = (updated: Record<string, unknown>) =>
+    setBioData((prev) => ({ ...prev, ...updated }));
+  const handleEducationChange = (updated: Record<string, unknown>) =>
+    setEducationData((prev) => ({ ...prev, ...updated }));
+  const handleWorkExperienceChange = (updated: Record<string, unknown>) =>
+    setWorkExperienceData((prev) => ({ ...prev, ...updated }));
+  const desiredWorkType: DesiredWorkType = selectedScheduleIntent.length === 1
+    ? selectedScheduleIntent[0]
+    : 'any';
+  const anyWorkSelected = selectedScheduleIntent.length === ALL_SCHEDULE_OPTIONS.length;
 
-  const handleAccordionChange = (section: ReadinessAccordionSection) => (_: React.SyntheticEvent, expanded: boolean) => {
+  const persistJobPreferences = async (
+    nextIndustries: TargetIndustry[],
+    nextScheduleOptions: ScheduleIntentOption[],
+  ) => {
+    if (!uid) return;
+    const nextDesiredWorkType: DesiredWorkType = nextScheduleOptions.length === 1
+      ? nextScheduleOptions[0]
+      : 'any';
+    await updateDoc(
+      doc(db, 'users', uid),
+      buildReadinessIntentWritePatch(nextDesiredWorkType, nextIndustries, nextScheduleOptions),
+    );
+  };
+
+  const handleIndustryToggle = async (industry: TargetIndustry) => {
+    const next = targetIndustries.includes(industry)
+      ? targetIndustries.filter((i) => i !== industry)
+      : [...targetIndustries, industry];
+    const normalized = Array.from(new Set(next));
+    setTargetIndustries(normalized);
+    await persistJobPreferences(normalized, selectedScheduleIntent);
+  };
+
+  const handleScheduleToggle = async (option: ScheduleIntentOption | 'any') => {
+    const nextSelection: ScheduleIntentOption[] = (() => {
+      if (option === 'any') {
+        return selectedScheduleIntent.length === ALL_SCHEDULE_OPTIONS.length
+          ? []
+          : [...ALL_SCHEDULE_OPTIONS];
+      }
+      const hasOption = selectedScheduleIntent.includes(option);
+      if (hasOption) return selectedScheduleIntent.filter((v) => v !== option);
+      return Array.from(new Set([...selectedScheduleIntent, option]));
+    })();
+    setSelectedScheduleIntent(nextSelection);
+    await persistJobPreferences(targetIndustries, nextSelection);
+  };
+
+  const handleAccordionChange = (section: WorkerProfileEditorSection) => (_: React.SyntheticEvent, expanded: boolean) => {
     onAccordionChange?.(expanded ? section : false);
+  };
+
+  const hasIndustries = targetIndustries.length > 0;
+  const hasScheduleIntent = selectedScheduleIntent.length > 0;
+  const hasSkills = Array.isArray(qualificationsData.skills) && qualificationsData.skills.length > 0;
+  const hasWorkHistory = Array.isArray(workExperienceData.workExperience) && workExperienceData.workExperience.length > 0;
+  const hasBio = typeof bioData.bio === 'string' && bioData.bio.trim().length > 0;
+  const hasEducation = Array.isArray(educationData.education) && educationData.education.length > 0;
+  const hasCertifications = Array.isArray(educationData.certifications) && educationData.certifications.length > 0;
+
+  const workPreferencesStatus: 'complete' | 'action_required' | 'recommended' =
+    hasIndustries && hasScheduleIntent ? 'complete' : 'action_required';
+  const skillsExperienceStatus: 'complete' | 'action_required' | 'recommended' =
+    hasSkills && hasWorkHistory ? 'complete' : (hasBio || hasEducation ? 'recommended' : 'action_required');
+  const certificationsDocumentsStatus: 'complete' | 'action_required' | 'recommended' =
+    hasCertifications && resumePresent ? 'complete' : (hasCertifications || resumePresent ? 'recommended' : 'action_required');
+
+  const renderStatusChip = (status: 'complete' | 'action_required' | 'recommended') => {
+    const color = status === 'complete' ? 'success' : status === 'action_required' ? 'warning' : 'default';
+    const label = status === 'complete' ? 'Complete' : status === 'action_required' ? 'Action required' : 'Recommended';
+    return (
+      <Chip
+        size="small"
+        variant="outlined"
+        color={color}
+        label={label}
+        sx={{ ml: 1 }}
+      />
+    );
   };
 
   return (
     <Box data-profile-section>
-      {/* 1. Availability & Preferences */}
+      {/* 1. Work Preferences */}
       <Accordion
-        id={READINESS_SECTION_IDS.availability}
-        expanded={expandedSection === 'availability'}
-        onChange={handleAccordionChange('availability')}
+        id="profile-work-preferences"
+        expanded={expandedSection === 'work-preferences'}
+        onChange={handleAccordionChange('work-preferences')}
         variant="outlined"
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>{t('profile.availabilityPreferences')}</Typography>
-        </AccordionSummary>
-        <AccordionDetails sx={detailsSx}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('profile.availabilitySubtext')}
-          </Typography>
-          <JobPreferencesStep value={preferencesData} onChange={handlePreferencesChange} />
-          <Box sx={{ mt: 2 }}>
-            <ShiftPreferencesCard uid={uid} />
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Typography fontWeight={600}>Work Preferences</Typography>
+            {renderStatusChip(workPreferencesStatus)}
           </Box>
-        </AccordionDetails>
-      </Accordion>
-
-      {/* 2. Work Experience */}
-      <Accordion
-        id={READINESS_SECTION_IDS['work-experience']}
-        expanded={expandedSection === 'work-experience'}
-        onChange={handleAccordionChange('work-experience')}
-        variant="outlined"
-        sx={accordionSx}
-      >
-        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>{t('profile.workExperience')}</Typography>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('profile.workExperienceSubtext')}
+            Set your target work types, schedule intent, and availability.
           </Typography>
-          <WorkExperienceStep
-            value={workExperienceData}
-            onChange={handleWorkExperienceChange}
-            context="profile"
-          />
+          <Stack spacing={2}>
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                What type of work are you interested in?
+              </Typography>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Button
+                  size="small"
+                  variant={targetIndustries.includes('hospitality') ? 'contained' : 'outlined'}
+                  onClick={() => handleIndustryToggle('hospitality')}
+                >
+                  Hospitality
+                </Button>
+                <Button
+                  size="small"
+                  variant={targetIndustries.includes('industrial') ? 'contained' : 'outlined'}
+                  onClick={() => handleIndustryToggle('industrial')}
+                >
+                  Industrial
+                </Button>
+              </Stack>
+            </Box>
+            <Box>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+                What kind of schedule are you looking for?
+              </Typography>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+                <Button
+                  size="small"
+                  variant={selectedScheduleIntent.includes('full_time') ? 'contained' : 'outlined'}
+                  onClick={() => handleScheduleToggle('full_time')}
+                >
+                  Full-Time
+                </Button>
+                <Button
+                  size="small"
+                  variant={selectedScheduleIntent.includes('part_time') ? 'contained' : 'outlined'}
+                  onClick={() => handleScheduleToggle('part_time')}
+                >
+                  Part-Time
+                </Button>
+                <Button
+                  size="small"
+                  variant={selectedScheduleIntent.includes('gig') ? 'contained' : 'outlined'}
+                  onClick={() => handleScheduleToggle('gig')}
+                >
+                  Gig Work
+                </Button>
+                <Button
+                  size="small"
+                  variant={anyWorkSelected ? 'contained' : 'outlined'}
+                  onClick={() => handleScheduleToggle('any')}
+                >
+                  Any Work
+                </Button>
+              </Stack>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              Saved preference: {desiredWorkType === 'any' ? 'Any work schedule' : desiredWorkType.replace('_', ' ')}
+            </Typography>
+            <Box sx={{ pt: 1 }}>
+              <ShiftPreferencesCard uid={uid} />
+            </Box>
+          </Stack>
         </AccordionDetails>
       </Accordion>
 
-      {/* 3. Certifications */}
+      {/* 2. Skills & Experience */}
       <Accordion
-        id={READINESS_SECTION_IDS.certifications}
-        expanded={expandedSection === 'certifications'}
-        onChange={handleAccordionChange('certifications')}
+        id="profile-skills-experience"
+        expanded={expandedSection === 'skills-experience'}
+        onChange={handleAccordionChange('skills-experience')}
         variant="outlined"
         sx={accordionSx}
       >
         <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>{t('profile.certifications')}</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Typography fontWeight={600}>Skills & Experience</Typography>
+            {renderStatusChip(skillsExperienceStatus)}
+          </Box>
         </AccordionSummary>
         <AccordionDetails sx={detailsSx}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('profile.certificationsSubtext')}
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Keep your skills, work history, education, and summary up to date.
           </Typography>
-          <EducationStep
-            value={educationData}
-            onChange={handleEducationChange}
-            context="profile"
-            showOnly="certifications"
-          />
-        </AccordionDetails>
-      </Accordion>
-
-      {/* 4. Skills & Languages */}
-      <Accordion
-        expanded={expandedSection === 'skills'}
-        onChange={handleAccordionChange('skills')}
-        variant="outlined"
-        sx={accordionSx}
-      >
-        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>{t('profile.skillsLanguages')}</Typography>
-        </AccordionSummary>
-        <AccordionDetails sx={detailsSx}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('profile.skillsLanguagesSubtext')}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+            Skills & Languages
           </Typography>
           <QualificationsStep
             value={qualificationsData}
@@ -213,47 +339,66 @@ const WorkerProfileAccordions: React.FC<Props> = ({
             context="profile"
             profileUid={uid}
           />
-        </AccordionDetails>
-      </Accordion>
-
-      {/* 5. Bio */}
-      <Accordion
-        id={READINESS_SECTION_IDS.bio}
-        expanded={expandedSection === 'bio'}
-        onChange={handleAccordionChange('bio')}
-        variant="outlined"
-        sx={accordionSx}
-      >
-        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>{t('profile.bio')}</Typography>
-        </AccordionSummary>
-        <AccordionDetails sx={detailsSx}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('profile.bioSubtext')}
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2, mb: 1 }}>
+            Work History
           </Typography>
-          <BioStep value={bioData} onChange={handleBioChange} />
-        </AccordionDetails>
-      </Accordion>
-
-      {/* 6. Education */}
-      <Accordion
-        expanded={expandedSection === 'education'}
-        onChange={handleAccordionChange('education')}
-        variant="outlined"
-        sx={accordionSx}
-      >
-        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
-          <Typography fontWeight={600}>{t('profile.education')}</Typography>
-        </AccordionSummary>
-        <AccordionDetails sx={detailsSx}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            {t('profile.educationSubtext')}
+          <WorkExperienceStep
+            value={workExperienceData}
+            onChange={handleWorkExperienceChange}
+            context="profile"
+          />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2, mb: 1 }}>
+            Education
           </Typography>
           <EducationStep
             value={educationData}
             onChange={handleEducationChange}
             context="profile"
             showOnly="education"
+          />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2, mb: 1 }}>
+            Bio / Summary
+          </Typography>
+          <BioStep value={bioData} onChange={handleBioChange} />
+        </AccordionDetails>
+      </Accordion>
+
+      {/* 3. Certifications & Documents */}
+      <Accordion
+        id="profile-certifications-documents"
+        expanded={expandedSection === 'certifications-documents'}
+        onChange={handleAccordionChange('certifications-documents')}
+        variant="outlined"
+        sx={accordionSx}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={summarySx}>
+          <Box sx={{ display: 'flex', alignItems: 'center' }}>
+            <Typography fontWeight={600}>Certifications & Documents</Typography>
+            {renderStatusChip(certificationsDocumentsStatus)}
+          </Box>
+        </AccordionSummary>
+        <AccordionDetails sx={detailsSx}>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+            Upload certifications and resume documents recruiters can review.
+          </Typography>
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
+            Certifications
+          </Typography>
+          <EducationStep
+            value={educationData}
+            onChange={handleEducationChange}
+            context="profile"
+            showOnly="certifications"
+          />
+          <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2, mb: 1 }}>
+            Resume
+          </Typography>
+          <ResumeUpload
+            userId={uid}
+            tenantId={tenantId}
+            hideTitle
+            compact
+            onResumeParsed={() => setResumePresent(true)}
           />
         </AccordionDetails>
       </Accordion>

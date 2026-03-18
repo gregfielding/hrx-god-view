@@ -72,6 +72,7 @@ import { getRequirementsWithStatus, getRequirementsWithStatusForJobPost, getElig
 import { RequirementInteraction } from '../components/RequirementInteraction';
 import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
+import { buildCanonicalWorkerProfileWritePatch } from '../utils/workerReadinessWriteModel';
 import AuthDialog from '../components/AuthDialog';
 import WorkerBottomSheet from '../components/worker/WorkerBottomSheet';
 
@@ -214,6 +215,11 @@ const JobPostingDetail: React.FC = () => {
   }, [user, guestLanguage]);
 
   useEffect(() => {
+    console.debug('[JobDetails] init', {
+      route: '/c1/jobs-board/:postId',
+      params: { postId: postId ?? null, tenantSlug: tenantSlug ?? null },
+      resolvedTenantId: resolvedTenantId ?? null,
+    });
     if (!resolvedTenantId || !postId) {
       console.log('⚠️ Missing tenantId or postId:', {
         resolvedTenantId,
@@ -221,6 +227,8 @@ const JobPostingDetail: React.FC = () => {
         isC1Route,
         authTenantId,
       });
+      setLoading(false);
+      setError(!postId ? 'Missing postId route parameter' : 'Missing tenant context for job details');
       return;
     }
 
@@ -388,6 +396,10 @@ const JobPostingDetail: React.FC = () => {
               showWorkersNeeded:
                 postData.showWorkersNeeded !== undefined ? postData.showWorkersNeeded : false,
             });
+            console.debug('[JobDetails] fetch success', {
+              postId: postSnap.id,
+              tenantId: resolvedTenantId,
+            });
           } else {
             console.error('❌ Job posting not found:', { resolvedTenantId, postId });
             setError('Job posting not found');
@@ -395,6 +407,12 @@ const JobPostingDetail: React.FC = () => {
         }
       } catch (err: any) {
         console.error('❌ Error loading job posting:', err);
+        console.error('[JobDetails] fetch failure', {
+          postId,
+          tenantId: resolvedTenantId,
+          code: err?.code,
+          message: err?.message,
+        });
         console.error('Error details:', {
           code: err.code,
           message: err.message,
@@ -1186,7 +1204,10 @@ const JobPostingDetail: React.FC = () => {
 
       if (category === 'skills') {
         if (answer === 'Yes') {
-          await updateDoc(userRef, { skills: arrayUnion(label), updatedAt: ts });
+          await updateDoc(
+            userRef,
+            buildCanonicalWorkerProfileWritePatch({ skills: arrayUnion(label), updatedAt: ts }),
+          );
           setUserProfile((p: any) => {
             const list = p?.skills || [];
             const has = list.some((s: any) => (typeof s === 'string' ? s : s?.name) === label);
@@ -1197,12 +1218,18 @@ const JobPostingDetail: React.FC = () => {
           const userData = userSnap.exists() ? userSnap.data() : {};
           const arr = Array.isArray((userData as any).skills) ? (userData as any).skills : [];
           const filtered = arr.filter((s: any) => (typeof s === 'string' ? s : s?.name) !== label);
-          await updateDoc(userRef, { skills: filtered, updatedAt: ts });
+          await updateDoc(
+            userRef,
+            buildCanonicalWorkerProfileWritePatch({ skills: filtered, updatedAt: ts }),
+          );
           setUserProfile((p: any) => ({ ...p, skills: filtered, updatedAt: new Date() }));
         }
       } else if (category === 'languages') {
         if (answer === 'Yes') {
-          await updateDoc(userRef, { languages: arrayUnion(label), updatedAt: ts });
+          await updateDoc(
+            userRef,
+            buildCanonicalWorkerProfileWritePatch({ languages: arrayUnion(label), updatedAt: ts }),
+          );
           setUserProfile((p: any) => {
             const list = p?.languages || [];
             const has = list.some((l: any) => (typeof l === 'string' ? l : l?.name) === label);
@@ -1213,16 +1240,25 @@ const JobPostingDetail: React.FC = () => {
           const userData = userSnap.exists() ? userSnap.data() : {};
           const arr = Array.isArray((userData as any).languages) ? (userData as any).languages : [];
           const filtered = arr.filter((l: any) => (typeof l === 'string' ? l : l?.name) !== label);
-          await updateDoc(userRef, { languages: filtered, updatedAt: ts });
+          await updateDoc(
+            userRef,
+            buildCanonicalWorkerProfileWritePatch({ languages: filtered, updatedAt: ts }),
+          );
           setUserProfile((p: any) => ({ ...p, languages: filtered, updatedAt: new Date() }));
         }
       } else if (category === 'experienceLevels' && answer === 'Yes') {
-        await updateDoc(userRef, { experienceLevel: label, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({ experienceLevel: label, updatedAt: ts }),
+        );
         setUserProfile((p: any) => ({ ...p, experienceLevel: label, updatedAt: new Date() }));
       } else if (category === 'licensesCerts' && !isFollowUpAck) {
         const certObj = { name: label };
         if (answer === 'Yes') {
-          await updateDoc(userRef, { certifications: arrayUnion(certObj), updatedAt: ts });
+          await updateDoc(
+            userRef,
+            buildCanonicalWorkerProfileWritePatch({ certifications: arrayUnion(certObj), updatedAt: ts }),
+          );
           setUserProfile((p: any) => {
             const certs = p?.certifications || [];
             const has = certs.some((c: any) => (typeof c === 'string' ? c : c?.name) === label);
@@ -1236,7 +1272,10 @@ const JobPostingDetail: React.FC = () => {
             const name = typeof c === 'string' ? c : c?.name;
             return name !== label || (typeof c === 'object' && c?.fileUrl);
           });
-          await updateDoc(userRef, { certifications: filtered, updatedAt: ts });
+          await updateDoc(
+            userRef,
+            buildCanonicalWorkerProfileWritePatch({ certifications: filtered, updatedAt: ts }),
+          );
           setUserProfile((p: any) => ({ ...p, certifications: filtered, updatedAt: new Date() }));
         }
       } else if (category === 'additionalScreenings' && !isFollowUpAck) {
@@ -1244,28 +1283,52 @@ const JobPostingDetail: React.FC = () => {
         const userData = userSnap.exists() ? userSnap.data() : {};
         const existing = (userData as any).additionalScreenings || {};
         const nextScreenings = { ...existing, [label]: answer };
-        await updateDoc(userRef, { additionalScreenings: nextScreenings, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({ additionalScreenings: nextScreenings, updatedAt: ts }),
+        );
         setUserProfile((p: any) => ({ ...p, additionalScreenings: nextScreenings, updatedAt: new Date() }));
       } else if (isFollowUpAck && ackKey) {
         const userSnap = await getDoc(userRef);
         const userData = userSnap.exists() ? userSnap.data() : {};
         const existing = (userData as any).requirementsAcks || {};
-        await updateDoc(userRef, { requirementsAcks: { ...existing, [ackKey]: answer }, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({
+            requirementsAcks: { ...existing, [ackKey]: answer },
+            updatedAt: ts,
+          }),
+        );
         setUserProfile((p: any) => ({ ...p, requirementsAcks: { ...(p?.requirementsAcks || {}), [ackKey]: answer }, updatedAt: new Date() }));
       } else if (ackKey === 'eVerifyComfort') {
-        await updateDoc(userRef, { comfortableEVerify: answer, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({ comfortableEVerify: answer, updatedAt: ts }),
+        );
         setUserProfile((p: any) => ({ ...p, comfortableEVerify: answer, updatedAt: new Date() }));
       } else if (ackKey === 'backgroundScreeningComfort') {
-        await updateDoc(userRef, { comfortablePassBackground: answer, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({ comfortablePassBackground: answer, updatedAt: ts }),
+        );
         setUserProfile((p: any) => ({ ...p, comfortablePassBackground: answer, updatedAt: new Date() }));
       } else if (ackKey === 'drugScreeningComfort') {
-        await updateDoc(userRef, { comfortablePassDrug: answer, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({ comfortablePassDrug: answer, updatedAt: ts }),
+        );
         setUserProfile((p: any) => ({ ...p, comfortablePassDrug: answer, updatedAt: new Date() }));
       } else if (ackKey) {
         const userSnap = await getDoc(userRef);
         const userData = userSnap.exists() ? userSnap.data() : {};
         const existing = (userData as any).requirementsAcks || {};
-        await updateDoc(userRef, { requirementsAcks: { ...existing, [ackKey]: answer }, updatedAt: ts });
+        await updateDoc(
+          userRef,
+          buildCanonicalWorkerProfileWritePatch({
+            requirementsAcks: { ...existing, [ackKey]: answer },
+            updatedAt: ts,
+          }),
+        );
         setUserProfile((p: any) => ({ ...p, requirementsAcks: { ...(p?.requirementsAcks || {}), [ackKey]: answer }, updatedAt: new Date() }));
       }
     } catch (err) {
@@ -1296,7 +1359,10 @@ const JobPostingDetail: React.FC = () => {
         return next;
       });
       const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, { educationLevel: level, updatedAt: serverTimestamp() });
+      await updateDoc(
+        userRef,
+        buildCanonicalWorkerProfileWritePatch({ educationLevel: level, updatedAt: serverTimestamp() }),
+      );
       setUserProfile((p: any) => ({ ...p, educationLevel: level }));
     } catch (err) {
       console.error('Failed to update education:', err);
@@ -1433,6 +1499,7 @@ const JobPostingDetail: React.FC = () => {
     skipConfirmPrompt?: boolean;
     suppressAlerts?: boolean;
     redirectOnAccept?: boolean;
+  entryPoint?: 'accept_button' | 'decline_button' | 'offer_confirmation_drawer' | 'unknown';
   };
 
   const handleAssignmentDecision = async (
@@ -1446,6 +1513,7 @@ const JobPostingDetail: React.FC = () => {
       skipConfirmPrompt = false,
       suppressAlerts = false,
       redirectOnAccept = true,
+      entryPoint = 'unknown',
     } = options;
 
     if (!skipConfirmPrompt) {
@@ -1475,6 +1543,24 @@ const JobPostingDetail: React.FC = () => {
         return;
       }
 
+      if (applicationDocId) {
+        const appRef = doc(db, 'tenants', resolvedTenantId, 'applications', applicationDocId);
+        await setDoc(
+          appRef,
+          {
+            lastAssignmentDecision: {
+              decision,
+              assignmentId,
+              shiftId: shiftId || null,
+              entryPoint,
+              byUid: user.uid,
+              at: serverTimestamp(),
+            },
+          },
+          { merge: true },
+        );
+      }
+
       const respondFn = httpsCallable(functions, 'respondToAssignment');
       await respondFn({
         tenantId: resolvedTenantId,
@@ -1501,6 +1587,11 @@ const JobPostingDetail: React.FC = () => {
       } else {
         if (shiftId) setShiftStatuses((prev) => ({ ...prev, [shiftId]: 'withdrawn' }));
         setApplicationStatus('withdrawn');
+        if (user?.uid && assignmentId) {
+          logAssignmentUpdateActivity(user.uid, assignmentId, 'declined').catch((e) =>
+            console.warn('Failed to log assignment declined activity:', e)
+          );
+        }
         if (!suppressAlerts) {
           alert('You declined this job. Your application has been withdrawn.');
         }
@@ -1532,11 +1623,11 @@ const JobPostingDetail: React.FC = () => {
   };
 
   const handleDeclineAssignment = async () => {
-    await handleAssignmentDecision('decline');
+    await handleAssignmentDecision('decline', undefined, { entryPoint: 'decline_button' });
   };
 
   const handleDeclineAssignmentForShift = async (shiftId: string) => {
-    await handleAssignmentDecision('decline', shiftId);
+    await handleAssignmentDecision('decline', shiftId, { entryPoint: 'decline_button' });
   };
 
   const handleSubmitOfferConfirmation = async () => {
@@ -1586,6 +1677,7 @@ const JobPostingDetail: React.FC = () => {
         skipConfirmPrompt: true,
         suppressAlerts: true,
         redirectOnAccept: true,
+        entryPoint: 'offer_confirmation_drawer',
       });
       setOfferConfirmationOpen(false);
     } catch (err) {

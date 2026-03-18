@@ -1,8 +1,9 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { 
   Box, 
   Typography, 
   Button, 
+  Stack,
   Paper, 
   LinearProgress, 
   Alert,
@@ -31,6 +32,10 @@ interface ResumeUploadProps {
   userId: string;
   tenantId?: string;
   onResumeParsed?: (parsedData: any) => void;
+  onParsingStatusChange?: (status: ParsingStatus['status']) => void;
+  hideTitle?: boolean;
+  compact?: boolean;
+  hideCaptureActions?: boolean;
 }
 
 interface ParsingStatus {
@@ -41,60 +46,107 @@ interface ParsingStatus {
   parsedData?: any;
 }
 
+interface PendingPreview {
+  name: string;
+  url: string;
+  isImage: boolean;
+}
+
 const ResumeUpload: React.FC<ResumeUploadProps> = ({ 
   userId, 
   tenantId, 
-  onResumeParsed 
+  onResumeParsed,
+  onParsingStatusChange,
+  hideTitle = false,
+  compact = false,
+  hideCaptureActions = false,
 }) => {
   const [parsingStatus, setParsingStatus] = useState<ParsingStatus>({
     status: 'idle',
     progress: 0,
     message: 'Ready to upload resume'
   });
-  const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingPreviews, setPendingPreviews] = useState<PendingPreview[]>([]);
+  const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const photoLibraryInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    onParsingStatusChange?.(parsingStatus.status);
+  }, [onParsingStatusChange, parsingStatus.status]);
 
   const functions = getFunctions();
   const auth = getAuth();
   const parseResume = httpsCallable(functions, 'parseResume');
   const getResumeParsingStatus = httpsCallable(functions, 'getResumeParsingStatus');
 
-  const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    const file = acceptedFiles[0];
-    if (!file) return;
+  void parseResume;
+  void getResumeParsingStatus;
 
-    // Validate file type
+  useEffect(() => () => {
+    pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
+  }, [pendingPreviews]);
+
+  const processSelectedFiles = useCallback((selected: File[]) => {
+    const files = selected.filter(Boolean);
+    if (files.length === 0) return;
+
     const allowedTypes = [
       'application/pdf',
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
       'application/msword',
-      'text/plain'
+      'text/plain',
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
     ];
 
-    if (!allowedTypes.includes(file.type)) {
+    const invalid = files.find((file) => !allowedTypes.includes(file.type));
+    if (invalid) {
       setParsingStatus({
         status: 'error',
         progress: 0,
-        message: 'Invalid file type. Please upload PDF, Word, or text files only.',
-        error: 'Invalid file type'
+        message: 'Invalid file type. Please upload PDF, Word, text, or image files only.',
+        error: 'Invalid file type',
       });
       return;
     }
 
-    // Validate file size (10MB limit)
-    if (file.size > 10 * 1024 * 1024) {
+    const oversized = files.find((file) => file.size > 10 * 1024 * 1024);
+    if (oversized) {
       setParsingStatus({
         status: 'error',
         progress: 0,
-        message: 'File too large. Please upload files smaller than 10MB.',
-        error: 'File too large'
+        message: 'File too large. Please upload files smaller than 10MB each.',
+        error: 'File too large',
       });
       return;
     }
 
-    setUploadedFile(file);
-    await handleFileUpload(file);
-  }, []);
+    pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
+    const previews = files.map((file) => ({
+      name: file.name,
+      url: URL.createObjectURL(file),
+      isImage: file.type.startsWith('image/'),
+    }));
+    setPendingFiles(files);
+    setPendingPreviews(previews);
+    setParsingStatus({
+      status: 'idle',
+      progress: 0,
+      message:
+        files.length > 1
+          ? `${files.length} files selected. Preview and tap "Upload selected" to continue.`
+          : 'File selected. Tap "Upload selected" to continue.',
+    });
+  }, [pendingPreviews]);
+
+  const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    processSelectedFiles(acceptedFiles);
+  }, [processSelectedFiles]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -102,10 +154,30 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'application/msword': ['.doc'],
-      'text/plain': ['.txt']
+      'text/plain': ['.txt'],
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/webp': ['.webp'],
+      'image/heic': ['.heic'],
+      'image/heif': ['.heif'],
     },
-    multiple: false
+    multiple: true
   });
+
+  const handleHiddenInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    processSelectedFiles(files);
+    event.target.value = '';
+  };
+
+  const handleUploadSelected = async () => {
+    const file = pendingFiles[0];
+    if (!file) return;
+    await handleFileUpload(file);
+    setPendingFiles([]);
+    pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
+    setPendingPreviews([]);
+  };
 
   const handleFileUpload = async (file: File) => {
     try {
@@ -259,7 +331,6 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
       progress: 0,
       message: 'Ready to upload resume'
     });
-    setUploadedFile(null);
   };
 
   const getStatusColor = () => {
@@ -284,14 +355,16 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
 
   return (
     <Box sx={{ width: '100%', maxWidth: 600, mx: 'auto' }}>
-      <Typography variant="h6" gutterBottom>
-        Upload Resume
-      </Typography>
+      {!hideTitle && (
+        <Typography variant="h6" gutterBottom>
+          Upload Resume
+        </Typography>
+      )}
       
       <Paper
         {...getRootProps()}
         sx={{
-          p: 3,
+          p: compact ? 2 : 3,
           textAlign: 'center',
           cursor: 'pointer',
           border: '2px dashed',
@@ -309,40 +382,133 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         <CloudUpload sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
         
         <Typography variant="h6" gutterBottom>
-          {isDragActive ? 'Drop your resume here' : 'Drag & drop your resume'}
+          {isDragActive ? 'Drop your resume or photos here' : 'Upload your resume'}
         </Typography>
         
         <Typography variant="body2" color="text.secondary" gutterBottom>
-          or click to browse files
+          {hideCaptureActions ? 'Drag and drop a file, or tap to browse.' : 'Use file upload, camera capture, or photo library'}
         </Typography>
+
+        {!hideCaptureActions && (
+          <Stack direction="row" spacing={1} justifyContent="center" useFlexGap flexWrap="wrap" sx={{ mt: 2 }}>
+            <Button size="small" variant="outlined" onClick={() => cameraInputRef.current?.click()}>
+              Use camera
+            </Button>
+            <Button size="small" variant="outlined" onClick={() => photoLibraryInputRef.current?.click()}>
+              Photo library
+            </Button>
+          </Stack>
+        )}
         
-        <Box sx={{ mt: 2 }}>
-          <Chip 
-            label="PDF" 
-            size="small" 
-            sx={{ mr: 1, mb: 1 }} 
-          />
-          <Chip 
-            label="Word (.docx)" 
-            size="small" 
-            sx={{ mr: 1, mb: 1 }} 
-          />
-          <Chip 
-            label="Word (.doc)" 
-            size="small" 
-            sx={{ mr: 1, mb: 1 }} 
-          />
-          <Chip 
-            label="Text (.txt)" 
-            size="small" 
-            sx={{ mb: 1 }} 
-          />
-        </Box>
+        {!compact && (
+          <Box sx={{ mt: 2 }}>
+            <Chip
+              label="PDF"
+              size="small"
+              sx={{ mr: 1, mb: 1 }}
+            />
+            <Chip
+              label="Word (.docx)"
+              size="small"
+              sx={{ mr: 1, mb: 1 }}
+            />
+            <Chip
+              label="Word (.doc)"
+              size="small"
+              sx={{ mr: 1, mb: 1 }}
+            />
+            <Chip
+              label="Text (.txt)"
+              size="small"
+              sx={{ mb: 1 }}
+            />
+            <Chip
+              label="Images (.jpg/.png/.heic)"
+              size="small"
+              sx={{ mb: 1 }}
+            />
+          </Box>
+        )}
         
         <Typography variant="caption" color="text.secondary">
-          Maximum file size: 10MB
+          Maximum file size: 10MB each
         </Typography>
       </Paper>
+
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*,.pdf,.doc,.docx,.txt"
+        capture="environment"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleHiddenInputChange}
+      />
+      <input
+        ref={photoLibraryInputRef}
+        type="file"
+        accept="image/*,.pdf,.doc,.docx,.txt"
+        multiple
+        style={{ display: 'none' }}
+        onChange={handleHiddenInputChange}
+      />
+
+      {pendingFiles.length > 0 && (
+        <Paper sx={{ mt: 2, p: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+            Preview before submit
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+            {pendingFiles.length > 1
+              ? `${pendingFiles.length} pages/files selected. Multi-page capture is supported in one flow.`
+              : '1 file selected.'}
+          </Typography>
+          <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
+            {pendingPreviews.map((preview, idx) => (
+              <Box
+                key={`${preview.name}-${idx}`}
+                sx={{
+                  width: 88,
+                  height: 88,
+                  border: '1px solid',
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  overflow: 'hidden',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  bgcolor: 'grey.50',
+                  p: 0.5,
+                }}
+              >
+                {preview.isImage ? (
+                  <img src={preview.url} alt={preview.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <Typography variant="caption" color="text.secondary" align="center">
+                    {preview.name}
+                  </Typography>
+                )}
+              </Box>
+            ))}
+          </Stack>
+          <Stack direction="row" spacing={1} sx={{ mt: 1.5 }}>
+            <Button variant="contained" size="small" onClick={handleUploadSelected}>
+              Upload selected
+            </Button>
+            <Button
+              variant="text"
+              size="small"
+              onClick={() => {
+                setPendingFiles([]);
+                pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
+                setPendingPreviews([]);
+              }}
+            >
+              Clear
+            </Button>
+          </Stack>
+        </Paper>
+      )}
 
       {/* Upload Status */}
       {parsingStatus.status !== 'idle' && (

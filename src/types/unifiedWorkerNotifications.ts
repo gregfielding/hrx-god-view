@@ -27,6 +27,28 @@ export type NotificationSource = 'system' | 'recruiter' | 'automation';
 
 export type NotificationChannel = 'push' | 'sms' | 'email' | 'web';
 
+export interface WorkerNotificationRouting {
+  deepLink?: string | null;
+  ctaUrl?: string | null;
+  entityId?: string | null;
+  threadId?: string | null;
+}
+
+export interface WorkerNotificationDeliveryChannelStatus {
+  status: 'written' | 'queued' | 'sent' | 'failed';
+  writtenAt?: Timestamp;
+  queuedAt?: Timestamp;
+  attemptedAt?: Timestamp;
+  sentAt?: Timestamp;
+  error?: string;
+}
+
+export interface WorkerNotificationDeliveryStatus {
+  inbox?: WorkerNotificationDeliveryChannelStatus;
+  push?: WorkerNotificationDeliveryChannelStatus;
+  sms?: WorkerNotificationDeliveryChannelStatus;
+}
+
 export interface WorkerNotification {
   uid: string;
   tenantId: string;
@@ -50,6 +72,10 @@ export interface WorkerNotification {
   entity?: { kind: string; id: string };
   metadata?: Record<string, unknown>;
   priority?: 'low' | 'normal' | 'high';
+  schemaVersion?: number;
+  routing?: WorkerNotificationRouting;
+  delivery?: WorkerNotificationDeliveryStatus;
+  deliveryStatus?: 'inbox_written' | 'queued' | 'sent' | 'failed';
 }
 
 export type ThreadTopic = 'recruiting' | 'support' | 'scheduling' | 'general' | string;

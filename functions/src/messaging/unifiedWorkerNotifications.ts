@@ -25,6 +25,7 @@ const ASSIGNMENTS_PATH = '/c1/workers/assignments';
 const JOBS_BOARD_PATH = '/c1/jobs-board';
 const JOB_READINESS_PATH = '/c1/workers/job-readiness';
 const APPLICATIONS_PATH = '/c1/workers/applications';
+const WORKER_NOTIFICATION_SCHEMA_VERSION = 1;
 
 /** Build deepLink from ctaUrl, threadId, or entity. Push and inbox use this so tap opens the correct screen. */
 function resolveDeepLink(payload: {
@@ -209,6 +210,7 @@ export async function writeWorkerInboxNotification(payload: {
   entityId?: string;
   ctaUrl?: string;
   entity?: { kind: string; id: string };
+  threadId?: string;
   source?: 'system' | 'recruiter' | 'automation';
   metadata?: Record<string, unknown>;
   priority?: 'low' | 'normal' | 'high';
@@ -220,6 +222,12 @@ export async function writeWorkerInboxNotification(payload: {
   const entityId = payload.entityId?.trim() || resolveEntityId(payload);
   const type = payload.type ?? 'general';
   const category = payload.category ?? categoryForType(type);
+  const routing = {
+    deepLink: deepLink || null,
+    ctaUrl: (payload.ctaUrl ?? deepLink) || null,
+    entityId: entityId || null,
+    threadId: payload.threadId ?? null,
+  };
   await ref.set({
     id,
     uid: payload.uid,
@@ -236,6 +244,15 @@ export async function writeWorkerInboxNotification(payload: {
     channel: 'push',
     ctaUrl: (payload.ctaUrl ?? deepLink) || undefined,
     entity: payload.entity,
+    schemaVersion: WORKER_NOTIFICATION_SCHEMA_VERSION,
+    routing,
+    delivery: {
+      inbox: {
+        status: 'written',
+        writtenAt: now,
+      },
+    },
+    deliveryStatus: 'inbox_written',
     ...(payload.metadata && Object.keys(payload.metadata).length > 0 ? { metadata: payload.metadata } : {}),
     ...(payload.priority ? { priority: payload.priority } : {}),
   });
@@ -272,6 +289,12 @@ export async function sendNotificationAndPush(payload: {
   const entityId = payload.entityId?.trim() || resolveEntityId(payload);
   const type = payload.type ?? 'general';
   const category = payload.category ?? categoryForType(type);
+  const routing = {
+    deepLink: deepLink || null,
+    ctaUrl: (payload.ctaUrl ?? deepLink) || null,
+    entityId: entityId || null,
+    threadId: payload.threadId ?? null,
+  };
   await ref.set({
     id,
     uid: payload.uid,
@@ -291,6 +314,19 @@ export async function sendNotificationAndPush(payload: {
     ctaUrl: (payload.ctaUrl ?? deepLink) || undefined,
     threadId: payload.threadId,
     entity: payload.entity,
+    schemaVersion: WORKER_NOTIFICATION_SCHEMA_VERSION,
+    routing,
+    delivery: {
+      inbox: {
+        status: 'written',
+        writtenAt: now,
+      },
+      push: {
+        status: 'queued',
+        queuedAt: now,
+      },
+    },
+    deliveryStatus: 'queued',
     ...(payload.metadata && Object.keys(payload.metadata).length > 0 ? { metadata: payload.metadata } : {}),
     ...(payload.priority ? { priority: payload.priority } : {}),
   });
@@ -301,21 +337,59 @@ export async function sendNotificationAndPush(payload: {
     return token ? [token] : [];
   });
   if (deviceTokens.length > 0) {
-    const push = getPushProvider();
-    await push.sendPush({
-      tenantId: payload.tenantId,
-      messageTypeId: 'worker_notification',
-      targets: [{ userId: payload.uid, deviceTokens }],
-      title: payload.title,
-      body: payload.body,
-      data: {
+    try {
+      const push = getPushProvider();
+      await push.sendPush({
+        tenantId: payload.tenantId,
+        messageTypeId: 'worker_notification',
+        targets: [{ userId: payload.uid, deviceTokens }],
+        title: payload.title,
+        body: payload.body,
+        data: {
+          notificationId: id,
+          threadId: payload.threadId ?? '',
+          ctaUrl: payload.ctaUrl ?? '',
+          deepLink,
+          entityId: entityId || '',
+        },
+      });
+      await ref.set({
+        delivery: {
+          push: {
+            status: 'sent',
+            attemptedAt: now,
+            sentAt: admin.firestore.Timestamp.now(),
+          },
+        },
+        deliveryStatus: 'sent',
+      }, { merge: true });
+    } catch (error: any) {
+      await ref.set({
+        delivery: {
+          push: {
+            status: 'failed',
+            attemptedAt: now,
+            error: String(error?.message || error || 'push_send_failed'),
+          },
+        },
+      }, { merge: true });
+      logger.warn('Push send failed; inbox notification preserved', {
         notificationId: id,
-        threadId: payload.threadId ?? '',
-        ctaUrl: payload.ctaUrl ?? '',
-        deepLink,
-        entityId: entityId || '',
+        uid: payload.uid,
+        error: String(error?.message || error || 'unknown'),
+      });
+    }
+  } else {
+    await ref.set({
+      delivery: {
+        push: {
+          status: 'failed',
+          attemptedAt: now,
+          error: 'no_enabled_push_tokens',
+        },
       },
-    });
+      deliveryStatus: 'inbox_written',
+    }, { merge: true });
   }
   logger.info('Unified worker notification created', { notificationId: id, uid: payload.uid });
   return { notificationId: id };

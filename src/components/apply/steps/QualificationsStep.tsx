@@ -11,6 +11,7 @@ import onetJobTitles from '../../../data/onetJobTitles.json';
 import SkillsTab from '../../../pages/UserProfile/components/SkillsTab/SkillsTab';
 import { EducationSection, WorkExperienceSection } from '../../../pages/UserProfile/components/SkillsTab/index';
 import { mapParsedExperienceToRows } from '../../../utils/resumeToWorkHistory';
+import { buildCanonicalWorkerProfileWritePatch } from '../../../utils/workerReadinessWriteModel';
 // Local debounce for onChange/onBlur saves (keeps dependencies minimal)
 // Using native month inputs for broad compatibility without extra dependencies
 
@@ -92,13 +93,13 @@ const QualificationsStep: React.FC<Props> = ({
 
   const queueUserUpdate = (data: Record<string, any>) => {
     if (!effectiveUid) return;
-    debouncedUpdate(doc(db, 'users', effectiveUid), data);
+    debouncedUpdate(doc(db, 'users', effectiveUid), buildCanonicalWorkerProfileWritePatch(data));
   };
 
   const immediateUserUpdate = async (data: Record<string, any>) => {
     if (!effectiveUid) return;
     try {
-      await updateDoc(doc(db, 'users', effectiveUid), data);
+      await updateDoc(doc(db, 'users', effectiveUid), buildCanonicalWorkerProfileWritePatch(data));
     } catch (error) {
       console.error('Failed to update user doc:', error);
     }

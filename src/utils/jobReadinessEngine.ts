@@ -54,7 +54,26 @@ export interface ReadinessEngineOutput {
   summary: string;
   eligibilitySummary: string;
   limitingSummary: string;
+  readinessScore: number;
+  readinessScorePercent: number;
+  readinessScoreSummary: string;
+  unlockSummary: string;
   topActions: Array<{ requirementId: string; label: string; industry: TargetIndustry }>;
+  topLimitingFactors: Array<{
+    requirementId: string;
+    label: string;
+    state: ReadinessLifecycleState;
+    industry: TargetIndustry;
+    profileSectionId?: string;
+  }>;
+  requirementStates: Array<{
+    requirementId: string;
+    label: string;
+    state: ReadinessLifecycleState;
+    industry: TargetIndustry;
+    impact: number;
+    profileSectionId?: string;
+  }>;
   nextCard: ReadinessCard | null;
 }
 
@@ -63,8 +82,45 @@ interface RequirementEvaluation {
   why: string;
 }
 
+export function getLifecycleStatePresentation(state: ReadinessLifecycleState): {
+  label: string;
+  color: 'default' | 'warning' | 'info' | 'success' | 'error';
+} {
+  switch (state) {
+    case 'unknown':
+      return { label: 'Not started', color: 'default' };
+    case 'attested':
+      return { label: 'Self-reported', color: 'warning' };
+    case 'proof_uploaded':
+      return { label: 'Under review', color: 'info' };
+    case 'verified':
+      return { label: 'Verified', color: 'success' };
+    case 'blocked':
+      return { label: 'Action required', color: 'error' };
+    case 'missing':
+      return { label: 'Action required', color: 'error' };
+    case 'complete':
+      return { label: 'Verified', color: 'success' };
+    default:
+      return { label: 'Not started', color: 'default' };
+  }
+}
+
+function supportsCategoryLabel(categories: TargetIndustry[]): string {
+  const labels = categories.map((c) => READINESS_OPPORTUNITY_MAP[c].label.toLowerCase());
+  if (labels.length === 0) return 'more roles';
+  if (labels.length === 1) return `${labels[0]} shifts`;
+  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]} shifts`;
+}
+
+function estimatedUnlockedJobsFromImpact(impact: number): number {
+  return Math.max(3, Math.round(impact * 0.25));
+}
+
 function isRequirementMet(readModel: JobReadinessReadModel, requirementId: string): boolean {
   switch (requirementId) {
+    case 'profile_photo':
+      return readModel.hasProfilePhoto();
     case 'food_handler_cert':
       return readModel.hasVerifiedCertification(['food handler', 'servsafe']);
     case 'forklift_cert':
@@ -91,6 +147,10 @@ function evaluateRequirementState(
   requirement: OpportunityRequirement,
 ): RequirementEvaluation {
   switch (requirement.id) {
+    case 'profile_photo':
+      return readModel.hasProfilePhoto()
+        ? { state: 'complete', why: 'Profile photo is set.' }
+        : { state: 'missing', why: 'No profile photo found.' };
     case 'food_handler_cert': {
       if (readModel.hasVerifiedCertification(['food handler', 'servsafe'])) {
         return { state: 'verified', why: 'Verified certification found.' };
@@ -143,6 +203,26 @@ function evaluateRequirementState(
 }
 
 function buildQuestionCard(req: OpportunityRequirement): ReadinessCard {
+  if (req.id === 'profile_photo') {
+    return {
+      id: `question__${req.id}`,
+      requirementId: req.id,
+      type: 'question',
+      title: 'Add your profile photo',
+      body: 'Employers are more likely to choose workers with a clear photo.',
+      actions: [
+        { id: 'upload_photo', label: 'Upload Photo', value: 'upload_photo', variant: 'contained' },
+        { id: 'webcam_capture', label: 'Use Camera', value: 'webcam_capture', variant: 'outlined' },
+        { id: 'open_profile', label: 'Open Profile', value: 'open_profile', variant: 'text' },
+      ],
+      profileSectionId: req.uploadSectionId,
+      whyThisMatters: req.explanation,
+      whatThisUnlocks: 'Improves trust and selection visibility across hospitality and industrial shifts.',
+    };
+  }
+
+  const jobsUnlocked = estimatedUnlockedJobsFromImpact(req.impact);
+  const categoryAccess = supportsCategoryLabel(req.supportsCategories);
   return {
     id: `question__${req.id}`,
     requirementId: req.id,
@@ -155,11 +235,13 @@ function buildQuestionCard(req: OpportunityRequirement): ReadinessCard {
     ],
     profileSectionId: req.uploadSectionId,
     whyThisMatters: req.explanation,
-    whatThisUnlocks: req.unlocksText,
+    whatThisUnlocks: `Can unlock about ${jobsUnlocked} more job matches and stronger access to ${categoryAccess}.`,
   };
 }
 
 function buildFollowUpCard(req: OpportunityRequirement, answer: string): ReadinessCard {
+  const jobsUnlocked = estimatedUnlockedJobsFromImpact(req.impact);
+  const categoryAccess = supportsCategoryLabel(req.supportsCategories);
   if (answer === 'yes') {
     return {
       id: `upload__${req.id}`,
@@ -173,7 +255,7 @@ function buildFollowUpCard(req: OpportunityRequirement, answer: string): Readine
       ],
       profileSectionId: req.uploadSectionId,
       whyThisMatters: req.explanation,
-      whatThisUnlocks: req.unlocksText,
+      whatThisUnlocks: `Can unlock about ${jobsUnlocked} more job matches and stronger access to ${categoryAccess}.`,
     };
   }
 
@@ -190,7 +272,7 @@ function buildFollowUpCard(req: OpportunityRequirement, answer: string): Readine
     resourceUrl: req.resourceUrl,
     profileSectionId: req.uploadSectionId,
     whyThisMatters: req.explanation,
-    whatThisUnlocks: req.unlocksText,
+    whatThisUnlocks: `Can unlock about ${jobsUnlocked} more job matches and stronger access to ${categoryAccess}.`,
   };
 }
 
@@ -215,7 +297,11 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
     }));
   });
 
-  const missing = requirementRows
+  const uniqueRequirementRows = Array.from(
+    new Map(requirementRows.map((row) => [row.req.id, row])).values()
+  );
+
+  const missing = uniqueRequirementRows
     .filter((r) => !['verified', 'complete'].includes(r.evaluation.state))
     .sort((a, b) => b.req.impact - a.req.impact);
 
@@ -223,6 +309,21 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
     requirementId: m.req.id,
     label: m.req.label,
     industry: m.industry,
+  }));
+  const requirementStates = uniqueRequirementRows.map((r) => ({
+    requirementId: r.req.id,
+    label: r.req.label,
+    state: r.evaluation.state,
+    industry: r.industry,
+    impact: r.req.impact,
+    profileSectionId: r.req.uploadSectionId,
+  }));
+  const topLimitingFactors = missing.slice(0, 3).map((m) => ({
+    requirementId: m.req.id,
+    label: m.req.label,
+    state: m.evaluation.state,
+    industry: m.industry,
+    profileSectionId: m.req.uploadSectionId,
   }));
 
   const eligibleIndustries = industries.filter((industry) => {
@@ -242,6 +343,18 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
   const limitingSummary = topLimiting.length
     ? `Main limiting factors right now: ${topLimiting.join(' and ')}.`
     : 'No major readiness blockers detected right now.';
+
+  const totalImpact = uniqueRequirementRows.reduce((sum, r) => sum + r.req.impact, 0);
+  const metImpact = uniqueRequirementRows
+    .filter((r) => ['verified', 'complete'].includes(r.evaluation.state))
+    .reduce((sum, r) => sum + r.req.impact, 0);
+  const readinessScore = totalImpact > 0 ? metImpact / totalImpact : 0;
+  const readinessScorePercent = Math.max(0, Math.min(100, Math.round(readinessScore * 100)));
+  const headlineIndustry = READINESS_OPPORTUNITY_MAP[industries[0] || 'hospitality'].label.toLowerCase();
+  const readinessScoreSummary = `You're ${readinessScorePercent}% ready for ${headlineIndustry} work.`;
+  const unlockSummary = topLimitingFactors.length
+    ? `Closing your top blockers could unlock about ${topLimitingFactors.reduce((sum, r) => sum + estimatedUnlockedJobsFromImpact(uniqueRequirementRows.find((x) => x.req.id === r.requirementId)?.req.impact || 0), 0)} additional matches across ${headlineIndustry} and related categories.`
+    : 'Your profile is in strong shape for current target categories.';
 
   const summary = `Based on your profile, ${eligibilitySummary} ${limitingSummary} Let’s improve that.`;
 
@@ -281,7 +394,13 @@ export function buildJobReadinessEngine(input: ReadinessEngineInput): ReadinessE
     summary,
     eligibilitySummary,
     limitingSummary,
+    readinessScore,
+    readinessScorePercent,
+    readinessScoreSummary,
+    unlockSummary,
     topActions,
+    topLimitingFactors,
+    requirementStates,
     nextCard,
   };
 }

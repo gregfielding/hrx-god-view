@@ -4,7 +4,9 @@
  */
 
 import React from 'react';
+
 import { Card, CardContent, Typography } from '@mui/material';
+
 import CardDeck from '../cards/CardDeck';
 import { CARD_THEMES } from '../dashboard/cards/types';
 import { useT } from '../../../i18n';
@@ -17,12 +19,9 @@ export interface ProfileSectionSpec {
 }
 
 const PROFILE_SECTIONS: ProfileSectionSpec[] = [
-  { id: 'availability', titleKey: 'profile.availabilityPreferences', summaryKey: 'profile.availabilitySubtext' },
-  { id: 'work-experience', titleKey: 'profile.workExperience', summaryKey: 'profile.workExperienceSubtext' },
-  { id: 'certifications', titleKey: 'profile.certifications', summaryKey: 'profile.certificationsSubtext' },
-  { id: 'skills', titleKey: 'profile.skillsLanguages', summaryKey: 'profile.skillsLanguagesSubtext' },
-  { id: 'bio', titleKey: 'profile.bio', summaryKey: 'profile.bioSubtext' },
-  { id: 'education', titleKey: 'profile.education', summaryKey: 'profile.educationSubtext' },
+  { id: 'work-preferences', titleKey: 'profile.jobPreferences', summaryKey: 'profile.jobPreferencesSubtext' },
+  { id: 'skills-experience', titleKey: 'profile.skillsLanguages', summaryKey: 'profile.skillsLanguagesSubtext' },
+  { id: 'certifications-documents', titleKey: 'profile.certifications', summaryKey: 'profile.certificationsSubtext' },
 ];
 
 export interface WorkerProfileCardDeckProps {

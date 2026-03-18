@@ -2,6 +2,7 @@ import React from 'react';
 import { Button, Card, CardContent, Chip, Stack, Typography } from '@mui/material';
 
 import type { ReadinessCard } from '../../../utils/jobReadinessEngine';
+import { getLifecycleStatePresentation } from '../../../utils/jobReadinessEngine';
 
 interface ReadinessEngineCardProps {
   card: ReadinessCard;
@@ -9,6 +10,9 @@ interface ReadinessEngineCardProps {
 }
 
 const ReadinessEngineCard: React.FC<ReadinessEngineCardProps> = ({ card, onAction }) => {
+  const lifecycle = card.lifecycleState
+    ? getLifecycleStatePresentation(card.lifecycleState)
+    : null;
   return (
     <Card variant="outlined" sx={{ borderRadius: 3, borderColor: 'divider', minHeight: 240 }}>
       <CardContent sx={{ p: 2.5 }}>
@@ -18,10 +22,11 @@ const ReadinessEngineCard: React.FC<ReadinessEngineCardProps> = ({ card, onActio
         <Typography variant="h6" sx={{ mt: 0.5, fontWeight: 700 }}>
           {card.title}
         </Typography>
-        {card.lifecycleState ? (
+        {lifecycle ? (
           <Chip
             size="small"
-            label={`Status: ${card.lifecycleState.replace('_', ' ')}`}
+            color={lifecycle.color}
+            label={`Status: ${lifecycle.label}`}
             sx={{ mt: 1, alignSelf: 'flex-start' }}
           />
         ) : null}
@@ -35,7 +40,7 @@ const ReadinessEngineCard: React.FC<ReadinessEngineCardProps> = ({ card, onActio
         ) : null}
         {card.whatThisUnlocks ? (
           <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-            What this can unlock: {card.whatThisUnlocks}
+            What this unlocks: {card.whatThisUnlocks}
           </Typography>
         ) : null}
 

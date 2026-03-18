@@ -19,7 +19,9 @@
     "test:triggers:deployed:coverage": "firebase functions:call checkTriggerCoverage",
     "test:triggers:dashboard": "firebase functions:call getTestResultsDashboard",
     "check:maintenance": "npx ts-node src/checkTestMaintenance.ts",
-    "backfill:scoring-distribution": "npm run build && node lib/scripts/backfillScoringDistribution.js"
+    "backfill:scoring-distribution": "npm run build && node lib/scripts/backfillScoringDistribution.js",
+    "debug:accusource:bgc": "npx ts-node src/scripts/debugAccusourceBackgroundCheck.ts",
+    "run:accusource:create-test": "npx ts-node src/scripts/runAccusourceCreateTest.ts"
   },
   "engines": {
     "node": "20"

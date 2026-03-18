@@ -70,6 +70,7 @@ import { getRequirementPackV1 } from '../../data/jobRequirementPacksV1';
 import { computeJobScoreSummaryV1 } from '../../utils/jobScoreV1';
 import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
+import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
 
 type WizardProps = {
   tenantId: string;
@@ -1404,7 +1405,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const update: any = { updatedAt: serverTimestamp() };
           if (p.profilePicture) update.avatar = p.profilePicture;
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, update, { merge: true });
+            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
         } else if (actualStep === 5) {
           // Skills → save skills, certifications, languages to profile
@@ -1413,19 +1414,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(q.skills)) update.skills = q.skills;
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
           if (Array.isArray(q.languages)) update.languages = normalizeLanguageList(q.languages);
-          if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
+          if (Object.keys(update).length > 1) {
+            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+          }
         } else if (actualStep === 6) {
           // Education → save education to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.education)) update.education = q.education;
-          if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
+          if (Object.keys(update).length > 1) {
+            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+          }
         } else if (actualStep === 7) {
           // Licenses and Certifications → save certifications to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
           if (Array.isArray(q.certifications)) update.certifications = q.certifications;
-          if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
+          if (Object.keys(update).length > 1) {
+            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+          }
         } else if (actualStep === 8) {
           // Work Experience → save work experience to profile
           const q = formData.qualifications || {};
@@ -1435,7 +1442,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.workExperience = q.workExperience;
             update.workHistory = q.workExperience; // Also save to workHistory for backward compatibility
           }
-          if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
+          if (Object.keys(update).length > 1) {
+            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
+          }
         } else if (actualStep === 9) {
           // Bio → save professional bio to profile
           const b = formData.bio || {};
@@ -1457,7 +1466,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Array.isArray(update.preferences.shiftPreferences)) {
             update['preferences.shiftPreferences'] = update.preferences.shiftPreferences;
           }
-          await setDoc(userRef, update, { merge: true });
+          await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
         } else if (actualStep === 11) {
           // Requirements → save screening responses and availability to user profile
           const r = formData.requirements || {};
@@ -1509,7 +1518,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
 
           if (Object.keys(update).length > 1) {
-            await setDoc(userRef, update, { merge: true });
+            await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
         }
       }
@@ -1892,7 +1901,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         }
       }
 
-      await setDoc(userRef, profileUpdate, { merge: true });
+      await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(profileUpdate), { merge: true });
 
       // Create final submitted application in tenants/{tenantId}/applications
       try {
@@ -2423,6 +2432,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             tenantId={tenantId}
             jobId={jobId}
             jobPosting={posting}
+            resumeData={formData.resume || userProfile?.resume || null}
           />
           </Box>
         );

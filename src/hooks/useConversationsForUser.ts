@@ -46,12 +46,25 @@ export function useConversationsForUser(
       q,
       (snap) => {
         if (!mountedRef.current) return;
+        console.debug('[WorkerInboxDetail] conversations fetch success', {
+          tenantId: resolvedTenantId,
+          uid,
+          count: snap.size,
+          routePath: `tenants/${resolvedTenantId}/conversations`,
+        });
         const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<Conversation, 'id'>) }));
         setConversations(rows);
         setLoading(false);
       },
       (err: any) => {
         if (!mountedRef.current) return;
+        console.error('[WorkerInboxDetail] conversations fetch failure', {
+          tenantId: resolvedTenantId,
+          uid,
+          routePath: `tenants/${resolvedTenantId}/conversations`,
+          code: err?.code,
+          message: err?.message,
+        });
         setError(err);
         setLoading(false);
       }

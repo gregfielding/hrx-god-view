@@ -20,6 +20,10 @@
         "function": "slackEvents"
       },
       {
+        "source": "/api/integrations/accusource/webhooks",
+        "function": "apiIntegrationsAccusourceWebhooks"
+      },
+      {
         "source": "**",
         "destination": "/index.html"
       }
