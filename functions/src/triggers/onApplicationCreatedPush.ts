@@ -10,6 +10,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
 import { resolveTemplateVariables } from '../utils/templateVariableResolver';
+import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -46,6 +47,15 @@ export const onApplicationCreatedPush = onDocumentCreated(
     // Idempotency: avoid duplicate push on trigger retry
     if (applicationData.applicationPushSentAt) {
       logger.info('[PUSH][application_created] skipped: already sent', { applicationId });
+      return;
+    }
+    const canProcessPushEvent = await markLifecycleEventIfFirst({
+      tenantId,
+      dedupeKey: `application_push_created__${applicationId}`,
+      eventType: 'application_created_push',
+      context: { applicationId, userId },
+    });
+    if (!canProcessPushEvent) {
       return;
     }
 

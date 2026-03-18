@@ -46,6 +46,7 @@ function mapLegacyToMessageType(
       // Map status to message type
       if (triggerStatus === 'screened') return 'application_screened';
       if (triggerStatus === 'advanced') return 'application_advanced';
+      if (triggerStatus === 'offer') return 'application_offered';
       if (triggerStatus === 'hired') return 'application_hired';
       if (triggerStatus === 'rejected') return 'application_rejected';
       if (triggerStatus === 'waitlisted') return 'application_waitlisted';

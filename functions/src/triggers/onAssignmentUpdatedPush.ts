@@ -8,6 +8,7 @@ import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
+import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -52,6 +53,21 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
     // Idempotency: already sent push for this status (e.g. trigger retry)
     if (after.lastPushSentForStatus === afterStatus) {
       logger.info('[PUSH][assignment_updated] skipped: already sent for status', { assignmentId, afterStatus });
+      return;
+    }
+    const updatedAtToken =
+      typeof (after.updatedAt as any)?.toMillis === 'function'
+        ? String((after.updatedAt as any).toMillis())
+        : typeof (after.updatedAt as any)?._seconds === 'number'
+          ? String((after.updatedAt as any)._seconds)
+          : 'na';
+    const canProcessPushEvent = await markLifecycleEventIfFirst({
+      tenantId,
+      dedupeKey: `assignment_push_status__${assignmentId}__${beforeStatus}__${afterStatus}__${updatedAtToken}`,
+      eventType: 'assignment_status_push',
+      context: { assignmentId, userId, beforeStatus, afterStatus },
+    });
+    if (!canProcessPushEvent) {
       return;
     }
 

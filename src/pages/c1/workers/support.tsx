@@ -3,7 +3,7 @@
  * AI support entry, common questions, and escalation to recruiter (inbox).
  */
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -18,6 +18,7 @@ import {
   CircularProgress,
   Alert,
   Stack,
+  Chip,
 } from '@mui/material';
 import SendIcon from '@mui/icons-material/Send';
 import SupportAgentIcon from '@mui/icons-material/SupportAgent';
@@ -25,14 +26,21 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 
-const ENHANCED_CHAT_URL = 'https://us-central1-hrx1-d3beb.cloudfunctions.net/enhancedChatWithGPT';
-
 const COMMON_QUESTION_KEYS = [
   'support.questionCancelShift',
   'support.questionWhenPaid',
   'support.questionWhatToWear',
   'support.questionUpdateCerts',
 ] as const;
+
+interface WorkerSupportAssistantResult {
+  answer: string;
+  confidence: number;
+  suggestedActions: string[];
+  followUps: string[];
+  escalate: boolean;
+  sourceTopics: string[];
+}
 
 const C1WorkerSupport: React.FC = () => {
   const navigate = useNavigate();
@@ -43,23 +51,23 @@ const C1WorkerSupport: React.FC = () => {
 
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
-  const [reply, setReply] = useState<string | null>(null);
+  const [reply, setReply] = useState<WorkerSupportAssistantResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const threadIdRef = useRef<string | null>(null);
-  const messagesRef = useRef<{ role: string; content: string }[]>([]);
 
-  const ensureThread = useCallback(async (): Promise<string> => {
-    if (threadIdRef.current) return threadIdRef.current;
-    const functions = getFunctions();
-    const startAIThread = httpsCallable(functions, 'startAIThread');
-    const res = await startAIThread({ tenantId, context: 'worker_support' });
-    const id = (res.data as { threadId?: string })?.threadId;
-    if (id) {
-      threadIdRef.current = id;
-      return id;
+  const handleSuggestedAction = useCallback((action: string) => {
+    const normalized = action.toLowerCase();
+    if (normalized.includes('inbox') || normalized.includes('recruiter') || normalized.includes('contact')) {
+      navigate('/c1/workers/inbox');
+      return;
     }
-    throw new Error('No threadId');
-  }, [tenantId]);
+    if (normalized.includes('assignment')) {
+      navigate('/c1/workers/assignments');
+      return;
+    }
+    if (normalized.includes('profile')) {
+      navigate('/c1/workers/profile');
+    }
+  }, [navigate]);
 
   const sendQuestion = useCallback(
     async (text: string) => {
@@ -71,25 +79,25 @@ const C1WorkerSupport: React.FC = () => {
       setReply(null);
 
       try {
-        const tid = await ensureThread();
-        const userMsg = { role: 'user' as const, content: trimmed };
-        messagesRef.current = [...messagesRef.current, userMsg];
-        const messages = messagesRef.current.slice(-10);
-
-        const response = await fetch(ENHANCED_CHAT_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tenantId, userId, threadId: tid, messages }),
+        const functions = getFunctions();
+        const askWorkerSupport = httpsCallable<
+          { question: string; tenantId: string },
+          WorkerSupportAssistantResult
+        >(functions, 'workerSupportAssistant');
+        const response = await askWorkerSupport({
+          question: trimmed,
+          tenantId,
         });
 
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const data = await response.json();
-        const assistantContent = data?.reply ?? '';
-        messagesRef.current = [...messagesRef.current, { role: 'assistant', content: assistantContent }];
-        setReply(assistantContent);
+        const data = response.data;
+        setReply({
+          answer: data?.answer || '',
+          confidence: Number(data?.confidence || 0),
+          suggestedActions: Array.isArray(data?.suggestedActions) ? data.suggestedActions : [],
+          followUps: Array.isArray(data?.followUps) ? data.followUps : [],
+          escalate: Boolean(data?.escalate),
+          sourceTopics: Array.isArray(data?.sourceTopics) ? data.sourceTopics : [],
+        });
         setQuestion('');
       } catch (err) {
         setError(t('support.errorSending'));
@@ -97,7 +105,7 @@ const C1WorkerSupport: React.FC = () => {
         setLoading(false);
       }
     },
-    [ensureThread, tenantId, userId, t]
+    [tenantId, userId, t]
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -173,10 +181,65 @@ const C1WorkerSupport: React.FC = () => {
                 borderColor: 'divider',
               }}
             >
-              <Typography variant="body2" component="div" sx={{ whiteSpace: 'pre-wrap' }}>
-                {reply}
+              <Typography variant="body2" component="div" sx={{ whiteSpace: 'pre-wrap', mb: 1 }}>
+                {reply.answer}
               </Typography>
+              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: 0.75 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
+                  Confidence: {Math.round(Math.max(0, Math.min(1, reply.confidence)) * 100)}%
+                </Typography>
+                {reply.escalate && (
+                  <Chip size="small" color="warning" variant="outlined" label="Escalation recommended" />
+                )}
+              </Stack>
+              {reply.suggestedActions.length > 0 && (
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
+                  {reply.suggestedActions.slice(0, 3).map((action) => (
+                    <Button
+                      key={action}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => handleSuggestedAction(action)}
+                    >
+                      {action}
+                    </Button>
+                  ))}
+                </Stack>
+              )}
+              {reply.followUps.length > 0 && (
+                <Stack spacing={0.75} sx={{ mt: 1.25 }}>
+                  {reply.followUps.slice(0, 2).map((followUp) => (
+                    <Button
+                      key={followUp}
+                      size="small"
+                      variant="text"
+                      sx={{ justifyContent: 'flex-start' }}
+                      onClick={() => sendQuestion(followUp)}
+                    >
+                      {followUp}
+                    </Button>
+                  ))}
+                </Stack>
+              )}
             </Box>
+          )}
+          {reply?.escalate && (
+            <Alert
+              severity="warning"
+              sx={{ mt: 1.5 }}
+              action={
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={goToInbox}
+                  startIcon={<SupportAgentIcon />}
+                >
+                  {t('support.contactRecruiter')}
+                </Button>
+              }
+            >
+              This question may need recruiter support for a complete answer.
+            </Alert>
           )}
           {error && (
             <Alert severity="error" sx={{ mt: 1.5 }} onClose={() => setError(null)}>

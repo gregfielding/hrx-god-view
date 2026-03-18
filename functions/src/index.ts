@@ -239,6 +239,8 @@ export {
   testCreateAccusourceBackgroundCheck,
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
+export { workerSupportAssistant } from './workerSupportAssistant';
+export { triggerWorkerOnboardingPipeline, updateWorkerOnboardingStepStatus } from './onboarding/workerOnboardingPipeline';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -8646,6 +8648,23 @@ export const logAssignmentCreated = onDocumentCreated(
     // Send worker notification if assignment was newly proposed/confirmed (SMS + email with full assignment details)
     if (assignment.userId && (assignment.status === 'proposed' || assignment.status === 'confirmed')) {
       try {
+        const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
+        const assignedAtToken =
+          typeof (assignment.assignedAt as any)?.toMillis === 'function'
+            ? String((assignment.assignedAt as any).toMillis())
+            : typeof (assignment.createdAt as any)?.toMillis === 'function'
+              ? String((assignment.createdAt as any).toMillis())
+              : 'na';
+        const canProcessCreateEvent = await markLifecycleEventIfFirst({
+          tenantId,
+          dedupeKey: `assignment_created__${assignmentId}__${String(assignment.status || '').toLowerCase()}__${assignedAtToken}`,
+          eventType: 'assignment_created',
+          context: { assignmentId, userId: assignment.userId, status: assignment.status },
+        });
+        if (!canProcessCreateEvent) {
+          return { success: true, deduped: true };
+        }
+
         const userDoc = await admin.firestore().doc(`users/${assignment.userId}`).get();
         const userData = userDoc.data();
         const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
@@ -8778,6 +8797,23 @@ export const logAssignmentUpdated = onDocumentUpdated(
     
     if (statusChanged && after.userId) {
       try {
+        const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
+        const statusChangedAtToken =
+          typeof (after.updatedAt as any)?.toMillis === 'function'
+            ? String((after.updatedAt as any).toMillis())
+            : typeof (after.updatedAt as any)?._seconds === 'number'
+              ? String((after.updatedAt as any)._seconds)
+              : 'na';
+        const canProcessStatusEvent = await markLifecycleEventIfFirst({
+          tenantId,
+          dedupeKey: `assignment_status__${assignmentId}__${String(before.status || '').toLowerCase()}__${String(after.status || '').toLowerCase()}__${statusChangedAtToken}`,
+          eventType: 'assignment_status_changed',
+          context: { assignmentId, userId: after.userId, beforeStatus: before.status, afterStatus: after.status },
+        });
+        if (!canProcessStatusEvent) {
+          return { success: true, deduped: true };
+        }
+
         // Fetch user data (needed for template resolution and fallback message)
         const userDoc = await admin.firestore().doc(`users/${after.userId}`).get();
         const userData = userDoc.data();

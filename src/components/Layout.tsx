@@ -913,6 +913,7 @@ const Layout: React.FC = function Layout() {
       'Team Access': <RecordVoiceOverIcon />,
       'Recruiter': <WorkIcon />,
       'Jobs': <WorkIcon />,
+      'Onboarding': <AssignmentTurnedInIcon />,
       'Workforce': <PeopleIcon />,
       'Users': <GroupsIcon />,
       'Accounts': <AccountBalanceIcon />,

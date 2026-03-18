@@ -23,7 +23,7 @@ import ViewListIcon from '@mui/icons-material/ViewList';
 import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
-import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -271,6 +271,8 @@ const UserApplications: React.FC = () => {
         status: 'withdrawn',
         withdrawnAt: new Date(),
         withdrawnBy: user?.uid || null,
+        applyDate: deleteField(),
+        applyDates: deleteField(),
         updatedAt: serverTimestamp(),
       });
       await loadApplications();

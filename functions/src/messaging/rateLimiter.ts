@@ -68,12 +68,19 @@ export type RateLimitResult =
 const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'application_received',
   'application_status_change',
+  'application_offered',
   'application_waitlisted',
   'application_rejected',
   'application_screened',
   'application_advanced',
   'application_hired',
   'application_requirements_reminder',
+  'assignment_created',
+  'assignment_status_change',
+  'assignment_confirmed',
+  'assignment_cancelled',
+  'assignment_active',
+  'assignment_completed',
 ]);
 
 /**

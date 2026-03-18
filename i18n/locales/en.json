@@ -488,6 +488,7 @@
     "requirementsToApplySummary": "To apply for this shift, complete these {count} steps:",
     "requirementsTierRequiredNow": "Required to apply now",
     "requirementsTierBeforeAssignment": "Required before assignment",
+    "jobPreparation": "Job Preparation",
     "requirementsTierRecommended": "Recommended",
     "requirementsActionConfirmSkill": "Confirm {label} skill",
     "requirementsActionAddCert": "Add {label} license/certification",

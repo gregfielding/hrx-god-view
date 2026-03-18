@@ -77,6 +77,7 @@ export async function sendLegacyApplicationStatusMessage(args: {
       if (args.status === 'submitted') messageTypeId = 'application_received'; // re-apply: same as new application
       else if (args.status === 'screened') messageTypeId = 'application_screened';
       else if (args.status === 'advanced') messageTypeId = 'application_advanced';
+      else if (args.status === 'offer') messageTypeId = 'application_offered';
       else if (args.status === 'hired') messageTypeId = 'application_hired';
       else if (args.status === 'rejected') messageTypeId = 'application_rejected';
       else if (args.status === 'waitlisted') messageTypeId = 'application_waitlisted';

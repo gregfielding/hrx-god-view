@@ -71,6 +71,7 @@ const WorkerProfileAccordions: React.FC<Props> = ({
   const [selectedScheduleIntent, setSelectedScheduleIntent] = useState<ScheduleIntentOption[]>([]);
   const [resumePresent, setResumePresent] = useState(false);
   const [tenantId, setTenantId] = useState<string | undefined>(undefined);
+  const [requirementAttestations, setRequirementAttestations] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!uid) return;
@@ -107,6 +108,29 @@ const WorkerProfileAccordions: React.FC<Props> = ({
             ? data.activeTenantId
             : undefined,
       );
+      const att = (data?.workerAttestations || {}) as Record<string, unknown>;
+      const additional = (att.additionalScreenings || {}) as Record<string, unknown>;
+      const mapped: Record<string, string> = {};
+      const mapMaybeString = (label: string, value: unknown) => {
+        const v = String(value || '').trim();
+        if (!v) return;
+        mapped[label] = v;
+      };
+      mapMaybeString('Drug screening', data?.comfortablePassDrug ?? att.drugScreeningWillingness);
+      mapMaybeString('Background check', data?.comfortablePassBackground ?? att.backgroundCheckWillingness);
+      mapMaybeString('E-Verify', data?.comfortableEVerify ?? att.eVerifyWillingness);
+      mapMaybeString('Language requirements', data?.comfortableWithLanguages ?? att.languageRequirementWillingness);
+      mapMaybeString('Physical requirements', data?.comfortableWithPhysicalRequirements ?? att.physicalRequirementWillingness);
+      mapMaybeString('Uniform requirements', data?.comfortableWithUniformRequirements ?? att.uniformRequirementWillingness);
+      mapMaybeString('Custom uniform requirements', data?.comfortableWithCustomUniformRequirements ?? att.customUniformRequirementWillingness);
+      mapMaybeString('Required PPE', data?.comfortableWithRequiredPpe ?? att.requiredPpeWillingness);
+      mapMaybeString('Transportation', data?.transportMethod ?? (data?.workerProfile as any)?.preferences?.transportMethod);
+      Object.entries(additional).forEach(([k, v]) => {
+        const vv = String(v || '').trim();
+        if (!vv) return;
+        mapped[`Additional: ${k}`] = vv;
+      });
+      setRequirementAttestations(mapped);
       const workerProfile = (data?.workerProfile || {}) as Record<string, unknown>;
       const workerPreferences = (workerProfile.preferences || {}) as Record<string, unknown>;
       const persistedIndustries = (Array.isArray(workerPreferences.targetIndustries)
@@ -305,6 +329,18 @@ const WorkerProfileAccordions: React.FC<Props> = ({
             <Typography variant="caption" color="text.secondary">
               Saved preference: {desiredWorkType === 'any' ? 'Any work schedule' : desiredWorkType.replace('_', ' ')}
             </Typography>
+            {Object.keys(requirementAttestations).length > 0 ? (
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 1 }}>
+                  Requirement attestations (from applications)
+                </Typography>
+                <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mt: 1 }}>
+                  {Object.entries(requirementAttestations).map(([label, value]) => (
+                    <Chip key={label} size="small" variant="outlined" label={`${label}: ${value}`} />
+                  ))}
+                </Stack>
+              </Box>
+            ) : null}
             <Box sx={{ pt: 1 }}>
               <ShiftPreferencesCard uid={uid} />
             </Box>

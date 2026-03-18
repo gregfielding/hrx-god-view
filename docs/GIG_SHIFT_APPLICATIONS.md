@@ -1,4 +1,10 @@
-# Gig Shift Applications - How They're Saved to Firestore
+# Gig Shift Applications - Historical Notes
+
+> **Launch note (Mar 2026):** This file contains historical implementation context and examples that no longer fully match production behavior.
+>
+> For launch-critical source-of-truth contracts, use:
+> - `docs/STAFFING_LAUNCH_CANONICAL_CONTRACT.md`
+> - `docs/career-vs-gig-placements-assignments.md`
 
 ## Overview
 

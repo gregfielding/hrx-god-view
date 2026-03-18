@@ -1,6 +1,8 @@
 # Data Connections - Quick Reference Guide
 **For Developers: What IDs to Store Where**
 
+> Launch staffing source of truth: `docs/STAFFING_LAUNCH_CANONICAL_CONTRACT.md`
+
 ---
 
 ## Quick Lookup Table

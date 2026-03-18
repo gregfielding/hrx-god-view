@@ -1079,6 +1079,8 @@ const JobPostingDetail: React.FC = () => {
         status: 'withdrawn',
         withdrawnAt: new Date(),
         withdrawnBy: user?.uid || null,
+        applyDate: deleteField(),
+        applyDates: deleteField(),
       });
       if (user?.uid) {
         try {
@@ -1735,6 +1737,8 @@ const JobPostingDetail: React.FC = () => {
   const urlAssignmentId = params.get('assignmentId');
   const intent = params.get('intent');
   const isAssignmentResponseMode = Boolean(urlAssignmentId && intent === 'assignment_response');
+  const showOfferResponseMinimalView = isAssignmentResponseMode;
+  const showAssignmentInfoOnJobPosting = false;
   const assignmentDetailsId =
     acceptedAssignmentId ||
     urlAssignmentId ||
@@ -2361,8 +2365,12 @@ const JobPostingDetail: React.FC = () => {
             </Card>
           )}
 
-          {/* Assignment Info + Schedule (when worker needs to accept/decline — show key details from assignment) */}
-          {((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) && statusButtonProps?.label !== 'confirmed_special' && assignmentData) ? (
+          {/* Assignment Info + Schedule (hidden for SMS offer-response mode; keep original job-post view there) */}
+          {((statusButtonProps?.label === 'accepted_special' || isAssignmentResponseMode) &&
+            statusButtonProps?.label !== 'confirmed_special' &&
+            assignmentData &&
+            !showOfferResponseMinimalView &&
+            showAssignmentInfoOnJobPosting) ? (
             <>
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent>
@@ -2603,12 +2611,15 @@ const JobPostingDetail: React.FC = () => {
             </Card>
           )}
 
-          {/* Requirements — guided flow: required-to-apply summary first, tiers, collapse completed */}
-          {(() => {
+          {/* Requirements — hidden for SMS offer-response mode to avoid re-asking application questions */}
+          {!showOfferResponseMinimalView && (() => {
             const eligibility = eligibilitySummary ?? getEligibilitySummary(posting, userProfile, applicationData);
             const allCategories = allRequirementsCategories;
             const hasAnyRequirement = allCategories.length > 0;
             const showInteraction = !!user?.uid && !!applicationDocId;
+            // Launch hardening: keep Jobs Board detail read-only.
+            // Requirement questions belong in the Apply wizard, not the post detail page.
+            const showInlineRequirementQuestions = false;
             const additionalScreeningsData = applicationData?.data?.requirements?.additionalScreenings || {};
             const missingCount = eligibility.missingRequired.length;
 
@@ -2662,161 +2673,8 @@ const JobPostingDetail: React.FC = () => {
                     </Box>
                   )}
 
-                  <Typography variant="subtitle1" sx={{ mb: 0.5, fontWeight: 600 }}>
-                    {t('jobs.requirementsCompleteTheseSteps')}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: missingCount > 0 ? 0.5 : 1 }}>
-                    {t('jobs.requirementsEligiblePercent', { percent: eligibility.percent })}
-                  </Typography>
-                  {missingCount > 0 && (
-                    <Typography variant="body2" color="primary.main" sx={{ fontWeight: 500, mb: 1 }}>
-                      {t('jobs.requirementsStepsRemaining', { count: missingCount })}
-                    </Typography>
-                  )}
-                  <LinearProgress
-                    variant="determinate"
-                    value={eligibility.totalCount > 0 ? Math.round((eligibility.metCount / eligibility.totalCount) * 100) : 100}
-                    sx={{ height: 8, borderRadius: 1, mb: 2 }}
-                    color={eligibility.percent >= 100 ? 'success' : 'primary'}
-                  />
-
-                  {/* Missing required items: inline interactions (only requiredToApply missing) */}
-                  {missingCount > 0 && (
-                    <Box sx={{ mb: 2 }}>
-                      <Stack spacing={1.5}>
-                        {eligibility.missingRequired.map((m, idx) => (
-                          <Box key={`${m.category}-${idx}`} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, bgcolor: 'grey.50' }}>
-                            <RequirementInteraction
-                              item={m.item}
-                              categoryLabel={m.categoryLabel}
-                              category={m.category}
-                              categoryItems={eligibility.categories.find((c) => c.category === m.category)?.items}
-                              onFix={
-                                !m.item.requiresUpload && m.item.ackKey
-                                  ? (answer) => handleRequirementFix(m.item.ackKey!, answer, m.category, m.item.label)
-                                  : undefined
-                              }
-                              onUploadClick={
-                                m.item.requiresUpload ? () => navigate('/c1/workers/profile?tab=Qualifications') : undefined
-                              }
-                              onEducationSelect={m.category === 'educationLevels' ? handleEducationSelect : undefined}
-                              onFollowUpFix={
-                                m.category === 'additionalScreenings' && /covid|vaccine|vaccination/i.test(m.item.label)
-                                  ? (answer) =>
-                                      handleRequirementFix(
-                                        `additionalScreenings_${m.item.label.replace(/[^a-zA-Z0-9]+/g, '_')}_willing`,
-                                        answer,
-                                        'additionalScreenings',
-                                        m.item.label
-                                      )
-                                  : undefined
-                              }
-                              showHealthFollowUp={
-                                m.category === 'additionalScreenings' && additionalScreeningsData[m.item.label] === 'No'
-                              }
-                              showInteraction={showInteraction}
-                              initialEducationLevel={m.category === 'educationLevels' ? userProfile?.educationLevel : undefined}
-                            />
-                          </Box>
-                        ))}
-                      </Stack>
-                    </Box>
-                  )}
-
-                  {/* Grouped by tier: Required now, Required before assignment, Recommended — completed sections collapsed */}
-                  {byTier.map(({ tier, categories: tierCategories }) =>
-                    tierCategories.length === 0 ? null : (
-                      <Box key={tier} sx={{ mb: 2 }}>
-                        <Typography variant="subtitle2" color="text.secondary" sx={{ fontWeight: 600, mb: 0.5 }}>
-                          {t(tierLabelKey[tier])}
-                        </Typography>
-                        {tierCategories.map((cat) => {
-                          const allMet = cat.items.every((i) => i.met);
-                          const expanded = requirementsExpanded[cat.category] ?? !allMet;
-                          return (
-                            <Accordion
-                              key={cat.category}
-                              expanded={expanded}
-                              onChange={(_, isExpanded) =>
-                                setRequirementsExpanded((prev) => ({ ...prev, [cat.category]: isExpanded }))
-                              }
-                              disableGutters
-                              sx={{
-                                boxShadow: 'none',
-                                '&:before': { display: 'none' },
-                                borderBottom: 1,
-                                borderColor: 'divider',
-                              }}
-                            >
-                              <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 48, '& .MuiAccordionSummary-content': { my: 1 } }}>
-                                <Stack direction="row" alignItems="center" spacing={1}>
-                                  {allMet ? (
-                                    <CheckCircle fontSize="small" color="success" />
-                                  ) : null}
-                                  <Typography variant="subtitle2">
-                                    {allMet ? `✔ ${cat.categoryLabel} complete` : cat.categoryLabel}
-                                  </Typography>
-                                </Stack>
-                              </AccordionSummary>
-                              <AccordionDetails sx={{ pt: 0 }}>
-                                <Stack spacing={2}>
-                                  {cat.items.map((item, index) => (
-                                    <Box key={`${cat.category}-${index}`} sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1, bgcolor: item.met ? 'success.50' : 'grey.50' }}>
-                                      <RequirementInteraction
-                                        item={item}
-                                        categoryLabel={cat.categoryLabel}
-                                        category={cat.category}
-                                        categoryItems={cat.items}
-                                        onFix={
-                                          !item.requiresUpload && item.ackKey
-                                            ? (answer) => handleRequirementFix(item.ackKey!, answer, cat.category, item.label)
-                                            : undefined
-                                        }
-                                        onUploadClick={
-                                          item.requiresUpload ? () => navigate('/c1/workers/profile?tab=Qualifications') : undefined
-                                        }
-                                        onEducationSelect={cat.category === 'educationLevels' ? handleEducationSelect : undefined}
-                                        onFollowUpFix={
-                                          cat.category === 'additionalScreenings' && /covid|vaccine|vaccination/i.test(item.label)
-                                            ? (answer) =>
-                                                handleRequirementFix(
-                                                  `additionalScreenings_${item.label.replace(/[^a-zA-Z0-9]+/g, '_')}_willing`,
-                                                  answer,
-                                                  'additionalScreenings',
-                                                  item.label
-                                                )
-                                            : undefined
-                                        }
-                                        showHealthFollowUp={
-                                          cat.category === 'additionalScreenings' && additionalScreeningsData[item.label] === 'No'
-                                        }
-                                        showInteraction={showInteraction}
-                                        initialEducationLevel={cat.category === 'educationLevels' ? userProfile?.educationLevel : undefined}
-                                      />
-                                    </Box>
-                                  ))}
-                                </Stack>
-                              </AccordionDetails>
-                            </Accordion>
-                          );
-                        })}
-                      </Box>
-                    )
-                  )}
-                  {posting.eVerifyRequired && (
-                    <Box sx={{ display: 'flex', justifyContent: 'flex-start', mt: 2 }}>
-                      <Box
-                        component="img"
-                        src="/img/everify.png"
-                        alt="E-Verify"
-                        sx={{
-                          height: { xs: 32, sm: 36 },
-                          width: 'auto',
-                          objectFit: 'contain',
-                        }}
-                      />
-                    </Box>
-                  )}
+                  {/* Intentional launch behavior: only show top requirements summary on job post detail.
+                      Interactive completion flow happens in Apply wizard after clicking Apply. */}
                 </CardContent>
               </Card>
             );

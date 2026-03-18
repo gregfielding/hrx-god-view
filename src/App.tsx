@@ -141,6 +141,7 @@ import RecruiterJobOrders from './pages/RecruiterJobOrders';
 import RecruiterAccounts from './pages/RecruiterAccounts';
 import RecruiterJobOrderDetail from './pages/RecruiterJobOrderDetail';
 import RecruiterApplicants from './pages/RecruiterApplicants';
+import RecruiterOnboarding from './pages/RecruiterOnboarding';
 import SmartGroupsPage from './pages/SmartGroupsPage';
 import AllSmartGroupsPage from './pages/AllSmartGroupsPage';
 import MySmartGroupsListPage from './pages/MySmartGroupsListPage';
@@ -1188,6 +1189,7 @@ function App() {
           <Route path="users" element={<Navigate to="/users" replace />} />
           <Route path="users/:uid" element={<UsersRedirect />} />
           <Route path="applicants" element={<RecruiterApplicants />} />
+          <Route path="onboarding" element={<Navigate to="/jobs/onboarding" replace />} />
           <Route path="smartgroups" element={<Navigate to="/users/smart-groups" replace />} />
           {/* Redirect all recruiter/companies/... to canonical /companies/... */}
           <Route path="companies/*" element={<RecruiterCompaniesRedirect />} />
@@ -1209,6 +1211,7 @@ function App() {
           <Route index element={<Navigate to="/jobs/job-orders" replace />} />
           <Route path="job-orders" element={<RecruiterJobOrders />} />
           <Route path="my-orders" element={<RecruiterJobOrders />} />
+          <Route path="onboarding" element={<RecruiterOnboarding />} />
           <Route path="job-orders/new" element={<NewJobOrder />} />
           <Route path="job-orders/:jobOrderId" element={<RecruiterJobOrderDetail />} />
           <Route path="jobs-board" element={

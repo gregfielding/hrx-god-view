@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -31,6 +32,49 @@ function overlapsSameDay(aStart: number | null, aEnd: number | null, bStart: num
   const normalizedAEnd = aEnd < aStart ? aEnd + 24 * 60 : aEnd;
   const normalizedBEnd = bEnd < bStart ? bEnd + 24 * 60 : bEnd;
   return aStart < normalizedBEnd && bStart < normalizedAEnd;
+}
+
+function buildAssignmentDocId(args: { shiftId: string; userId: string; dayKey: string }): string {
+  return `${args.shiftId}__${args.userId}__${args.dayKey}`;
+}
+
+function buildLegacyAssignmentDocId(args: { shiftId: string; userId: string }): string {
+  return `${args.shiftId}__${args.userId}`;
+}
+
+function isAssignmentActiveStatus(status: string): boolean {
+  const normalized = String(status || '').toLowerCase();
+  return !['declined', 'canceled', 'cancelled'].includes(normalized);
+}
+
+function legacyAssignmentMatchesDay(args: {
+  legacyStartDate: string;
+  targetDay: string;
+  isGigJob: boolean;
+}): boolean {
+  const legacyDay = String(args.legacyStartDate || '').trim();
+  const targetDay = String(args.targetDay || '').trim();
+  // For gig/day-scoped flows, a blank legacy date should not block placement for all days.
+  if (args.isGigJob) return Boolean(legacyDay && targetDay && legacyDay === targetDay);
+  // Career/undated flows can still treat legacy records as matching.
+  return legacyDay === targetDay || legacyDay === '';
+}
+
+function isIsoDayToken(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
+
+function getApplicationApplyDays(applicationData: Record<string, any>): string[] {
+  const days = new Set<string>();
+  if (Array.isArray(applicationData.applyDates)) {
+    applicationData.applyDates.forEach((entry: unknown) => {
+      const value = String(entry || '').trim();
+      if (isIsoDayToken(value)) days.add(value);
+    });
+  }
+  const applyDate = String(applicationData.applyDate || '').trim();
+  if (isIsoDayToken(applyDate)) days.add(applyDate);
+  return Array.from(days).sort();
 }
 
 function canManageAssignmentsFromClaims(auth: any, tenantId: string): boolean {
@@ -323,6 +367,7 @@ export const placementsCreateAssignments = onCall(
 
   const jobOrder = jobOrderSnap.data() || {};
   const shift = shiftSnap.data() || {};
+  const isGigJob = String(jobOrder.jobType || '').toLowerCase() === 'gig';
   const onboardingConfig = await resolveOnboardingConfigForJobOrder({
     tenantId,
     jobOrderId,
@@ -374,11 +419,31 @@ export const placementsCreateAssignments = onCall(
         const warnings: string[] = [];
         const userCreated: Array<{ assignmentId: string; date: string }> = [];
         for (const singleDate of bulkDates) {
-          const assignmentDocId = `${shiftId}__${userId}__${singleDate}`;
+          const assignmentDocId = buildAssignmentDocId({ shiftId, userId, dayKey: singleDate });
           const assignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(assignmentDocId);
-          const assignmentDoc = await assignmentRef.get();
+          const legacyAssignmentRef = db
+            .collection(`tenants/${tenantId}/assignments`)
+            .doc(buildLegacyAssignmentDocId({ shiftId, userId }));
+          const [assignmentDoc, legacyAssignmentDoc] = await Promise.all([
+            assignmentRef.get(),
+            legacyAssignmentRef.get(),
+          ]);
           const existingStatus = assignmentDoc.exists ? String((assignmentDoc.data() || {}).status || '').toLowerCase() : '';
-          if (assignmentDoc.exists && !['declined', 'canceled', 'cancelled'].includes(existingStatus)) {
+          const legacyStatus = legacyAssignmentDoc.exists
+            ? String((legacyAssignmentDoc.data() || {}).status || '').toLowerCase()
+            : '';
+          const legacyStartDate = legacyAssignmentDoc.exists
+            ? toDateOnly((legacyAssignmentDoc.data() || {}).startDate)
+            : '';
+          const legacySameDay = legacyAssignmentMatchesDay({
+            legacyStartDate,
+            targetDay: singleDate,
+            isGigJob,
+          });
+          if (
+            (assignmentDoc.exists && isAssignmentActiveStatus(existingStatus)) ||
+            (legacyAssignmentDoc.exists && legacySameDay && isAssignmentActiveStatus(legacyStatus))
+          ) {
             continue;
           }
           const activeAssignments = await db
@@ -397,7 +462,7 @@ export const placementsCreateAssignments = onCall(
             if (overlapsSameDay(shiftStartMin, shiftEndMin, existingStart, existingEnd)) blockedByOverlap = true;
           });
           if (blockedByOverlap) continue;
-          const isReactivating = assignmentDoc.exists && ['canceled', 'cancelled', 'declined'].includes(existingStatus);
+          const isReactivating = assignmentDoc.exists && !isAssignmentActiveStatus(existingStatus);
           const assignmentData: any = {
             tenantId,
             jobOrderId,
@@ -562,13 +627,33 @@ export const placementsCreateAssignments = onCall(
       const userData = userSnap.data() || {};
       const warnings: string[] = [];
 
-      const assignmentDocId = effectiveStartDate !== shiftDate || effectiveEndDate !== shiftEndDate
-        ? `${shiftId}__${userId}__${effectiveStartDate}`
-        : `${shiftId}__${userId}`;
-      const assignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(assignmentDocId);
-      const assignmentDoc = await assignmentRef.get();
+      const shouldUseDayScopedAssignmentId = isGigJob || effectiveStartDate !== shiftDate || effectiveEndDate !== shiftEndDate;
+      const canonicalAssignmentDocId = shouldUseDayScopedAssignmentId
+        ? buildAssignmentDocId({ shiftId, userId, dayKey: effectiveStartDate })
+        : buildLegacyAssignmentDocId({ shiftId, userId });
+      const legacyAssignmentDocId = buildLegacyAssignmentDocId({ shiftId, userId });
+      const assignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(canonicalAssignmentDocId);
+      const legacyAssignmentRef = db.collection(`tenants/${tenantId}/assignments`).doc(legacyAssignmentDocId);
+      const [assignmentDoc, legacyAssignmentDoc] = await Promise.all([
+        assignmentRef.get(),
+        canonicalAssignmentDocId === legacyAssignmentDocId ? Promise.resolve(null) : legacyAssignmentRef.get(),
+      ]);
       const existingStatus = assignmentDoc.exists ? String((assignmentDoc.data() || {}).status || '').toLowerCase() : '';
-      const hasExistingForThisSlot = assignmentDoc.exists && !['declined', 'canceled', 'cancelled'].includes(existingStatus);
+      const legacyStatus =
+        legacyAssignmentDoc?.exists
+          ? String((legacyAssignmentDoc.data() || {}).status || '').toLowerCase()
+          : '';
+      const legacyStartDate = legacyAssignmentDoc?.exists
+        ? toDateOnly((legacyAssignmentDoc.data() || {}).startDate)
+        : '';
+      const legacySameDay = legacyAssignmentMatchesDay({
+        legacyStartDate,
+        targetDay: effectiveStartDate,
+        isGigJob,
+      });
+      const hasExistingForThisSlot =
+        (assignmentDoc.exists && isAssignmentActiveStatus(existingStatus)) ||
+        Boolean(legacyAssignmentDoc?.exists && legacySameDay && isAssignmentActiveStatus(legacyStatus));
       if (hasExistingForThisSlot) {
         skipped.push({ userId, reason: 'already_assigned_to_shift' });
         continue;
@@ -617,7 +702,7 @@ export const placementsCreateAssignments = onCall(
           .trim() ||
         '';
 
-      const isReactivating = assignmentDoc.exists && ['canceled', 'cancelled', 'declined'].includes(existingStatus);
+      const isReactivating = assignmentDoc.exists && !isAssignmentActiveStatus(existingStatus);
 
       if (isReactivating) {
         const onboardingStatus =
@@ -809,6 +894,15 @@ export const respondToAssignment = onCall(
         { merge: true },
       );
     }
+    await ensureWorkerOnboardingPipeline({
+      tenantId,
+      userId: uid,
+      assignmentId,
+      jobOrderId: (assignment.jobOrderId as string) || null,
+      entityId: (assignment.entityId as string) || null,
+      triggeredByUid: uid,
+      triggerSource: 'worker_confirmation',
+    });
     return { success: true, status: 'confirmed' };
   }
 
@@ -823,16 +917,54 @@ export const respondToAssignment = onCall(
     { merge: true },
   );
   if (applicationRef) {
-    await applicationRef.set(
-      {
-        status: 'withdrawn',
-        withdrawnAt: now,
-        withdrawnBy: uid,
-        updatedAt: now,
-        updatedBy: uid,
-      },
-      { merge: true },
-    );
+    const appSnap = await applicationRef.get();
+    const appData = appSnap.exists ? (appSnap.data() as Record<string, any>) : {};
+    const declinedDay = toDateOnly(assignment.startDate);
+    const currentDays = getApplicationApplyDays(appData);
+    const canAdjustByDay = Boolean(declinedDay && currentDays.length > 0);
+    if (canAdjustByDay) {
+      const remainingDays = currentDays.filter((day) => day !== declinedDay);
+      if (remainingDays.length > 0) {
+        await applicationRef.set(
+          {
+            status: 'submitted',
+            applyDate: remainingDays[0],
+            applyDates: remainingDays,
+            updatedAt: now,
+            updatedBy: uid,
+            withdrawnAt: admin.firestore.FieldValue.delete(),
+            withdrawnBy: admin.firestore.FieldValue.delete(),
+          },
+          { merge: true },
+        );
+      } else {
+        await applicationRef.set(
+          {
+            status: 'withdrawn',
+            withdrawnAt: now,
+            withdrawnBy: uid,
+            applyDate: admin.firestore.FieldValue.delete(),
+            applyDates: admin.firestore.FieldValue.delete(),
+            updatedAt: now,
+            updatedBy: uid,
+          },
+          { merge: true },
+        );
+      }
+    } else {
+      await applicationRef.set(
+        {
+          status: 'withdrawn',
+          withdrawnAt: now,
+          withdrawnBy: uid,
+          applyDate: admin.firestore.FieldValue.delete(),
+          applyDates: admin.firestore.FieldValue.delete(),
+          updatedAt: now,
+          updatedBy: uid,
+        },
+        { merge: true },
+      );
+    }
   }
   return { success: true, status: 'declined' };
   },
@@ -891,6 +1023,18 @@ export const confirmAssignmentForWorker = onCall(
         { merge: true },
       );
     }
+    const targetWorkerId = String(assignment.userId || assignment.candidateId || '').trim();
+    if (targetWorkerId) {
+      await ensureWorkerOnboardingPipeline({
+        tenantId,
+        userId: targetWorkerId,
+        assignmentId,
+        jobOrderId: (assignment.jobOrderId as string) || null,
+        entityId: (assignment.entityId as string) || null,
+        triggeredByUid: uid,
+        triggerSource: 'recruiter_confirmation',
+      });
+    }
     return { success: true, status: 'confirmed' };
   },
 );
@@ -936,7 +1080,10 @@ export const placementsCancelAssignment = onCall(
     throw new HttpsError('invalid-argument', 'Assignment does not match userId/shiftId');
   }
 
-  const placementId = `${shiftId}__${userId}`;
+  const placementDayKey = toDateOnly(assignmentData.startDate);
+  const placementId = placementDayKey
+    ? `${shiftId}__${userId}__${placementDayKey}`
+    : `${shiftId}__${userId}`;
   const placementRef = db.doc(`tenants/${tenantId}/placements/${placementId}`);
 
   // Linked application: revert to submitted so worker's job posting view no longer shows "Confirmed"
@@ -962,11 +1109,30 @@ export const placementsCancelAssignment = onCall(
       tenantId,
       jobOrderId: assignmentData.jobOrderId,
       shiftId,
+      startDate: placementDayKey || '',
       userId,
       createdBy: request.auth!.uid,
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
     if (applicationRef) {
+      const appSnap = await tx.get(applicationRef);
+      const appData = appSnap.exists ? (appSnap.data() as Record<string, any>) : {};
+      const currentDays = getApplicationApplyDays(appData);
+      const remainingDays = placementDayKey
+        ? currentDays.filter((day) => day !== placementDayKey)
+        : currentDays;
+      const dayPatch: Record<string, unknown> =
+        currentDays.length > 0
+          ? remainingDays.length > 0
+            ? {
+                applyDates: remainingDays,
+                applyDate: remainingDays[0],
+              }
+            : {
+                applyDates: admin.firestore.FieldValue.delete(),
+                applyDate: admin.firestore.FieldValue.delete(),
+              }
+          : {};
       tx.update(applicationRef, {
         status: 'submitted',
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -974,6 +1140,7 @@ export const placementsCancelAssignment = onCall(
         confirmedBy: admin.firestore.FieldValue.delete(),
         // Signal to application triggers: do not send application_received SMS (assignment cancel already sends one message)
         statusChangeReason: 'assignment_cancelled',
+        ...dayPatch,
       });
     }
   });

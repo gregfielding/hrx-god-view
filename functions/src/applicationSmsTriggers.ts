@@ -11,6 +11,7 @@ import { sendLegacyApplicationStatusMessage } from './messaging/legacyMessageHel
 import { shouldSendNotification } from './utils/notificationSettings';
 import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } from './utils/templateVariableResolver';
 import { sendApplicationStatusChangedNotification } from './messaging/unifiedWorkerNotifications';
+import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -34,6 +35,10 @@ function cleanupMisSavedPlaceholders(
 }
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeStringToken(value: unknown): string {
+  return String(value || '').trim().toLowerCase();
 }
 
 if (!admin.apps.length) {
@@ -127,6 +132,15 @@ export const onApplicationCreated = onDocumentCreated(
         if (!phoneE164) {
           logger.info(`User ${userId} has no phone number, skipping SMS for application ${applicationId}`);
           return { success: true };
+        }
+        const canProcessCreateEvent = await markLifecycleEventIfFirst({
+          tenantId,
+          dedupeKey: `application_created__${applicationId}`,
+          eventType: 'application_created',
+          context: { applicationId, userId },
+        });
+        if (!canProcessCreateEvent) {
+          return { success: true, deduped: true };
         }
 
         // Try to find matching template
@@ -389,6 +403,109 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return false;
       };
 
+      // Final safety net for messy/legacy application shapes:
+      // if user already has a good-standing assignment that clearly matches this application by
+      // jobOrderId, shiftId, jobPostId, or (jobTitle + companyName), do not send waitlist SMS.
+      const skipWaitlistedWhenUserHasMatchingGoodStandingAssignment = async () => {
+        const userId = after.userId || after.candidateId;
+        if (!userId) return false;
+
+        const appJobOrderId = normalizeStringToken(after.jobOrderId);
+        const appShiftIds = new Set<string>();
+        const appShiftId = normalizeStringToken(after.shiftId);
+        if (appShiftId) appShiftIds.add(appShiftId);
+        if (Array.isArray(after.shiftIds)) {
+          after.shiftIds
+            .map((shift: unknown) => normalizeStringToken(shift))
+            .filter(Boolean)
+            .forEach((shift: string) => appShiftIds.add(shift));
+        }
+        const appPostIds = new Set<string>();
+        const appJobId = normalizeStringToken(after.jobId);
+        const appPostId = normalizeStringToken(after.postId);
+        const appJobPostId = normalizeStringToken((after as any).jobPostId);
+        if (appJobId) appPostIds.add(appJobId);
+        if (appPostId) appPostIds.add(appPostId);
+        if (appJobPostId) appPostIds.add(appJobPostId);
+        const appJobTitle = normalizeStringToken(after.jobTitle || after.postTitle);
+        const appCompanyName = normalizeStringToken(after.companyName || after.companyTitle);
+
+        try {
+          const assignSnap = await admin.firestore()
+            .collection(`tenants/${tenantId}/assignments`)
+            .where('userId', '==', userId)
+            .where('status', 'in', ['proposed', 'confirmed', 'active'])
+            .limit(20)
+            .get();
+
+          const hasMatchingAssignment = assignSnap.docs.some((docSnap) => {
+            const assignment = docSnap.data() || {};
+            const assignmentJobOrderId = normalizeStringToken(assignment.jobOrderId);
+            const assignmentShiftId = normalizeStringToken(assignment.shiftId);
+            const assignmentPostId = normalizeStringToken(assignment.jobPostId);
+            const assignmentJobTitle = normalizeStringToken(assignment.jobTitle);
+            const assignmentCompanyName = normalizeStringToken(assignment.companyName || assignment.companyTitle);
+
+            if (appJobOrderId && assignmentJobOrderId && appJobOrderId === assignmentJobOrderId) return true;
+            if (appShiftIds.size > 0 && assignmentShiftId && appShiftIds.has(assignmentShiftId)) return true;
+            if (appPostIds.size > 0 && assignmentPostId && appPostIds.has(assignmentPostId)) return true;
+            if (appJobTitle && appCompanyName && assignmentJobTitle && assignmentCompanyName) {
+              return appJobTitle === assignmentJobTitle && appCompanyName === assignmentCompanyName;
+            }
+            if (appJobTitle && assignmentJobTitle) return appJobTitle === assignmentJobTitle;
+            return false;
+          });
+
+          if (hasMatchingAssignment) {
+            logger.info(`Application ${applicationId} status=waitlisted but user ${userId} has a matching good-standing assignment; skipping waitlisted notification`);
+            return true;
+          }
+        } catch (err) {
+          logger.warn(`Could not run matching-assignment waitlist guard for application ${applicationId}:`, err);
+        }
+
+        return false;
+      };
+
+      // Placement-level guard: placement can exist before assignment status settles.
+      // If worker is currently placed for this job/shift, do not send waitlist SMS.
+      const skipWaitlistedWhenUserHasPlacementForJobOrShift = async () => {
+        const userId = after.userId || after.candidateId;
+        if (!userId) return false;
+        const appJobOrderId = normalizeStringToken(after.jobOrderId);
+        const appShiftIds = new Set<string>();
+        const appShiftId = normalizeStringToken(after.shiftId);
+        if (appShiftId) appShiftIds.add(appShiftId);
+        if (Array.isArray(after.shiftIds)) {
+          after.shiftIds
+            .map((shift: unknown) => normalizeStringToken(shift))
+            .filter(Boolean)
+            .forEach((shift: string) => appShiftIds.add(shift));
+        }
+        try {
+          const placementSnap = await admin.firestore()
+            .collection(`tenants/${tenantId}/placements`)
+            .where('userId', '==', userId)
+            .limit(20)
+            .get();
+          const hasMatchingPlacement = placementSnap.docs.some((docSnap) => {
+            const placement = docSnap.data() || {};
+            const placementJobOrderId = normalizeStringToken(placement.jobOrderId);
+            const placementShiftId = normalizeStringToken(placement.shiftId);
+            if (appJobOrderId && placementJobOrderId && appJobOrderId === placementJobOrderId) return true;
+            if (appShiftIds.size > 0 && placementShiftId && appShiftIds.has(placementShiftId)) return true;
+            return false;
+          });
+          if (hasMatchingPlacement) {
+            logger.info(`Application ${applicationId} status=waitlisted but user ${userId} has a matching placement; skipping waitlisted notification`);
+            return true;
+          }
+        } catch (err) {
+          logger.warn(`Could not run placement waitlist guard for application ${applicationId}:`, err);
+        }
+        return false;
+      };
+
       if (newStatus === 'rejected' && (await skipStatusNotificationWhenAssigned('skipping rejection notification'))) {
         return { success: true };
       }
@@ -397,6 +514,20 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       }
       // Do not send waitlisted SMS when the user is already in good standing (assigned or accepted/confirmed for this job).
       if (newStatus === 'waitlisted') {
+        const waitlistDedupeScopeKey = [
+          normalizeStringToken(after.userId || after.candidateId),
+          normalizeStringToken(after.jobOrderId || after.jobId || after.postId || (after as any).jobPostId || applicationId),
+        ].join('__');
+        const canProcessWaitlistScopeEvent = await markLifecycleEventIfFirst({
+          tenantId,
+          dedupeKey: `application_waitlisted_scope__${waitlistDedupeScopeKey}`,
+          eventType: 'application_waitlisted_scope',
+          context: { applicationId, userId: after.userId || after.candidateId, jobOrderId: after.jobOrderId, jobId: after.jobId, postId: after.postId },
+        });
+        if (!canProcessWaitlistScopeEvent) {
+          logger.info(`Application ${applicationId} waitlisted scope dedupe hit; skipping duplicate waitlisted SMS`);
+          return { success: true, deduped: true };
+        }
         if ((oldStatus || '').toLowerCase() === 'accepted' || (oldStatus || '').toLowerCase() === 'confirmed') {
           logger.info(`Application ${applicationId} status changed to waitlisted but previous status was ${oldStatus}; skipping (user was already accepted/confirmed)`);
           return { success: true };
@@ -405,10 +536,16 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         if (await skipWaitlistedOrRejectedWhenUserHasAssignmentForJob()) return { success: true };
         if (await skipWaitlistedWhenOtherApplicationAcceptedForSameJob()) return { success: true };
         if (await skipWaitlistedWhenUserHasAssignmentForThisShift()) return { success: true };
+        if (await skipWaitlistedWhenUserHasMatchingGoodStandingAssignment()) return { success: true };
+        if (await skipWaitlistedWhenUserHasPlacementForJobOrShift()) return { success: true };
         // Final hardening: re-read application and assignments right before we'd send (handles race where waitlist write fired before placement write was visible).
         const reReadAppSnap = await admin.firestore().doc(`tenants/${tenantId}/applications/${applicationId}`).get();
         const reReadApp = reReadAppSnap.data();
         const currentStatus = (reReadApp?.status || '').toLowerCase();
+        if (currentStatus !== 'waitlisted') {
+          logger.info(`Application ${applicationId} final re-read status=${currentStatus || 'unknown'}; skipping stale waitlisted SMS`);
+          return { success: true };
+        }
         if (currentStatus === 'accepted' || currentStatus === 'confirmed') {
           logger.info(`Application ${applicationId} re-read shows status=${currentStatus}; skipping waitlisted SMS (placement won race)`);
           return { success: true };
@@ -434,6 +571,21 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       if (!userId) {
         logger.warn(`Application ${applicationId} has no userId or candidateId, skipping SMS`);
         return { success: true };
+      }
+      const updatedAtToken =
+        typeof (after.updatedAt as any)?.toMillis === 'function'
+          ? String((after.updatedAt as any).toMillis())
+          : typeof (after.updatedAt as any)?._seconds === 'number'
+            ? String((after.updatedAt as any)._seconds)
+            : 'na';
+      const canProcessStatusEvent = await markLifecycleEventIfFirst({
+        tenantId,
+        dedupeKey: `application_status__${applicationId}__${String(oldStatus || '').toLowerCase()}__${String(newStatus || '').toLowerCase()}__${updatedAtToken}`,
+        eventType: 'application_status_changed',
+        context: { applicationId, userId, oldStatus, newStatus },
+      });
+      if (!canProcessStatusEvent) {
+        return { success: true, deduped: true };
       }
 
       // Fetch user data to get phone number
@@ -464,6 +616,7 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           if (newStatus === 'submitted') messageTypeId = 'application_received';
           else if (newStatus === 'screened') messageTypeId = 'application_screened';
           else if (newStatus === 'advanced') messageTypeId = 'application_advanced';
+          else if (newStatus === 'offer') messageTypeId = 'application_offered';
           else if (newStatus === 'hired') messageTypeId = 'application_hired';
           else if (newStatus === 'rejected') messageTypeId = 'application_rejected';
           else if (newStatus === 'waitlisted') messageTypeId = 'application_waitlisted';
@@ -569,6 +722,8 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         const statusTitle =
           newStatus === 'accepted' || newStatus === 'hired' || newStatus === 'confirmed'
             ? "You've been selected"
+            : newStatus === 'offer'
+              ? "You've received an offer"
             : newStatus === 'rejected'
               ? 'Application declined'
               : newStatus === 'waitlisted'

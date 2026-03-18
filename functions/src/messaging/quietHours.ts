@@ -46,6 +46,7 @@ const DEFAULT_QUIET_HOURS: QuietHoursConfig = {
     'application_received',
     'application_screened',
     'application_advanced',
+    'application_offered',
     'application_hired',
     'application_waitlisted',
     'application_rejected',

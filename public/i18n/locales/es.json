@@ -485,6 +485,7 @@
     "requirementsToApplySummary": "Para aplicar a este turno, completa estos {count} pasos:",
     "requirementsTierRequiredNow": "Requerido para aplicar ahora",
     "requirementsTierBeforeAssignment": "Requerido antes de la asignación",
+    "jobPreparation": "Preparación para el trabajo",
     "requirementsTierRecommended": "Recomendado",
     "requirementsActionConfirmSkill": "Confirmar habilidad {label}",
     "requirementsActionAddCert": "Añadir licencia/certificación {label}",

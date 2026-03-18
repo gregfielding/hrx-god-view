@@ -40,6 +40,7 @@ import { getCategoryForTitle } from '../../../utils/dashboardCardCategory';
 import { buildHomeReadinessModel } from '../../../utils/homeReadinessModel';
 import { getImprovementTasks } from '../../../utils/jobReadinessTasks';
 import { useT, getLanguage } from '../../../i18n';
+import { useWorkerOnboardingPipeline } from '../../../hooks/useWorkerOnboardingPipeline';
 
 import JobReadinessFeed from './JobReadinessFeed';
 
@@ -161,6 +162,7 @@ const WorkerDashboard: React.FC = () => {
     [userDoc, checklist]
   );
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
+  const { tasks: onboardingTasks } = useWorkerOnboardingPipeline(user?.uid, tenantId);
 
   const firstName =
     (userDoc?.firstName as string) ||
@@ -407,6 +409,17 @@ const WorkerDashboard: React.FC = () => {
       ? scoredPercent
       : readinessPercent;
   const nextIncompleteStep = checklistItems.find((item) => item.status !== 'complete');
+  const onboardingChecklistItems: HomeChecklistItem[] = onboardingTasks.map((task) => ({
+    id: task.id,
+    title: task.title,
+    benefit: task.benefit,
+    status: task.status,
+    priority: task.priority,
+    launchStep: 'start',
+  }));
+  const openOnboardingTask = () => {
+    navigate('/c1/workers/documents');
+  };
   const primaryCtaLabel =
     effectiveReadinessPercent <= 0
       ? 'Start getting job-ready'
@@ -460,6 +473,21 @@ const WorkerDashboard: React.FC = () => {
               items={checklistItems}
               onSelectItem={(item) => openReadinessFlow(item.launchStep)}
             />
+
+            {onboardingChecklistItems.length > 0 ? (
+              <Stack spacing={1}>
+                <Typography variant="h6" sx={{ fontWeight: 700 }}>
+                  Onboarding tasks
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  These are assignment onboarding items that need your attention.
+                </Typography>
+                <NextStepsChecklist
+                  items={onboardingChecklistItems}
+                  onSelectItem={openOnboardingTask}
+                />
+              </Stack>
+            ) : null}
 
             <RecommendedJobsSection
               cards={sections.jobsCards.slice(0, 5)}

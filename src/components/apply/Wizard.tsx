@@ -151,6 +151,52 @@ const detectDefaultLanguage = (): 'en' | 'es' => {
   return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
 };
 
+const parseAuthDisplayName = (displayName: unknown): { firstName: string; lastName: string } => {
+  const raw = typeof displayName === 'string' ? displayName.trim() : '';
+  if (!raw) return { firstName: '', lastName: '' };
+  const parts = raw.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { firstName: '', lastName: '' };
+  if (parts.length === 1) return { firstName: parts[0], lastName: '' };
+  return { firstName: parts[0], lastName: parts.slice(1).join(' ') };
+};
+
+const normalizeToken = (value: unknown): string => String(value || '').trim().toLowerCase();
+
+const valuesLooselyMatch = (left: string, right: string): boolean => {
+  if (!left || !right) return false;
+  const a = normalizeToken(left);
+  const b = normalizeToken(right);
+  return a === b || a.includes(b) || b.includes(a);
+};
+
+const toStringList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value
+        .map((item) => {
+          if (typeof item === 'string') return item.trim();
+          if (item && typeof item === 'object' && 'name' in item) return String((item as any).name || '').trim();
+          if (item && typeof item === 'object' && 'degree' in item) return String((item as any).degree || '').trim();
+          return String(item || '').trim();
+        })
+        .filter(Boolean)
+    : [];
+
+const hasResumeData = (resume: any): boolean =>
+  Boolean(
+    resume?.fileName ||
+      resume?.storagePath ||
+      resume?.downloadUrl ||
+      resume?.fileUrl ||
+      resume?.resumeUrl ||
+      resume?.parsed
+  );
+
+const buildAdditionalScreeningCanonicalKey = (screeningName: string): string => {
+  const compact = String(screeningName || '').replace(/[^a-zA-Z0-9]+/g, '');
+  if (!compact) return '';
+  return compact.charAt(0).toLowerCase() + compact.slice(1);
+};
+
 const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId, uid, signupGroupId = null }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -286,8 +332,158 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     if (posting.jobType === 'gig') {
       indices = indices.filter((i) => i !== 10);
     }
+
+    const isAuthenticated = Boolean(auth.currentUser?.uid || uid);
+    const profile = userProfile || {};
+    const personal = formData?.personal || {};
+    const eligibility = formData?.eligibility || {};
+    const qualifications = formData?.qualifications || {};
+    const profilePicture = formData?.profilePicture || {};
+    const resume = formData?.resume || {};
+    const requirementsForm = (formData?.requirements || {}) as Record<string, any>;
+
+    const personalComplete = Boolean(
+      String(personal.firstName || profile.firstName || '').trim() &&
+        String(personal.lastName || profile.lastName || '').trim() &&
+        String(personal.email || profile.email || '').trim() &&
+        String(personal.phone || profile.phone || profile.phoneE164 || '').trim() &&
+        String(personal.dob || profile.dob || profile.dateOfBirth || '').trim()
+    );
+    if (isAuthenticated && personalComplete) indices = indices.filter((i) => i !== 0);
+
+    const homeLat =
+      personal.homeLat ??
+      profile.addressInfo?.homeLat ??
+      profile.homeLat;
+    const homeLng =
+      personal.homeLng ??
+      profile.addressInfo?.homeLng ??
+      profile.homeLng;
+    const addressComplete = Boolean(
+      String(personal.street || profile.addressInfo?.streetAddress || '').trim() &&
+        String(personal.city || profile.city || profile.addressInfo?.city || '').trim() &&
+        String(personal.state || profile.state || profile.addressInfo?.state || '').trim() &&
+        String(personal.zip || profile.zipCode || profile.addressInfo?.zip || '').trim() &&
+        homeLat !== undefined &&
+        homeLng !== undefined
+    );
+    if (isAuthenticated && addressComplete) indices = indices.filter((i) => i !== 1);
+
+    const workAuthComplete =
+      /C1 Events LLC/i.test(String(hiringEntityName || '')) ||
+      Boolean(eligibility.workAuthorized ?? profile.workEligibility);
+    if (isAuthenticated && workAuthComplete) indices = indices.filter((i) => i !== 2);
+
+    const hasProfilePhoto = Boolean(
+      profilePicture.profilePicture || profile.workerProfile?.photoUrl || profile.avatar
+    );
+    if (hasProfilePhoto) indices = indices.filter((i) => i !== 3);
+
+    const hasResume = hasResumeData(resume) || hasResumeData(profile.resume) || Boolean(profile.resumeUrl);
+    if (hasResume) indices = indices.filter((i) => i !== 4);
+
+    const requiredSkills = toStringList(
+      posting.skills ||
+        posting.skillsRequired ||
+        posting.requiredSkills ||
+        posting.requirements?.skills ||
+        posting.scoping?.skills
+    );
+    const userSkills = toStringList(qualifications.skills || profile.skills);
+    const missingRequiredSkills = requiredSkills.filter(
+      (requiredSkill) => !userSkills.some((userSkill) => valuesLooselyMatch(userSkill, requiredSkill))
+    );
+    const skillsComplete =
+      requiredSkills.length > 0 ? missingRequiredSkills.length === 0 : userSkills.length > 0;
+    if (skillsComplete) indices = indices.filter((i) => i !== 5);
+
+    const requiredEducation = toStringList(
+      posting.educationLevels ||
+        posting.educationRequired ||
+        posting.requirements?.education ||
+        posting.jobOrder?.educationRequired
+    );
+    const userEducation = toStringList(qualifications.education || profile.education);
+    const educationComplete =
+      requiredEducation.length === 0 ||
+      requiredEducation.every((requiredEdu) =>
+        userEducation.some((userEdu) => valuesLooselyMatch(userEdu, requiredEdu))
+      );
+    if (educationComplete) indices = indices.filter((i) => i !== 6);
+
+    const requiredCertifications = toStringList(
+      posting.licensesCerts ||
+        posting.requiredCertifications ||
+        posting.requirements?.certifications
+    );
+    const userCertifications = toStringList(qualifications.certifications || profile.certifications);
+    const certificationsComplete =
+      requiredCertifications.length === 0 ||
+      requiredCertifications.every((requiredCert) =>
+        userCertifications.some((userCert) => valuesLooselyMatch(userCert, requiredCert))
+      );
+    if (certificationsComplete) indices = indices.filter((i) => i !== 7);
+
+    const requiresExperience = Boolean(
+      posting.yearsOfExperience ||
+        posting.experienceYears ||
+        (Array.isArray(posting.experienceLevels) && posting.experienceLevels.length > 0) ||
+        (Array.isArray(posting.requiredExperienceLevels) && posting.requiredExperienceLevels.length > 0) ||
+        posting.experienceRequired ||
+        posting.jobOrder?.experienceRequired
+    );
+    const hasWorkHistory = toStringList(
+      qualifications.workExperience ||
+        qualifications.workHistory ||
+        profile.workExperience ||
+        profile.workHistory
+    ).length > 0;
+    if (!requiresExperience || hasWorkHistory) indices = indices.filter((i) => i !== 8);
+
+    // Optional profile-strength steps are hidden on re-apply unless needed for required gating.
+    indices = indices.filter((i) => i !== 9 && i !== 10);
+
+    const hasValue = (v: unknown) => String(v || '').trim().length > 0;
+    const needsDrug = Boolean(posting.showDrugScreening || posting.drugScreeningRequired);
+    const needsBackground = Boolean(posting.showBackgroundChecks || posting.backgroundCheckRequired);
+    const needsEVerify = Boolean(posting.eVerifyRequired);
+    const additionalScreenings = Array.isArray(posting.additionalScreenings) ? posting.additionalScreenings : [];
+    const showAdditional = Boolean(posting.showAdditionalScreenings) && additionalScreenings.length > 0;
+    const requiredLanguages = toStringList(posting.languages || (requirements as any).languages);
+    const requiredPhysical = toStringList(posting.physicalRequirements || requirements.physical);
+    const requiredUniform = toStringList(posting.uniformRequirements);
+    const requiredPpe = toStringList(posting.requiredPpe || posting.ppeRequirements || requirements.ppe);
+    const customUniformText = String(posting.customUniformRequirements || '').trim();
+    const missingAdditional = showAdditional
+      ? additionalScreenings.some((name) => !hasValue(requirementsForm?.additionalScreenings?.[name]))
+      : false;
+    const needsRequirementsStep =
+      (needsDrug &&
+        (!hasValue(requirementsForm.drugScreeningComfort) ||
+          (requirementsForm.drugScreeningComfort === 'Maybe' && !hasValue(requirementsForm.drugExplanation)))) ||
+      (needsBackground &&
+        (!hasValue(requirementsForm.backgroundScreeningComfort) ||
+          (requirementsForm.backgroundScreeningComfort === 'Maybe' &&
+            !hasValue(requirementsForm.backgroundExplanation)))) ||
+      (needsEVerify && !hasValue(requirementsForm.eVerifyComfort)) ||
+      missingAdditional ||
+      ((posting.showLanguages || requiredLanguages.length > 0) && !hasValue(requirementsForm.languagesComfort)) ||
+      ((posting.showPhysicalRequirements || requiredPhysical.length > 0) &&
+        !hasValue(requirementsForm.physicalRequirementsComfort)) ||
+      ((posting.showUniformRequirements || requiredUniform.length > 0) &&
+        !hasValue(requirementsForm.uniformRequirementsComfort)) ||
+      ((posting.showCustomUniformRequirements || customUniformText.length > 0) &&
+        !hasValue(requirementsForm.customUniformRequirementsComfort)) ||
+      ((posting.showRequiredPpe || requiredPpe.length > 0) && !hasValue(requirementsForm.requiredPpeComfort)) ||
+      !hasValue(requirementsForm.transportMethod);
+    if (!needsRequirementsStep) indices = indices.filter((i) => i !== 11);
+
+    if (indices.length === 0) {
+      // Always keep at least one final step so worker can submit.
+      indices = [11];
+    }
     return indices;
-  }, [posting, hiringEntityName]);
+  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
@@ -628,26 +824,47 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
   useEffect(() => {
     const loadUser = async () => {
       try {
-        if (!uid) return;
-        const uref = doc(db, 'users', uid);
+        const effectiveUid = uid || auth.currentUser?.uid;
+        if (!effectiveUid) return;
+        const uref = doc(db, 'users', effectiveUid);
         const usnap = await getDoc(uref);
         if (usnap.exists()) setUserProfile(usnap.data());
       } catch {}
     };
     loadUser();
-  }, [uid]);
+  }, [uid, auth.currentUser?.uid]);
+
+  // Hydrate Personal Info from Firebase Auth displayName when available.
+  // This prevents empty first/last fields immediately after signup redirects.
+  useEffect(() => {
+    const authName = parseAuthDisplayName(auth.currentUser?.displayName);
+    if (!authName.firstName && !authName.lastName) return;
+    setFormData((prev: any) => {
+      const existingPersonal = prev?.personal || {};
+      if (existingPersonal.firstName && existingPersonal.lastName) return prev;
+      return {
+        ...prev,
+        personal: {
+          ...existingPersonal,
+          firstName: existingPersonal.firstName || authName.firstName || '',
+          lastName: existingPersonal.lastName || authName.lastName || '',
+        },
+      };
+    });
+  }, [auth.currentUser?.uid, auth.currentUser?.displayName]);
 
   // Prefill wizard from user profile (runs when profile or posting loads)
   useEffect(() => {
     if (!userProfile) return;
 
     const currentFormData = formDataRef.current || {};
+    const authName = parseAuthDisplayName(auth.currentUser?.displayName);
     const addressInfo = userProfile.addressInfo || {};
     // Merge with existing formData.personal to preserve user input
     const existingPersonal = currentFormData.personal || {};
     const personal = {
-      firstName: existingPersonal.firstName || userProfile.firstName || '',
-      lastName: existingPersonal.lastName || userProfile.lastName || '',
+      firstName: existingPersonal.firstName || userProfile.firstName || authName.firstName || '',
+      lastName: existingPersonal.lastName || userProfile.lastName || authName.lastName || '',
       email: existingPersonal.email || userProfile.email || '',
       phone: existingPersonal.phone || userProfile.phone || userProfile.phoneE164 || '',
       dob: toDobString(existingPersonal.dob || userProfile.dob || userProfile.dateOfBirth) || '',
@@ -781,7 +998,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         console.log('📋 User profile data:', userProfile);
         posting.additionalScreenings.forEach((name: string) => {
           const key = `comfortableWith${name.replace(/[^a-zA-Z0-9]+/g, '')}`;
-          const userValue = (userProfile as any)[key];
+          const canonicalKey = buildAdditionalScreeningCanonicalKey(name);
+          const userValue =
+            // Existing requirement value for this exact screening name in the form
+            requirementsPrefill.additionalScreenings[name] ||
+            // Canonical/normalized map persisted for attestations
+            (canonicalKey
+              ? (userProfile as any)?.workerAttestations?.additionalScreenings?.[canonicalKey]
+              : undefined) ||
+            // Top-level additionalScreenings map if present
+            (userProfile as any)?.additionalScreenings?.[name] ||
+            // Legacy dynamic flat field
+            (userProfile as any)[key];
           console.log(
             `  → ${name}: key=${key}, userValue=${userValue}, alreadyInForm=${requirementsPrefill.additionalScreenings[name]}`,
           );
@@ -807,7 +1035,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
       // Only persist prefill if we don't have existing personal data
       // This ensures user input is preserved after account creation
-      const shouldPrefillPersonal = !personalPrefilledRef.current;
+      const missingCriticalNames =
+        (!currentFormData.personal?.firstName || !currentFormData.personal?.lastName) &&
+        !!(personal.firstName || personal.lastName);
+      const shouldPrefillPersonal = !personalPrefilledRef.current || missingCriticalNames;
       const persistPayload: Record<string, any> = {
         eligibility,
         profilePicture,
@@ -827,7 +1058,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       persist(persistPayload);
       prefilledRef.current = true;
       if (shouldPrefillPersonal) {
-        personalPrefilledRef.current = true;
+        const persistedPersonal = (persistPayload.personal || {}) as Record<string, unknown>;
+        const hasPersistedName =
+          String(persistedPersonal.firstName || '').trim().length > 0 ||
+          String(persistedPersonal.lastName || '').trim().length > 0;
+        if (hasPersistedName || !missingCriticalNames) {
+          personalPrefilledRef.current = true;
+        }
       }
     }
   }, [userProfile, posting]);
@@ -1055,6 +1292,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const cred = await createUserWithEmailAndPassword(auth, email, password);
           // Account created successfully - immediately create user document with base fields
           const newUid = cred.user.uid;
+          const typedFirstName = String(formData?.personal?.firstName || '').trim();
+          const typedLastName = String(formData?.personal?.lastName || '').trim();
+          const composedDisplayName = [typedFirstName, typedLastName].filter(Boolean).join(' ').trim();
           const userRef = doc(db, 'users', newUid);
           const userSnap = await getDoc(userRef);
 
@@ -1063,9 +1303,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             const baseProfile = {
               uid: newUid,
               email: String(email).trim(),
-              displayName: '',
-              firstName: '',
-              lastName: '',
+              displayName: composedDisplayName || '',
+              firstName: typedFirstName || '',
+              lastName: typedLastName || '',
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
               source: 'public_jobs_board',
@@ -1487,6 +1727,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.comfortableWithCustomUniformRequirements = r.customUniformRequirementsComfort;
           if (r.requiredPpeComfort) update.comfortableWithRequiredPpe = r.requiredPpeComfort;
           if (r.transportMethod) update.transportMethod = r.transportMethod;
+          if (r.additionalScreenings && typeof r.additionalScreenings === 'object') {
+            update.additionalScreenings = r.additionalScreenings;
+          }
 
           // Save additional screenings with dynamic field names
           if (r.additionalScreenings && Array.isArray(posting?.additionalScreenings)) {
@@ -1747,7 +1990,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
       const eligibility = formData.eligibility || {};
       const profilePicture = formData.profilePicture || {};
-      const normalizedLanguages = normalizeLanguageList(quals.languages || []);
+      const requirementAnswers = formData.requirements || {};
+      const requiredJobLanguages = Array.isArray(posting?.languages)
+        ? posting.languages.map((l: unknown) => String(l || '').trim()).filter(Boolean)
+        : [];
+      const languagesFromRequirementAnswer =
+        requirementAnswers.languagesComfort === 'Yes' ? requiredJobLanguages : [];
+      const normalizedLanguages = normalizeLanguageList([
+        ...(Array.isArray(quals.languages) ? quals.languages : []),
+        ...languagesFromRequirementAnswer,
+      ]);
       const certifications = Array.isArray(quals.certifications) ? quals.certifications : [];
       const profileUpdate: any = {
         updatedAt: serverTimestamp(),
@@ -1869,6 +2121,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         profileUpdate.passBackgroundExplanation = requirements.backgroundExplanation;
       if (requirements.eVerifyComfort)
         profileUpdate.comfortableEVerify = requirements.eVerifyComfort;
+      if (requirements.languagesComfort)
+        profileUpdate.comfortableWithLanguages = requirements.languagesComfort;
+      if (requirements.physicalRequirementsComfort)
+        profileUpdate.comfortableWithPhysicalRequirements = requirements.physicalRequirementsComfort;
+      if (requirements.uniformRequirementsComfort)
+        profileUpdate.comfortableWithUniformRequirements = requirements.uniformRequirementsComfort;
+      if (requirements.customUniformRequirementsComfort)
+        profileUpdate.comfortableWithCustomUniformRequirements = requirements.customUniformRequirementsComfort;
+      if (requirements.requiredPpeComfort)
+        profileUpdate.comfortableWithRequiredPpe = requirements.requiredPpeComfort;
+      if (requirements.transportMethod)
+        profileUpdate.transportMethod = requirements.transportMethod;
+      if (requirements.additionalScreenings && typeof requirements.additionalScreenings === 'object')
+        profileUpdate.additionalScreenings = requirements.additionalScreenings;
 
       // Save additional screenings with dynamic field names
       if (requirements.additionalScreenings && Array.isArray(posting?.additionalScreenings)) {
@@ -1925,11 +2191,22 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (applyDateFromUrl) {
             const existingSnap = await getDoc(tRef);
             const existing = existingSnap.exists() ? existingSnap.data() : null;
-            const existingDates: string[] = existing?.applyDates
-              ? [...(existing.applyDates as string[])]
-              : existing?.applyDate && /^\d{4}-\d{2}-\d{2}$/.test(String(existing.applyDate))
-                ? [String(existing.applyDate)]
-                : [];
+            const existingStatus = String(existing?.status || '').toLowerCase();
+            const shouldCarryForwardExistingDays = ![
+              'withdrawn',
+              'declined',
+              'deleted',
+              'cancelled',
+              'canceled',
+              'rejected',
+            ].includes(existingStatus);
+            const existingDates: string[] = shouldCarryForwardExistingDays
+              ? existing?.applyDates
+                ? [...(existing.applyDates as string[])]
+                : existing?.applyDate && /^\d{4}-\d{2}-\d{2}$/.test(String(existing.applyDate))
+                  ? [String(existing.applyDate)]
+                  : []
+              : [];
             const merged = [...new Set([...existingDates, applyDateFromUrl])].sort();
             applyDatePayload = applyDateFromUrl;
             applyDatesPayload = merged;
