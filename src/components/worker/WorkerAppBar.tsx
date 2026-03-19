@@ -289,7 +289,7 @@ const WorkerAppBar: React.FC = () => {
         </Box>
       </Menu>
 
-      {/* Avatar dropdown: My Profile, Settings, Log Out */}
+      {/* Avatar dropdown: My Profile, Log Out */}
       <Menu
         anchorEl={avatarMenuAnchorEl}
         open={Boolean(avatarMenuAnchorEl)}
@@ -310,15 +310,6 @@ const WorkerAppBar: React.FC = () => {
           }}
         >
           {t('nav.myProfile')}
-        </MenuItem>
-        <Divider />
-        <MenuItem
-          onClick={() => {
-            setAvatarMenuAnchorEl(null);
-            navigate('/c1/workers/settings');
-          }}
-        >
-          {t('nav.settings')}
         </MenuItem>
         <Divider />
         <MenuItem

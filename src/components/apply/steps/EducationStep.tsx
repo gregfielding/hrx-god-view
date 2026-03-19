@@ -460,12 +460,16 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
       {/* Education Section */}
       {(showOnly === 'both' || showOnly === 'education') && (
       <Box sx={{ mb: 2.5 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          🎓 Education
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Helps you qualify for more jobs, higher pay, and healthcare roles.
-        </Typography>
+        {showOnly !== 'education' && (
+          <>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
+              🎓 Education
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Helps you qualify for more jobs, higher pay, and healthcare roles.
+            </Typography>
+          </>
+        )}
 
         {education.length > 0 ? (
           <>
@@ -655,12 +659,16 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
           </Box>
         )}
 
-        <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          ✅ Certifications
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Professional certifications and licenses that help you stand out.
-        </Typography>
+        {showOnly !== 'certifications' && (
+          <>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
+              ✅ Certifications
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Professional certifications and licenses that help you stand out.
+            </Typography>
+          </>
+        )}
 
         {certifications.length > 0 ? (
           <>

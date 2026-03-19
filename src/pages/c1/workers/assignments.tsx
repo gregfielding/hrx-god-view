@@ -17,6 +17,7 @@ import { getCalendarDayLocal } from '../../../utils/dateUtils';
 import WorkerAssignmentsTabs from '../../../components/worker/assignments/WorkerAssignmentsTabs';
 import WorkerAssignmentCard from '../../../components/worker/assignments/WorkerAssignmentCard';
 import CardDeck from '../../../components/worker/cards/CardDeck';
+import SmsWarningBanner from '../../../components/worker/SmsWarningBanner';
 import { emitWorkerCardSignal } from '../../../utils/workerCardSignals';
 import type { WorkerAssignmentItem } from '../../../components/worker/assignments/WorkerAssignmentCard';
 import type { AssignmentStatus } from '../../../components/worker/assignments/WorkerAssignmentCard';
@@ -296,6 +297,7 @@ const WorkerAssignments: React.FC = () => {
   return (
     <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
       <Stack spacing={4} sx={{ py: 2 }}>
+        <SmsWarningBanner />
         <Stack
           direction="row"
           justifyContent="space-between"

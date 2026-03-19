@@ -1,6 +1,6 @@
 /**
- * Worker Inbox / Notification Center — /c1/workers/notifications
- * Persistent list of all push notifications. Every push creates an inbox message.
+ * Worker Notification Center — /c1/workers/notifications
+ * Persistent list of all worker notifications (event feed + deep links).
  * Filters: All, Unread, Assignments, Applications, Opportunities, Profile, System. Click → deepLink.
  */
 

@@ -11,11 +11,9 @@ function hasWorkEligibility(u: UserDocForJobScore): boolean {
 }
 
 function hasAvailability(u: UserDocForJobScore): boolean {
-  const prefs = u?.preferences;
-  const hasShift = Array.isArray(prefs?.shiftPreferences) && prefs.shiftPreferences.length > 0;
-  const hasNotes = !!(prefs?.availabilityNotes && String(prefs.availabilityNotes).trim());
-  const hasStart = !!(u?.availableToStartDate && String(u.availableToStartDate).trim());
-  return hasShift || hasNotes || hasStart;
+  void u;
+  // Availability is optional for onboarding/profile completion and should not block worker progress.
+  return true;
 }
 
 function hasWorkExperience(u: UserDocForJobScore): boolean {

@@ -55,7 +55,6 @@ export interface HomeSnapshotV1 {
 export interface ReadinessSignals {
   hasProfilePhoto: boolean;
   hasWorkAuthorization: boolean;
-  hasAvailability: boolean;
   hasCertifications: boolean;
   hasSkills: boolean;
   hasResume: boolean;
@@ -80,15 +79,6 @@ const CHECKLIST_DEFINITIONS: ChecklistDefinition[] = [
     priority: 'required',
     launchStep: 'work_authorization',
     weight: 28,
-    industries: ['hospitality', 'industrial'],
-  },
-  {
-    id: 'availability',
-    title: 'Add availability',
-    benefit: 'Availability helps us match you with better shifts.',
-    priority: 'high_impact',
-    launchStep: 'start',
-    weight: 20,
     industries: ['hospitality', 'industrial'],
   },
   {
@@ -163,14 +153,6 @@ function hasWorkAuthorization(userDoc: Record<string, unknown>): boolean {
   );
 }
 
-function hasAvailability(userDoc: Record<string, unknown>): boolean {
-  const prefs = ((userDoc.workerProfile as Record<string, unknown> | undefined)?.preferences ||
-    {}) as Record<string, unknown>;
-  const direct = prefs.scheduleIntentOptions;
-  const legacy = userDoc.desiredWorkType;
-  return (Array.isArray(direct) && direct.length > 0) || normalizeString(legacy).length > 0;
-}
-
 function hasCertifications(userDoc: Record<string, unknown>): boolean {
   const canonical = (((userDoc.workerProfile as Record<string, unknown> | undefined)?.credentials ||
     {}) as Record<string, unknown>).certifications;
@@ -194,9 +176,6 @@ function resolveChecklistStatus(userDoc: Record<string, unknown>, itemId: string
     return hasProfilePhoto(userDoc) ? 'complete' : 'missing';
   case 'work_authorization':
     return hasWorkAuthorization(userDoc) ? 'complete' : 'missing';
-  case 'availability':
-    if (hasAvailability(userDoc)) return 'complete';
-    return responseExists(userDoc, 'availability') ? 'in_progress' : 'missing';
   case 'certifications':
     if (hasCertifications(userDoc)) return 'complete';
     return responseExists(userDoc, 'certification-food-handler') ? 'in_progress' : 'missing';
@@ -217,7 +196,6 @@ export function extractReadinessSignals(userDoc: Record<string, unknown>): Readi
   return {
     hasProfilePhoto: hasProfilePhoto(userDoc),
     hasWorkAuthorization: hasWorkAuthorization(userDoc),
-    hasAvailability: hasAvailability(userDoc),
     hasCertifications: hasCertifications(userDoc),
     hasSkills: hasSkills(userDoc),
     hasResume: hasResume(userDoc),

@@ -19,9 +19,8 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import FolderIcon from '@mui/icons-material/Folder';
-import InboxIcon from '@mui/icons-material/Inbox';
 import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
+import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 
 const drawerWidth = 240;
 
@@ -30,8 +29,7 @@ const navConfig = [
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
-  { key: 'nav.inbox', path: '/c1/workers/inbox', icon: <InboxIcon /> },
-  { key: 'nav.myDocuments', path: '/c1/workers/documents', icon: <FolderIcon /> },
+  { key: 'nav.notifications', path: '/c1/workers/notifications', icon: <NotificationsNoneIcon /> },
   { key: 'nav.helpSupport', path: '/c1/workers/support', icon: <HelpOutlineIcon /> },
 ];
 
@@ -56,6 +54,15 @@ function DrawerContent({
   onNavClick?: () => void;
   t: (key: string) => string;
 }) {
+  const getLabel = (key: string) => {
+    if (key === 'nav.notifications') {
+      const translated = t('nav.notifications');
+      // Safety guard: never show "Inbox" for this worker nav slot.
+      return translated?.toLowerCase?.() === 'inbox' ? 'Notifications' : translated;
+    }
+    return t(key);
+  };
+
   const handleNav = (path: string) => {
     navigate(path);
     onNavClick?.();
@@ -140,7 +147,7 @@ function DrawerContent({
             onClick={() => handleNav(path)}
           >
             <ListItemIcon>{icon}</ListItemIcon>
-            <ListItemText primary={t(key)} />
+            <ListItemText primary={getLabel(key)} />
           </ListItemButton>
         ))}
       </List>

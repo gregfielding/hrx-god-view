@@ -45,7 +45,6 @@ const RECOMPUTE_PATH_PREFIXES = [
 const ITEM_TO_LAUNCH_STEP: Record<string, HomeReadinessLaunchStep> = {
   profile_photo: 'profile_photo',
   work_authorization: 'work_authorization',
-  availability: 'start',
   certifications: 'certifications',
   skills: 'skills',
   resume: 'resume',

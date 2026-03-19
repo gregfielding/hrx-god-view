@@ -1824,7 +1824,7 @@ const JobPostingDetail: React.FC = () => {
     return JSON.parse(JSON.stringify(schema));
   };
 
-  const cardPadding = isMobile ? 2 : 3;
+  const cardPadding = isMobile ? 1.5 : 2.5;
   const cardBaseSx = {
     width: '100%',
     maxWidth: '100%',
@@ -1963,20 +1963,6 @@ const JobPostingDetail: React.FC = () => {
               </Tooltip>
             </Box>
 
-            {(posting.trustedClient || posting.popularShift || posting.highDemand) && (
-              <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mb: 1 }}>
-                {posting.trustedClient && (
-                  <Chip label={t('apply.trustedClient')} size="small" variant="outlined" color="success" sx={{ fontSize: '0.7rem' }} />
-                )}
-                {posting.popularShift && (
-                  <Chip label={t('apply.popularShift')} size="small" variant="outlined" color="primary" sx={{ fontSize: '0.7rem' }} />
-                )}
-                {posting.highDemand && (
-                  <Chip label={t('apply.highDemand')} size="small" variant="outlined" sx={{ fontSize: '0.7rem' }} />
-                )}
-              </Stack>
-            )}
-
             {posting.companyName && (
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
                 <BusinessIcon fontSize="small" color="action" />
@@ -2017,16 +2003,6 @@ const JobPostingDetail: React.FC = () => {
 
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
               <Chip label={posting.jobType === 'gig' ? t('jobs.gig') : t('jobs.career')} color="primary" size="small" />
-              {posting.workersNeeded != null &&
-                posting.showWorkersNeeded !== false &&
-                !(posting.jobType === 'gig' && dynamicShifts.length > 0) && (
-                  <Chip
-                    icon={<WorkIcon />}
-                    label={posting.workersNeeded === 1 ? t('jobs.positionsCountOne') : t('jobs.positionsCountOther', { count: posting.workersNeeded })}
-                    size="small"
-                    variant="outlined"
-                  />
-                )}
               {(() => {
                 // For gig jobs with shifts, show next shift date (today or later, local time)
                 if (posting.jobType === 'gig' && dynamicShifts.length > 0) {
@@ -2099,9 +2075,6 @@ const JobPostingDetail: React.FC = () => {
                       px: isMobile ? 1.5 : 2,
                       fontSize: isMobile ? '0.75rem' : undefined,
                       fontWeight: 600,
-                      backgroundColor: '#4CAF50',
-                      color: '#fff',
-                      '&:hover': { backgroundColor: '#45a049' },
                     }}
                   >
                     View Assignment Details
@@ -2246,16 +2219,6 @@ const JobPostingDetail: React.FC = () => {
         </Box>
       </Paper>
 
-      {/* Quick Facts strip — Pay, Location (requirements moved to Requirements section) */}
-      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 3, alignItems: 'center' }}>
-        {posting.showPayRate && posting.payRate != null && (
-          <Chip size="small" icon={<MoneyIcon />} label={`$${Number(posting.payRate)}/hr`} color="success" variant="outlined" />
-        )}
-        {posting.worksiteAddress?.city && posting.worksiteAddress?.state && (
-          <Chip size="small" icon={<LocationIcon />} label={`${posting.worksiteAddress.city}, ${posting.worksiteAddress.state}`} variant="outlined" />
-        )}
-      </Box>
-
       <Box
         sx={{
           display: 'grid',
@@ -2353,7 +2316,7 @@ const JobPostingDetail: React.FC = () => {
                           src={`https://www.google.com/maps?q=${mapsQuery}&output=embed`}
                           sx={{
                             width: '100%',
-                            height: 200,
+                            height: 170,
                             border: 0,
                             borderRadius: 1,
                             mt: 1,
@@ -2650,7 +2613,7 @@ const JobPostingDetail: React.FC = () => {
             };
             const byTier = tierOrder.map((tier) => ({ tier, categories: allCategories.filter((c) => c.tier === tier) }));
 
-            if (!hasAnyRequirement) return null;
+            if (!hasAnyRequirement || missingCount === 0) return null;
             return (
               <Card sx={{ ...cardBaseSx }} elevation={2}>
                 <CardContent>
@@ -2721,17 +2684,6 @@ const JobPostingDetail: React.FC = () => {
                 <Divider sx={{ my: 2 }} />
 
                 <Stack spacing={2}>
-                  {posting.showPayRate && posting.payRate && (
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <Typography variant="body2" color="text.secondary">
-                        {t('jobs.payRate')}
-                      </Typography>
-                      <Typography variant="body1" fontWeight="medium">
-                        ${posting.payRate}/hr
-                      </Typography>
-                    </Box>
-                  )}
-
                   {posting.workersNeeded && posting.showWorkersNeeded !== false && (
                     <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
                       <Typography variant="body2" color="text.secondary">
@@ -2801,10 +2753,6 @@ const JobPostingDetail: React.FC = () => {
                         py: 1.5,
                         fontSize: '1.1rem',
                         fontWeight: 'bold',
-                        backgroundColor: '#4CAF50',
-                        '&:hover': {
-                          backgroundColor: '#45a049',
-                        },
                       }}
                     >
                       {assignmentDecisionLoading ? t('jobs.accepting') : t('jobs.acceptOfferCta')}
@@ -2834,9 +2782,6 @@ const JobPostingDetail: React.FC = () => {
                           py: 1.5,
                           fontSize: '1.1rem',
                           fontWeight: 'bold',
-                          backgroundColor: '#4CAF50',
-                          color: '#fff',
-                          '&:hover': { backgroundColor: '#45a049' },
                         }}
                       >
                         {t('assignment.viewAssignment')}

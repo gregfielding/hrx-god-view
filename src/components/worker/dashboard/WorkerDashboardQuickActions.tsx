@@ -1,6 +1,6 @@
 /**
  * Worker Dashboard Quick Actions — compact quick-nav row.
- * Find Work | Assignments | Applications | Messages | Profile
+ * Find Work | Assignments | Applications | Notifications | Profile
  */
 
 import React from 'react';
@@ -9,7 +9,7 @@ import { Link as RouterLink } from 'react-router-dom';
 import WorkIcon from '@mui/icons-material/Work';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import MessageIcon from '@mui/icons-material/Message';
+import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import PersonIcon from '@mui/icons-material/Person';
 import { useT } from '../../../i18n';
 
@@ -17,7 +17,7 @@ const ACTIONS = [
   { key: 'nav.findWork', to: '/c1/jobs-board', icon: <WorkIcon fontSize="small" /> },
   { key: 'nav.myAssignments', to: '/c1/workers/assignments', icon: <AssignmentIcon fontSize="small" /> },
   { key: 'nav.myApplications', to: '/c1/workers/applications', icon: <ListAltIcon fontSize="small" /> },
-  { key: 'nav.inbox', to: '/c1/workers/inbox', icon: <MessageIcon fontSize="small" /> },
+  { key: 'nav.notifications', to: '/c1/workers/notifications', icon: <NotificationsNoneIcon fontSize="small" /> },
   { key: 'nav.myProfile', to: '/c1/workers/profile', icon: <PersonIcon fontSize="small" /> },
 ] as const;
 

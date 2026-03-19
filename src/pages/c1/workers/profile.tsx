@@ -1,64 +1,32 @@
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Container,
-  Typography,
+  Avatar,
   Box,
-  Stack,
   Card,
   CardContent,
-  Avatar,
-  Chip,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Button,
+  Container,
+  Divider,
+  List,
+  ListItemButton,
+  ListItemText,
+  Stack,
+  Typography,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import OpenInNewIcon from '@mui/icons-material/OpenInNew';
-import { doc, onSnapshot, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { useNavigate, useLocation } from 'react-router-dom';
+import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
-import { userProfileBatcher, flushProfileUpdates } from '../../../utils/userProfileBatching';
-import { buildHomeReadinessModel } from '../../../utils/homeReadinessModel';
-import WorkerProfileAccordions, { type WorkerProfileEditorSection } from '../../../components/worker/profile/WorkerProfileAccordions';
-import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBasicIdentityCard';
-import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
-import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
-
-type ProfileAccordionSection =
-  | 'basic-info'
-  | 'work-eligibility'
-  | WorkerProfileEditorSection;
-
-const accordionSx = {
-  '&:before': { display: 'none' },
-  borderColor: 'divider',
-  borderRadius: '8px !important',
-  boxShadow: 'none',
-  '& .MuiAccordionSummary-root': {
-    transition: 'background-color 0.2s ease',
-    '&:hover': { bgcolor: 'action.hover' },
-  },
-};
 
 const WorkerProfile: React.FC = () => {
-  const { user, avatarUrl, setAvatarUrl } = useAuth();
+  const { user, avatarUrl, logout } = useAuth();
   const t = useT();
   const navigate = useNavigate();
-  const location = useLocation();
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
-  const [expandedSection, setExpandedSection] = useState<ProfileAccordionSection | false>('basic-info');
-
-  useEffect(() => {
-    userProfileBatcher.initialize();
-    return () => {
-      flushProfileUpdates(true);
-    };
-  }, []);
 
   useEffect(() => {
     if (!uid) return;
@@ -69,7 +37,6 @@ const WorkerProfile: React.FC = () => {
     return () => unsubscribe();
   }, [uid]);
 
-  const readinessModel = useMemo(() => buildHomeReadinessModel(userDoc), [userDoc]);
   const resolvedProfilePhoto = String(
     (userDoc?.workerProfile as Record<string, unknown> | undefined)?.photoUrl ||
       userDoc?.avatar ||
@@ -91,73 +58,54 @@ const WorkerProfile: React.FC = () => {
   ).trim();
   const locationLabel = city && state ? `${city}, ${state}` : city || state || t('profile.addLocation');
 
-  const profileStatus: 'complete' | 'action_required' | 'recommended' =
-    readinessModel.readinessPercent >= 90
-      ? 'complete'
-      : readinessModel.readinessPercent < 40
-        ? 'action_required'
-        : 'recommended';
-  const profileStatusColor = profileStatus === 'complete' ? 'success' : profileStatus === 'action_required' ? 'warning' : 'default';
-  const profileStatusLabel =
-    profileStatus === 'complete'
-      ? t('profile.statusComplete')
-      : profileStatus === 'action_required'
-        ? t('profile.statusActionRequired')
-        : t('profile.statusRecommended');
-
-  const workEligibilityValueFromDoc = useMemo(() => {
-    const a = userDoc?.workEligibilityAttestation as Record<string, unknown> | undefined;
-    if (a && typeof a === 'object') {
-      return {
-        workAuthorized: a.authorizedToWorkUS === true,
-        requireSponsorship: !!a.requireSponsorship,
-        gender: String(a.gender || ''),
-        veteranStatus: String(a.veteranStatus || ''),
-        disabilityStatus: String(a.disabilityStatus || ''),
-      };
-    }
-    return {
-      workAuthorized: !!userDoc?.workEligibility,
-      requireSponsorship: !!userDoc?.requireSponsorship,
-      gender: String(userDoc?.gender || ''),
-      veteranStatus: String(userDoc?.veteranStatus || ''),
-      disabilityStatus: String(userDoc?.disabilityStatus || ''),
-    };
-  }, [userDoc]);
-  const [workEligibilityLocal, setWorkEligibilityLocal] = useState(workEligibilityValueFromDoc);
-  useEffect(() => {
-    setWorkEligibilityLocal(workEligibilityValueFromDoc);
-  }, [workEligibilityValueFromDoc]);
-
-  const handleWorkEligibilityUpdate = useCallback(async (value: typeof workEligibilityValueFromDoc) => {
-    if (!uid) return;
-    const attestation = {
-      authorizedToWorkUS: !!value.workAuthorized,
-      requireSponsorship: !!value.requireSponsorship,
-      attestedAt: serverTimestamp(),
-      gender: value.gender || null,
-      veteranStatus: value.veteranStatus || null,
-      disabilityStatus: value.disabilityStatus || null,
-    };
-    const workEligibility = deriveWorkEligibilityFromAttestation(attestation as never);
-    await updateDoc(doc(db, 'users', uid), {
-      workEligibilityAttestation: attestation,
-      workEligibility,
-      requireSponsorship: !!value.requireSponsorship,
-      gender: value.gender || null,
-      veteranStatus: value.veteranStatus || null,
-      disabilityStatus: value.disabilityStatus || null,
-      updatedAt: serverTimestamp(),
-    });
-  }, [uid]);
-
-  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleWorkEligibilityChange = useCallback((value: typeof workEligibilityValueFromDoc) => {
-    setWorkEligibilityLocal(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => { handleWorkEligibilityUpdate(value); }, 500);
-  }, [handleWorkEligibilityUpdate]);
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  const personalDetailsComplete = Boolean(
+    String(userDoc?.firstName || '').trim() &&
+      String(userDoc?.lastName || '').trim() &&
+      String(userDoc?.email || '').trim() &&
+      String(userDoc?.phone || userDoc?.phoneE164 || '').trim()
+  );
+  const locationComplete = Boolean(city && state);
+  const workEligibilityAttestation = (userDoc?.workEligibilityAttestation || {}) as Record<string, unknown>;
+  const hasWorkAuth = Boolean(
+    (typeof workEligibilityAttestation.authorizedToWorkUS === 'boolean' ||
+      typeof userDoc?.workEligibility === 'boolean') &&
+      (typeof workEligibilityAttestation.requireSponsorship === 'boolean' ||
+        typeof userDoc?.requireSponsorship === 'boolean')
+  );
+  const resumeObj = (userDoc?.resume || {}) as Record<string, unknown>;
+  const resumeComplete = Boolean(
+    resumeObj.downloadUrl || resumeObj.fileName || resumeObj.storagePath || userDoc?.resumeStoragePath || userDoc?.resumeUrl
+  );
+  const certificationsComplete = Boolean(Array.isArray(userDoc?.certifications) && userDoc?.certifications.length > 0);
+  const workExperienceComplete = Boolean(
+    (Array.isArray(userDoc?.workExperience) && userDoc?.workExperience.length > 0) ||
+      (Array.isArray(userDoc?.workHistory) && userDoc?.workHistory.length > 0)
+  );
+  const educationComplete = Boolean(Array.isArray(userDoc?.education) && userDoc?.education.length > 0);
+  const languagesComplete = Boolean(Array.isArray(userDoc?.languages) && userDoc?.languages.length > 0);
+  const preferences = ((userDoc?.workerProfile as Record<string, unknown> | undefined)?.preferences ||
+    {}) as Record<string, unknown>;
+  const availabilityPreferencesPresent = Boolean(
+    (Array.isArray(preferences.targetIndustries) && preferences.targetIndustries.length > 0) ||
+      (Array.isArray(preferences.scheduleIntentOptions) && preferences.scheduleIntentOptions.length > 0)
+  );
+  const basicInfoSectionComplete = personalDetailsComplete && locationComplete;
+  const workProfileSectionComplete =
+    hasWorkAuth &&
+    resumeComplete &&
+    certificationsComplete &&
+    workExperienceComplete &&
+    educationComplete &&
+    languagesComplete;
+  const accountSectionComplete = Boolean(String(userDoc?.email || '').trim());
+  const totalSections = 3;
+  const completeSectionCount = [
+    basicInfoSectionComplete,
+    workProfileSectionComplete,
+    accountSectionComplete,
+  ].filter(Boolean).length;
+  const isProfileComplete = completeSectionCount >= totalSections;
+  const completionPercent = Math.round((completeSectionCount / totalSections) * 100);
 
   if (!uid) {
     return (
@@ -188,84 +136,117 @@ const WorkerProfile: React.FC = () => {
                   {locationLabel}
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
-                  {t('profile.keyItemsComplete', {
-                    completed: readinessModel.completedCount,
-                    total: readinessModel.requiredCount,
-                    percent: readinessModel.readinessPercent,
-                  })}
+                  {isProfileComplete
+                    ? 'Profile complete'
+                    : `${completeSectionCount} of ${totalSections} sections complete`}
                 </Typography>
               </Box>
-              <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
-                <Chip size="small" variant="outlined" color={profileStatusColor} label={profileStatusLabel} />
-              </Stack>
+              <Typography variant="caption" color="text.secondary">
+                {`${completionPercent}%`}
+              </Typography>
             </Stack>
-            {location.search.includes('from=readiness') && (
-              <Box sx={{ mt: 1.5 }}>
-                <Button
-                  size="small"
-                  variant="text"
-                  endIcon={<OpenInNewIcon fontSize="small" />}
-                  onClick={() => navigate('/c1/workers/dashboard')}
-                >
-                  {t('profile.returnToHome')}
-                </Button>
-              </Box>
-            )}
           </CardContent>
         </Card>
 
-        <Accordion
-          id="profile-basic-info"
-          expanded={expandedSection === 'basic-info'}
-          onChange={(_, expanded) => setExpandedSection(expanded ? 'basic-info' : false)}
-          variant="outlined"
-          sx={accordionSx}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography fontWeight={600}>{t('profile.basicIdentity')}</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <WorkerBasicIdentityCard
-              uid={uid}
-              userDoc={userDoc}
-              avatarUrl={resolvedProfilePhoto}
-              onAvatarUpdated={setAvatarUrl}
-            />
-          </AccordionDetails>
-        </Accordion>
+        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <CardContent sx={{ p: 0 }}>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Basic Info</Typography>
+            <Divider />
+            <List disablePadding>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
+                <ListItemText primary="Personal details" secondary="Update your name, email, and phone." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/location')}>
+                <ListItemText primary="City and state" secondary="Keep your location updated for stronger opportunities." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+            </List>
+          </CardContent>
+        </Card>
 
-        <Accordion
-          id="profile-work-eligibility"
-          expanded={expandedSection === 'work-eligibility'}
-          onChange={(_, expanded) => setExpandedSection(expanded ? 'work-eligibility' : false)}
-          variant="outlined"
-          sx={accordionSx}
-        >
-          <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-            <Typography fontWeight={600}>{t('profile.workEligibility')}</Typography>
-          </AccordionSummary>
-          <AccordionDetails sx={{ pt: 0 }}>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {t('profile.workEligibilityConfirmDetails')}
-            </Typography>
-            <WorkEligibilityStep
-              value={workEligibilityLocal}
-              onChange={handleWorkEligibilityChange}
-            />
-          </AccordionDetails>
-        </Accordion>
+        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <CardContent sx={{ p: 0 }}>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Work Profile</Typography>
+            <Divider />
+            <List disablePadding>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/work-authorization')}>
+                <ListItemText primary="Work authorization" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {hasWorkAuth ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/resume')}>
+                <ListItemText primary="Resume" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {resumeComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/certifications')}>
+                <ListItemText primary="Certifications & Licenses" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {certificationsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/work-history')}>
+                <ListItemText primary="Work experience" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {workExperienceComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/education')}>
+                <ListItemText primary="Education" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {educationComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/languages')}>
+                <ListItemText primary="Languages" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {languagesComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/preferences')}>
+                <ListItemText primary="Availability and preferences" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {availabilityPreferencesPresent ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+            </List>
+          </CardContent>
+        </Card>
 
-        <WorkerProfileAccordions
-          uid={uid}
-          expandedSection={
-            expandedSection === 'work-preferences' ||
-            expandedSection === 'skills-experience' ||
-            expandedSection === 'certifications-documents'
-              ? expandedSection
-              : false
-          }
-          onAccordionChange={(section) => setExpandedSection(section)}
-        />
+        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <CardContent sx={{ p: 0 }}>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Account</Typography>
+            <Divider />
+            <List disablePadding>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/reset-password')}>
+                <ListItemText primary="Reset password" secondary="Update your sign-in password." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
+                <ListItemText primary="Update phone number" secondary="Update your contact phone number." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/app-language')}>
+                <ListItemText primary="App language" secondary="Manage app language preferences." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+              <ListItemButton onClick={() => void logout()}>
+                <ListItemText primary="Log out" secondary="Sign out of this device securely." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+            </List>
+          </CardContent>
+        </Card>
       </Stack>
     </Container>
   );

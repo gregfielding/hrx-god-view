@@ -104,10 +104,10 @@ import C1WorkersIndex from './pages/c1/workers/index';
 import C1WorkerDashboard from './pages/c1/workers/dashboard';
 import C1WorkerAssignments from './pages/c1/workers/assignments';
 import C1WorkerProfile from './pages/c1/workers/profile';
+import C1WorkerProfileSection from './pages/c1/workers/profileSection';
 import C1WorkerDocuments from './pages/c1/workers/documents';
 import C1WorkerSupport from './pages/c1/workers/support';
 import C1WorkerNotifications from './pages/c1/workers/notifications';
-import C1WorkerInbox from './pages/c1/workers/inbox';
 import OnboardingProfileForm from './components/OnboardingProfileForm';
 import OnboardingCompleteScreen from './components/OnboardingCompleteScreen';
 import Help from './pages/Help';
@@ -476,13 +476,14 @@ function App() {
             <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
             <Route path="applications" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
+            <Route path="profile/:section" element={<C1WorkerProfileSection />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
             <Route path="documents" element={<WorkerDocuments />} />
             <Route path="support" element={<WorkerSupport />} />
-            <Route path="settings" element={<PrivacySettings />} />
+            <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />
-            <Route path="inbox" element={<C1WorkerInbox />} />
-            <Route path="inbox/:conversationId" element={<C1WorkerInbox />} />
+            <Route path="inbox" element={<Navigate to="/c1/workers/notifications" replace />} />
+            <Route path="inbox/:conversationId" element={<Navigate to="/c1/workers/notifications" replace />} />
           </Route>
           <Route path="jobs-board" element={<PublicJobsBoard />} />
           <Route path="jobs-board/:postId" element={<JobPostingDetail />} />
@@ -1253,7 +1254,11 @@ function App() {
         
         {/* Worker-specific routes */}
         <Route path="mobile-app" element={<MobileApp />} />
-        <Route path="privacy-settings" element={<PrivacySettings />} />
+        <Route path="privacy-settings" element={
+          <ProtectedRoute requiredSecurityLevel="5">
+            <PrivacySettings />
+          </ProtectedRoute>
+        } />
         <Route path="assignments" element={<WorkerAssignments />} />
       </Route>
     </Routes>

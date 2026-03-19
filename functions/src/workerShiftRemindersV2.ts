@@ -2,11 +2,13 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { onCall, HttpsError } from 'firebase-functions/v2/https';
 
 import { writeWorkerInboxNotification } from './messaging/unifiedWorkerNotifications';
 import { getPushProvider } from './messaging/pushProviderFactory';
 import { sendWorkerMessageInternal } from './twilio';
 import { shouldSendNotification } from './utils/notificationSettings';
+import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -25,8 +27,14 @@ const CLAIM_TTL_MS = 5 * 60 * 1000;
 // Deterministic retry delay for non-terminal retry path.
 const RETRY_BACKOFF_MS = 2 * 60 * 1000;
 const DISPATCH_BATCH_LIMIT = 200;
+const LEGACY_REMINDER_TYPES: ReminderType[] = ['shift_reminder_24h', 'shift_reminder_4h'];
 
-type ReminderType = 'shift_reminder_24h' | 'shift_reminder_4h';
+type ReminderType =
+  | 'assignment_reminder_24h'
+  | 'assignment_reminder_2h'
+  // Legacy values kept for backward-compatible reads during rollout.
+  | 'shift_reminder_24h'
+  | 'shift_reminder_4h';
 type ReminderStatus = 'pending' | 'processing' | 'sent' | 'failed' | 'cancelled';
 
 function isTerminalReminderStatus(status: unknown): boolean {
@@ -35,14 +43,23 @@ function isTerminalReminderStatus(status: unknown): boolean {
 }
 
 const HOURS_BY_TYPE: Record<ReminderType, number> = {
+  assignment_reminder_24h: 24,
+  assignment_reminder_2h: 2,
   shift_reminder_24h: 24,
   shift_reminder_4h: 4,
 };
 
 const DOC_ID_BY_TYPE: Record<ReminderType, string> = {
+  assignment_reminder_24h: 'assignment_reminder_24h',
+  assignment_reminder_2h: 'assignment_reminder_2h',
   shift_reminder_24h: 'shift_reminder_24h',
   shift_reminder_4h: 'shift_reminder_4h',
 };
+
+const CANONICAL_REMINDER_TYPES: ReadonlyArray<ReminderType> = [
+  'assignment_reminder_24h',
+  'assignment_reminder_2h',
+];
 
 type ReminderPayload = {
   jobTitle: string;
@@ -71,6 +88,10 @@ type ReminderDoc = {
   updatedAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
   sentAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
   cancelledAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  claimedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  claimedBy?: string;
+  claimExpiresAt?: admin.firestore.Timestamp | admin.firestore.FieldValue;
+  cancelReason?: string;
   attempts: number;
   maxAttempts: number;
   dedupeKey: string;
@@ -87,6 +108,30 @@ type ReminderDoc = {
     sms?: { attemptedAt?: admin.firestore.Timestamp; success?: boolean; error?: string };
   };
 };
+
+function isProductionProject(): boolean {
+  const projectId = String(process.env.GCLOUD_PROJECT || process.env.FIREBASE_CONFIG || '').toLowerCase();
+  return projectId.includes('hrx1-d3beb') || projectId.includes('prod') || projectId.includes('production');
+}
+
+async function getDebugOverrideMinutes(tenantId: string): Promise<number[] | null> {
+  if (isProductionProject()) return null;
+  try {
+    const snap = await db.doc(`tenants/${tenantId}/messagingConfig/reminderOverrides`).get();
+    if (!snap.exists) return null;
+    const data = snap.data() as Record<string, unknown>;
+    if (data?.enabled !== true) return null;
+    const minutes = Array.isArray(data?.shortIntervalsMinutes)
+      ? data.shortIntervalsMinutes
+          .map((v) => Number(v))
+          .filter((v) => Number.isFinite(v) && v > 0 && v <= 24 * 60)
+      : [];
+    if (minutes.length === 0) return null;
+    return minutes.slice(0, 2);
+  } catch {
+    return null;
+  }
+}
 
 function normalize(value: unknown): string {
   return String(value ?? '').trim();
@@ -271,11 +316,55 @@ async function cancelNonTerminalReminders(tenantId: string, assignmentId: string
       status: 'cancelled',
       cancelledAt: now,
       updatedAt: now,
+      cancelReason: reason,
       lastError: reason,
+      claimedAt: admin.firestore.FieldValue.delete(),
+      claimedBy: admin.firestore.FieldValue.delete(),
+      claimExpiresAt: admin.firestore.FieldValue.delete(),
       lock: admin.firestore.FieldValue.delete(),
     }, { merge: true });
   }
   await batch.commit();
+}
+
+async function cleanupLegacyReminderDocsForAssignment(
+  tenantId: string,
+  assignmentId: string,
+  reason = 'legacy_type_migrated_to_canonical',
+): Promise<number> {
+  const subcollectionRef = db.collection(`tenants/${tenantId}/assignments/${assignmentId}/${REMINDER_SUBCOLLECTION}`);
+  const snap = await subcollectionRef.where('type', '==', REMINDER_KIND).get();
+  if (snap.empty) return 0;
+
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  const batch = db.batch();
+  let cleaned = 0;
+  for (const docSnap of snap.docs) {
+    const reminderType = normalize(docSnap.get('reminderType')) as ReminderType;
+    if (!LEGACY_REMINDER_TYPES.includes(reminderType)) continue;
+    const status = normalizeStatus(docSnap.get('status'));
+    if (status === 'sent' || status === 'failed' || status === 'cancelled') continue;
+
+    batch.set(
+      docSnap.ref,
+      {
+        status: 'cancelled',
+        cancelledAt: now,
+        updatedAt: now,
+        cancelReason: reason,
+        lastError: reason,
+        migratedToCanonical: true,
+        claimedAt: admin.firestore.FieldValue.delete(),
+        claimedBy: admin.firestore.FieldValue.delete(),
+        claimExpiresAt: admin.firestore.FieldValue.delete(),
+        lock: admin.firestore.FieldValue.delete(),
+      },
+      { merge: true },
+    );
+    cleaned += 1;
+  }
+  if (cleaned > 0) await batch.commit();
+  return cleaned;
 }
 
 async function upsertReminderDocs(tenantId: string, assignmentId: string, assignment: Record<string, unknown>): Promise<void> {
@@ -300,10 +389,17 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
   const deepLink = `/c1/workers/assignments/${assignmentId}`;
   const nowMs = Date.now();
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const debugOverrideMinutes = await getDebugOverrideMinutes(tenantId);
+  const offsetsByType: Record<'assignment_reminder_24h' | 'assignment_reminder_2h', number> = {
+    assignment_reminder_24h: debugOverrideMinutes?.[0] != null ? debugOverrideMinutes[0] / 60 : 24,
+    assignment_reminder_2h: debugOverrideMinutes?.[1] != null ? debugOverrideMinutes[1] / 60 : 2,
+  };
+  const scheduleMode = debugOverrideMinutes ? 'debug_short' : 'production_default';
 
   const writes: Promise<unknown>[] = [];
-  for (const reminderType of Object.keys(HOURS_BY_TYPE) as ReminderType[]) {
-    const scheduledForMs = start.toMillis() - HOURS_BY_TYPE[reminderType] * 60 * 60 * 1000;
+  for (const reminderType of CANONICAL_REMINDER_TYPES) {
+    const offsetHours = offsetsByType[reminderType];
+    const scheduledForMs = start.toMillis() - offsetHours * 60 * 60 * 1000;
     const isPast = scheduledForMs <= nowMs;
     const status: ReminderStatus = isPast ? 'cancelled' : 'pending';
     const docRef = db.doc(
@@ -345,6 +441,8 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       channels: { inbox: true, push: true, sms: true },
       payload,
       resolvedTimezone,
+      scheduleMode,
+      scheduledOffsetMinutes: Math.round(offsetHours * 60),
       assignmentStatusSnapshot,
       createdAt: now,
       updatedAt: now,
@@ -356,6 +454,10 @@ async function upsertReminderDocs(tenantId: string, assignmentId: string, assign
       lastError: isPast ? 'skipped_past_schedule' : admin.firestore.FieldValue.delete(),
       sentAt: admin.firestore.FieldValue.delete(),
       cancelledAt: isPast ? now : admin.firestore.FieldValue.delete(),
+      cancelReason: isPast ? 'skipped_past_schedule' : admin.firestore.FieldValue.delete(),
+      claimedAt: admin.firestore.FieldValue.delete(),
+      claimedBy: admin.firestore.FieldValue.delete(),
+      claimExpiresAt: admin.firestore.FieldValue.delete(),
       delivery: admin.firestore.FieldValue.delete(),
     };
     writes.push(docRef.set(data, { merge: true }));
@@ -392,18 +494,25 @@ async function getEnabledPushTokens(workerId: string): Promise<string[]> {
 function buildReminderMessage(reminderType: ReminderType, payload: ReminderPayload, assignmentId: string) {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
   const assignmentUrl = `https://hrxone.com/c1/workers/assignments/${assignmentId}`;
-  if (reminderType === 'shift_reminder_24h') {
+  if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return {
-      title: 'Shift Reminder: Tomorrow',
-      body: `You are scheduled for ${payload.jobTitle} at ${payload.companyName} tomorrow at ${startLabel}. Tap to review assignment details.`,
-      sms: `Reminder: You are scheduled for ${payload.jobTitle} at ${payload.companyName} tomorrow at ${startLabel}. View details: ${assignmentUrl}`,
+      title: 'Shift Reminder',
+      body: `You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel}.`,
+      sms: `C1 Staffing reminder: You’re confirmed for ${payload.jobTitle} tomorrow at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
     };
   }
   return {
-    title: 'Shift Starts Soon',
-    body: `Your shift for ${payload.jobTitle} at ${payload.companyName} starts in 4 hours. Please review directions and arrival instructions.`,
-    sms: `Reminder: Your shift for ${payload.jobTitle} at ${payload.companyName} starts in 4 hours. Review details: ${assignmentUrl}`,
+    title: 'Your shift starts soon',
+    body: `${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}.`,
+    sms: `C1 Staffing reminder: Your shift for ${payload.jobTitle} starts at ${startLabel} at ${payload.locationName}. View details: ${assignmentUrl}`,
   };
+}
+
+function toCanonicalReminderType(reminderType: ReminderType): 'assignment_reminder_24h' | 'assignment_reminder_2h' {
+  if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
+    return 'assignment_reminder_24h';
+  }
+  return 'assignment_reminder_2h';
 }
 
 async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapshot): Promise<void> {
@@ -423,6 +532,9 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
     tx.update(docSnap.ref, {
       status: 'processing',
       attempts: admin.firestore.FieldValue.increment(1),
+      claimedAt: nowTs,
+      claimedBy: 'dispatchScheduledWorkerReminders',
+      claimExpiresAt: lockExpiresAt,
       lock: {
         claimedAt: nowTs,
         claimedBy: 'dispatchScheduledWorkerReminders',
@@ -438,6 +550,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   if (!claimedSnap.exists) return;
   const reminder = claimedSnap.data() as ReminderDoc;
   const maxAttempts = Number(reminder.maxAttempts || MAX_ATTEMPTS);
+  const canonicalReminderType = toCanonicalReminderType(reminder.reminderType);
   const message = buildReminderMessage(reminder.reminderType, reminder.payload, reminder.assignmentId);
   const delivery: NonNullable<ReminderDoc['delivery']> = {};
   let inboxSuccess = false;
@@ -447,23 +560,108 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
   let smsAvailable = false;
   let lastError = '';
 
+  // Re-check assignment state at send-time to prevent stale reminders.
+  const assignmentSnap = await db.doc(`tenants/${reminder.tenantId}/assignments/${reminder.assignmentId}`).get();
+  if (!assignmentSnap.exists) {
+    logger.info('[worker_shift_reminders] reminder suppressed', {
+      reason: 'assignment_missing',
+      assignmentId: reminder.assignmentId,
+      userId: reminder.workerId,
+      reminderType: canonicalReminderType,
+      scheduledTime: reminder.scheduledFor.toDate().toISOString(),
+      actualSendTime: new Date().toISOString(),
+    });
+    await docSnap.ref.update({
+      status: 'cancelled',
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelReason: 'assignment_missing',
+      lastError: 'assignment_missing',
+      lock: admin.firestore.FieldValue.delete(),
+    });
+    return;
+  }
+
+  const assignmentData = assignmentSnap.data() as Record<string, unknown>;
+  const assignmentStatus = normalizeStatus(assignmentData.status);
+  const assignmentStart = resolveAssignmentStart(assignmentData);
+  if (!isConfirmedStatus(assignmentStatus) || isCancelLikeStatus(assignmentStatus) || !assignmentStart || assignmentStart.toMillis() <= Date.now()) {
+    const suppressReason = !assignmentStart
+      ? 'missing_assignment_start'
+      : assignmentStart.toMillis() <= Date.now()
+        ? 'assignment_start_in_past'
+        : `assignment_status_${assignmentStatus || 'unknown'}`;
+    logger.info('[worker_shift_reminders] reminder suppressed', {
+      reason: suppressReason,
+      assignmentId: reminder.assignmentId,
+      userId: reminder.workerId,
+      reminderType: canonicalReminderType,
+      assignmentStatus,
+      scheduledTime: reminder.scheduledFor.toDate().toISOString(),
+      actualSendTime: new Date().toISOString(),
+    });
+    await docSnap.ref.update({
+      status: 'cancelled',
+      cancelledAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      cancelReason: suppressReason,
+      lastError: suppressReason,
+      assignmentStatusSnapshot: assignmentStatus || reminder.assignmentStatusSnapshot,
+      lock: admin.firestore.FieldValue.delete(),
+    });
+    return;
+  }
+
   try {
+    logger.info('[worker_shift_reminders] reminder send attempt', {
+      assignmentId: reminder.assignmentId,
+      userId: reminder.workerId,
+      tenantId: reminder.tenantId,
+      reminderType: canonicalReminderType,
+      assignmentStatus,
+      scheduledTime: reminder.scheduledFor.toDate().toISOString(),
+      actualSendTime: new Date().toISOString(),
+    });
+
     // Durable in-app record is always required.
     try {
-      await writeWorkerInboxNotification({
-        uid: reminder.workerId,
+      const inboxDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__inbox`;
+      const inboxIsFirst = await markLifecycleEventIfFirst({
         tenantId: reminder.tenantId,
-        title: message.title,
-        body: message.body,
-        type: 'assignment',
-        category: 'assignments',
-        deepLink: reminder.deepLink,
-        entityId: reminder.assignmentId,
-        source: 'automation',
-        metadata: { reminderType: reminder.reminderType, reminderKind: reminder.type },
+        dedupeKey: inboxDedupeKey,
+        eventType: canonicalReminderType,
+        context: {
+          assignmentId: reminder.assignmentId,
+          userId: reminder.workerId,
+          channel: 'inbox',
+        },
       });
-      inboxSuccess = true;
-      delivery.inbox = { attemptedAt: nowTs, success: true };
+      if (!inboxIsFirst) {
+        inboxSuccess = true;
+        delivery.inbox = { attemptedAt: nowTs, success: true, error: 'dedupe_skip_already_sent' };
+        logger.info('[worker_shift_reminders] reminder suppressed due to dedupe', {
+          assignmentId: reminder.assignmentId,
+          userId: reminder.workerId,
+          reminderType: canonicalReminderType,
+          channel: 'inbox',
+          dedupeKey: inboxDedupeKey,
+        });
+      } else {
+        await writeWorkerInboxNotification({
+          uid: reminder.workerId,
+          tenantId: reminder.tenantId,
+          title: message.title,
+          body: message.body,
+          type: 'assignment',
+          category: 'assignments',
+          deepLink: reminder.deepLink,
+          entityId: reminder.assignmentId,
+          source: 'automation',
+          metadata: { reminderType: canonicalReminderType, reminderKind: reminder.type },
+        });
+        inboxSuccess = true;
+        delivery.inbox = { attemptedAt: nowTs, success: true };
+      }
     } catch (err: any) {
       const msg = err?.message || String(err);
       lastError = `inbox_failed:${msg}`;
@@ -476,15 +674,41 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       pushAvailable = tokens.length > 0;
       if (pushAvailable) {
         try {
+          const pushDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__push`;
+          const pushIsFirst = await markLifecycleEventIfFirst({
+            tenantId: reminder.tenantId,
+            dedupeKey: pushDedupeKey,
+            eventType: canonicalReminderType,
+            context: {
+              assignmentId: reminder.assignmentId,
+              userId: reminder.workerId,
+              channel: 'push',
+            },
+          });
+          if (!pushIsFirst) {
+            pushSuccess = true;
+            delivery.push = {
+              attemptedAt: nowTs,
+              success: true,
+              error: 'dedupe_skip_already_sent',
+            };
+            logger.info('[worker_shift_reminders] reminder suppressed due to dedupe', {
+              assignmentId: reminder.assignmentId,
+              userId: reminder.workerId,
+              reminderType: canonicalReminderType,
+              channel: 'push',
+              dedupeKey: pushDedupeKey,
+            });
+          } else {
           const push = getPushProvider();
           const result = await push.sendPush({
             tenantId: reminder.tenantId,
-            messageTypeId: 'worker_shift_reminder',
+            messageTypeId: canonicalReminderType,
             targets: [{ userId: reminder.workerId, deviceTokens: tokens }],
             title: message.title,
             body: message.body,
             data: {
-              reminderType: reminder.reminderType,
+              reminderType: canonicalReminderType,
               assignmentId: reminder.assignmentId,
               deepLink: reminder.deepLink,
             },
@@ -497,6 +721,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           };
           if (!pushSuccess) {
             lastError = `push_failed:${result.errors?.[0]?.errorMessage || 'unknown'}`;
+          }
           }
         } catch (err: any) {
           const msg = err?.message || String(err);
@@ -523,11 +748,37 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
 
       if (smsAvailable) {
         try {
+          const smsDedupeKey = `${canonicalReminderType}__${reminder.assignmentId}__sms`;
+          const smsIsFirst = await markLifecycleEventIfFirst({
+            tenantId: reminder.tenantId,
+            dedupeKey: smsDedupeKey,
+            eventType: canonicalReminderType,
+            context: {
+              assignmentId: reminder.assignmentId,
+              userId: reminder.workerId,
+              channel: 'sms',
+            },
+          });
+          if (!smsIsFirst) {
+            smsSuccess = true;
+            delivery.sms = {
+              attemptedAt: nowTs,
+              success: true,
+              error: 'dedupe_skip_already_sent',
+            };
+            logger.info('[worker_shift_reminders] reminder suppressed due to dedupe', {
+              assignmentId: reminder.assignmentId,
+              userId: reminder.workerId,
+              reminderType: canonicalReminderType,
+              channel: 'sms',
+              dedupeKey: smsDedupeKey,
+            });
+          } else {
           const result = await sendWorkerMessageInternal(phoneE164, message.sms, {
             source: 'automation',
             sourceId: reminder.assignmentId,
             tenantId: reminder.tenantId,
-            messageTypeId: 'assignment_shift_reminder',
+            messageTypeId: canonicalReminderType,
             userId: reminder.workerId,
             systemContext: true,
           });
@@ -539,6 +790,7 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
           };
           if (!result.success) {
             lastError = `sms_failed:${result.error || 'unknown'}`;
+          }
           }
         } catch (err: any) {
           const msg = err?.message || String(err);
@@ -577,9 +829,17 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
         status: 'sent',
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        assignmentStatusSnapshot: assignmentStatus || reminder.assignmentStatusSnapshot,
         delivery,
+        cancelReason: admin.firestore.FieldValue.delete(),
         lastError: admin.firestore.FieldValue.delete(),
         lock: admin.firestore.FieldValue.delete(),
+      });
+      logger.info('[worker_shift_reminders] reminder send success', {
+        assignmentId: reminder.assignmentId,
+        userId: reminder.workerId,
+        reminderType: canonicalReminderType,
+        assignmentStatus,
       });
       return;
     }
@@ -590,9 +850,19 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       status: exceeded ? 'failed' : 'pending',
       scheduledFor: exceeded ? reminder.scheduledFor : admin.firestore.Timestamp.fromMillis(Date.now() + RETRY_BACKOFF_MS),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      assignmentStatusSnapshot: assignmentStatus || reminder.assignmentStatusSnapshot,
       delivery,
+      cancelReason: admin.firestore.FieldValue.delete(),
       lastError: lastError || 'success_rule_not_met',
       lock: admin.firestore.FieldValue.delete(),
+    });
+    logger.warn('[worker_shift_reminders] reminder send incomplete', {
+      assignmentId: reminder.assignmentId,
+      userId: reminder.workerId,
+      reminderType: canonicalReminderType,
+      assignmentStatus,
+      willRetry: !exceeded,
+      lastError: lastError || 'success_rule_not_met',
     });
   } catch (err: any) {
     const attempts = Number(reminder.attempts || 0);
@@ -601,9 +871,19 @@ async function dispatchOneReminder(docSnap: admin.firestore.QueryDocumentSnapsho
       status: exceeded ? 'failed' : 'pending',
       scheduledFor: exceeded ? reminder.scheduledFor : admin.firestore.Timestamp.fromMillis(Date.now() + RETRY_BACKOFF_MS),
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      assignmentStatusSnapshot: assignmentStatus || reminder.assignmentStatusSnapshot,
       delivery,
+      cancelReason: admin.firestore.FieldValue.delete(),
       lastError: err?.message || String(err),
       lock: admin.firestore.FieldValue.delete(),
+    });
+    logger.error('[worker_shift_reminders] reminder send failure', {
+      assignmentId: reminder.assignmentId,
+      userId: reminder.workerId,
+      reminderType: canonicalReminderType,
+      assignmentStatus,
+      error: err?.message || String(err),
+      willRetry: !exceeded,
     });
   }
 }
@@ -632,6 +912,7 @@ export const onAssignmentConfirmedScheduleReminders = onDocumentWritten(
       if (materiallyChanged && before) {
         await cancelNonTerminalReminders(tenantId, assignmentId, 'assignment_material_change');
       }
+      const cleanedLegacyCount = await cleanupLegacyReminderDocsForAssignment(tenantId, assignmentId);
       await upsertReminderDocs(tenantId, assignmentId, after);
 
       logger.info('[worker_shift_reminders] reminders synced', {
@@ -639,6 +920,7 @@ export const onAssignmentConfirmedScheduleReminders = onDocumentWritten(
         assignmentId,
         transitionedToConfirmed,
         materiallyChanged,
+        cleanedLegacyCount,
       });
     } catch (err: any) {
       logger.error('[worker_shift_reminders] trigger failed', {
@@ -690,4 +972,92 @@ export const dispatchScheduledWorkerReminders = onSchedule(
     });
   },
 );
+
+export const cleanupLegacyWorkerShiftReminders = onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) throw new HttpsError('unauthenticated', 'Authentication required.');
+
+  const authLevel = Number((auth.token as Record<string, unknown>)?.securityLevel ?? -1);
+  if (!Number.isFinite(authLevel) || authLevel < 5) {
+    throw new HttpsError('permission-denied', 'Admin access required.');
+  }
+
+  const data = (request.data || {}) as Record<string, unknown>;
+  const tenantFilter = normalize(data.tenantId);
+  const assignmentFilter = normalize(data.assignmentId);
+  const dryRun = data.dryRun === true;
+  const maxAssignments = Math.max(1, Math.min(500, Number(data.maxAssignments || 100)));
+  const assignmentKeySet = new Set<string>();
+
+  for (const legacyType of LEGACY_REMINDER_TYPES) {
+    const snap = await db
+      .collectionGroup(REMINDER_SUBCOLLECTION)
+      .where('type', '==', REMINDER_KIND)
+      .where('reminderType', '==', legacyType)
+      .where('status', 'in', ['pending', 'processing'])
+      .limit(1000)
+      .get();
+    for (const docSnap of snap.docs) {
+      const pathParts = docSnap.ref.path.split('/');
+      const tenantIdx = pathParts.indexOf('tenants');
+      const assignmentIdx = pathParts.indexOf('assignments');
+      const tenantId = tenantIdx >= 0 ? pathParts[tenantIdx + 1] : '';
+      const assignmentId = assignmentIdx >= 0 ? pathParts[assignmentIdx + 1] : '';
+      if (!tenantId || !assignmentId) continue;
+      if (tenantFilter && tenantFilter !== tenantId) continue;
+      if (assignmentFilter && assignmentFilter !== assignmentId) continue;
+      assignmentKeySet.add(`${tenantId}__${assignmentId}`);
+      if (assignmentKeySet.size >= maxAssignments) break;
+    }
+    if (assignmentKeySet.size >= maxAssignments) break;
+  }
+
+  const assignmentKeys = Array.from(assignmentKeySet);
+  let cleanedDocs = 0;
+  let resyncedAssignments = 0;
+  const errors: Array<{ tenantId: string; assignmentId: string; error: string }> = [];
+
+  if (!dryRun) {
+    for (const key of assignmentKeys) {
+      const [tenantId, assignmentId] = key.split('__');
+      try {
+        cleanedDocs += await cleanupLegacyReminderDocsForAssignment(tenantId, assignmentId, 'legacy_cleanup_callable_migration');
+
+        const assignmentSnap = await db.doc(`tenants/${tenantId}/assignments/${assignmentId}`).get();
+        if (!assignmentSnap.exists) continue;
+        const assignment = assignmentSnap.data() as Record<string, unknown>;
+        const status = normalizeStatus(assignment.status);
+        if (isConfirmedStatus(status) && !isCancelLikeStatus(status)) {
+          await upsertReminderDocs(tenantId, assignmentId, assignment);
+          resyncedAssignments += 1;
+        }
+      } catch (err: any) {
+        errors.push({
+          tenantId,
+          assignmentId,
+          error: err?.message || String(err),
+        });
+      }
+    }
+  }
+
+  logger.info('[worker_shift_reminders] legacy cleanup complete', {
+    dryRun,
+    tenantFilter: tenantFilter || null,
+    assignmentFilter: assignmentFilter || null,
+    assignmentCount: assignmentKeys.length,
+    cleanedDocs,
+    resyncedAssignments,
+    errorCount: errors.length,
+  });
+
+  return {
+    success: true,
+    dryRun,
+    assignmentCount: assignmentKeys.length,
+    cleanedDocs,
+    resyncedAssignments,
+    errors,
+  };
+});
 

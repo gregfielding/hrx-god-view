@@ -5,7 +5,6 @@
 
 export const READINESS_SECTION_IDS = {
   'job-preferences': 'readiness-job-preferences',
-  availability: 'readiness-availability',
   'work-experience': 'readiness-work-experience',
   certifications: 'readiness-certifications',
   skills: 'readiness-skills',
@@ -29,12 +28,6 @@ export function getReadinessPrompts(userDoc: any): ReadinessPrompt[] {
   if (!userDoc || typeof userDoc !== 'object') return [];
 
   const prompts: ReadinessPrompt[] = [];
-  const prefs = userDoc.preferences || {};
-  const hasAvailability =
-    (Array.isArray(prefs.shiftPreferences) && prefs.shiftPreferences.length > 0) ||
-    !!userDoc.availableToStartDate ||
-    !!(prefs.availabilityNotes && String(prefs.availabilityNotes).trim());
-
   const certs = userDoc.certifications;
   const hasCertifications = Array.isArray(certs) && certs.length > 0;
 
@@ -44,13 +37,6 @@ export function getReadinessPrompts(userDoc: any): ReadinessPrompt[] {
   const bio = userDoc.professionalBio || userDoc.bio;
   const hasBio = typeof bio === 'string' && bio.trim().length > 0;
 
-  if (!hasAvailability) {
-    prompts.push({
-      id: 'availability',
-      textKey: 'profile.promptAvailability',
-      icon: '🔓',
-    });
-  }
   if (!hasCertifications) {
     prompts.push({
       id: 'certifications',

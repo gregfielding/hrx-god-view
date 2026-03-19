@@ -303,10 +303,6 @@ export function computeJobScoreSummaryV1(
     const ratio = overlap / requiredShifts.length;
     requirementsScore += WEIGHTS.shift * ratio;
     if (ratio >= 1) matched.push({ key: 'shift', label: 'Shift Preference' });
-    else {
-      missingOptional.push({ key: 'shift', label: 'Update availability/preferences', sectionId: SECTION_IDS.availability });
-      nextActions.push({ label: 'Update availability/preferences', sectionId: SECTION_IDS.availability, priority: 2 });
-    }
   }
 
   // ——— 5.5 Language (5) ———

@@ -29,6 +29,7 @@ import NextStepsChecklist from '../../../components/worker/home/NextStepsCheckli
 import ProfileNudgesSection from '../../../components/worker/home/ProfileNudgesSection';
 import ReadinessSummaryCard from '../../../components/worker/home/ReadinessSummaryCard';
 import RecommendedJobsSection from '../../../components/worker/home/RecommendedJobsSection';
+import SmsWarningBanner from '../../../components/worker/SmsWarningBanner';
 import type { HomeChecklistItem, HomeReadinessLaunchStep } from '../../../components/worker/home/types';
 import type { DashboardCardPayload } from '../../../components/worker/dashboard/cards';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
@@ -418,7 +419,7 @@ const WorkerDashboard: React.FC = () => {
     launchStep: 'start',
   }));
   const openOnboardingTask = () => {
-    navigate('/c1/workers/documents');
+    navigate('/c1/workers/profile');
   };
   const primaryCtaLabel =
     effectiveReadinessPercent <= 0
@@ -446,6 +447,7 @@ const WorkerDashboard: React.FC = () => {
   return (
     <Box sx={{ maxWidth: 760, mx: 'auto', px: 1 }}>
       <Stack spacing={4} sx={{ py: 2 }}>
+        <SmsWarningBanner />
         <Stack spacing={0.75}>
           <Typography variant="h5" sx={{ fontWeight: 700 }}>
             {t('dashboard.welcomeBack', { firstName: displayFirstName })}

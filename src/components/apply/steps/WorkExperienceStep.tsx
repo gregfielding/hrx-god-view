@@ -12,8 +12,6 @@ import {
   DialogActions,
   TextField,
   MenuItem,
-  useTheme, 
-  useMediaQuery,
   Autocomplete,
   Accordion,
   AccordionSummary,
@@ -29,7 +27,6 @@ import { auth, db } from '../../../firebase';
 import { useT } from '../../../i18n';
 import onetJobTitles from '../../../data/onetJobTitles.json';
 import { experienceOptions } from '../../../data/experienceOptions';
-import ResumeUpload from '../../../components/ResumeUpload';
 
 type Props = {
   value: any;
@@ -41,35 +38,20 @@ type Props = {
   resumeData?: any;
 };
 
-const quickAddExperience = [
-  'Line Cook',
-  'Prep Cook',
-  'Dishwasher',
-  'Server / FOH',
-  'Retail / Cashier',
-];
-
 // Generate years from 1970 to 2026 for date picker
 const yearOptions = Array.from({ length: 57 }, (_, i) => 2026 - i);
 
-// Common job titles for suggestions
-const commonJobTitles = [
-  'Line Cook', 'Prep Cook', 'Dishwasher', 'Server', 'Host', 'Bartender',
-  'Cashier', 'Retail Associate', 'Stock Clerk', 'Janitor', 'Housekeeper',
-  'Food Service Worker', 'Kitchen Helper', 'Barista', 'Delivery Driver'
-];
-
-const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'application', tenantId, jobId, jobPosting, resumeData }) => {
-  const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+const WorkExperienceStep: React.FC<Props> = ({
+  value,
+  onChange,
+  context = 'application',
+  tenantId: _tenantId,
+  jobId: _jobId,
+  jobPosting,
+  resumeData: _resumeData,
+}) => {
   const t = useT();
   const [experienceDialogOpen, setExperienceDialogOpen] = useState(false);
-  const [resumePromptChoice, setResumePromptChoice] = useState<'unknown' | 'upload' | 'skip'>(() => {
-    const existing = String(value?.resumePromptChoice || '').toLowerCase();
-    if (existing === 'upload' || existing === 'skip') return existing;
-    return 'unknown';
-  });
-  const [resumeUploadedThisStep, setResumeUploadedThisStep] = useState(false);
   
   const [newExperience, setNewExperience] = useState({
     jobTitle: '',
@@ -95,13 +77,6 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
   };
 
   const workExperience = value?.workExperience || value?.workHistory || [];
-  const hasExistingResume = Boolean(
-    resumeUploadedThisStep ||
-    resumeData?.fileName ||
-    resumeData?.storagePath ||
-    resumeData?.downloadUrl ||
-    resumeData?.parsed,
-  );
 
   // Get required experience from job posting (multiple possible fields)
   const requiredExperience = useMemo(() => {
@@ -183,28 +158,6 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
     return null;
   }, [jobPosting]);
 
-  // Suggest jobs based on what's already added
-  const suggestedJobs = useMemo(() => {
-    const addedTitles = workExperience.map((exp: any) => exp.jobTitle?.toLowerCase() || '');
-    return commonJobTitles.filter(title => 
-      !addedTitles.includes(title.toLowerCase())
-    ).slice(0, 5);
-  }, [workExperience]);
-
-  const handleQuickAddExperience = (jobTitle: string, e?: React.MouseEvent) => {
-    e?.preventDefault();
-    e?.stopPropagation();
-    setNewExperience({
-      jobTitle: jobTitle,
-      employer: '',
-      startYear: '',
-      endYear: '',
-      stillWorking: false,
-      showDates: false,
-    });
-    setExperienceDialogOpen(true);
-  };
-
   const handleSaveExperience = () => {
     const entry: any = {
       jobTitle: newExperience.jobTitle.trim(),
@@ -268,11 +221,6 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
     setExperienceDialogOpen(true);
   };
 
-  const handleResumeChoice = (choice: 'upload' | 'skip') => {
-    setResumePromptChoice(choice);
-    onChange({ ...value, resumePromptChoice: choice });
-  };
-
   return (
     <Box>
       {/* Job requirement callout when this job has an experience requirement */}
@@ -283,47 +231,15 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
       )}
       {/* Work Experience Section */}
       <Box sx={{ mb: 2.5 }}>
-        <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          Tell us about your recent work
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Can you tell us about your last few jobs? This helps us match you to better opportunities.
-        </Typography>
-
-        {!hasExistingResume && (
-          <Box sx={{ mb: 2, p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 2, bgcolor: 'grey.50' }}>
-            <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-              Do you already have a resume?
+        {context !== 'profile' && (
+          <>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
+              Tell us about your recent work
             </Typography>
-            <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap" sx={{ mb: resumePromptChoice === 'upload' ? 1.5 : 0 }}>
-              <Button
-                size="small"
-                variant={resumePromptChoice === 'upload' ? 'contained' : 'outlined'}
-                onClick={() => handleResumeChoice('upload')}
-              >
-                Yes, upload it
-              </Button>
-              <Button
-                size="small"
-                variant={resumePromptChoice === 'skip' ? 'contained' : 'outlined'}
-                onClick={() => handleResumeChoice('skip')}
-              >
-                Skip for now
-              </Button>
-            </Stack>
-            {resumePromptChoice === 'upload' && (
-              <ResumeUpload
-                userId={auth.currentUser?.uid || ''}
-                tenantId={tenantId}
-                onResumeParsed={() => setResumeUploadedThisStep(true)}
-              />
-            )}
-          </Box>
-        )}
-        {hasExistingResume && (
-          <Alert severity="success" sx={{ mb: 2 }}>
-            Resume found. You can still add work history manually below.
-          </Alert>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              Can you tell us about your last few jobs? This helps us match you to better opportunities.
+            </Typography>
+          </>
         )}
 
         {workExperience.length > 0 ? (
@@ -387,76 +303,9 @@ const WorkExperienceStep: React.FC<Props> = ({ value, onChange, context = 'appli
               </Box>
             )}
 
-            {/* Show suggestions after entries are added */}
-            {suggestedJobs.length > 0 && (
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, fontSize: '0.85rem' }}>
-                  Add more experience:
-                </Typography>
-                <Stack direction="row" flexWrap="wrap" gap={1}>
-                  {suggestedJobs.map((jobTitle) => (
-                    <Chip
-                      key={jobTitle}
-                      label={jobTitle}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        handleQuickAddExperience(jobTitle, e);
-                      }}
-                      variant="outlined"
-                      sx={{
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease',
-                        '&:hover': {
-                          bgcolor: 'primary.main',
-                          color: 'white',
-                          borderColor: 'primary.main',
-                          transform: 'translateY(-2px)',
-                          boxShadow: '0 4px 8px rgba(0,0,0,0.15)'
-                        }
-                      }}
-                    />
-                  ))}
-                </Stack>
-              </Box>
-            )}
           </>
         ) : (
-          <Box sx={{ mb: 2 }}>
-            <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                🧑‍🍳 You haven't added experience yet
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                (Add ANY job — fast food, retail, or gig work all count!)
-              </Typography>
-            </Box>
-
-            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, fontSize: '0.85rem' }}>
-              Quick add:
-            </Typography>
-            <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mb: 2 }}>
-              {quickAddExperience.map((jobTitle) => (
-                <Chip
-                  key={jobTitle}
-                  label={jobTitle}
-                  onClick={() => handleQuickAddExperience(jobTitle)}
-                  variant="outlined"
-                  sx={{
-                    cursor: 'pointer',
-                    transition: 'all 0.2s ease',
-                    '&:hover': {
-                      bgcolor: 'primary.main',
-                      color: 'white',
-                      borderColor: 'primary.main',
-                      transform: 'translateY(-2px)',
-                      boxShadow: '0 4px 8px rgba(0,0,0,0.15)'
-                    }
-                  }}
-                />
-              ))}
-            </Stack>
-          </Box>
+          <Box sx={{ mb: 2 }} />
         )}
 
         <Chip

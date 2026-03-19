@@ -324,7 +324,7 @@ export async function generateMenuItems(
         text: 'Privacy & Notifications',
         to: '/privacy-settings',
         icon: 'notifications',
-        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Worker', 'Customer'] as ClaimsRole[], // All user types
+        requiredRoles: ['Admin', 'Recruiter', 'Manager', 'Customer'] as ClaimsRole[],
       },
       // {
       //   text: 'Help',

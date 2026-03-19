@@ -390,6 +390,20 @@ const PublicJobsBoard: React.FC = () => {
     return distance;
   };
 
+  const getJobDistanceMiles = (job: PublicJobPosting): number | null => {
+    if (!userLocation) return null;
+    const lat = job.worksiteAddress?.coordinates?.lat;
+    const lng = job.worksiteAddress?.coordinates?.lng;
+    if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+    return calculateDistance(userLocation.lat, userLocation.lng, lat, lng);
+  };
+
+  const getDistanceLabel = (distanceMiles: number | null): string | null => {
+    if (distanceMiles === null || !Number.isFinite(distanceMiles)) return null;
+    if (distanceMiles < 0.1) return t('jobs.distanceUnderPointOne');
+    return t('jobs.distanceMilesAway', { miles: distanceMiles.toFixed(1) } as any);
+  };
+
 
   // Helper function to convert JobOrder to PublicJobPosting format
   const convertJobOrderToPosting = (jobOrder: any, tenantId: string): PublicJobPosting => {
@@ -1134,6 +1148,14 @@ const PublicJobsBoard: React.FC = () => {
         // If neither has coordinates, maintain original order
         return 0;
       });
+    } else if (sortBy === 'pay_desc') {
+      // Sort by pay rate (high to low), then newest first as tie-breaker
+      filtered = filtered.sort((a, b) => {
+        const payA = Number.isFinite(Number(a.payRate)) ? Number(a.payRate) : -1;
+        const payB = Number.isFinite(Number(b.payRate)) ? Number(b.payRate) : -1;
+        if (payB !== payA) return payB - payA;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      });
     } else {
       // Default sort by newest
       filtered = filtered.sort((a, b) => 
@@ -1547,7 +1569,7 @@ const PublicJobsBoard: React.FC = () => {
       )}
 
       {/* Search and Filters */}
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+      <Paper elevation={1} sx={{ p: 3, mb: 4 }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={6}>
             <TextField
@@ -1555,6 +1577,12 @@ const PublicJobsBoard: React.FC = () => {
               placeholder={t('jobs.searchPlaceholder')}
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
+              size="medium"
+              sx={{
+                '& .MuiInputBase-root': {
+                  minHeight: 52,
+                },
+              }}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -1651,6 +1679,7 @@ const PublicJobsBoard: React.FC = () => {
               >
                 <MenuItem value="newest">{t('jobs.newestFirst')}</MenuItem>
                 <MenuItem value="closest">{t('jobs.closestToMe')}</MenuItem>
+                <MenuItem value="pay_desc">{t('jobs.payRateHighToLow')}</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -1706,6 +1735,7 @@ const PublicJobsBoard: React.FC = () => {
                   >
                     <MenuItem value="newest">{t('jobs.newestFirst')}</MenuItem>
                     <MenuItem value="closest">{t('jobs.closestToMe')}</MenuItem>
+                    <MenuItem value="pay_desc">{t('jobs.payRateHighToLow')}</MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -1801,6 +1831,7 @@ const PublicJobsBoard: React.FC = () => {
               dateTimeLabel={feedQueue[0].startDate
                 ? new Date(feedQueue[0].startDate).toLocaleDateString(displayLanguage === 'es' ? 'es' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric', weekday: 'short' })
                 : undefined}
+              distanceLabel={getDistanceLabel(getJobDistanceMiles(feedQueue[0])) || undefined}
               isSaved={user ? isFavorite(feedQueue[0].id) : false}
               onSkip={() => setFeedQueue((q) => q.slice(1))}
               onSave={() => {
@@ -1835,9 +1866,13 @@ const PublicJobsBoard: React.FC = () => {
         >
           {filteredJobs[deckIndex] && (() => {
             const job = filteredJobs[deckIndex];
-            const location = job.worksiteAddress?.city && job.worksiteAddress?.state
+            const baseLocation = job.worksiteAddress?.city && job.worksiteAddress?.state
               ? `${job.worksiteAddress.city}, ${job.worksiteAddress.state}`
               : job.worksiteName || undefined;
+            const distanceLabel = getDistanceLabel(getJobDistanceMiles(job));
+            const location = distanceLabel && baseLocation
+              ? `${baseLocation} • ${distanceLabel}`
+              : baseLocation;
             const dateTime = job.startDate
               ? new Date(job.startDate).toLocaleDateString(displayLanguage === 'es' ? 'es' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })
               : undefined;
@@ -1871,6 +1906,9 @@ const PublicJobsBoard: React.FC = () => {
         <Grid container spacing={3} sx={{ px: 2, pb: 2 }}>
           {filteredJobs.map((job) => (
             <Grid item xs={12} md={6} key={`${job.tenantId}-${job.id}`}>
+              {(() => {
+                const jobDistanceLabel = getDistanceLabel(getJobDistanceMiles(job));
+                return (
               <Card
                 elevation={2}
                 sx={{
@@ -1889,38 +1927,22 @@ const PublicJobsBoard: React.FC = () => {
               >
                 <CardContent sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                   {/* Job Title and Bookmark on same line */}
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, gap: 1 }}>
-                      <Typography variant="h6" component="h3" sx={{ fontWeight: 600 }}>
+                      <Typography
+                        variant="h6"
+                        component="h3"
+                        sx={{
+                          fontWeight: 700,
+                          lineHeight: 1.25,
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                          overflow: 'hidden',
+                        }}
+                      >
                         {job.postTitle}
                       </Typography>
-                      {job.jobType === 'gig' && (
-                        <Chip
-                          icon={<Event sx={{ fontSize: 16 }} />}
-                          label={t('jobs.gig')}
-                          size="small"
-                          color="primary"
-                          sx={{ 
-                            height: 24,
-                            fontSize: '0.75rem',
-                            fontWeight: 500
-                          }}
-                        />
-                      )}
-                      {/* Optional trust indicators */}
-                      {(job.trustedClient || job.popularShift || job.highDemand) && (
-                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-                          {job.trustedClient && (
-                            <Chip label={t('apply.trustedClient')} size="small" variant="outlined" color="success" sx={{ height: 22, fontSize: '0.7rem' }} />
-                          )}
-                          {job.popularShift && (
-                            <Chip label={t('apply.popularShift')} size="small" variant="outlined" color="primary" sx={{ height: 22, fontSize: '0.7rem' }} />
-                          )}
-                          {job.highDemand && (
-                            <Chip label={t('apply.highDemand')} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.7rem' }} />
-                          )}
-                        </Stack>
-                      )}
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                       {user && (
@@ -1949,265 +1971,71 @@ const PublicJobsBoard: React.FC = () => {
                     </Box>
                   </Box>
 
-                  {/* Hide pay rate for gig jobs - it's shown on individual shift cards instead */}
-                  {job.payRate && job.showPayRate && job.jobType !== 'gig' && (
-                    <Box sx={{ mb: 2 }}>
-                      <Typography variant="h6" color="primary" sx={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                  {job.payRate && job.showPayRate && (
+                    <Box sx={{ mb: 1.25 }}>
+                      <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.2rem', color: 'success.dark' }}>
                         ${job.payRate}/hr
                       </Typography>
                     </Box>
                   )}
 
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      {job.companyName}
-                    </Typography>
-                  </Box>
-
-                  {job.jobTitle && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <Work sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {job.jobTitle}
-                      </Typography>
-                    </Box>
-                  )}
-
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'flex-start', mb: 1 }}>
                     <LocationOn sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
-                    <Typography variant="body2" color="text.secondary">
-                      {job.worksiteAddress?.city && job.worksiteAddress?.state && 
-                       job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim() ? (
-                        `${job.worksiteAddress.city}, ${job.worksiteAddress.state}${job.worksiteAddress.zipCode ? ` ${job.worksiteAddress.zipCode}` : ''}`
-                      ) : (
-                        'Location TBD'
-                      )}
-                    </Typography>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">
+                        {job.worksiteAddress?.city && job.worksiteAddress?.state && 
+                        job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim() ? (
+                          `${job.worksiteAddress.city}, ${job.worksiteAddress.state}${job.worksiteAddress.zipCode ? ` ${job.worksiteAddress.zipCode}` : ''}`
+                        ) : (
+                          'Location TBD'
+                        )}
+                      </Typography>
+                      {jobDistanceLabel ? (
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
+                          {jobDistanceLabel}
+                        </Typography>
+                      ) : null}
+                    </Box>
                   </Box>
 
-                  {/* For Gig jobs with shifts, show Next Shift; otherwise show Start Date */}
-                  {job.jobType === 'gig' && (job as any).nextShiftDate ? (
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                      <Schedule sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
-                      <Typography variant="body2" color="text.secondary">
-                        Next Shift: {formatDateForDisplay((job as any).nextShiftDate)}
-                      </Typography>
-                    </Box>
-                  ) : (
-                    job.startDate && job.showStart && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                        <Schedule sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
-                        <Typography variant="body2" color="text.secondary">
-                          Starts: {formatDateForDisplay(job.startDate)}
-                        </Typography>
-                      </Box>
-                    )
-                  )}
-
-                  {job.shift && job.shift.length > 0 && job.showShift && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Build sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {job.shift.slice(0, 2).join(', ')}
-                        {job.shift.length > 2 && ` +${job.shift.length - 2} more`}
-                      </Typography>
-                    </Box>
-                  )}
-
-                  {/* Missing Certifications Warning - Only show after application submission */}
-                  {user && job.licensesCerts && job.licensesCerts.length > 0 && job.showLicensesCerts && (() => {
-                    // Check if user has applied to this job
+                  {(() => {
                     const applicationId = `${job.tenantId}_${job.id}`;
                     const hasApplied = userApplicationIds.includes(applicationId);
-                    
-                    // Only show warning if user has applied
-                    if (!hasApplied) return null;
-                    
-                    const missingCerts = checkMissingCertifications(job.licensesCerts, userCertifications);
-                    if (missingCerts.length > 0) {
-                      return (
-                        <Alert 
-                          severity="warning" 
-                          icon={<WarningIcon />}
-                          sx={{ 
-                            mb: 2,
-                            mt: 1,
-                            '& .MuiAlert-message': {
-                              fontSize: '0.875rem',
-                              width: '100%'
-                            }
-                          }}
-                          action={
-                            <Button
-                              size="small"
-                              color="inherit"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigate('/profile?tab=licenses');
-                              }}
-                              sx={{ 
-                                textTransform: 'none',
-                                fontSize: '0.75rem',
-                                minWidth: 'auto',
-                                px: 1
-                              }}
-                            >
-                              Upload
-                            </Button>
-                          }
-                        >
-                          <Typography variant="body2" sx={{ fontWeight: 600, mb: 0.5 }}>
-                            Missing Required Certification{missingCerts.length > 1 ? 's' : ''}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Please upload {missingCerts.length === 1 ? 'this certification' : 'these certifications'} to your profile: {missingCerts.slice(0, 2).join(', ')}{missingCerts.length > 2 ? ` +${missingCerts.length - 2} more` : ''}
-                          </Typography>
-                        </Alert>
-                      );
-                    }
-                    return null;
+                    const isNew = (() => {
+                      const createdAt = (job as any).createdAt;
+                      if (!createdAt) return false;
+                      const createdMs = createdAt?.toDate ? createdAt.toDate().getTime() : new Date(createdAt).getTime();
+                      if (!Number.isFinite(createdMs)) return false;
+                      return Date.now() - createdMs <= 7 * 24 * 60 * 60 * 1000;
+                    })();
+                    const tags: string[] = [];
+                    if (hasApplied) tags.push(t('jobs.applicationStatusSubmitted'));
+                    if (!hasApplied && isNew) tags.push(t('jobs.newLabel'));
+                    if (!hasApplied && job.jobType === 'gig') tags.push(t('jobs.gig'));
+                    return tags.length > 0 ? (
+                      <Stack direction="row" spacing={0.75} sx={{ mb: 1.5 }} flexWrap="wrap" useFlexGap>
+                        {tags.slice(0, 2).map((tag) => (
+                          <Chip key={tag} label={tag} size="small" variant="outlined" sx={{ height: 24, fontSize: '0.72rem' }} />
+                        ))}
+                      </Stack>
+                    ) : null;
                   })()}
 
-
-
-                  <Box sx={{ mt: 'auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    {/* E-Verify in footer (left side) */}
-                    {job.eVerifyRequired && (
-                      <img 
-                        src="/img/everify.png" 
-                        alt="E-Verify" 
-                        style={{ 
-                          height: '30px', 
-                          width: 'auto',
-                          objectFit: 'contain'
-                        }}
-                      />
-                    )}
-                    
-                    {/* Apply Now or Application Status button (right side, half width) */}
-                    {(() => {
-                      // For gig jobs, always show "Apply Now" - status is handled per shift in detail view
-                      if (job.jobType === 'gig') {
-                        return (
-                          <Button 
-                            variant="contained" 
-                            sx={{ 
-                              width: '50%',
-                              ml: 'auto'
-                            }} 
-                            onClick={(e) => {
-                              e.stopPropagation(); // Prevent card click
-                              handleCardClick(job);
-                            }}
-                          >
-                            {t('jobs.applyNow')}
-                          </Button>
-                        );
-                      }
-                      
-                      // For non-gig jobs, show status if user has applied
-                      const applicationId = `${job.tenantId}_${job.id}`;
-                      const hasApplied = userApplicationIds.includes(applicationId);
-                      
-                      if (hasApplied) {
-                        const status = userApplicationStatuses[applicationId] || 'submitted';
-                        // If application is withdrawn, cancelled, or removed by admin, show "Apply Now" button instead
-                        if (status === 'withdrawn' || status === 'cancelled' || status === 'deleted') {
-                          return (
-                            <Button 
-                              variant="contained" 
-                              sx={{ 
-                                width: '50%',
-                                ml: 'auto'
-                              }} 
-                              onClick={(e) => {
-                                e.stopPropagation(); // Prevent card click
-                                handleApply(job);
-                              }}
-                            >
-                              {t('jobs.applyNow')}
-                            </Button>
-                          );
-                        }
-
-                        // If user has an assignment for this job, show green "View Assignment" button
-                        const jobOrderId = (job as PublicJobPosting).jobOrderId;
-                        const assignmentId = jobOrderId ? userAssignmentIdByJobOrderId[jobOrderId] : undefined;
-                        if (assignmentId) {
-                          return (
-                            <Button 
-                              variant="contained" 
-                              sx={{ 
-                                width: '50%',
-                                ml: 'auto',
-                                backgroundColor: '#2e7d32',
-                                color: '#fff',
-                                '&:hover': {
-                                  backgroundColor: '#1b5e20',
-                                },
-                              }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigate(`/c1/workers/assignments/${assignmentId}`);
-                              }}
-                            >
-                              {t('assignment.viewAssignment')}
-                            </Button>
-                          );
-                        }
-                        
-                        const buttonProps = getApplicationStatusButton(status);
-                        const helperText = (status || '').toLowerCase() === 'waitlisted'
-                          ? "You're on our shortlist. We'll contact you if a spot opens up."
-                          : (status || '').toLowerCase() === 'rejected' || (status || '').toLowerCase() === 'not accepted'
-                            ? "This role has been filled or we've moved forward with other candidates."
-                            : null;
-                        return (
-                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25, width: '100%' }}>
-                            <Button 
-                              variant="contained" 
-                              sx={{ 
-                                width: '50%',
-                                ml: 'auto',
-                                backgroundColor: buttonProps.backgroundColor,
-                                color: buttonProps.color,
-                                '&:hover': {
-                                  backgroundColor: buttonProps.backgroundColor,
-                                },
-                                cursor: buttonProps.cursor,
-                                pointerEvents: buttonProps.pointerEvents,
-                              }}
-                            >
-                              {buttonProps.label}
-                            </Button>
-                            {helperText && (
-                              <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'right', width: '100%', px: 0.5 }}>
-                                {helperText}
-                              </Typography>
-                            )}
-                          </Box>
-                        );
-                      }
-                      
-                      return (
-                        <Button 
-                          variant="contained" 
-                          sx={{ 
-                            width: '50%',
-                            ml: 'auto'
-                          }} 
-                          onClick={(e) => {
-                            e.stopPropagation(); // Prevent card click
-                            handleApply(job);
-                          }}
-                        >
-                          {t('jobs.applyNow')}
-                        </Button>
-                      );
-                    })()}
-                  </Box>
+                  <Button
+                    variant="contained"
+                    fullWidth
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigateToJobDetails(job, 'grid_card');
+                    }}
+                    sx={{ mt: 'auto', fontWeight: 700, py: 1.1 }}
+                  >
+                    {t('jobs.viewJob')}
+                  </Button>
                 </CardContent>
               </Card>
+                );
+              })()}
             </Grid>
           ))}
         </Grid>
@@ -2279,14 +2107,24 @@ const PublicJobsBoard: React.FC = () => {
                   
                   <Stack direction="row" spacing={1} alignItems="center">
                     <LocationOn sx={{ fontSize: 20, color: 'text.secondary' }} />
-                    <Typography variant="body1">
-                      {selectedJob.worksiteAddress?.city && selectedJob.worksiteAddress?.state &&
-                       selectedJob.worksiteAddress.city.trim() && selectedJob.worksiteAddress.state.trim() ? (
-                        `${selectedJob.worksiteAddress.city}, ${selectedJob.worksiteAddress.state}${selectedJob.worksiteAddress.zipCode ? ` ${selectedJob.worksiteAddress.zipCode}` : ''}`
-                      ) : (
-                        'Location TBD'
-                      )}
-                    </Typography>
+                    <Box>
+                      <Typography variant="body1">
+                        {selectedJob.worksiteAddress?.city && selectedJob.worksiteAddress?.state &&
+                        selectedJob.worksiteAddress.city.trim() && selectedJob.worksiteAddress.state.trim() ? (
+                          `${selectedJob.worksiteAddress.city}, ${selectedJob.worksiteAddress.state}${selectedJob.worksiteAddress.zipCode ? ` ${selectedJob.worksiteAddress.zipCode}` : ''}`
+                        ) : (
+                          'Location TBD'
+                        )}
+                      </Typography>
+                      {(() => {
+                        const selectedDistanceLabel = getDistanceLabel(getJobDistanceMiles(selectedJob));
+                        return selectedDistanceLabel ? (
+                          <Typography variant="caption" color="text.secondary">
+                            {selectedDistanceLabel}
+                          </Typography>
+                        ) : null;
+                      })()}
+                    </Box>
                   </Stack>
                   
                   {/* Schedule in Header */}

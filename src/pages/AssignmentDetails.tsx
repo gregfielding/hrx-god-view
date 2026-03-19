@@ -36,6 +36,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
 import { useT } from '../i18n';
+import SmsWarningBanner from '../components/worker/SmsWarningBanner';
 import { getShiftDisplayText } from '../utils/shiftI18n';
 import { parseCalendarDateLocal } from '../utils/dateUtils';
 import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
@@ -1066,6 +1067,9 @@ const AssignmentDetails: React.FC = () => {
 
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', p: 3 }}>
+      <Box sx={{ mb: 2 }}>
+        <SmsWarningBanner />
+      </Box>
       {/* Header */}
       <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }}>
         <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>

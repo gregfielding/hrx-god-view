@@ -7,7 +7,6 @@ const READINESS_TRIGGER_VERSION = 1;
 type ReadinessDomain =
   | 'profile_photo'
   | 'work_authorization'
-  | 'availability'
   | 'certifications'
   | 'skills'
   | 'resume'
@@ -19,10 +18,6 @@ const DOMAIN_PATH_PREFIXES: Record<ReadinessDomain, string[]> = {
     'workEligibilityAttestation.authorizedToWorkUS',
     'workEligibilityAttestation.requireSponsorship',
     'workEligibility',
-  ],
-  availability: [
-    'workerProfile.preferences.scheduleIntentOptions',
-    'workerProfile.preferences.desiredWorkType',
   ],
   certifications: ['workerProfile.credentials.certifications', 'certifications'],
   skills: ['workerProfile.skills', 'skills'],

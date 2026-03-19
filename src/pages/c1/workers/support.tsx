@@ -57,7 +57,7 @@ const C1WorkerSupport: React.FC = () => {
   const handleSuggestedAction = useCallback((action: string) => {
     const normalized = action.toLowerCase();
     if (normalized.includes('inbox') || normalized.includes('recruiter') || normalized.includes('contact')) {
-      navigate('/c1/workers/inbox');
+      navigate('/c1/workers/notifications');
       return;
     }
     if (normalized.includes('assignment')) {
@@ -119,8 +119,8 @@ const C1WorkerSupport: React.FC = () => {
     sendQuestion(q);
   };
 
-  const goToInbox = () => {
-    navigate('/c1/workers/inbox');
+  const goToNotifications = () => {
+    navigate('/c1/workers/notifications');
   };
 
   if (!tenantId) {
@@ -231,7 +231,7 @@ const C1WorkerSupport: React.FC = () => {
                 <Button
                   color="inherit"
                   size="small"
-                  onClick={goToInbox}
+                  onClick={goToNotifications}
                   startIcon={<SupportAgentIcon />}
                 >
                   {t('support.contactRecruiter')}
@@ -282,7 +282,7 @@ const C1WorkerSupport: React.FC = () => {
             <Button
               variant="contained"
               startIcon={<SupportAgentIcon />}
-              onClick={goToInbox}
+              onClick={goToNotifications}
               sx={{ textTransform: 'none', fontWeight: 600 }}
             >
               {t('support.contactRecruiter')}

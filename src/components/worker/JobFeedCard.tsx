@@ -48,6 +48,8 @@ export interface JobFeedCardProps {
   isSaved?: boolean;
   /** Optional date/time string for display */
   dateTimeLabel?: string;
+  /** Optional computed distance label (e.g., "3.2 miles away") */
+  distanceLabel?: string;
 }
 
 function formatPay(pay: number | undefined): string {
@@ -62,6 +64,7 @@ const JobFeedCard: React.FC<JobFeedCardProps> = ({
   onViewDetails,
   isSaved = false,
   dateTimeLabel,
+  distanceLabel,
 }) => {
   const t = useT();
   const cardRef = useRef<HTMLDivElement>(null);
@@ -191,11 +194,18 @@ const JobFeedCard: React.FC<JobFeedCardProps> = ({
               </Box>
             )}
             {locationStr && (
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.5, mt: 0.5 }}>
                 <LocationOn sx={{ fontSize: 16, color: contrast, opacity: 0.9 }} />
-                <Typography variant="body2" sx={{ color: contrast, opacity: 0.85 }}>
-                  {locationStr}
-                </Typography>
+                <Box>
+                  <Typography variant="body2" sx={{ color: contrast, opacity: 0.85 }}>
+                    {locationStr}
+                  </Typography>
+                  {distanceLabel ? (
+                    <Typography variant="caption" sx={{ color: contrast, opacity: 0.78 }}>
+                      {distanceLabel}
+                    </Typography>
+                  ) : null}
+                </Box>
               </Box>
             )}
             {payStr && (

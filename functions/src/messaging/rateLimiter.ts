@@ -81,6 +81,8 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'assignment_cancelled',
   'assignment_active',
   'assignment_completed',
+  'assignment_reminder_24h',
+  'assignment_reminder_2h',
 ]);
 
 /**

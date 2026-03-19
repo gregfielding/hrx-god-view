@@ -134,14 +134,10 @@ function isRequirementMet(readModel: JobReadinessReadModel, requirementId: strin
       return readModel.hasVerifiedCertification(['food handler', 'servsafe']);
     case 'forklift_cert':
       return readModel.hasVerifiedCertification(['forklift']);
-    case 'weekend_availability':
-      return readModel.hasWeekendAvailability();
     case 'hospitality_experience':
       return readModel.hasExperienceKeywords(['hospitality', 'server', 'banquet', 'food service']);
     case 'steel_toe_boots':
       return readModel.attestation.hasSteelToeBoots;
-    case 'shift_flexibility':
-      return readModel.durableProfile.preferences.flexibleShifts;
     case 'warehouse_tools':
       return readModel.hasExperienceKeywords(['rf scanner', 'pallet jack', 'warehouse']);
     case 'black_uniform_readiness':
@@ -178,10 +174,6 @@ function evaluateRequirementState(
       }
       return { state: 'missing', why: 'No verified forklift credential found.' };
     }
-    case 'weekend_availability':
-      return readModel.hasWeekendAvailability()
-        ? { state: 'complete', why: 'Weekend availability is set.' }
-        : { state: 'missing', why: 'Weekend availability is not set.' };
     case 'hospitality_experience':
       return readModel.hasExperienceKeywords(['hospitality', 'server', 'banquet', 'food service'])
         ? { state: 'complete', why: 'Relevant hospitality experience found.' }
@@ -190,10 +182,6 @@ function evaluateRequirementState(
       return readModel.hasExperienceKeywords(['rf scanner', 'pallet jack', 'warehouse'])
         ? { state: 'complete', why: 'Relevant warehouse tools familiarity found.' }
         : { state: 'missing', why: 'No matching warehouse tools familiarity found.' };
-    case 'shift_flexibility':
-      return readModel.durableProfile.preferences.flexibleShifts
-        ? { state: 'complete', why: 'Flexible shifts preference is set.' }
-        : { state: 'missing', why: 'Flexible shifts preference not set.' };
     case 'steel_toe_boots': {
       if (readModel.attestation.hasSteelToeBoots) {
         return { state: 'attested', why: 'Worker attested safety gear readiness.' };

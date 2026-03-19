@@ -1279,7 +1279,15 @@ const Layout: React.FC = function Layout() {
             </ListItem>
           ) : (
             menuItemsWithIcons
-              .filter(({ text }) => text !== 'Log out') // Remove Logout from sidebar
+              .filter(({ text }) => {
+                if (text === 'Log out') return false; // Remove Logout from sidebar
+                const isWorkerSurface =
+                  location.pathname.startsWith('/c1/workers') ||
+                  location.pathname.startsWith('/c1/jobs-board');
+                // MVP worker comms model: hide legacy Inbox surface on worker routes.
+                if (isWorkerSurface && text === 'Inbox') return false;
+                return true;
+              })
               .map(({ text, to, icon }) => {
               const isInbox = text === 'Inbox';
               const showBadge = isInbox && inboxUnreadCount > 0;

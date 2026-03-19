@@ -39,15 +39,6 @@ const CHECKLIST_DEFINITIONS: ChecklistDefinition[] = [
     industries: ['hospitality', 'industrial'],
   },
   {
-    id: 'availability',
-    title: 'Add availability',
-    benefit: 'Availability helps us match you with better shifts.',
-    priority: 'high_impact',
-    launchStep: 'start',
-    weight: 20,
-    industries: ['hospitality', 'industrial'],
-  },
-  {
     id: 'certifications',
     title: 'Add certifications',
     benefit: 'Certifications can unlock better-paying roles.',
@@ -146,14 +137,6 @@ function hasWorkAuthorization(userDoc: Record<string, unknown> | null): boolean 
   );
 }
 
-function hasAvailability(userDoc: Record<string, unknown> | null): boolean {
-  const prefs = ((userDoc?.workerProfile as Record<string, unknown> | undefined)?.preferences ||
-    {}) as Record<string, unknown>;
-  const direct = prefs.scheduleIntentOptions;
-  const legacy = userDoc?.desiredWorkType;
-  return (Array.isArray(direct) && direct.length > 0) || typeof legacy === 'string';
-}
-
 function hasCertifications(userDoc: Record<string, unknown> | null): boolean {
   const canonical = (((userDoc?.workerProfile as Record<string, unknown> | undefined)?.credentials ||
     {}) as Record<string, unknown>).certifications;
@@ -185,9 +168,6 @@ function resolveChecklistStatus(userDoc: Record<string, unknown> | null, itemId:
       return hasProfilePhoto(userDoc) ? 'complete' : 'missing';
     case 'work_authorization':
       return hasWorkAuthorization(userDoc) ? 'complete' : 'missing';
-    case 'availability':
-      if (hasAvailability(userDoc)) return 'complete';
-      return responseExists(userDoc, 'availability') ? 'in_progress' : 'missing';
     case 'certifications':
       if (hasCertifications(userDoc)) return 'complete';
       return responseExists(userDoc, 'certification-food-handler') ? 'in_progress' : 'missing';
@@ -269,12 +249,28 @@ export function buildHomeReadinessModel(userDoc: Record<string, unknown> | null)
     Array.isArray(snapshot.checklist) &&
     snapshot.scoring != null
   ) {
+    const validIds = new Set(CHECKLIST_DEFINITIONS.map((item) => item.id));
+    const sanitizedChecklist = [...snapshot.checklist]
+      .filter((item) => validIds.has(item.id))
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    const totalWeight = sanitizedChecklist.reduce((sum, item) => sum + (item.weight || 0) * (item.relevanceScore || 1), 0);
+    const completedWeight = sanitizedChecklist.reduce(
+      (sum, item) =>
+        sum + (item.status === 'complete' ? (item.weight || 0) * (item.relevanceScore || 1) : 0),
+      0
+    );
+    const readinessPercent = totalWeight > 0 ? clampPercent((completedWeight / totalWeight) * 100) : 0;
+    const requiredCount = sanitizedChecklist.filter((item) => item.priority !== 'optional').length;
+    const completedCount = sanitizedChecklist.filter(
+      (item) => item.status === 'complete' && item.priority !== 'optional'
+    ).length;
+
     return {
-      readinessPercent: clampPercent(snapshot.scoring?.readinessPercent ?? 0),
-      completedCount: Number(snapshot.scoring?.completedCount ?? 0),
-      requiredCount: Number(snapshot.scoring?.requiredCount ?? 0),
-      orderedChecklist: [...snapshot.checklist].sort((a, b) => a.sortOrder - b.sortOrder),
-      orderedNextStepIds: Array.isArray(snapshot.orderedNextStepIds) ? snapshot.orderedNextStepIds : [],
+      readinessPercent,
+      completedCount,
+      requiredCount,
+      orderedChecklist: sanitizedChecklist,
+      orderedNextStepIds: sanitizedChecklist.filter((item) => item.status !== 'complete').map((item) => item.id),
       source: 'snapshot',
     };
   }

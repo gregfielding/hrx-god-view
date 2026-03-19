@@ -90,20 +90,8 @@ export function getImprovementTasks(
     out.push(backgroundCheckTask());
   }
 
-  // If we have fewer than 3, add from a secondary list (e.g. availability, work experience) so we always show up to 3
-  const availabilityMissing = prompts.some((p) => p.id === 'availability');
+  // If we have fewer than 3, add from a secondary list (e.g. work experience) so we always show up to 3
   const workExpMissing = prompts.some((p) => p.id === 'work-experience');
-  if (out.length < MAX_TASKS && availabilityMissing && !wasAnswered('availability')) {
-    out.push({
-      id: 'availability',
-      type: 'certification',
-      titleKey: 'jobReadiness.availabilityTitle',
-      bodyKey: 'jobReadiness.availabilityBody',
-      questionKey: 'jobReadiness.availabilityQuestion',
-      actionType: 'yes_no',
-      profileSectionId: READINESS_SECTION_IDS.availability,
-    });
-  }
   if (out.length < MAX_TASKS && workExpMissing && !wasAnswered('work-experience')) {
     out.push({
       id: 'work-experience',

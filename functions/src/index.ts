@@ -11597,6 +11597,7 @@ export {
 export {
   onAssignmentConfirmedScheduleReminders,
   dispatchScheduledWorkerReminders,
+  cleanupLegacyWorkerShiftReminders,
 } from './workerShiftRemindersV2';
 
 // Mentions Functions
