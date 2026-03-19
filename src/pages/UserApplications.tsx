@@ -26,7 +26,7 @@ import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { useT, getLanguage } from '../i18n';
 import CardDeck from '../components/worker/cards/CardDeck';
 import ApplicationCard from '../components/worker/dashboard/cards/ApplicationCard';
@@ -56,16 +56,18 @@ type HiredOfferSet = Set<string>;
 const UserApplications: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { applicationId: routeApplicationId } = useParams<{ applicationId?: string }>();
   const t = useT();
   const [applications, setApplications] = useState<Application[]>([]);
   const [pendingOfferKeys, setPendingOfferKeys] = useState<PendingOfferSet>(new Set());
   const [hiredOfferKeys, setHiredOfferKeys] = useState<HiredOfferSet>(new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [linkedApplicationMissing, setLinkedApplicationMissing] = useState(false);
 
   useEffect(() => {
     loadApplications();
-  }, [user?.uid]);
+  }, [user?.uid, routeApplicationId]);
 
   const loadApplications = async () => {
     if (!user?.uid) {
@@ -199,6 +201,11 @@ const UserApplications: React.FC = () => {
       loadedApplications.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
 
       setApplications(loadedApplications);
+      if (routeApplicationId) {
+        setLinkedApplicationMissing(!loadedApplications.some((app) => app.id === routeApplicationId));
+      } else {
+        setLinkedApplicationMissing(false);
+      }
 
       // Load proposed assignments (offer sent) → "Accept offer"; confirmed/active (accepted) → "You've been hired"
       const tenantIds = [...new Set(loadedApplications.map((a) => a.tenantId))];
@@ -367,6 +374,11 @@ const UserApplications: React.FC = () => {
 
   return (
     <Box>
+      {linkedApplicationMissing && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          This item is unavailable. You can review your other applications below.
+        </Alert>
+      )}
       <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2} sx={{ mb: 2 }}>
         <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
           {t('applications.title')}

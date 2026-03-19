@@ -8,6 +8,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendMessage } from './messaging/routingOrchestrator';
+import { buildWorkerJobPostUrl } from './utils/workerUrls';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -15,8 +16,6 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
-const JOBS_BOARD_BASE_URL = 'https://hrxone.com';
-const JOBS_BOARD_PATH = '/c1/jobs-board';
 const HOURS_AFTER_SUBMIT = 24;
 const BATCH_LIMIT = 100;
 
@@ -92,7 +91,7 @@ export const scheduledCompleteRequirementsReminder = onSchedule(
       }
 
       const jobTitle = data.jobTitle || data.postTitle || data.jobOrderName || 'your application';
-      const ctaUrl = `${JOBS_BOARD_BASE_URL}${JOBS_BOARD_PATH}/${jobId}`;
+      const ctaUrl = buildWorkerJobPostUrl(jobId);
       const subject = 'Complete your application';
       const messageHtml = `You have a few requirements left for <strong>${jobTitle}</strong>. <a href="${ctaUrl}">Complete them here</a>.`;
 

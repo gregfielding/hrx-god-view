@@ -72,7 +72,7 @@ const WorkerDashboardStatusCards: React.FC<WorkerDashboardStatusCardsProps> = ({
       label: t('dashboard.documents'),
       metric: documentsStatus,
       subtext: documentsSubtext,
-      to: '/c1/workers/documents',
+      to: '/c1/workers/profile',
       icon: <DescriptionIcon fontSize="small" />,
     },
     {

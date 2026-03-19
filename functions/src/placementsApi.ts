@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
+import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -578,10 +579,11 @@ export const placementsCreateAssignments = onCall(
           return d.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
         });
         const dateTimeInfo = dateStrs.length ? ` on ${dateStrs.join(', ')}` : '';
-        const postingPath = jobPostId
-          ? `/c1/jobs-board/${jobPostId}?assignmentId=${assignments[0].assignmentId}&shiftId=${shiftId}&intent=assignment_response`
-          : '/c1/jobs-board';
-        const jobUrl = `https://hrxone.com${postingPath}`;
+        const jobUrl = buildWorkerAssignmentResponseUrl({
+          jobPostId,
+          assignmentId: assignments[0].assignmentId,
+          shiftId,
+        });
         const locationText = locationNickname ? ` at ${locationNickname}` : '';
         const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}`;
         let emailSubject: string | undefined;
@@ -1250,10 +1252,11 @@ export const resendAssignmentOffer = onCall(
     }
   }
   const locationText = worksiteName ? ` at ${worksiteName}` : '';
-  const postingPath = assignment.jobPostId
-    ? `/c1/jobs-board/${assignment.jobPostId}?assignmentId=${assignmentId}&shiftId=${assignment.shiftId || ''}&intent=assignment_response`
-    : '/c1/jobs-board';
-  const jobUrl = `https://hrxone.com${postingPath}`;
+  const jobUrl = buildWorkerAssignmentResponseUrl({
+    jobPostId: assignment.jobPostId,
+    assignmentId,
+    shiftId: assignment.shiftId || '',
+  });
   const instructionsText = checkInInstructions ? ` Check-in: ${checkInInstructions}` : '';
   const message = `Hi ${firstName}, your application has been accepted for ${jobTitle}${dateTimeInfo}${locationText}. View details and respond: ${jobUrl}.${instructionsText}`;
 

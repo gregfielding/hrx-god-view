@@ -1,0 +1,16 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "REPLACE_WITH_APPLE_TEAM_ID.REPLACE_WITH_IOS_BUNDLE_ID",
+        "paths": [
+          "/c1/workers/*",
+          "/c1/jobs/*",
+          "/c1/jobs-board/*",
+          "/c1/*"
+        ]
+      }
+    ]
+  }
+}

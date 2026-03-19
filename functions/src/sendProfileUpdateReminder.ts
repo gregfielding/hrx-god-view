@@ -1,6 +1,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { sendWorkerMessageInternal } from './twilio';
+import { buildWorkerProfileUrl } from './utils/workerUrls';
 
 function getMaxSecurityLevel(userData: any): number {
   const levels: number[] = [];
@@ -49,13 +50,14 @@ export const sendProfileUpdateReminder = onCall({ cors: true }, async (request) 
 
   const firstName = String(targetData.firstName || targetData.displayName || 'there').trim().split(/\s+/)[0] || 'there';
   const preferredLanguage = String(targetData.preferredLanguage || 'en').toLowerCase() === 'es' ? 'es' : 'en';
+  const profileUrl = buildWorkerProfileUrl();
 
   const englishMessage =
     `Hi ${firstName}, we are trying to get you hired for a job but your profile is still not complete. ` +
-    `Can you please update your qualifications here https://hrxone.com/c1/workers/profile Thank you - C1 Staffing`;
+    `Can you please update your qualifications here ${profileUrl} Thank you - C1 Staffing`;
   const spanishMessage =
     `Hola ${firstName}, estamos tratando de ayudarte a conseguir trabajo, pero tu perfil todavia no esta completo. ` +
-    `Puedes actualizar tus calificaciones aqui https://hrxone.com/c1/workers/profile Gracias - C1 Staffing`;
+    `Puedes actualizar tus calificaciones aqui ${profileUrl} Gracias - C1 Staffing`;
   const messageBody = preferredLanguage === 'es' ? spanishMessage : englishMessage;
 
   const sentAt = admin.firestore.Timestamp.now();

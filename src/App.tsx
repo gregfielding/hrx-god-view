@@ -105,7 +105,6 @@ import C1WorkerDashboard from './pages/c1/workers/dashboard';
 import C1WorkerAssignments from './pages/c1/workers/assignments';
 import C1WorkerProfile from './pages/c1/workers/profile';
 import C1WorkerProfileSection from './pages/c1/workers/profileSection';
-import C1WorkerDocuments from './pages/c1/workers/documents';
 import C1WorkerSupport from './pages/c1/workers/support';
 import C1WorkerNotifications from './pages/c1/workers/notifications';
 import OnboardingProfileForm from './components/OnboardingProfileForm';
@@ -173,7 +172,6 @@ const googleMapsApiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || '';
 // C1 worker pages: use same names as default exports to avoid TS "Cannot find name" when referenced in routes
 const WorkerDashboard = C1WorkerDashboard;
 const WorkerProfile = C1WorkerProfile;
-const WorkerDocuments = C1WorkerDocuments;
 const WorkerSupport = C1WorkerSupport;
 
 // Static libraries array to prevent performance warnings (shared across app)
@@ -218,6 +216,7 @@ function JobsRedirect() {
   const suffix = rest ? `/${rest}` : '';
   return <Navigate to={`/jobs${suffix}${location.search}${location.hash}`} replace />;
 }
+
 
 function CrmCompaniesRedirect() {
   const params = useParams();
@@ -475,10 +474,12 @@ function App() {
             <Route path="assignments" element={<C1WorkerAssignments />} />
             <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
             <Route path="applications" element={<UserApplications />} />
+            <Route path="applications/:applicationId" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
             <Route path="profile/:section" element={<C1WorkerProfileSection />} />
+            <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
-            <Route path="documents" element={<WorkerDocuments />} />
+            <Route path="documents" element={<Navigate to="/c1/workers/profile" replace />} />
             <Route path="support" element={<WorkerSupport />} />
             <Route path="settings" element={<Navigate to="/c1/workers/profile/app-language" replace />} />
             <Route path="notifications" element={<C1WorkerNotifications />} />

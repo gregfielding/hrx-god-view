@@ -9,6 +9,7 @@ import { getPushProvider } from './messaging/pushProviderFactory';
 import { sendWorkerMessageInternal } from './twilio';
 import { shouldSendNotification } from './utils/notificationSettings';
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
+import { buildWorkerAssignmentUrl } from './utils/workerUrls';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -493,7 +494,7 @@ async function getEnabledPushTokens(workerId: string): Promise<string[]> {
 
 function buildReminderMessage(reminderType: ReminderType, payload: ReminderPayload, assignmentId: string) {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
-  const assignmentUrl = `https://hrxone.com/c1/workers/assignments/${assignmentId}`;
+  const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
   if (reminderType === 'assignment_reminder_24h' || reminderType === 'shift_reminder_24h') {
     return {
       title: 'Shift Reminder',

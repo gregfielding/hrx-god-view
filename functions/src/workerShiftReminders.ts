@@ -8,6 +8,7 @@ import {
 } from './messaging/unifiedWorkerNotifications';
 import { sendWorkerMessageInternal } from './twilio';
 import { shouldSendNotification } from './utils/notificationSettings';
+import { buildWorkerAssignmentUrl } from './utils/workerUrls';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -413,7 +414,7 @@ function buildReminderMessage(
   assignmentId: string,
 ): { title: string; body: string; sms: string } {
   const startLabel = formatStartInTimezone(payload.startTime, payload.timezone);
-  const assignmentUrl = `https://hrxone.com/c1/workers/assignments/${assignmentId}`;
+  const assignmentUrl = buildWorkerAssignmentUrl(assignmentId);
   if (type === 'shift_reminder_24h') {
     return {
       title: 'Shift Reminder: Tomorrow',

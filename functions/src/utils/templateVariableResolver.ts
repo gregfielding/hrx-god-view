@@ -7,6 +7,7 @@
 
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
+import { buildWorkerAssignmentResponseUrl, buildWorkerAssignmentUrl } from './workerUrls';
 
 const db = admin.firestore();
 
@@ -609,19 +610,7 @@ function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): st
   const assignmentId = context.assignmentId;
   const jobPostId = context.assignmentData?.jobPostId || context.jobPostId || context.jobPostData?.id;
   const shiftId = context.assignmentData?.shiftId || context.shiftId || '';
-  const baseUrl = 'https://hrxone.com';
-  if (jobPostId && assignmentId) {
-    const params = new URLSearchParams({
-      assignmentId,
-      intent: 'assignment_response',
-      ...(shiftId ? { shiftId } : {}),
-    });
-    return `${baseUrl}/c1/jobs-board/${jobPostId}?${params.toString()}`;
-  }
-  if (assignmentId) {
-    return `${baseUrl}/c1/jobs-board?assignmentId=${assignmentId}&intent=assignment_response`;
-  }
-  return `${baseUrl}/c1/jobs-board`;
+  return buildWorkerAssignmentResponseUrl({ jobPostId, assignmentId, shiftId });
 }
 
 /**
@@ -630,11 +619,7 @@ function resolveAssignmentAcceptDeclineUrl(context: TemplateVariableContext): st
  */
 function resolveAssignmentUrl(context: TemplateVariableContext): string {
   const assignmentId = context.assignmentId;
-  const baseUrl = 'https://hrxone.com';
-  if (assignmentId) {
-    return `${baseUrl}/c1/workers/assignments/${assignmentId}`;
-  }
-  return `${baseUrl}/c1/workers/assignments`;
+  return buildWorkerAssignmentUrl(assignmentId);
 }
 
 function resolveShiftDate(context: TemplateVariableContext): string {

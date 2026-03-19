@@ -10,6 +10,7 @@ import type { Timestamp } from 'firebase/firestore';
 import { p, workerNotificationsPaths } from '../data/firestorePaths';
 import { db } from '../firebase';
 import type { WorkerNotification, NotificationCategory, NotificationType } from '../types/unifiedWorkerNotifications';
+import { WORKER_CANONICAL_PATHS } from '../utils/workerDeepLinks';
 
 function typeToCategory(type: NotificationType): NotificationCategory {
   switch (type) {
@@ -100,7 +101,7 @@ export function useWorkerNotifications(uid: string | undefined, options?: { max?
 export function getNotificationUrl(n: WorkerNotification & { id: string }): string {
   if (n.deepLink && n.deepLink.trim()) return n.deepLink.trim();
   if (n.entity?.kind === 'job_post' && n.entity?.id) {
-    return `/c1/jobs-board/${n.entity.id}`;
+    return WORKER_CANONICAL_PATHS.jobPostDetail(n.entity.id);
   }
   return n.threadId ? '/c1/workers/support' : '';
 }
@@ -179,15 +180,15 @@ export async function getNotificationUrlAsync(
 
   // Priority 2: related assignment detail
   const assignmentId = extractAssignmentId(n);
-  if (assignmentId) return `/c1/workers/assignments/${assignmentId}`;
+  if (assignmentId) return WORKER_CANONICAL_PATHS.assignmentDetail(assignmentId);
 
   // Priority 3: related job detail
   const directJobId = extractJobId(n);
-  if (directJobId) return `/c1/jobs-board/${directJobId}`;
+  if (directJobId) return WORKER_CANONICAL_PATHS.jobPostDetail(directJobId);
 
   // Priority 4: related application detail/list
   const applicationId = extractApplicationId(n);
-  if (applicationId) return `/c1/workers/applications?applicationId=${encodeURIComponent(applicationId)}`;
+  if (applicationId) return WORKER_CANONICAL_PATHS.applicationDetail(applicationId);
 
   // Priority 5: related legacy inbox thread (MVP routes to Support)
   const threadId = extractThreadId(n);
@@ -209,8 +210,8 @@ export async function getNotificationUrlAsync(
         });
       const app = byCreated[0];
       const jobId = app?.jobId ?? app?.postId;
-      if (jobId) return `/c1/jobs-board/${jobId}`;
-      if (app?.id) return `/c1/workers/applications?applicationId=${encodeURIComponent(app.id)}`;
+      if (jobId) return WORKER_CANONICAL_PATHS.jobPostDetail(jobId);
+      if (app?.id) return WORKER_CANONICAL_PATHS.applicationDetail(app.id);
     } catch {
       // ignore lookup failures and use fallback
     }
