@@ -988,7 +988,7 @@ export default function AccountLocationDetail() {
     setLocationPricingSaving(true);
     try {
       const ref = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
-      const positionsToSave = locationPricingPositions.map(({ id, workersCompRate: _r, ...p }) => p);
+      const positionsToSave = locationPricingPositions.map(({ id, ...p }) => p);
       await setDoc(ref, {
         pricing: { positions: positionsToSave },
         updatedAt: serverTimestamp(),
@@ -1936,7 +1936,7 @@ export default function AccountLocationDetail() {
             <Card>
               <CardHeader
                 title="Positions table"
-                subheader="Job titles and rates for this location. Inherited from account until you edit; then saved as location override."
+                subheader="Job titles and rates for this location. WC code and rate auto-fill when job title + state match in Settings → Workers Comp; or enter them manually. Inherited from account until you edit; then saved as location override."
                 titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
                 action={
                   <Button
@@ -2128,9 +2128,17 @@ export default function AccountLocationDetail() {
                               <TextField
                                 size="small"
                                 value={row.workersCompCode ?? ''}
-                                disabled
+                                onChange={(e) => {
+                                  const v = e.target.value.trim();
+                                  setLocationPricingPositions((prev) => {
+                                    const next = [...prev];
+                                    next[idx] = { ...next[idx], workersCompCode: v || undefined };
+                                    return next;
+                                  });
+                                }}
                                 sx={{ width: 100 }}
-                                placeholder="Set job title + state"
+                                placeholder="e.g. 8810"
+                                helperText="Auto from Workers Comp when job title + state match; or enter manually"
                               />
                             </TableCell>
                             <TableCell align="right">
@@ -2144,10 +2152,18 @@ export default function AccountLocationDetail() {
                                     return (sc && code ? wcRatesByKey[`${sc}_${code}`] : undefined) ?? (row.workersCompRate ?? '');
                                   })()
                                 }
-                                disabled
+                                onChange={(e) => {
+                                  const v = e.target.value === '' ? null : Number(e.target.value);
+                                  setLocationPricingPositions((prev) => {
+                                    const next = [...prev];
+                                    next[idx] = { ...next[idx], workersCompRate: v != null && !Number.isNaN(v) ? v : undefined };
+                                    return next;
+                                  });
+                                }}
                                 inputProps={{ min: 0, step: 0.1 }}
                                 sx={{ width: 70 }}
                                 placeholder="—"
+                                helperText="Auto from Workers Comp or enter manually"
                               />
                             </TableCell>
                             {(entityOptions.find((e) => e.id === account?.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (

@@ -2645,8 +2645,8 @@ const RecruiterAccountDetails: React.FC = () => {
     setPricingSaving(true);
     try {
       const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
-      // Persist only workersCompCode on positions; rate lives in workers_comp_rates so master updates flow everywhere.
-      const positionsToSave = pricingPositions.map(({ id, workersCompRate: _r, ...p }) => p);
+      // Persist workersCompCode and workersCompRate (manual overrides; rate also comes from workers_comp_rates when code matches).
+      const positionsToSave = pricingPositions.map(({ id, ...p }) => p);
       const ref = doc(db, p.recruiterAccount(tenantId, accountId));
       await updateDoc(ref, {
         pricing: {
@@ -5065,7 +5065,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
               <Card>
                 <CardHeader
                   title="Positions table"
-                  subheader="Job titles and rates for this account. At sub-account or standalone level, workers comp and (for C1 Workforce / C1 Select) SUTA/FUTA apply."
+                  subheader="Job titles and rates for this account. WC code and rate auto-fill when job title + state match in Settings → Workers Comp; or enter them manually. At sub-account or standalone level, workers comp and (for C1 Workforce / C1 Select) SUTA/FUTA apply."
                   titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
                   action={
                     <Button
@@ -5264,10 +5264,17 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                 <TextField
                                   size="small"
                                   value={row.workersCompCode ?? ''}
-                                  disabled
+                                  onChange={(e) => {
+                                    const v = e.target.value.trim();
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], workersCompCode: v || undefined };
+                                      return next;
+                                    });
+                                  }}
                                   sx={{ width: 100 }}
-                                  placeholder="Set job title + state"
-                                  helperText="From Workers Comp"
+                                  placeholder="e.g. 8810"
+                                  helperText="Auto from Workers Comp when job title + state match; or enter manually"
                                 />
                               </TableCell>
                               <TableCell align="right">
@@ -5282,11 +5289,18 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                       return fromMaster != null ? fromMaster : (row.workersCompRate ?? '');
                                     })()
                                   }
-                                  disabled
+                                  onChange={(e) => {
+                                    const v = e.target.value === '' ? null : Number(e.target.value);
+                                    setPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], workersCompRate: v != null && !Number.isNaN(v) ? v : undefined };
+                                      return next;
+                                    });
+                                  }}
                                   inputProps={{ min: 0, step: 0.1 }}
                                   sx={{ width: 70 }}
                                   placeholder="—"
-                                  helperText="From Workers Comp"
+                                  helperText="Auto from Workers Comp or enter manually"
                                 />
                               </TableCell>
                               {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
