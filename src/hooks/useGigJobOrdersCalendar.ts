@@ -254,7 +254,9 @@ export function useGigJobOrdersCalendar({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const filterByAccount = !!(jobOrderIds && jobOrderIds.length > 0);
+  // Important: if caller passes an explicit empty list, treat it as "show none",
+  // not "show all". This prevents cross-account event leakage.
+  const filterByAccount = Array.isArray(jobOrderIds);
 
   useEffect(() => {
     if (!enabled || !tenantId) {

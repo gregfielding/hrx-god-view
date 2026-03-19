@@ -21,7 +21,7 @@ import {
   Today as TodayIcon,
 } from '@mui/icons-material';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, startOfDay, eachDayOfInterval, parseISO, isValid as isValidDate, isSameDay, isSameMonth, isToday, differenceInCalendarDays, addDays, subDays, addWeeks, subWeeks, addMonths, subMonths } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, documentId } from 'firebase/firestore';
+import { collection, query, where, getDocs, documentId } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { useGigJobOrdersCalendar, getColorForJobOrderId } from '../../hooks/useGigJobOrdersCalendar';
@@ -79,64 +79,71 @@ const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, accou
   const [filteredJobOrderIds, setFilteredJobOrderIds] = useState<string[] | null>(null);
 
   const baseIds = useMemo(() => account?.associations?.jobOrderIds ?? [], [account?.associations?.jobOrderIds]);
+  const companyScopeIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (account?.id) ids.add(account.id);
+    (account?.childAccountIds ?? []).forEach((id) => {
+      if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+    });
+    (account?.associations?.companyIds ?? []).forEach((id) => {
+      if (typeof id === 'string' && id.trim()) ids.add(id.trim());
+    });
+    return Array.from(ids);
+  }, [account?.id, (account?.childAccountIds ?? []).join(','), (account?.associations?.companyIds ?? []).join(',')]);
 
   useEffect(() => {
     if (!tenantId || !account?.id) {
       setAccountJobOrderIds([]);
       return;
     }
-    const childIds = account.childAccountIds ?? [];
-    if (childIds.length === 0) {
-      setAccountJobOrderIds(baseIds);
-      return;
-    }
     let cancelled = false;
     (async () => {
       const ids = new Set<string>(baseIds);
-      for (const childId of childIds) {
-        if (cancelled) return;
-        try {
-          const childRef = doc(db, p.recruiterAccount(tenantId, childId));
-          const snap = await getDoc(childRef);
-          const data = snap.data();
-          const childJobOrderIds = (data?.associations as any)?.jobOrderIds ?? [];
-          childJobOrderIds.forEach((id: string) => ids.add(id));
-        } catch {
-          // skip failed child
+      if (companyScopeIds.length > 0) {
+        const IN_LIMIT = 10;
+        for (let i = 0; i < companyScopeIds.length; i += IN_LIMIT) {
+          if (cancelled) return;
+          const batch = companyScopeIds.slice(i, i + IN_LIMIT);
+          try {
+            const ref = collection(db, p.jobOrders(tenantId));
+            const q = query(ref, where('companyId', 'in', batch));
+            const snap = await getDocs(q);
+            snap.docs.forEach((d) => ids.add(d.id));
+          } catch {
+            // fall back to association IDs only if this query fails
+          }
         }
       }
       if (!cancelled) setAccountJobOrderIds(Array.from(ids));
     })();
     return () => { cancelled = true; };
-  }, [tenantId, account?.id, baseIds.join(','), (account?.childAccountIds ?? []).join(',')]);
+  }, [tenantId, account?.id, baseIds.join(','), companyScopeIds.join(',')]);
 
   useEffect(() => {
-    if (!tenantId || !locationFilter || accountJobOrderIds.length === 0) {
+    if (!tenantId || !locationFilter) {
       setFilteredJobOrderIds(null);
       return;
     }
     let cancelled = false;
     const { companyId, locationId } = locationFilter;
     (async () => {
-      const IN_LIMIT = 30;
-      const matchingIds: string[] = [];
-      for (let i = 0; i < accountJobOrderIds.length; i += IN_LIMIT) {
-        if (cancelled) return;
-        const batch = accountJobOrderIds.slice(i, i + IN_LIMIT);
+      const matchingIds = new Set<string>();
+      try {
         const ref = collection(db, p.jobOrders(tenantId));
-        const q = query(ref, where(documentId(), 'in', batch));
+        const q = query(ref, where('companyId', '==', companyId));
         const snap = await getDocs(q);
         snap.docs.forEach((d) => {
-          const data = d.data();
-          const joCompanyId = (data as any).companyId ?? (data as any).deal?.companyId;
-          const joLocationId = (data as any).locationId ?? (data as any).worksiteId ?? (data as any).deal?.locationId;
-          if (joCompanyId === companyId && joLocationId === locationId) matchingIds.push(d.id);
+          const data = d.data() as Record<string, any>;
+          const joLocationId = data.locationId ?? data.worksiteId ?? data.deal?.locationId;
+          if (joLocationId === locationId) matchingIds.add(d.id);
         });
+      } catch {
+        // If this query fails, keep filtered set empty instead of leaking cross-account events.
       }
-      if (!cancelled) setFilteredJobOrderIds(matchingIds);
+      if (!cancelled) setFilteredJobOrderIds(Array.from(matchingIds));
     })();
     return () => { cancelled = true; };
-  }, [tenantId, locationFilter?.companyId, locationFilter?.locationId, accountJobOrderIds.join(',')]);
+  }, [tenantId, locationFilter?.companyId, locationFilter?.locationId]);
 
   const jobOrderIdsForCalendar =
     locationFilter

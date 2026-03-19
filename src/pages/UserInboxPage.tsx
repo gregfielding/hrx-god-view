@@ -414,6 +414,7 @@ const UserInboxPage: React.FC = () => {
 
   // Gmail sync function
   const handleSyncGmail = useCallback(async (silent = false) => {
+    const isInvalidGrant = (message: string) => /invalid[_\s-]?grant|access has expired|reauth/i.test(message);
     if (!user?.uid || !effectiveTenantId) {
       if (!silent) {
       setError('User or tenant not found');
@@ -466,6 +467,14 @@ const UserInboxPage: React.FC = () => {
         setBackgroundSyncMessage(null);
         const data = result.data as any;
         if (data?.error) {
+          const message = String(data?.message || data?.error || '');
+          if (isInvalidGrant(message)) {
+            // OAuth refresh token is expired/revoked: stop noisy retries and prompt reconnect.
+            gmailSyncBackoffUntilRef.current = Date.now() + 60 * 60 * 1000;
+            refreshStatus(true);
+            if (!silent) setError('Gmail connection expired. Please click "Connect Gmail" to reconnect.');
+            return;
+          }
           if (!silent) setError(data.message || 'Failed to sync Gmail emails');
           return;
         }
@@ -485,8 +494,16 @@ const UserInboxPage: React.FC = () => {
         syncingGmailRef.current = false;
         setSyncingGmail(false);
         setBackgroundSyncMessage(null);
-        console.error('Error syncing Gmail emails:', error);
         const message = String(error?.message || '');
+        if (isInvalidGrant(message)) {
+          gmailSyncBackoffUntilRef.current = Date.now() + 60 * 60 * 1000;
+          refreshStatus(true);
+          if (!silent) {
+            setError('Gmail connection expired. Please click "Connect Gmail" to reconnect.');
+          }
+          return;
+        }
+        console.error('Error syncing Gmail emails:', error);
         if (/rate.?limit|resource_exhausted|quota|internal/i.test(message)) {
           gmailSyncBackoffUntilRef.current = Date.now() + 15 * 60 * 1000;
         }
@@ -494,7 +511,7 @@ const UserInboxPage: React.FC = () => {
           setError(`Failed to sync Gmail emails: ${error?.message || 'Unknown error'}`);
         }
       });
-  }, [user?.uid, effectiveTenantId]);
+  }, [user?.uid, effectiveTenantId, refreshStatus]);
 
   // Reset search state when searchQuery becomes empty
   useEffect(() => {
