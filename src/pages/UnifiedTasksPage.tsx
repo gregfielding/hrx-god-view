@@ -302,7 +302,7 @@ const UnifiedTasksPage: React.FC = () => {
         </Box>
 
         <Collapse in={label !== 'Completed' || !completedCollapsed}>
-          <Stack spacing={1.5}>
+          <Stack spacing={1}>
             {tasks.map((task) => (
               <Fade
                 key={task.id}
@@ -313,11 +313,12 @@ const UnifiedTasksPage: React.FC = () => {
                   <UnifiedTaskCard
                     task={task}
                     onComplete={() => handleCompleteTask(task)}
-                    onSnooze={() => {}} // Legacy prop, using onSnoozeClick instead
+                    onSnooze={() => {}}
                     onSnoozeClick={handleSnoozeClick}
                     onEdit={() => handleTaskClick(task)}
                     onDelete={() => handleDeleteTask(task.id)}
                     onView={() => handleTaskClick(task)}
+                    isCompleting={completingTaskId === task.id}
                     associationLookups={associationLookups}
                   />
                 </Box>

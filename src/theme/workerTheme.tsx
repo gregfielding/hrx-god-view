@@ -166,6 +166,7 @@ export function getWorkerTheme() {
       MuiDrawer: {
         styleOverrides: {
           paper: {
+            borderRadius: 0,
             borderRight: '1px solid rgba(0,0,0,0.06)',
             boxShadow: 'none',
           },

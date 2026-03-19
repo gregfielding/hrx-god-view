@@ -1971,9 +1971,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         open={showStartOnboardingDialog}
         onClose={() => setShowStartOnboardingDialog(false)}
         userId={uid}
-          tenantId={tenantId || authTenantId || activeTenant?.id || ''}
-        employeeOnboardStatus={employeeOnboardStatus}
-        contractorOnboardStatus={contractorOnboardStatus}
+        tenantId={tenantId || authTenantId || activeTenant?.id || ''}
         onOnboardingStarted={() => {
           if (onOnboardingStarted) {
             onOnboardingStarted();

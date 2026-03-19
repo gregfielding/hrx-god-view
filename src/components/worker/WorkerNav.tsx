@@ -37,6 +37,7 @@ const drawerPaperSx = {
   width: drawerWidth,
   boxSizing: 'border-box' as const,
   mt: 0,
+  borderRadius: 0,
   borderRight: '1px solid',
   borderColor: 'divider',
 };

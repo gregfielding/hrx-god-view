@@ -2352,8 +2352,6 @@ const UserProfilePage = () => {
           onClose={() => setShowStartOnboardingDialog(false)}
           userId={uid}
           tenantId={(tenantId || authTenantId || activeTenant?.id) as string}
-          employeeOnboardStatus={employeeOnboardStatus}
-          contractorOnboardStatus={contractorOnboardStatus}
           onOnboardingStarted={async () => {
             const userRef = doc(db, 'users', uid);
             const userSnap = await getDoc(userRef);

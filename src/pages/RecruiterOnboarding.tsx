@@ -134,6 +134,37 @@ const WORKFLOW_STATUS_COLOR: Record<string, "default" | "warning" | "success" | 
 
 const CRITICAL_STEP_IDS = new Set(["i9", "onboarding_forms", "e_verify", "background_check", "drug_screen"]);
 
+/** Onboarding workspace phases (entity-driven). E-Verify phase only shown when step applicability !== not_required. */
+const PHASE_PAYROLL_LEGAL: string[] = ["i9", "onboarding_forms", "everee"];
+const PHASE_E_VERIFY: string[] = ["e_verify"];
+const PHASE_BACKGROUNDS: string[] = ["background_check", "drug_screen"];
+
+const PHASES: { id: string; title: string; stepIds: string[] }[] = [
+  { id: "payroll_legal", title: "Payroll & Legal", stepIds: PHASE_PAYROLL_LEGAL },
+  { id: "e_verify", title: "E-Verify", stepIds: PHASE_E_VERIFY },
+  { id: "backgrounds", title: "Backgrounds & Screening", stepIds: PHASE_BACKGROUNDS },
+];
+
+/** Resolve milestone label: W-4 for W2, W-9 for 1099 (tax_forms only). */
+function getMilestoneLabel(
+  milestoneId: string,
+  milestoneLabel: string,
+  workerType?: string
+): string {
+  if (milestoneId !== "tax_forms") return milestoneLabel;
+  const is1099 = String(workerType || "").toLowerCase() === "1099";
+  return is1099 ? "W-9" : "W-4";
+}
+
+/** Contractor-only milestone IDs; hide for W-2 workers. */
+const CONTRACTOR_ONLY_MILESTONES = new Set(["contractor_agreement_sent", "contractor_agreement_signed"]);
+
+function filterMilestonesByWorkerType(milestones: StepMilestone[], workerType?: string): StepMilestone[] {
+  const is1099 = String(workerType || "").toLowerCase() === "1099";
+  if (is1099) return milestones;
+  return milestones.filter((m) => !CONTRACTOR_ONLY_MILESTONES.has(m.id));
+}
+
 const nextStatusForManualProgress = (status: StepStatus): StepStatus => {
   if (status === "not_started") return "in_progress";
   if (status === "in_progress") return "complete";
@@ -451,109 +482,129 @@ const RecruiterOnboarding: React.FC = () => {
                         </Stack>
                       </Stack>
                       <Divider />
-                      {steps.map((step) => {
-                        const key = `${row.id}__${step.id}`;
-                        const keyPkg = `${row.id}__${step.id}_pkg`;
-                        const keyWf = `${row.id}__${step.id}_wf`;
-                        const applicability = normalizeApplicability(step);
-                        const isBg = step.id === "background_check";
-                        const isDrug = step.id === "drug_screen";
-                        const packages = isBg ? DUMMY_BACKGROUND_PACKAGES : isDrug ? DUMMY_DRUG_PACKAGES : [];
-                        const hasMilestones = Array.isArray(step.milestones) && step.milestones.length > 0;
-                        const milestoneKey = `${row.id}__${step.id}_m`;
-                        const milestonesOpen = expandedMilestones[milestoneKey];
+                      {PHASES.map((phase) => {
+                        const stepIdsInPhase = phase.stepIds;
+                        const stepsInPhase = steps.filter((s) => stepIdsInPhase.includes(s.id));
+                        const eVerifyStep = stepsInPhase.find((s) => s.id === "e_verify");
+                        const showEVerifyPhase = phase.id !== "e_verify" || (eVerifyStep && normalizeApplicability(eVerifyStep) !== "not_required");
+                        const stepsToRender = phase.id === "e_verify" && !showEVerifyPhase ? [] : stepsInPhase.filter((s) => (s.id !== "e_verify") || normalizeApplicability(s) !== "not_required");
+                        if (stepsToRender.length === 0) return null;
                         return (
-                          <Box key={step.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
-                            <Stack spacing={1}>
-                              <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
-                                <Typography variant="body2" fontWeight={600}>{step.title}</Typography>
-                                <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
-                                  {step.selectedPackageLabel && (
-                                    <Chip label={step.selectedPackageLabel} size="small" color="primary" sx={{ fontWeight: 600 }} />
-                                  )}
-                                  <Chip
-                                    label={toDisplayLabel(step.workflowStatus || step.status)}
-                                    color={WORKFLOW_STATUS_COLOR[step.workflowStatus || ""] || STATUS_COLOR[step.status]}
-                                    size="small"
-                                  />
-                                  <Chip label={toDisplayLabel(applicability)} color={APPLICABILITY_COLOR[applicability]} size="small" variant="outlined" />
-                                </Stack>
-                              </Stack>
-                              <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
-                                {packages.length > 0 && (
-                                  <FormControl size="small" sx={{ minWidth: 140 }}>
-                                    <Select
-                                      value={step.selectedPackageId || ""}
-                                      displayEmpty
-                                      disabled={savingKey === keyPkg}
-                                      onChange={(e) => {
-                                        const id = e.target.value as string;
-                                        const pkg = packages.find((p) => p.id === id);
-                                        updateStepPackage(row.id, step.id, id || null, pkg?.label ?? null);
-                                      }}
-                                    >
-                                      <MenuItem value="">Select package</MenuItem>
-                                      {packages.map((p) => (
-                                        <MenuItem key={p.id} value={p.id}>{p.label}</MenuItem>
-                                      ))}
-                                    </Select>
-                                  </FormControl>
-                                )}
-                                {WORKFLOW_ACTIONS.map((action) => (
-                                  <Button
-                                    key={action.value}
-                                    size="small"
-                                    variant={action.value === "complete" ? "contained" : "outlined"}
-                                    disabled={savingKey === keyWf}
-                                    onClick={() => {
-                                      if (["skipped", "blocked", "failed"].includes(action.value)) {
-                                        openWorkflowNote(row.id, step.id, action.value);
-                                      } else {
-                                        updateStepWorkflow(row.id, step.id, action.value);
-                                      }
-                                    }}
-                                  >
-                                    {action.label}
-                                  </Button>
-                                ))}
-                                <Button size="small" variant="outlined" onClick={() => updateStepStatus(row.id, step)} disabled={savingKey === key}>
-                                  Cycle status
-                                </Button>
-                              </Stack>
-                              {(step.workflowStatus === "skipped" || step.workflowStatus === "blocked" || step.workflowStatus === "failed") && (step.note || step.failureReason) && (
-                                <Box sx={{ pl: 0.5, py: 0.5, bgcolor: "action.hover", borderRadius: 1, px: 1 }}>
-                                  <Typography variant="caption" color="text.secondary" component="span" sx={{ fontWeight: 600 }}>Reason: </Typography>
-                                  <Typography variant="caption" color="text.secondary" component="span">{step.failureReason || step.note}</Typography>
-                                </Box>
-                              )}
-                              {hasMilestones && (
-                                <>
-                                  <Stack direction="row" alignItems="center" sx={{ pl: 0.5 }}>
-                                    <IconButton size="small" onClick={() => setExpandedMilestones((p) => ({ ...p, [milestoneKey]: !p[milestoneKey] }))} aria-label={milestonesOpen ? "Collapse milestones" : "Expand milestones"}>
-                                      {milestonesOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                                    </IconButton>
-                                    <Typography variant="caption" color="text.secondary" onClick={() => setExpandedMilestones((p) => ({ ...p, [milestoneKey]: !p[milestoneKey] }))} sx={{ cursor: "pointer" }}>
-                                      Milestones ({step.milestones!.filter((m) => m.completed).length}/{step.milestones!.length})
-                                    </Typography>
-                                  </Stack>
-                                  <Collapse in={milestonesOpen}>
-                                    <Stack direction="row" flexWrap="wrap" gap={1} sx={{ pl: 5, pt: 0.5, pb: 0.5, bgcolor: "action.selected", borderRadius: 1, mx: 0.5 }}>
-                                      {step.milestones!.map((m) => (
-                                        <Stack key={m.id} direction="row" alignItems="center">
-                                          <Checkbox
-                                            size="small"
-                                            checked={m.completed}
-                                            disabled={savingKey === `${row.id}__${step.id}__${m.id}`}
-                                            onChange={(_, checked) => updateMilestone(row.id, step.id, m.id, checked)}
-                                          />
-                                          <Typography variant="caption">{m.label}</Typography>
-                                        </Stack>
-                                      ))}
+                          <Box key={phase.id}>
+                            <Typography variant="subtitle2" color="text.secondary" sx={{ mt: 1.5, mb: 0.5, fontWeight: 600 }}>
+                              {phase.title}
+                            </Typography>
+                            {stepsToRender.map((step) => {
+                              const key = `${row.id}__${step.id}`;
+                              const keyPkg = `${row.id}__${step.id}_pkg`;
+                              const keyWf = `${row.id}__${step.id}_wf`;
+                              const applicability = normalizeApplicability(step);
+                              const isBg = step.id === "background_check";
+                              const isDrug = step.id === "drug_screen";
+                              const packages = isBg ? DUMMY_BACKGROUND_PACKAGES : isDrug ? DUMMY_DRUG_PACKAGES : [];
+                              const rawMilestones = step.milestones ?? [];
+                              const hasMilestones = rawMilestones.length > 0;
+                              const displayMilestones = step.id === "onboarding_forms"
+                                ? filterMilestonesByWorkerType(rawMilestones, employment?.workerType)
+                                : rawMilestones;
+                              const showMilestones = hasMilestones && displayMilestones.length > 0;
+                              const milestoneKey = `${row.id}__${step.id}_m`;
+                              const milestonesOpen = expandedMilestones[milestoneKey];
+                              return (
+                                <Box key={step.id} sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, p: 1.5 }}>
+                                  <Stack spacing={1}>
+                                    <Stack direction="row" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
+                                      <Typography variant="body2" fontWeight={600}>{step.title}</Typography>
+                                      <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                                        {step.selectedPackageLabel && (
+                                          <Chip label={step.selectedPackageLabel} size="small" color="primary" sx={{ fontWeight: 600 }} />
+                                        )}
+                                        <Chip
+                                          label={toDisplayLabel(step.workflowStatus || step.status)}
+                                          color={WORKFLOW_STATUS_COLOR[step.workflowStatus || ""] || STATUS_COLOR[step.status]}
+                                          size="small"
+                                        />
+                                        <Chip label={toDisplayLabel(applicability)} color={APPLICABILITY_COLOR[applicability]} size="small" variant="outlined" />
+                                      </Stack>
                                     </Stack>
-                                  </Collapse>
-                                </>
-                              )}
-                            </Stack>
+                                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" useFlexGap>
+                                      {packages.length > 0 && (
+                                        <FormControl size="small" sx={{ minWidth: 140 }}>
+                                          <Select
+                                            value={step.selectedPackageId || ""}
+                                            displayEmpty
+                                            disabled={savingKey === keyPkg}
+                                            onChange={(e) => {
+                                              const id = e.target.value as string;
+                                              const pkg = packages.find((p) => p.id === id);
+                                              updateStepPackage(row.id, step.id, id || null, pkg?.label ?? null);
+                                            }}
+                                          >
+                                            <MenuItem value="">Select package</MenuItem>
+                                            {packages.map((p) => (
+                                              <MenuItem key={p.id} value={p.id}>{p.label}</MenuItem>
+                                            ))}
+                                          </Select>
+                                        </FormControl>
+                                      )}
+                                      {WORKFLOW_ACTIONS.map((action) => (
+                                        <Button
+                                          key={action.value}
+                                          size="small"
+                                          variant={action.value === "complete" ? "contained" : "outlined"}
+                                          disabled={savingKey === keyWf}
+                                          onClick={() => {
+                                            if (["skipped", "blocked", "failed"].includes(action.value)) {
+                                              openWorkflowNote(row.id, step.id, action.value);
+                                            } else {
+                                              updateStepWorkflow(row.id, step.id, action.value);
+                                            }
+                                          }}
+                                        >
+                                          {action.label}
+                                        </Button>
+                                      ))}
+                                      <Button size="small" variant="outlined" onClick={() => updateStepStatus(row.id, step)} disabled={savingKey === key}>
+                                        Cycle status
+                                      </Button>
+                                    </Stack>
+                                    {(step.workflowStatus === "skipped" || step.workflowStatus === "blocked" || step.workflowStatus === "failed") && (step.note || step.failureReason) && (
+                                      <Box sx={{ pl: 0.5, py: 0.5, bgcolor: "action.hover", borderRadius: 1, px: 1 }}>
+                                        <Typography variant="caption" color="text.secondary" component="span" sx={{ fontWeight: 600 }}>Reason: </Typography>
+                                        <Typography variant="caption" color="text.secondary" component="span">{step.failureReason || step.note}</Typography>
+                                      </Box>
+                                    )}
+                                    {showMilestones && (
+                                      <>
+                                        <Stack direction="row" alignItems="center" sx={{ pl: 0.5 }}>
+                                          <IconButton size="small" onClick={() => setExpandedMilestones((p) => ({ ...p, [milestoneKey]: !p[milestoneKey] }))} aria-label={milestonesOpen ? "Collapse milestones" : "Expand milestones"}>
+                                            {milestonesOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                                          </IconButton>
+                                          <Typography variant="caption" color="text.secondary" onClick={() => setExpandedMilestones((p) => ({ ...p, [milestoneKey]: !p[milestoneKey] }))} sx={{ cursor: "pointer" }}>
+                                            Milestones ({displayMilestones.filter((m) => m.completed).length}/{displayMilestones.length})
+                                          </Typography>
+                                        </Stack>
+                                        <Collapse in={milestonesOpen}>
+                                          <Stack direction="row" flexWrap="wrap" gap={1} sx={{ pl: 5, pt: 0.5, pb: 0.5, bgcolor: "action.selected", borderRadius: 1, mx: 0.5 }}>
+                                            {displayMilestones.map((m) => (
+                                              <Stack key={m.id} direction="row" alignItems="center">
+                                                <Checkbox
+                                                  size="small"
+                                                  checked={m.completed}
+                                                  disabled={savingKey === `${row.id}__${step.id}__${m.id}`}
+                                                  onChange={(_, checked) => updateMilestone(row.id, step.id, m.id, checked)}
+                                                />
+                                                <Typography variant="caption">{getMilestoneLabel(m.id, m.label, employment?.workerType)}</Typography>
+                                              </Stack>
+                                            ))}
+                                          </Stack>
+                                        </Collapse>
+                                      </>
+                                    )}
+                                  </Stack>
+                                </Box>
+                              );
+                            })}
                           </Box>
                         );
                       })}

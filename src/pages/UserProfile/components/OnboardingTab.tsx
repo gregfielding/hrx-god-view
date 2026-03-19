@@ -316,7 +316,7 @@ const OnboardingTab: React.FC<OnboardingTabProps> = ({ uid, tenantId }) => {
   return (
     <Box sx={{ py: 4 }}>
       <Alert severity="info" sx={{ mb: 2 }}>
-        This is the legacy onboarding view (user-level tasks). For entity-based onboarding and employment status, use the <strong>Employment</strong> tab on this profile and <strong>New Hires / Onboarding</strong> (<code>/jobs/onboarding</code>).
+        This is the legacy onboarding view (user-level tasks). For entity-based onboarding and employment status, use the <strong>Employment</strong> tab on this profile.
       </Alert>
       {/* Header */}
       <Box sx={{ mb: 3 }}>

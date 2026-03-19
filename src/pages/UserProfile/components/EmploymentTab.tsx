@@ -298,7 +298,7 @@ const EmploymentTab: React.FC<EmploymentTabProps> = ({ uid, tenantId }) => {
     return (
       <Box sx={{ p: 2 }}>
         <Alert severity="info">
-          No entity employment records yet. Onboarding will create a record when a worker is confirmed for a job tied to an entity, or when triggered manually from New Hires / Onboarding.
+          No entity employment records yet. Onboarding will create a record when a worker is confirmed for a job tied to an entity, or when triggered from the user profile (Start Onboarding).
         </Alert>
       </Box>
     );
@@ -514,16 +514,6 @@ const EmploymentTab: React.FC<EmploymentTabProps> = ({ uid, tenantId }) => {
                     ))}
                   </Select>
                 </FormControl>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<OpenInNewIcon />}
-                  href={`/jobs/onboarding?pipelineId=${encodeURIComponent(rec.onboardingPipelineId)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  Open onboarding
-                </Button>
               </Stack>
             </Stack>
           </CardContent>

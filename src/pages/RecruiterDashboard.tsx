@@ -24,7 +24,6 @@ import { useAuth } from '../contexts/AuthContext';
 export type RecruiterTab =
   | 'job-orders'
   | 'my-orders'
-  | 'onboarding'
   | 'jobs-board'
   | 'reports';
 
@@ -49,7 +48,6 @@ const RecruiterDashboard: React.FC = () => {
   // Get active tab from URL or default to 'job-orders'
   const getActiveTab = (): RecruiterTab => {
     const path = location.pathname;
-    if (path.includes('/onboarding')) return 'onboarding';
     if (path.includes('/my-orders')) return 'my-orders';
     if (path.includes('/job-orders')) return 'job-orders';
     if (path.includes('/jobs-board')) return 'jobs-board';
@@ -80,7 +78,6 @@ const RecruiterDashboard: React.FC = () => {
   const tabs = [
     { id: 'job-orders' as RecruiterTab, label: 'Job Orders', icon: <WorkIcon fontSize="small" /> },
     { id: 'my-orders' as RecruiterTab, label: 'My Job Orders', icon: <PersonIcon fontSize="small" /> },
-    { id: 'onboarding' as RecruiterTab, label: 'New Hires / Onboarding', icon: <GroupAddIcon fontSize="small" /> },
     { id: 'jobs-board' as RecruiterTab, label: 'Jobs Board', icon: <AssignmentIcon fontSize="small" /> },
   ];
 

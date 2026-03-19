@@ -1023,13 +1023,15 @@ const Layout: React.FC = function Layout() {
             maxWidth: drawerWidth,
             boxSizing: 'border-box',
             position: 'fixed',
-            top: 64, // Start below top bar
+            top: 0,
             left: 0,
-            height: 'calc(100vh - 64px)', // Full height minus top bar
+            height: '100vh',
             overflowX: 'hidden',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'flex-start',
+            borderRadius: 0,
+            zIndex: 1000, // Below app bar (1100) so top bar and sidebar meet flush
             backgroundColor: isStaffShell ? '#FFFFFF' : '#2E2E2E', // Staff: white; admins: dark shell
             borderRight: isStaffShell ? '1px solid rgba(0,0,0,0.08)' : 'none',
             boxShadow: 'none',
@@ -1050,8 +1052,8 @@ const Layout: React.FC = function Layout() {
           },
         }}
       >
-        {/* Logo removed - now in top bar */}
-        <List sx={{ flexGrow: 1, pb: '80px' }}>
+        {/* Logo removed - now in top bar; pad so nav icons sit below the 64px app bar */}
+        <List sx={{ flexGrow: 1, pb: '80px', paddingTop: '64px' }}>
           {/* Dashboard shortcut for security levels 5-7 (at the top) */}
           {(() => {
             const secLevel = currentClaimsSecurityLevel || securityLevel;

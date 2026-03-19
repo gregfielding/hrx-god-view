@@ -17,7 +17,7 @@ import {
   MenuItem,
   Tooltip,
   Stack,
-  Link,
+  Checkbox,
 } from '@mui/material';
 import {
   CheckCircle as CheckCircleIcon,
@@ -29,14 +29,10 @@ import {
   CalendarToday as CalendarIcon,
   Repeat as RepeatIcon,
   Sync as SyncIcon,
-  Business as BusinessIcon,
-  Person as PersonIcon,
-  AttachMoney as AttachMoneyIcon,
 } from '@mui/icons-material';
-import { UnifiedTask } from '../types/UnifiedTask';
 import { format, parseISO, isPast, isToday } from 'date-fns';
-import { formatDateForDisplay } from '../utils/dateUtils';
-import { Link as RouterLink } from 'react-router-dom';
+
+import { UnifiedTask } from '../types/UnifiedTask';
 
 interface UnifiedTaskCardProps {
   task: UnifiedTask;
@@ -46,6 +42,7 @@ interface UnifiedTaskCardProps {
   onDelete: () => void;
   onView: () => void;
   onSnoozeClick?: (task: UnifiedTask) => void; // Optional callback to open snooze dialog
+  isCompleting?: boolean;
   associationLookups?: {
     deals?: Record<string, string>;
     contacts?: Record<string, string>;
@@ -61,6 +58,7 @@ const UnifiedTaskCard: React.FC<UnifiedTaskCardProps> = ({
   onEdit,
   onDelete,
   onView,
+  isCompleting = false,
   associationLookups,
 }) => {
   const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
@@ -142,213 +140,161 @@ const UnifiedTaskCard: React.FC<UnifiedTaskCardProps> = ({
 
   const shortId = (id: string) => (id.length <= 8 ? id : `${id.slice(0, 6)}…`);
 
-  const renderLinksLine = (
-    label: string,
-    icon: React.ReactNode,
-    ids: string[],
-    kind: 'deal' | 'contact' | 'company'
-  ) => {
-    if (!ids.length) return null;
-    const MAX = 8;
-    const shown = ids.slice(0, MAX);
-    const remaining = ids.length - shown.length;
+  // Shorten system-generated descriptions (e.g. "System-managed checklist task for job order 2YzN9...")
+  const displayDescription = (() => {
+    const d = task.description?.trim();
+    if (!d) return null;
+    const taskAny = task as any;
+    if (taskAny.systemSource === 'job_order_checklist' && d.toLowerCase().includes('system-managed')) {
+      return assoc?.relatedToName ? `Checklist: ${assoc.relatedToName}` : 'Job order checklist';
+    }
+    return d;
+  })();
 
-    const getName = (id: string) => {
-      const map =
-        kind === 'deal'
-          ? associationLookups?.deals
-          : kind === 'contact'
-          ? associationLookups?.contacts
-          : associationLookups?.companies;
-      const fromMap = map?.[id];
-      if (fromMap) return fromMap;
-      // Use optimized relatedToName when it matches the singular association
-      if (assoc?.relatedToName && assoc?.relatedTo?.id === id) return String(assoc.relatedToName);
-      return `${label} ${shortId(id)}`;
-    };
-
-    const toFor = (id: string) => {
-      if (kind === 'deal') return `/crm/deals/${id}`;
-      if (kind === 'contact') return `/contacts/${id}`;
-      return `/companies/${id}`;
-    };
-
-    const remainingNames = remaining
-      ? ids.slice(MAX).map((id) => getName(id)).filter(Boolean).join(', ')
-      : '';
-
-    return (
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', color: 'text.secondary' }}>{icon}</Box>
-        <Typography variant="body2" color="text.secondary" sx={{ flexShrink: 0, fontWeight: 600 }}>
-          {label}:
-        </Typography>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', minWidth: 0 }}>
-          {shown.map((id, idx) => (
-            <React.Fragment key={id}>
-              <Link
-                component={RouterLink}
-                to={toFor(id)}
-                underline="hover"
-                onClick={(e) => e.stopPropagation()}
-                sx={{ fontWeight: 600 }}
-              >
-                {getName(id)}
-              </Link>
-              {idx < shown.length - 1 && (
-                <Typography variant="body2" color="text.secondary">
-                  ,
-                </Typography>
-              )}
-            </React.Fragment>
-          ))}
-          {remaining > 0 && (
-            <Tooltip title={remainingNames || `${remaining} more`} arrow>
-              <Typography variant="body2" color="text.secondary" sx={{ cursor: 'help' }}>
-                (+{remaining} more)
-              </Typography>
-            </Tooltip>
-          )}
-        </Box>
-      </Box>
-    );
-  };
+  // Single-line "Linked to" for compact view (first deal/contact/company name only)
+  const linkedToShort = (() => {
+    const parts: string[] = [];
+    if (dealIds.length > 0) {
+      const name = associationLookups?.deals?.[dealIds[0]] || assoc?.relatedToName || `Deal ${shortId(dealIds[0])}`;
+      parts.push(name);
+    }
+    if (contactIds.length > 0 && parts.length < 2) {
+      const name = associationLookups?.contacts?.[contactIds[0]] || `Contact ${shortId(contactIds[0])}`;
+      parts.push(name);
+    }
+    if (companyIds.length > 0 && parts.length < 2) {
+      const name = associationLookups?.companies?.[companyIds[0]] || `Company ${shortId(companyIds[0])}`;
+      parts.push(name);
+    }
+    return parts.length > 0 ? parts.join(' · ') : null;
+  })();
 
   return (
     <Card
       variant="outlined"
       sx={{
         cursor: 'pointer',
-        transition: 'all 0.2s',
+        transition: 'all 0.15s ease',
         '&:hover': {
-          boxShadow: 2,
-          transform: 'translateY(-1px)',
+          boxShadow: 1,
+          borderColor: 'action.selected',
         },
-        opacity: isCompleted ? 0.7 : 1,
+        opacity: isCompleted ? 0.75 : 1,
       }}
       onClick={onView}
     >
-      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
-        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2 }}>
-          {/* Complete Checkbox */}
-          <IconButton
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation();
-              onComplete();
-            }}
-            sx={{
-              mt: 0.5,
-              color: isCompleted ? 'success.main' : 'action.disabled',
-            }}
-          >
-            <CheckCircleIcon fontSize="small" />
-          </IconButton>
+      <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+          {/* Complete — primary action on card */}
+          <Tooltip title={isCompleted ? 'Mark incomplete' : 'Mark complete'}>
+            <Checkbox
+              checked={!!isCompleted}
+              disabled={isCompleting}
+              onChange={(e) => {
+                e.stopPropagation();
+                onComplete();
+              }}
+              onClick={(e) => e.stopPropagation()}
+              size="small"
+              checkedIcon={<CheckCircleIcon />}
+              sx={{
+                p: 0.25,
+                color: isCompleted ? 'success.main' : 'action.disabled',
+                '&.Mui-checked': { color: 'success.main' },
+                '&.Mui-disabled': { opacity: 0.8 },
+              }}
+            />
+          </Tooltip>
 
-          {/* Task Content */}
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', mb: 1 }}>
-              <Typography
-                variant="body1"
-                sx={{
-                  fontWeight: isCompleted ? 400 : 500,
-                  textDecoration: isCompleted ? 'line-through' : 'none',
-                  flex: 1,
-                }}
-              >
-                {task.title}
-              </Typography>
+          {/* Title + metadata on one row */}
+          <Box sx={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Typography
+              variant="body2"
+              sx={{
+                fontWeight: isCompleted ? 400 : 600,
+                textDecoration: isCompleted ? 'line-through' : 'none',
+                flex: '1 1 auto',
+                minWidth: 0,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {task.title}
+            </Typography>
 
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, ml: 1 }}>
-                {/* Badges */}
-                {task.isScheduled && (
-                  <Tooltip title="Scheduled">
-                    <CalendarIcon fontSize="small" color="action" />
-                  </Tooltip>
-                )}
-                {task.isRecurring && (
-                  <Tooltip title="Recurring">
-                    <RepeatIcon fontSize="small" color="action" />
-                  </Tooltip>
-                )}
-                {task.isSynced && (
-                  <Tooltip title={`Synced with ${task.syncSource === 'google_tasks' ? 'Google Tasks' : 'Google Calendar'}`}>
-                    <SyncIcon fontSize="small" color="action" />
-                  </Tooltip>
-                )}
-
-                {/* Menu */}
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setMenuAnchor(e.currentTarget);
-                  }}
-                >
-                  <MoreVertIcon fontSize="small" />
-                </IconButton>
-              </Box>
-            </Box>
-
-            {task.description && (
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{
-                  mb: 1,
-                  display: '-webkit-box',
-                  WebkitLineClamp: 2,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                }}
-              >
-                {task.description}
-              </Typography>
-            )}
-
-            {/* Metadata Row */}
-            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
-              {/* Priority */}
+            <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap" sx={{ flexShrink: 0 }}>
               <Chip
                 label={task.priority}
                 size="small"
                 color={getPriorityColor(task.priority) as any}
                 variant="outlined"
+                sx={{ height: 20, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.75 } }}
               />
-
-              {/* Due Date */}
               {dueDateDisplay && (
                 <Chip
-                  icon={<ScheduleIcon />}
+                  icon={<ScheduleIcon sx={{ fontSize: 14 }} />}
                   label={dueDateDisplay}
                   size="small"
                   variant="outlined"
+                  sx={{ height: 20, fontSize: '0.7rem', '& .MuiChip-label': { px: 0.75 }, '& .MuiChip-icon': { fontSize: 14 } }}
                 />
               )}
-
-              {/* Source */}
               {sourceLabel && (
                 <Chip
                   label={sourceLabel}
                   size="small"
                   variant="outlined"
-                  sx={{ fontSize: '0.7rem' }}
+                  sx={{ height: 20, fontSize: '0.65rem', '& .MuiChip-label': { px: 0.75 } }}
                 />
+              )}
+              {task.isScheduled && (
+                <Tooltip title="Scheduled">
+                  <CalendarIcon sx={{ fontSize: 16, color: 'action.active' }} />
+                </Tooltip>
+              )}
+              {task.isRecurring && (
+                <Tooltip title="Recurring">
+                  <RepeatIcon sx={{ fontSize: 16, color: 'action.active' }} />
+                </Tooltip>
+              )}
+              {task.isSynced && (
+                <Tooltip title={task.syncSource === 'google_tasks' ? 'Google Tasks' : 'Google Calendar'}>
+                  <SyncIcon sx={{ fontSize: 16, color: 'action.active' }} />
+                </Tooltip>
               )}
             </Stack>
 
-            {/* Linked Objects (expanded) */}
-            {(dealIds.length > 0 || contactIds.length > 0 || companyIds.length > 0) && (
-              <Box sx={{ mt: 1 }}>
-                <Stack spacing={0.5}>
-                  {renderLinksLine('Deal', <AttachMoneyIcon fontSize="small" />, dealIds, 'deal')}
-                  {renderLinksLine('Contacts', <PersonIcon fontSize="small" />, contactIds, 'contact')}
-                  {renderLinksLine('Company', <BusinessIcon fontSize="small" />, companyIds, 'company')}
-                </Stack>
-              </Box>
-            )}
+            <IconButton
+              size="small"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuAnchor(e.currentTarget);
+              }}
+              sx={{ ml: 0.5, p: 0.25 }}
+            >
+              <MoreVertIcon fontSize="small" />
+            </IconButton>
           </Box>
         </Box>
+
+        {/* Optional second line: description or linked-to (single line) */}
+        {(displayDescription || linkedToShort) && (
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{
+              display: 'block',
+              mt: 0.25,
+              pl: 4.25, // align with title after checkbox
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {linkedToShort && displayDescription ? `${linkedToShort} — ${displayDescription}` : (linkedToShort || displayDescription)}
+          </Typography>
+        )}
       </CardContent>
 
       {/* Action Menu */}

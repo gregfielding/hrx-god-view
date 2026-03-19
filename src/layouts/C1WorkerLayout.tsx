@@ -46,6 +46,7 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
                 px: { xs: 2, sm: 3 },
                 overflow: 'auto',
                 maxWidth: { sm: 880 },
+                borderRadius: 0,
               }}
             >
               <WorkerPageTransition>{children ?? <Outlet />}</WorkerPageTransition>

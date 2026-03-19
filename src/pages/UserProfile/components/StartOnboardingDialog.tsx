@@ -1,3 +1,7 @@
+/**
+ * Start Onboarding — entity-driven.
+ * Only required field: Entity. Worker type and E-Verify are taken from entity config.
+ */
 import React, { useState, useEffect } from 'react';
 import {
   Box,
@@ -13,26 +17,27 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Chip,
   Stack,
+  TextField,
 } from '@mui/material';
-import {
-  Close as CloseIcon,
-  Person as PersonIcon,
-  Work as WorkIcon,
-  CheckCircle as CheckCircleIcon,
-} from '@mui/icons-material';
-import { useAuth } from '../../../contexts/AuthContext';
-import { startOnboarding } from '../utils/onboardingHelpers';
-import type { OnboardingType } from '../utils/onboardingTasks';
+import CloseIcon from '@mui/icons-material/Close';
+import { collection, getDocs } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../../../firebase';
+import { p } from '../../../data/firestorePaths';
+
+interface EntityOption {
+  id: string;
+  name: string;
+  workerType?: string;
+  everifyRequired?: boolean;
+}
 
 interface StartOnboardingDialogProps {
   open: boolean;
   onClose: () => void;
   userId: string;
   tenantId: string;
-  employeeOnboardStatus?: string;
-  contractorOnboardStatus?: string;
   onOnboardingStarted?: () => void;
 }
 
@@ -41,61 +46,74 @@ const StartOnboardingDialog: React.FC<StartOnboardingDialogProps> = ({
   onClose,
   userId,
   tenantId,
-  employeeOnboardStatus,
-  contractorOnboardStatus,
   onOnboardingStarted,
 }) => {
-  const { currentUser } = useAuth();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [onboardingType, setOnboardingType] = useState<OnboardingType | ''>('');
+  const [entities, setEntities] = useState<EntityOption[]>([]);
+  const [entitiesLoading, setEntitiesLoading] = useState(false);
+  const [entityId, setEntityId] = useState('');
+  const [jobOrderId, setJobOrderId] = useState('');
+  const [notes, setNotes] = useState('');
 
-  const employeeInProgress = employeeOnboardStatus === 'In Progress';
-  const contractorInProgress = contractorOnboardStatus === 'In Progress';
-  const employeeCompleted = employeeOnboardStatus === 'Completed';
-  const contractorCompleted = contractorOnboardStatus === 'Completed';
+  useEffect(() => {
+    if (!open || !tenantId) {
+      setEntities([]);
+      return;
+    }
+    const load = async () => {
+      setEntitiesLoading(true);
+      try {
+        const ref = collection(db, p.entities(tenantId));
+        const snap = await getDocs(ref);
+        const list = snap.docs
+          .map((d) => {
+            const data = d.data() as { name?: string; workerType?: string; everifyRequired?: boolean };
+            return {
+              id: d.id,
+              name: data.name || d.id,
+              workerType: data.workerType,
+              everifyRequired: data.everifyRequired,
+            };
+          })
+          .filter((e) => e.name);
+        setEntities(list);
+      } catch {
+        setEntities([]);
+      } finally {
+        setEntitiesLoading(false);
+      }
+    };
+    load();
+  }, [open, tenantId]);
 
+  const selectedEntity = entityId ? entities.find((e) => e.id === entityId) : null;
 
   const handleStart = async () => {
-    if (!onboardingType) {
-      setError('Please select an onboarding type');
+    if (!entityId.trim()) {
+      setError('Please select an entity');
       return;
     }
-
-    if (onboardingType === 'employee' && employeeInProgress) {
-      setError('Employee onboarding is already in progress');
-      return;
-    }
-
-    if (onboardingType === 'contractor' && contractorInProgress) {
-      setError('Contractor onboarding is already in progress');
-      return;
-    }
-
     setLoading(true);
     setError('');
-
     try {
-      // Start onboarding (this also initializes tasks)
-      await startOnboarding(
-        userId,
+      const callable = httpsCallable<
+        { tenantId: string; userId: string; entityId: string | null; jobOrderId?: string | null },
+        { success: boolean; pipelineId?: string; created?: boolean }
+      >(functions, 'triggerWorkerOnboardingPipeline');
+      await callable({
         tenantId,
-        onboardingType,
-        undefined, // No job order linking - assignment will handle this
-        currentUser?.uid
-      );
-
-      // Reset form
-      setOnboardingType('');
-
-      // Close and notify parent
+        userId,
+        entityId: entityId.trim(),
+        jobOrderId: jobOrderId.trim() || null,
+      });
+      setEntityId('');
+      setJobOrderId('');
+      setNotes('');
       onClose();
-      if (onOnboardingStarted) {
-        onOnboardingStarted();
-      }
+      onOnboardingStarted?.();
     } catch (err: any) {
-      console.error('Error starting onboarding:', err);
-      setError(err.message || 'Failed to start onboarding. Please try again.');
+      setError(err?.message || 'Failed to start onboarding. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -103,7 +121,9 @@ const StartOnboardingDialog: React.FC<StartOnboardingDialogProps> = ({
 
   const handleClose = () => {
     if (!loading) {
-      setOnboardingType('');
+      setEntityId('');
+      setJobOrderId('');
+      setNotes('');
       setError('');
       onClose();
     }
@@ -122,8 +142,8 @@ const StartOnboardingDialog: React.FC<StartOnboardingDialogProps> = ({
 
       <DialogContent>
         <Box sx={{ pt: 1 }}>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-            Select the type of onboarding to start. A user can have both employee and contractor onboarding processes.
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Select the entity for this onboarding. Worker type and E-Verify requirement are set from the entity.
           </Typography>
 
           {error && (
@@ -132,98 +152,62 @@ const StartOnboardingDialog: React.FC<StartOnboardingDialogProps> = ({
             </Alert>
           )}
 
-          {/* Current Status Display */}
-          {(employeeInProgress || contractorInProgress || employeeCompleted || contractorCompleted) && (
-            <Alert severity="info" sx={{ mb: 3 }}>
-              <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
-                Current Onboarding Status:
-              </Typography>
-              <Stack spacing={1}>
-                {employeeInProgress && (
-                  <Chip
-                    icon={<PersonIcon />}
-                    label="Employee: In Progress"
-                    color="warning"
-                    size="small"
-                  />
-                )}
-                {employeeCompleted && (
-                  <Chip
-                    icon={<CheckCircleIcon />}
-                    label="Employee: Completed"
-                    color="success"
-                    size="small"
-                  />
-                )}
-                {contractorInProgress && (
-                  <Chip
-                    icon={<WorkIcon />}
-                    label="Contractor: In Progress"
-                    color="warning"
-                    size="small"
-                  />
-                )}
-                {contractorCompleted && (
-                  <Chip
-                    icon={<CheckCircleIcon />}
-                    label="Contractor: Completed"
-                    color="success"
-                    size="small"
-                  />
-                )}
-              </Stack>
-            </Alert>
-          )}
-
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            {/* Onboarding Type Selection */}
-            <FormControl fullWidth>
-              <InputLabel>Onboarding Type *</InputLabel>
+          <Stack spacing={2}>
+            <FormControl fullWidth required>
+              <InputLabel>Entity *</InputLabel>
               <Select
-                value={onboardingType}
-                onChange={(e) => setOnboardingType(e.target.value as OnboardingType)}
-                label="Onboarding Type *"
-                disabled={loading}
+                value={entityId}
+                onChange={(e) => setEntityId(e.target.value)}
+                label="Entity *"
+                disabled={loading || entitiesLoading}
               >
-                <MenuItem value="employee" disabled={employeeInProgress}>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <PersonIcon fontSize="small" />
-                    <Box>
-                      <Typography>Employee (W-2)</Typography>
-                      {employeeInProgress && (
-                        <Typography variant="caption" color="text.secondary">
-                          Already in progress
-                        </Typography>
-                      )}
-                      {employeeCompleted && (
-                        <Typography variant="caption" color="success.main">
-                          Completed
-                        </Typography>
-                      )}
-                    </Box>
-                  </Stack>
+                <MenuItem value="">
+                  <em>Select entity</em>
                 </MenuItem>
-                <MenuItem value="contractor" disabled={contractorInProgress}>
-                  <Stack direction="row" spacing={1} alignItems="center">
-                    <WorkIcon fontSize="small" />
-                    <Box>
-                      <Typography>Contractor (1099)</Typography>
-                      {contractorInProgress && (
-                        <Typography variant="caption" color="text.secondary">
-                          Already in progress
-                        </Typography>
-                      )}
-                      {contractorCompleted && (
-                        <Typography variant="caption" color="success.main">
-                          Completed
-                        </Typography>
-                      )}
-                    </Box>
-                  </Stack>
-                </MenuItem>
+                {entities.map((e) => (
+                  <MenuItem key={e.id} value={e.id}>
+                    {e.name}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
-          </Box>
+
+            {selectedEntity && (
+              <Box sx={{ p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.5 }}>
+                  Preview (from entity)
+                </Typography>
+                <Stack direction="row" spacing={1} flexWrap="wrap">
+                  <Typography variant="body2">
+                    Worker type: <strong>{selectedEntity.workerType === '1099' ? '1099' : selectedEntity.workerType === 'BOTH' ? 'W-2 or 1099' : 'W-2'}</strong>
+                  </Typography>
+                  <Typography variant="body2">
+                    E-Verify: <strong>{selectedEntity.everifyRequired ? 'Required' : 'Not required'}</strong>
+                  </Typography>
+                </Stack>
+              </Box>
+            )}
+
+            <TextField
+              label="Job / assignment (optional)"
+              value={jobOrderId}
+              onChange={(e) => setJobOrderId(e.target.value)}
+              fullWidth
+              size="small"
+              placeholder="Job order ID if applicable"
+              disabled={loading}
+            />
+            <TextField
+              label="Notes (optional)"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              fullWidth
+              size="small"
+              multiline
+              minRows={1}
+              disabled={loading}
+            />
+          </Stack>
         </Box>
       </DialogContent>
 
@@ -235,7 +219,7 @@ const StartOnboardingDialog: React.FC<StartOnboardingDialogProps> = ({
           variant="contained"
           color="primary"
           onClick={handleStart}
-          disabled={!onboardingType || loading}
+          disabled={!entityId.trim() || loading || entitiesLoading}
           size="large"
         >
           {loading ? 'Starting...' : 'Start Onboarding'}
@@ -246,4 +230,3 @@ const StartOnboardingDialog: React.FC<StartOnboardingDialogProps> = ({
 };
 
 export default StartOnboardingDialog;
-
