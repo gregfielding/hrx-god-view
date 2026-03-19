@@ -69,50 +69,50 @@ function normalizeLanguage(value: unknown): string {
     .replace(/\s+/g, ' ');
 }
 
-const SECTION_META: Record<SectionKey, { title: string; description: string }> = {
+const SECTION_META: Record<SectionKey, { titleKey: string; descriptionKey: string }> = {
   'personal-details': {
-    title: 'Personal details',
-    description: 'Update your name, email, phone, and profile photo.',
+    titleKey: 'profile.sectionPersonalDetailsTitle',
+    descriptionKey: 'profile.sectionPersonalDetailsDescription',
   },
   location: {
-    title: 'City and state',
-    description: 'Keep your location updated for stronger opportunities.',
+    titleKey: 'profile.sectionLocationTitle',
+    descriptionKey: 'profile.sectionLocationDescription',
   },
   'work-authorization': {
-    title: 'Work authorization',
-    description: 'Confirm your work authorization and optional self-identification details.',
+    titleKey: 'profile.sectionWorkAuthorizationTitle',
+    descriptionKey: 'profile.sectionWorkAuthorizationDescription',
   },
   preferences: {
-    title: 'Availability and preferences',
-    description: 'Set your target work types and schedule preferences.',
+    titleKey: 'profile.sectionPreferencesTitle',
+    descriptionKey: 'profile.sectionPreferencesDescription',
   },
   resume: {
-    title: 'Resume',
-    description: 'Upload, replace, or review your resume.',
+    titleKey: 'profile.sectionResumeTitle',
+    descriptionKey: 'profile.sectionResumeDescription',
   },
   certifications: {
-    title: 'Certifications & Licenses',
-    description: 'Manage certifications and licenses.',
+    titleKey: 'profile.sectionCertificationsTitle',
+    descriptionKey: 'profile.sectionCertificationsDescription',
   },
   'work-history': {
-    title: 'Work experience',
-    description: 'Add or update your recent work experience.',
+    titleKey: 'profile.sectionWorkHistoryTitle',
+    descriptionKey: 'profile.sectionWorkHistoryDescription',
   },
   education: {
-    title: 'Education',
-    description: 'Keep your education entries up to date.',
+    titleKey: 'profile.sectionEducationTitle',
+    descriptionKey: 'profile.sectionEducationDescription',
   },
   languages: {
-    title: 'Languages',
-    description: 'Add languages once and avoid duplicates.',
+    titleKey: 'profile.sectionLanguagesTitle',
+    descriptionKey: 'profile.sectionLanguagesDescription',
   },
   'app-language': {
-    title: 'App language',
-    description: 'Manage app language and notification preferences.',
+    titleKey: 'profile.sectionAppLanguageTitle',
+    descriptionKey: 'profile.sectionAppLanguageDescription',
   },
   'reset-password': {
-    title: 'Reset password',
-    description: 'Update your sign-in password.',
+    titleKey: 'profile.sectionResetPasswordTitle',
+    descriptionKey: 'profile.sectionResetPasswordDescription',
   },
 };
 
@@ -262,9 +262,9 @@ const WorkerProfileSection: React.FC = () => {
         },
         updatedAt: serverTimestamp(),
       });
-      setSaveMessage('Location saved');
+      setSaveMessage(t('profile.locationSaved'));
     } catch {
-      setSaveError('Unable to save location right now.');
+      setSaveError(t('profile.unableToSaveLocation'));
     }
   };
 
@@ -285,9 +285,9 @@ const WorkerProfileSection: React.FC = () => {
         languages: deduped,
         updatedAt: serverTimestamp(),
       });
-      setSaveMessage('Languages saved');
+      setSaveMessage(t('profile.languagesSaved'));
     } catch {
-      setSaveError('Unable to save languages right now.');
+      setSaveError(t('profile.unableToSaveLanguages'));
     }
   };
 
@@ -327,16 +327,16 @@ const WorkerProfileSection: React.FC = () => {
   const handlePasswordReset = async () => {
     const email = String(userDoc?.email || user?.email || '').trim();
     if (!email) {
-      setSaveError('No email found on your profile.');
+      setSaveError(t('profile.noEmailFound'));
       return;
     }
     setSaveError(null);
     setSaveMessage(null);
     try {
       await sendPasswordResetEmail(auth, email);
-      setSaveMessage(`Password reset email sent to ${email}`);
+      setSaveMessage(t('profile.passwordResetEmailSent', { email }));
     } catch {
-      setSaveError('Unable to send password reset email.');
+      setSaveError(t('profile.unableToSendPasswordReset'));
     }
   };
 
@@ -368,10 +368,10 @@ const WorkerProfileSection: React.FC = () => {
     setLanguage(lang);
     try {
       await updateAccountSettings({ preferredLanguage: lang });
-      setSaveMessage('Account settings saved');
+      setSaveMessage(t('profile.accountSettingsSaved'));
       setSaveError(null);
     } catch {
-      setSaveError('Unable to save preferred language.');
+      setSaveError(t('profile.unableToSavePreferredLanguage'));
     }
   };
 
@@ -382,10 +382,10 @@ const WorkerProfileSection: React.FC = () => {
     setNotificationSettings(next);
     try {
       await updateAccountSettings({ notificationSettings: next });
-      setSaveMessage('Account settings saved');
+      setSaveMessage(t('profile.accountSettingsSaved'));
       setSaveError(null);
     } catch {
-      setSaveError('Unable to save notification preference.');
+      setSaveError(t('profile.unableToSaveNotificationPreference'));
     }
   };
 
@@ -403,9 +403,9 @@ const WorkerProfileSection: React.FC = () => {
     return (
       <Container maxWidth="md" sx={{ py: 2 }}>
         <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/workers/profile')} sx={{ mb: 2 }}>
-          Back to profile
+          {t('profile.backToProfile')}
         </Button>
-        <Alert severity="warning">That profile section is not available.</Alert>
+        <Alert severity="warning">{t('profile.sectionUnavailable')}</Alert>
       </Container>
     );
   }
@@ -414,16 +414,16 @@ const WorkerProfileSection: React.FC = () => {
     <Container maxWidth="md" sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Button startIcon={<ArrowBackIcon />} onClick={() => navigate('/c1/workers/profile')} sx={{ alignSelf: 'flex-start' }}>
-          Back to profile
+          {t('profile.backToProfile')}
         </Button>
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent>
             <Typography variant="h5" sx={{ fontWeight: 700 }}>
-              {sectionMeta.title}
+              {t(sectionMeta.titleKey)}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {sectionMeta.description}
+              {t(sectionMeta.descriptionKey)}
             </Typography>
           </CardContent>
         </Card>
@@ -445,19 +445,19 @@ const WorkerProfileSection: React.FC = () => {
             <CardContent>
               <Stack spacing={2}>
                 <TextField
-                  label="City"
+                  label={t('profile.city')}
                   value={locationForm.city}
                   onChange={(e) => setLocationForm((prev) => ({ ...prev, city: e.target.value }))}
                   fullWidth
                 />
                 <TextField
-                  label="State"
+                  label={t('profile.state')}
                   value={locationForm.state}
                   onChange={(e) => setLocationForm((prev) => ({ ...prev, state: e.target.value }))}
                   fullWidth
                 />
                 <Button variant="contained" onClick={saveLocation} sx={{ alignSelf: 'flex-start' }}>
-                  Save location
+                  {t('profile.saveLocation')}
                 </Button>
               </Stack>
             </CardContent>
@@ -480,30 +480,30 @@ const WorkerProfileSection: React.FC = () => {
               <Stack spacing={2}>
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-                    Target work types
+                    {t('profile.targetWorkTypes')}
                   </Typography>
                   <Stack direction="row" spacing={1}>
                     <Button variant={industryPrefs.includes('hospitality') ? 'contained' : 'outlined'} onClick={() => void toggleIndustry('hospitality')}>
-                      Hospitality
+                      {t('readiness.hospitality')}
                     </Button>
                     <Button variant={industryPrefs.includes('industrial') ? 'contained' : 'outlined'} onClick={() => void toggleIndustry('industrial')}>
-                      Industrial
+                      {t('readiness.industrial')}
                     </Button>
                   </Stack>
                 </Box>
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 1 }}>
-                    Schedule preference
+                    {t('profile.schedulePreference')}
                   </Typography>
                   <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                     <Button variant={schedulePrefs.includes('full_time') ? 'contained' : 'outlined'} onClick={() => void toggleSchedule('full_time')}>
-                      Full-Time
+                      {t('readiness.fullTime')}
                     </Button>
                     <Button variant={schedulePrefs.includes('part_time') ? 'contained' : 'outlined'} onClick={() => void toggleSchedule('part_time')}>
-                      Part-Time
+                      {t('readiness.partTime')}
                     </Button>
                     <Button variant={schedulePrefs.includes('gig') ? 'contained' : 'outlined'} onClick={() => void toggleSchedule('gig')}>
-                      Gig Work
+                      {t('readiness.gigWork')}
                     </Button>
                   </Stack>
                 </Box>
@@ -560,7 +560,7 @@ const WorkerProfileSection: React.FC = () => {
             <CardContent>
               <Stack spacing={1.5}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
-                  Select all that apply
+                  {t('readiness.selectAllThatApply')}
                 </Typography>
                 <Stack direction="row" spacing={1} useFlexGap flexWrap="wrap">
                   {LANGUAGE_OPTIONS.map((language) => {
@@ -589,38 +589,38 @@ const WorkerProfileSection: React.FC = () => {
               <Stack spacing={2}>
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.75 }}>
-                    App language
+                    {t('profile.sectionAppLanguageTitle')}
                   </Typography>
                   <FormControl size="small" sx={{ minWidth: 160 }}>
                     <Select
                       value={preferredLanguage}
                       onChange={(e) => void handlePreferredLanguageChange(e.target.value as 'en' | 'es')}
                     >
-                      <MenuItem value="en">English</MenuItem>
-                      <MenuItem value="es">Español</MenuItem>
+                      <MenuItem value="en">{t('workerSettings.english')}</MenuItem>
+                      <MenuItem value="es">{t('workerSettings.spanish')}</MenuItem>
                     </Select>
                   </FormControl>
                 </Box>
 
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.75 }}>
-                    Notifications
+                    {t('common.notifications')}
                   </Typography>
                   <Stack spacing={0.5}>
                     <Stack direction="row" alignItems="center" justifyContent="space-between">
-                      <Typography variant="body2">Email notifications</Typography>
+                      <Typography variant="body2">{t('workerSettings.emailNotifications')}</Typography>
                       <Switch checked={notificationSettings.emailNotifications} onChange={() => void toggleNotificationSetting('emailNotifications')} />
                     </Stack>
                     <Stack direction="row" alignItems="center" justifyContent="space-between">
-                      <Typography variant="body2">Push notifications</Typography>
+                      <Typography variant="body2">{t('workerSettings.pushNotifications')}</Typography>
                       <Switch checked={notificationSettings.pushNotifications} onChange={() => void toggleNotificationSetting('pushNotifications')} />
                     </Stack>
                     <Stack direction="row" alignItems="center" justifyContent="space-between">
-                      <Typography variant="body2">SMS notifications</Typography>
+                      <Typography variant="body2">{t('workerSettings.smsNotifications')}</Typography>
                       <Switch checked={notificationSettings.smsNotifications} onChange={() => void toggleNotificationSetting('smsNotifications')} />
                     </Stack>
                     <Stack direction="row" alignItems="center" justifyContent="space-between">
-                      <Typography variant="body2">Marketing emails</Typography>
+                      <Typography variant="body2">{t('workerSettings.marketingEmails')}</Typography>
                       <Switch checked={notificationSettings.marketingEmails} onChange={() => void toggleNotificationSetting('marketingEmails')} />
                     </Stack>
                   </Stack>
@@ -628,10 +628,10 @@ const WorkerProfileSection: React.FC = () => {
 
                 <Box>
                   <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>
-                    Phone verification
+                    {t('profile.phoneVerification')}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    {userDoc?.phoneVerified ? 'Verified' : 'Not verified'}
+                    {userDoc?.phoneVerified ? t('profile.verified') : t('profile.notVerified')}
                   </Typography>
                 </Box>
               </Stack>
@@ -644,7 +644,7 @@ const WorkerProfileSection: React.FC = () => {
             <CardContent>
               <Stack spacing={1.5}>
                 <Typography variant="body2" color="text.secondary">
-                  Send a secure password reset email to your account.
+                  {t('profile.resetPasswordEmailHelp')}
                 </Typography>
                 <Button variant="contained" onClick={handlePasswordReset} sx={{ alignSelf: 'flex-start' }}>
                   Send reset email
