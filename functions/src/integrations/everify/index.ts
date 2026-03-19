@@ -16,7 +16,7 @@ export {
   everifyMarkReferralInitiated,
   everifyCloseCaseManual,
 } from './everifyCallables';
-export { onUserEmploymentUpdatedEverify } from './everifyTriggers';
+export { onUserEmploymentUpdatedEverify, onEverifyCaseUpdatedSyncOnboarding } from './everifyTriggers';
 export { processEverifyCaseFromEmployment } from './everifyHttpWorker';
 export { scheduledEverifyPoller } from './everifyPoller';
 export type { EverifyCase, EverifyCaseEvent, EverifyCaseStatus } from './everifySchemas';

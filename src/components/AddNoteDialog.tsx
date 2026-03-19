@@ -38,7 +38,7 @@ interface AddNoteDialogProps {
   open: boolean;
   onClose: () => void;
   entityId: string;
-  entityType: 'contact' | 'company' | 'location' | 'deal';
+  entityType: 'contact' | 'company' | 'location' | 'deal' | 'account';
   entityName: string;
   tenantId: string;
   contacts?: Contact[];
@@ -222,14 +222,26 @@ const AddNoteDialog: React.FC<AddNoteDialogProps> = ({
               disabled={aiProcessing}
             />
 
-            {/* Company Contact */}
+            {/* Contact (optional) - label varies by entity type */}
             {contacts.length > 0 && (
               <FormControl fullWidth>
-                <InputLabel>Company Contact (optional)</InputLabel>
+                <InputLabel>
+                  {entityType === 'account'
+                    ? 'Account Contact (optional)'
+                    : entityType === 'location'
+                      ? 'Location Contact (optional)'
+                      : 'Company Contact (optional)'}
+                </InputLabel>
                 <Select
                   value={selectedContact}
                   onChange={(e) => setSelectedContact(e.target.value)}
-                  label="Company Contact (optional)"
+                  label={
+                    entityType === 'account'
+                      ? 'Account Contact (optional)'
+                      : entityType === 'location'
+                        ? 'Location Contact (optional)'
+                        : 'Company Contact (optional)'
+                  }
                   disabled={aiProcessing}
                 >
                   <MenuItem value="">

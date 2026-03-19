@@ -166,9 +166,10 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       } else {
         const constraints: any[] = [];
 
-        // Add status filter if selected (kept server-side for non-My Orders views)
+        // Add status filter if selected (normalize to match DB: stored as lowercase e.g. open, cancelled, on-hold)
         if (statusFilter) {
-          constraints.push(where('status', '==', statusFilter));
+          const normalizedStatus = statusFilter.toLowerCase().replace(/\s+/g, '-');
+          constraints.push(where('status', '==', normalizedStatus));
         }
 
         // recruiterName is computed client-side, so use createdAt for Firestore order when sorting by recruiter

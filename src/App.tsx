@@ -105,6 +105,8 @@ import C1WorkerDashboard from './pages/c1/workers/dashboard';
 import C1WorkerAssignments from './pages/c1/workers/assignments';
 import C1WorkerProfile from './pages/c1/workers/profile';
 import C1WorkerProfileSection from './pages/c1/workers/profileSection';
+import C1WorkerMyEmployment from './pages/c1/workers/myEmployment';
+import C1WorkerMyEmploymentDetail from './pages/c1/workers/myEmploymentDetail';
 import C1WorkerSupport from './pages/c1/workers/support';
 import C1WorkerNotifications from './pages/c1/workers/notifications';
 import OnboardingProfileForm from './components/OnboardingProfileForm';
@@ -477,6 +479,8 @@ function App() {
             <Route path="applications/:applicationId" element={<UserApplications />} />
             <Route path="profile" element={<WorkerProfile />} />
             <Route path="profile/:section" element={<C1WorkerProfileSection />} />
+            <Route path="my-employment" element={<C1WorkerMyEmployment />} />
+            <Route path="my-employment/:employmentId" element={<C1WorkerMyEmploymentDetail />} />
             <Route path="find-work" element={<Navigate to="/c1/jobs-board" replace />} />
             <Route path="job-readiness" element={<Navigate to="/c1/workers/dashboard#home-readiness-summary" replace />} />
             <Route path="documents" element={<Navigate to="/c1/workers/profile" replace />} />

@@ -50,6 +50,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Skeleton,
+  Badge,
+  Tooltip,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -78,6 +80,8 @@ import {
   Receipt as ReceiptIcon,
   LinkedIn as LinkedInIcon,
   Assessment as ReportsIcon,
+  Note as NoteIcon,
+  Notes as NotesIcon,
 } from '@mui/icons-material';
 import {
   doc,
@@ -96,6 +100,7 @@ import {
   deleteDoc,
   setDoc,
   addDoc,
+  onSnapshot,
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
@@ -130,6 +135,8 @@ import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CO
 import { canAccessAccountInvoicingTab } from '../utils/invoicingAccessControl';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
+import AddNoteDialog from '../components/AddNoteDialog';
+import CRMNotesTab from '../components/CRMNotesTab';
 
 interface JobOrderWithDetails extends JobOrder {
   companyName?: string;
@@ -1210,7 +1217,7 @@ type PersonOption = { id: string; label: string };
 type AccountOption = { id: string; label: string };
 type EntityOption = { id: string; name: string; entityCode: string; workerType: string };
 
-const ACCOUNT_TAB_SLUGS = ['overview', 'calendar', 'active-workers', 'locations', 'children', 'pricing', 'job-orders', 'jobs-board', 'labor-pool', 'settings', 'invoicing', 'order-defaults', 'reports', 'activity'] as const;
+const ACCOUNT_TAB_SLUGS = ['overview', 'calendar', 'active-workers', 'locations', 'contacts', 'children', 'pricing', 'job-orders', 'jobs-board', 'labor-pool', 'settings', 'invoicing', 'order-defaults', 'reports', 'activity', 'notes'] as const;
 
 const RecruiterAccountDetails: React.FC = () => {
   const { accountId } = useParams<{ accountId: string }>();
@@ -1365,6 +1372,9 @@ const RecruiterAccountDetails: React.FC = () => {
   });
   const [addContactSaving, setAddContactSaving] = useState(false);
   const [addContactError, setAddContactError] = useState<string | null>(null);
+
+  const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [notesCount, setNotesCount] = useState(0);
 
   // Children tab: visible if child accounts in widget or any account has this as parent
   const [hasAnyAccountWithThisAsParent, setHasAnyAccountWithThisAsParent] = useState(false);
@@ -1798,6 +1808,14 @@ const RecruiterAccountDetails: React.FC = () => {
   useEffect(() => {
     if (accountId && tenantId) loadAccountUploads();
   }, [accountId, tenantId, loadAccountUploads]);
+
+  useEffect(() => {
+    if (!tenantId || !accountId) return;
+    const notesRef = collection(db, 'tenants', tenantId, 'account_notes');
+    const q = query(notesRef, where('entityId', '==', accountId));
+    const unsub = onSnapshot(q, (snap) => setNotesCount(snap.size), (err) => console.error('account_notes count', err));
+    return () => unsub();
+  }, [tenantId, accountId]);
 
   const handleUploadFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3039,6 +3057,31 @@ const RecruiterAccountDetails: React.FC = () => {
                   Back
                 </Button>
               </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
+                <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                    <IconButton
+                      size="small"
+                      onClick={() => setShowAddNoteDialog(true)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <NoteIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Badge>
+                </Tooltip>
+              </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mt: 0.75, flexWrap: 'wrap' }}>
                 <Chip
                   label={account.active ? 'Active' : 'Inactive'}
@@ -3377,6 +3420,24 @@ const RecruiterAccountDetails: React.FC = () => {
                 }}
               >
                 Activity
+              </Button>
+              <Button
+                variant={tabValue === 15 ? 'contained' : 'text'}
+                onClick={() => setAccountTab(15)}
+                startIcon={<NotesIcon fontSize="small" />}
+                sx={{
+                  borderRadius: '18px',
+                  textTransform: 'none',
+                  fontWeight: 500,
+                  px: 2.5,
+                  py: 0.75,
+                  height: 36,
+                  ...(tabValue === 15
+                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                }}
+              >
+                Notes {notesCount > 0 ? `(${notesCount})` : ''}
               </Button>
             </Box>
           </Box>
@@ -6493,7 +6554,33 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
             </Grid>
           </Grid>
         </TabPanel>
+        <TabPanel value={tabValue} index={15}>
+          <Box sx={{ py: 1 }}>
+            <CRMNotesTab
+              entityId={account.id}
+              entityType="account"
+              entityName={account.name || 'Account'}
+              tenantId={tenantId!}
+            />
+          </Box>
+        </TabPanel>
       </Box>
+
+      <AddNoteDialog
+        open={showAddNoteDialog}
+        onClose={() => setShowAddNoteDialog(false)}
+        entityId={account.id}
+        entityType="account"
+        entityName={account.name || 'Account'}
+        tenantId={tenantId!}
+        contacts={accountContactsList.map((c) => ({
+          id: c.id,
+          fullName: c.fullName || [c.firstName, c.lastName].filter(Boolean).join(' ') || 'Unknown',
+          email: c.email || '',
+          title: c.jobTitle || c.title || '',
+        }))}
+        onNoteAdded={() => setNotesCount((n) => n + 1)}
+      />
 
       {/* Delete upload confirmation */}
       <Dialog

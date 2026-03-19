@@ -50,6 +50,8 @@ import UserAssignmentsTab from './components/UserAssignmentsTab';
 import SystemAccessTab from './components/SystemAccessTab';
 import EmailSignatureTab from './components/EmailSignatureTab';
 import OnboardingTab from './components/OnboardingTab';
+import EmploymentTab from './components/EmploymentTab';
+import ComplianceTab from './components/ComplianceTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 import MessagesTab from './components/MessagesTab';
 import ResumeTab from './components/ResumeTab';
@@ -371,6 +373,8 @@ const UserProfilePage = () => {
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
       { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
       { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Employment', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Compliance', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount }, // Hidden for 0-4
       { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
@@ -2227,6 +2231,10 @@ const UserProfilePage = () => {
                 return <UserGroupsTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || undefined} />;
               case 'Onboarding':
                 return <OnboardingTab uid={uid} tenantId={tenantId || ''} />;
+              case 'Employment':
+                return <EmploymentTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
+              case 'Compliance':
+                return <ComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
               case 'Backgrounds':
                 return <CombinedBackgroundAndVaccinationTab uid={uid} />;
               case 'Reports & Insights':

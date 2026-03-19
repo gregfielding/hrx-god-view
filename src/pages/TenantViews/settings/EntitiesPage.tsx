@@ -35,6 +35,7 @@ import EntityCostCentersTab from './EntityCostCentersTab';
 import EntityComplianceTab from './EntityComplianceTab';
 import EntityDocumentsTab from './EntityDocumentsTab';
 import EntityWorkersCompTab from './EntityWorkersCompTab';
+import type { PayrollSettings as PayrollSettingsType } from '../../../types/payroll';
 
 export type EntityTab = 'overview' | 'workflow' | 'documents' | 'compliance' | 'costcenters' | 'workerscomp' | 'export';
 
@@ -97,8 +98,10 @@ export interface Entity {
   isActive?: boolean;
   /** Which onboarding workflow steps are active for this entity */
   onboardingWorkflowSteps?: OnboardingWorkflowStepsConfig;
-  /** Payroll / Everee (HRX Everee Master Plan) */
-  payrollProvider?: 'none' | 'everee';
+  /** Payroll / Everee (HRX Everee Master Plan). Phase 2B: TempWorks via payrollSettings. */
+  payrollProvider?: 'none' | 'tempworks' | 'everee';
+  /** Phase 2B: Entity-level payroll config (TempWorks portal link, mode). When provider is everee, legacy everee* fields used. */
+  payrollSettings?: PayrollSettingsType | null;
   evereeEnabled?: boolean;
   evereeTenantId?: string;
   evereeEnvironment?: 'sandbox' | 'production';
@@ -138,8 +141,6 @@ export const ONBOARDING_WORKFLOW_STEPS: OnboardingWorkflowStepDef[] = [
   { id: 'w4_sent', label: 'W-4 Sent', category: 'W2' },
   { id: 'w4_completed', label: 'W-4 Completed', category: 'W2' },
   { id: 'direct_deposit_w2', label: 'Direct Deposit Setup', category: 'W2' },
-  { id: 'emergency_contact', label: 'Emergency Contact Form', category: 'W2' },
-  { id: 'benefits_enrollment', label: 'Benefits Enrollment', category: 'W2' },
   { id: 'policy_acknowledgments', label: 'Policy Acknowledgments (e.g. harassment, confidentiality)', category: 'W2' },
   { id: 'background_initiated', label: 'Background Check Initiated', category: 'W2' },
   { id: 'background_completed', label: 'Background Check Completed', category: 'W2' },
@@ -218,11 +219,17 @@ const EntitiesPage: React.FC = () => {
 
   useEffect(() => {
     if (selectedEntity) {
+      const payrollProvider =
+        selectedEntity.payrollProvider ||
+        (selectedEntity.payrollSettings?.provider === 'tempworks' ? 'tempworks' : undefined) ||
+        (selectedEntity.payrollSettings?.provider === 'everee' ? 'everee' : undefined) ||
+        'none';
       setForm({
         ...selectedEntity,
         defaultRequirementPackageId: selectedEntity.defaultRequirementPackageId ?? null,
         defaultCostCenterId: selectedEntity.defaultCostCenterId ?? null,
         isActive: selectedEntity.isActive ?? true,
+        payrollProvider: payrollProvider as 'none' | 'tempworks' | 'everee',
       });
     }
   }, [selectedEntity]);
@@ -333,6 +340,21 @@ const EntitiesPage: React.FC = () => {
         evereeApiBaseUrl: form.evereeApiBaseUrl?.trim() || null,
         updatedAt: serverTimestamp(),
       };
+      if (form.payrollProvider === 'tempworks' && form.payrollSettings) {
+        payload.payrollSettings = {
+          provider: 'tempworks',
+          mode: form.payrollSettings.mode || 'portal_link_only',
+          onboardingUrl: form.payrollSettings.onboardingUrl?.trim() || null,
+          portalUrl: form.payrollSettings.portalUrl?.trim() || null,
+          supportsEmbeddedFlow: false,
+          inviteMethod: form.payrollSettings.inviteMethod || 'manual',
+          notes: form.payrollSettings.notes?.trim() || null,
+          updatedAt: serverTimestamp(),
+          updatedBy: null,
+        };
+      } else if (form.payrollProvider !== 'tempworks') {
+        payload.payrollSettings = null;
+      }
       if (form.addresses?.length) payload.addresses = form.addresses;
       if (form.contacts) payload.contacts = form.contacts;
       if (form.workersCompSummary) payload.workersCompSummary = form.workersCompSummary;
@@ -658,7 +680,7 @@ const EntitiesPage: React.FC = () => {
                       />
                       <Divider sx={{ my: 1 }} />
                       <Typography variant="subtitle2" color="text.secondary">
-                        Payroll (Everee)
+                        Payroll
                       </Typography>
                       <FormControl fullWidth>
                         <InputLabel>Payroll provider</InputLabel>
@@ -668,15 +690,128 @@ const EntitiesPage: React.FC = () => {
                           onChange={(e) =>
                             setForm((f) => ({
                               ...f,
-                              payrollProvider: e.target.value as 'none' | 'everee',
+                              payrollProvider: e.target.value as 'none' | 'tempworks' | 'everee',
                               evereeEnabled: e.target.value === 'everee' ? f.evereeEnabled : false,
+                              payrollSettings:
+                                e.target.value === 'tempworks'
+                                  ? (f.payrollSettings || {
+                                      provider: 'tempworks',
+                                      mode: 'portal_link_only',
+                                      onboardingUrl: null,
+                                      portalUrl: null,
+                                      supportsEmbeddedFlow: false,
+                                      inviteMethod: 'manual',
+                                      notes: null,
+                                      updatedAt: null,
+                                      updatedBy: null,
+                                    })
+                                  : f.payrollSettings,
                             }))
                           }
                         >
                           <MenuItem value="none">None</MenuItem>
+                          <MenuItem value="tempworks">TempWorks</MenuItem>
                           <MenuItem value="everee">Everee</MenuItem>
                         </Select>
                       </FormControl>
+                      {form.payrollProvider === 'tempworks' && (
+                        <>
+                          <FormControl fullWidth>
+                            <InputLabel>Mode</InputLabel>
+                            <Select
+                              value={form.payrollSettings?.mode || 'portal_link_only'}
+                              label="Mode"
+                              onChange={(e) =>
+                                setForm((f) => ({
+                                  ...f,
+                                  payrollSettings: {
+                                    provider: f.payrollSettings?.provider ?? 'tempworks',
+                                    mode: e.target.value as 'portal_link_only' | 'manual_tracking' | 'integrated',
+                                    onboardingUrl: f.payrollSettings?.onboardingUrl ?? null,
+                                    portalUrl: f.payrollSettings?.portalUrl ?? null,
+                                    supportsEmbeddedFlow: f.payrollSettings?.supportsEmbeddedFlow ?? false,
+                                    inviteMethod: (f.payrollSettings?.inviteMethod ?? 'manual') as PayrollSettingsType['inviteMethod'],
+                                    notes: f.payrollSettings?.notes ?? null,
+                                    updatedAt: f.payrollSettings?.updatedAt ?? null,
+                                    updatedBy: f.payrollSettings?.updatedBy ?? null,
+                                  },
+                                }))
+                              }
+                            >
+                              <MenuItem value="portal_link_only">Portal link only</MenuItem>
+                              <MenuItem value="manual_tracking">Manual tracking</MenuItem>
+                              <MenuItem value="integrated">Integrated</MenuItem>
+                            </Select>
+                          </FormControl>
+                          <TextField
+                            label="TempWorks onboarding URL"
+                            value={form.payrollSettings?.onboardingUrl || ''}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                payrollSettings: {
+                                  provider: f.payrollSettings?.provider ?? 'tempworks',
+                                  mode: (f.payrollSettings?.mode ?? 'portal_link_only') as PayrollSettingsType['mode'],
+                                  onboardingUrl: e.target.value || null,
+                                  portalUrl: f.payrollSettings?.portalUrl ?? null,
+                                  supportsEmbeddedFlow: f.payrollSettings?.supportsEmbeddedFlow ?? false,
+                                  inviteMethod: (f.payrollSettings?.inviteMethod ?? 'manual') as PayrollSettingsType['inviteMethod'],
+                                  notes: f.payrollSettings?.notes ?? null,
+                                  updatedAt: f.payrollSettings?.updatedAt ?? null,
+                                  updatedBy: f.payrollSettings?.updatedBy ?? null,
+                                },
+                              }))
+                            }
+                            fullWidth
+                            placeholder="https://..."
+                          />
+                          <TextField
+                            label="TempWorks portal URL"
+                            value={form.payrollSettings?.portalUrl || ''}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                payrollSettings: {
+                                  provider: f.payrollSettings?.provider ?? 'tempworks',
+                                  mode: (f.payrollSettings?.mode ?? 'portal_link_only') as PayrollSettingsType['mode'],
+                                  onboardingUrl: f.payrollSettings?.onboardingUrl ?? null,
+                                  portalUrl: e.target.value || null,
+                                  supportsEmbeddedFlow: f.payrollSettings?.supportsEmbeddedFlow ?? false,
+                                  inviteMethod: (f.payrollSettings?.inviteMethod ?? 'manual') as PayrollSettingsType['inviteMethod'],
+                                  notes: f.payrollSettings?.notes ?? null,
+                                  updatedAt: f.payrollSettings?.updatedAt ?? null,
+                                  updatedBy: f.payrollSettings?.updatedBy ?? null,
+                                },
+                              }))
+                            }
+                            fullWidth
+                            placeholder="https://..."
+                          />
+                          <TextField
+                            label="Notes"
+                            value={form.payrollSettings?.notes || ''}
+                            onChange={(e) =>
+                              setForm((f) => ({
+                                ...f,
+                                payrollSettings: {
+                                  provider: f.payrollSettings?.provider ?? 'tempworks',
+                                  mode: (f.payrollSettings?.mode ?? 'portal_link_only') as PayrollSettingsType['mode'],
+                                  onboardingUrl: f.payrollSettings?.onboardingUrl ?? null,
+                                  portalUrl: f.payrollSettings?.portalUrl ?? null,
+                                  supportsEmbeddedFlow: f.payrollSettings?.supportsEmbeddedFlow ?? false,
+                                  inviteMethod: (f.payrollSettings?.inviteMethod ?? 'manual') as PayrollSettingsType['inviteMethod'],
+                                  notes: e.target.value || null,
+                                  updatedAt: f.payrollSettings?.updatedAt ?? null,
+                                  updatedBy: f.payrollSettings?.updatedBy ?? null,
+                                },
+                              }))
+                            }
+                            fullWidth
+                            multiline
+                            minRows={1}
+                          />
+                        </>
+                      )}
                       {form.payrollProvider === 'everee' && (
                         <>
                           <FormControlLabel

@@ -225,6 +225,19 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Employment</Typography>
+            <Divider />
+            <List disablePadding>
+              <ListItemButton onClick={() => navigate('/c1/workers/my-employment')}>
+                <ListItemText primary="My Employment" secondary="View your status with each C1 entity." />
+                <ChevronRightIcon color="action" />
+              </ListItemButton>
+            </List>
+          </CardContent>
+        </Card>
+
+        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+          <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Account</Typography>
             <Divider />
             <List disablePadding>

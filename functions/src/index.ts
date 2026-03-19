@@ -221,6 +221,7 @@ export {
   everifyMarkReferralInitiated,
   everifyCloseCaseManual,
   onUserEmploymentUpdatedEverify,
+  onEverifyCaseUpdatedSyncOnboarding,
   processEverifyCaseFromEmployment,
   scheduledEverifyPoller,
 } from './integrations/everifyGate';
@@ -240,7 +241,14 @@ export {
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
 export { workerSupportAssistant } from './workerSupportAssistant';
-export { triggerWorkerOnboardingPipeline, updateWorkerOnboardingStepStatus } from './onboarding/workerOnboardingPipeline';
+export {
+  triggerWorkerOnboardingPipeline,
+  updateWorkerOnboardingStepStatus,
+  updateWorkerOnboardingStepPackage,
+  updateWorkerOnboardingStepWorkflow,
+  updateWorkerOnboardingStepMilestone,
+  updateEntityEmploymentStatus,
+} from './onboarding/workerOnboardingPipeline';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

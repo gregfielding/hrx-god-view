@@ -112,6 +112,12 @@ export const p = {
    */
   entities: (tid: string) => `tenants/${tid}/entities`,
   entity: (tid: string, id: string) => `tenants/${tid}/entities/${id}`,
+  /** Entity employments: per worker per entity (doc id = userId__entityKey) */
+  entityEmployments: (tid: string) => `tenants/${tid}/entity_employments`,
+  entityEmployment: (tid: string, docId: string) => `tenants/${tid}/entity_employments/${docId}`,
+  /** Worker onboarding pipelines (doc id = userId__entityKey) */
+  workerOnboarding: (tid: string) => `tenants/${tid}/worker_onboarding`,
+  workerOnboardingPipeline: (tid: string, pipelineId: string) => `tenants/${tid}/worker_onboarding/${pipelineId}`,
   requirementPackages: (tid: string) => `tenants/${tid}/requirement_packages`,
   requirementPackage: (tid: string, id: string) => `tenants/${tid}/requirement_packages/${id}`,
   onboardingInstances: (tid: string) => `tenants/${tid}/onboarding_instances`,
@@ -124,6 +130,18 @@ export const p = {
   onboardingItem: (tid: string, id: string) => `tenants/${tid}/onboarding_item_library/${id}`,
   onboardingDocuments: (tid: string) => `tenants/${tid}/onboarding_documents`,
   onboardingDocument: (tid: string, id: string) => `tenants/${tid}/onboarding_documents/${id}`,
+
+  /**
+   * Phase 2: Compliance, Benefits, Payroll, AI Signals (see docs/PHASE2_SYSTEMS_ARCHITECTURE.md)
+   */
+  workerComplianceItems: (tid: string) => `tenants/${tid}/worker_compliance_items`,
+  workerComplianceItem: (tid: string, id: string) => `tenants/${tid}/worker_compliance_items/${id}`,
+  workerBenefits: (tid: string) => `tenants/${tid}/worker_benefits`,
+  workerBenefit: (tid: string, id: string) => `tenants/${tid}/worker_benefits/${id}`,
+  workerPayrollAccounts: (tid: string) => `tenants/${tid}/worker_payroll_accounts`,
+  workerPayrollAccount: (tid: string, id: string) => `tenants/${tid}/worker_payroll_accounts/${id}`,
+  workerSignals: (tid: string) => `tenants/${tid}/worker_signals`,
+  workerSignal: (tid: string, id: string) => `tenants/${tid}/worker_signals/${id}`,
 
   /**
    * Everee payroll integration (HRX Everee Master Plan)

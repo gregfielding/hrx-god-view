@@ -1,6 +1,7 @@
 /**
  * E-Verify Firestore triggers.
  * On user_employments i9Status → completed: enqueue Cloud Task to create case.
+ * On everify_cases status change: sync to worker_onboarding e_verify step and entity_employments.
  * Config-driven worker URL; creates/verifies EVERIFY_QUEUE.
  */
 
@@ -8,6 +9,7 @@ import { onDocumentUpdated } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 import { CloudTasksClient } from '@google-cloud/tasks';
 import { getEverifyWorkerUrl, getEverifyQueueName } from './everifyConfig';
+import { syncEverifyStatusToPipelineAndEmployment } from '../../onboarding/workerOnboardingPipeline';
 
 const tasksClient = new CloudTasksClient();
 const PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
@@ -84,6 +86,42 @@ export const onUserEmploymentUpdatedEverify = onDocumentUpdated(
       await enqueueEverifyTask(tenantId, employmentId);
     } catch (err: unknown) {
       logger.error(`Error enqueueing E-Verify task for ${employmentId}:`, err);
+    }
+  }
+);
+
+/** When everify_cases doc is updated and status changed, sync to pipeline + entity_employments. */
+export const onEverifyCaseUpdatedSyncOnboarding = onDocumentUpdated(
+  {
+    document: 'tenants/{tenantId}/everify_cases/{caseId}',
+    region: LOCATION,
+  },
+  async (event) => {
+    const before = event.data?.before?.data();
+    const after = event.data?.after?.data();
+    const tenantId = event.params.tenantId;
+
+    if (!before || !after) return;
+    const prevStatus = String(before.status || '');
+    const newStatus = String(after.status || '');
+    if (prevStatus === newStatus) return;
+
+    const userId = (after.userId as string) || null;
+    const entityId = (after.entityId as string) || null;
+    try {
+      await syncEverifyStatusToPipelineAndEmployment({
+        tenantId,
+        userId,
+        entityId,
+        caseStatus: newStatus,
+      });
+    } catch (err: unknown) {
+      logger.error('E-Verify sync to onboarding failed', {
+        tenantId,
+        caseId: event.params.caseId,
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 );

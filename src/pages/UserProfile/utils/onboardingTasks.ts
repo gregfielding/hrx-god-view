@@ -21,7 +21,6 @@ export const getEmployeeOnboardingTasks = (): Omit<OnboardingTask, 'completed' |
   { id: 'everify', label: 'Complete E-Verify', category: 'E-Verify', required: true },
   { id: 'background', label: 'Background Check', category: 'Background', required: false },
   { id: 'drug', label: 'Drug Screening', category: 'Background', required: false },
-  { id: 'emergency', label: 'Submit Emergency Contact Information', category: 'Documents', required: true },
   { id: 'direct_deposit', label: 'Submit Direct Deposit Information', category: 'Documents', required: false },
   { id: 'handbook', label: 'Review Employee Handbook', category: 'Orientation', required: false },
   { id: 'orientation', label: 'Complete Orientation/Training', category: 'Orientation', required: false },
@@ -32,7 +31,6 @@ export const getContractorOnboardingTasks = (): Omit<OnboardingTask, 'completed'
   { id: 'w9', label: 'Submit W-9 Form', category: 'Documents', required: true },
   { id: 'background', label: 'Background Check', category: 'Background', required: false },
   { id: 'drug', label: 'Drug Screening', category: 'Background', required: false },
-  { id: 'emergency', label: 'Submit Emergency Contact Information', category: 'Documents', required: true },
   { id: 'contract', label: 'Review Contractor Agreement', category: 'Documents', required: true },
   { id: 'insurance', label: 'Submit Insurance Information', category: 'Documents', required: false },
 ];

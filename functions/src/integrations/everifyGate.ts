@@ -20,6 +20,10 @@ const stubTrigger = onDocumentUpdated(
   { document: 'tenants/{tenantId}/user_employments/{employmentId}', region: 'us-central1' },
   async () => {}
 );
+const stubEverifyCaseTrigger = onDocumentUpdated(
+  { document: 'tenants/{tenantId}/everify_cases/{caseId}', region: 'us-central1' },
+  async () => {}
+);
 
 const stubHttp = onRequest({ region: 'us-central1' }, async (_, res) => {
   res.status(503).json({ ok: false, error: DISABLED_MSG });
@@ -44,5 +48,6 @@ export const everifyMarkContested = everify?.everifyMarkContested ?? stubCallabl
 export const everifyMarkReferralInitiated = everify?.everifyMarkReferralInitiated ?? stubCallable;
 export const everifyCloseCaseManual = everify?.everifyCloseCaseManual ?? stubCallable;
 export const onUserEmploymentUpdatedEverify = everify?.onUserEmploymentUpdatedEverify ?? stubTrigger;
+export const onEverifyCaseUpdatedSyncOnboarding = everify?.onEverifyCaseUpdatedSyncOnboarding ?? stubEverifyCaseTrigger;
 export const processEverifyCaseFromEmployment = everify?.processEverifyCaseFromEmployment ?? stubHttp;
 export const scheduledEverifyPoller = everify?.scheduledEverifyPoller ?? stubScheduled;

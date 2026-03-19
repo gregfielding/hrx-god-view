@@ -89,13 +89,25 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
         const data = d.data();
         const defaults = data.defaults;
         const eVerify = defaults?.eVerify && typeof defaults.eVerify === 'object' ? defaults.eVerify : null;
+        const parentAccountId = data.parentAccountId ?? null;
+        const childAccountIdsArr = Array.isArray(data.childAccountIds) ? data.childAccountIds : [];
+        const rawAccountType = data.accountType ?? null;
+        // Derive account type same as RecruiterAccountDetails: explicit value, else child if has parent, else national if has children, else standalone
+        const accountType =
+          rawAccountType != null && rawAccountType !== ''
+            ? rawAccountType
+            : parentAccountId
+              ? 'child'
+              : childAccountIdsArr.length > 0
+                ? 'national'
+                : 'standalone';
         return {
           id: d.id,
           name: data.name ?? '',
           active: data.active !== false,
-          parentAccountId: data.parentAccountId ?? null,
-          childAccountIds: Array.isArray(data.childAccountIds) ? data.childAccountIds : [],
-          accountType: data.accountType ?? null,
+          parentAccountId,
+          childAccountIds: childAccountIdsArr,
+          accountType,
           hiringEntityId: data.hiringEntityId ?? null,
           eVerifyRequired: eVerify ? !!eVerify.eVerifyRequired : false,
           createdAt: data.createdAt,
@@ -104,6 +116,15 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
           updatedBy: data.updatedBy,
           associations: data.associations ?? undefined,
         };
+      });
+      // Second pass: treat as child if this account's id appears in any other account's childAccountIds (detail page sync may not have written parentAccountId yet)
+      list.forEach((acc, i) => {
+        if (acc.accountType === 'standalone' && !acc.parentAccountId) {
+          const isChildOfSomeone = list.some((other) => other.id !== acc.id && (other.childAccountIds || []).includes(acc.id));
+          if (isChildOfSomeone) {
+            list[i] = { ...acc, accountType: 'child' };
+          }
+        }
       });
       setAccounts(list);
     } catch (err) {
@@ -540,9 +561,9 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
                         }}
                       >
                         {account.accountType === 'national'
-                          ? 'National'
+                          ? 'National account'
                           : account.accountType === 'child'
-                            ? 'Child'
+                            ? 'Child account'
                             : 'Standalone'}
                       </TableCell>
                       <TableCell

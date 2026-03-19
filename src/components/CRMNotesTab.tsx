@@ -50,12 +50,12 @@ interface Note {
   aiReviewed: boolean;
   aiInsights?: string;
   tags?: string[];
-  source?: 'location' | 'company' | 'contact' | 'deal' | 'jobOrder';
+  source?: 'location' | 'company' | 'contact' | 'deal' | 'jobOrder' | 'account';
 }
 
 interface CRMNotesTabProps {
   entityId: string;
-  entityType: 'contact' | 'company' | 'location' | 'deal' | 'jobOrder';
+  entityType: 'contact' | 'company' | 'location' | 'deal' | 'jobOrder' | 'account';
   entityName: string;
   tenantId: string;
   companyId?: string; // For location notes to filter up to company

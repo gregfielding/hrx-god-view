@@ -23,7 +23,36 @@ const SmartGroupsSettings = lazy(() => import('./SmartGroupsSettings'));
 import { useAuth } from '../../contexts/AuthContext';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import DescriptionIcon from '@mui/icons-material/Description';
-type SettingsTab = 'company-setup' | 'entities' | 'onboarding-library' | 'documents' | 'messaging' | 'senders' | 'slack' | 'workforce' | 'smart-groups' | 'everify-ops';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import BadgeIcon from '@mui/icons-material/Badge';
+import SecurityIcon from '@mui/icons-material/Security';
+import LocalHospitalIcon from '@mui/icons-material/LocalHospital';
+import AccountBalanceWalletIcon from '@mui/icons-material/AccountBalanceWallet';
+import PsychologyIcon from '@mui/icons-material/Psychology';
+import ComplianceLibraryPlaceholder from './settings/ComplianceLibraryPlaceholder';
+import CredentialTypesPlaceholder from './settings/CredentialTypesPlaceholder';
+import ScreeningTypesPlaceholder from './settings/ScreeningTypesPlaceholder';
+import BenefitsProgramsPlaceholder from './settings/BenefitsProgramsPlaceholder';
+import PayrollProvidersPlaceholder from './settings/PayrollProvidersPlaceholder';
+import AISignalsPlaceholder from './settings/AISignalsPlaceholder';
+
+type SettingsTab =
+  | 'company-setup'
+  | 'entities'
+  | 'onboarding-library'
+  | 'documents'
+  | 'messaging'
+  | 'senders'
+  | 'slack'
+  | 'workforce'
+  | 'smart-groups'
+  | 'everify-ops'
+  | 'compliance-library'
+  | 'credential-types'
+  | 'screening-types'
+  | 'benefits-programs'
+  | 'payroll-providers'
+  | 'ai-signals';
 
 const SettingsLanding: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
@@ -81,6 +110,37 @@ const SettingsLanding: React.FC = () => {
       title: 'E-Verify Ops',
       icon: <AdminPanelSettingsIcon sx={{ fontSize: 20 }} />,
     },
+    // Phase 2 placeholders (see docs/PHASE2_SYSTEMS_ARCHITECTURE.md)
+    {
+      id: 'compliance-library' as SettingsTab,
+      title: 'Compliance Library',
+      icon: <VerifiedUserIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'credential-types' as SettingsTab,
+      title: 'Credential Types',
+      icon: <BadgeIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'screening-types' as SettingsTab,
+      title: 'Screening Types',
+      icon: <SecurityIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'benefits-programs' as SettingsTab,
+      title: 'Benefits Programs',
+      icon: <LocalHospitalIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'payroll-providers' as SettingsTab,
+      title: 'Payroll Providers',
+      icon: <AccountBalanceWalletIcon sx={{ fontSize: 20 }} />,
+    },
+    {
+      id: 'ai-signals' as SettingsTab,
+      title: 'AI Signals / Alerts',
+      icon: <PsychologyIcon sx={{ fontSize: 20 }} />,
+    },
   ];
 
   const renderTabContent = () => {
@@ -113,6 +173,18 @@ const SettingsLanding: React.FC = () => {
         ) : null;
       case 'everify-ops':
         return effectiveTenantId ? <EverifyAdminOpsPage tenantId={effectiveTenantId} /> : null;
+      case 'compliance-library':
+        return <ComplianceLibraryPlaceholder />;
+      case 'credential-types':
+        return <CredentialTypesPlaceholder />;
+      case 'screening-types':
+        return <ScreeningTypesPlaceholder />;
+      case 'benefits-programs':
+        return <BenefitsProgramsPlaceholder />;
+      case 'payroll-providers':
+        return <PayrollProvidersPlaceholder />;
+      case 'ai-signals':
+        return <AISignalsPlaceholder />;
       default:
         return <CompanySetup />;
     }

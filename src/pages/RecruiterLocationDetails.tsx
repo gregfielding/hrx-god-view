@@ -36,6 +36,8 @@ import {
   TableCell,
   TableBody,
   Autocomplete,
+  Badge,
+  Tooltip,
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
@@ -52,13 +54,14 @@ import {
   Facebook as FacebookIcon,
   Dashboard as DashboardIcon,
   Notes as NotesIcon,
+  Note as NoteIcon,
   Timeline as TimelineIcon,
   Phone as PhoneIcon,
   Event as EventIcon,
   Email as EmailIcon,
   AttachMoney as DealIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 
@@ -796,6 +799,7 @@ const RecruiterLocationDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
+  const [notesCount, setNotesCount] = useState(0);
   const [locationContacts, setLocationContacts] = useState<any[]>([]);
   const [locationDeals, setLocationDeals] = useState<any[]>([]);
   const [companyDivisions, setCompanyDivisions] = useState<string[]>([]);
@@ -1002,6 +1006,14 @@ const RecruiterLocationDetails: React.FC = () => {
     setTabValue(newValue);
   };
 
+  useEffect(() => {
+    if (!tenantId || !location?.id) return;
+    const notesRef = collection(db, 'tenants', tenantId, 'location_notes');
+    const q = query(notesRef, where('entityId', '==', location.id));
+    const unsub = onSnapshot(q, (snap) => setNotesCount(snap.size), (err) => console.error('location_notes count', err));
+    return () => unsub();
+  }, [tenantId, location?.id]);
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
@@ -1072,6 +1084,33 @@ const RecruiterLocationDetails: React.FC = () => {
           return url;
         }}
       />
+
+      {/* Icon row (Add Note) – match Company layout */}
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5, mb: 1, flexWrap: 'wrap' }}>
+        <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+          <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+            <IconButton
+              size="small"
+              onClick={() => setShowAddNoteDialog(true)}
+              sx={{
+                p: 1,
+                color: 'primary.main',
+                bgcolor: 'action.hover',
+                borderRadius: 1,
+                '&:hover': {
+                  color: 'primary.dark',
+                  bgcolor: 'primary.light',
+                  transform: 'translateY(-1px)',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                },
+                transition: 'all 0.2s ease',
+              }}
+            >
+              <NoteIcon sx={{ fontSize: 20 }} />
+            </IconButton>
+          </Badge>
+        </Tooltip>
+      </Box>
 
       {/* Tabs Navigation */}
       <Paper elevation={1} sx={{ mb: 3, borderRadius: 1 }}>
