@@ -7,10 +7,12 @@
 
 import React, { useEffect, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { Box, CircularProgress, Typography, Alert } from '@mui/material';
+import { Box, CircularProgress, Typography, Alert, Button, Stack } from '@mui/material';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { useAuth } from '../contexts/AuthContext';
 import Wizard from '../components/apply/Wizard';
+import { useGuestLanguage } from '../hooks/useGuestLanguage';
+import { loadLocale, setLanguage } from '../i18n';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 
@@ -22,10 +24,12 @@ const Apply: React.FC = () => {
   const { user } = useAuth();
   const location = useLocation();
   const params = useParams<ApplyRouteParams>();
+  const [guestLanguage, setGuestLanguage] = useGuestLanguage();
 
   const [signupGroupId, setSignupGroupId] = useState<string | null>(null);
   const [signupGroupTitle, setSignupGroupTitle] = useState<string | null>(null);
   const [groupLoading, setGroupLoading] = useState(false);
+  const [localeLoading, setLocaleLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -35,6 +39,22 @@ const Apply: React.FC = () => {
     const resolved = fromParam || fromQuery || '';
     setSignupGroupId(resolved || null);
   }, [params.groupId, location.search]);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Public apply route runs outside worker layout language setup.
+    // Ensure locale is loaded before rendering wizard to avoid raw i18n keys.
+    setLocaleLoading(true);
+    setLanguage(guestLanguage);
+    loadLocale(guestLanguage)
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLocaleLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [guestLanguage]);
 
   useEffect(() => {
     let cancelled = false;
@@ -69,7 +89,7 @@ const Apply: React.FC = () => {
     };
   }, [signupGroupId]);
 
-  if (groupLoading) {
+  if (groupLoading || localeLoading) {
     return (
       <Box display="flex" alignItems="center" justifyContent="center" minHeight="40vh">
         <CircularProgress size={28} />
@@ -87,20 +107,42 @@ const Apply: React.FC = () => {
 
   return (
     <Box sx={{ px: 0, py: 0 }}>
-      {signupGroupTitle && (
-        <Box
-          sx={{
-            px: { xs: 2, md: 3 },
-            pt: { xs: 2, md: 3 },
-            maxWidth: { xs: '100%', md: '1200px' },
-            mx: { xs: 0, md: 'auto' },
-          }}
-        >
+      <Box
+        sx={{
+          px: { xs: 2, md: 3 },
+          pt: { xs: 2, md: 3 },
+          maxWidth: { xs: '100%', md: '1200px' },
+          mx: { xs: 0, md: 'auto' },
+        }}
+      >
+        <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
           <Typography variant="body2" color="text.secondary">
-            Signing up for: <strong>{signupGroupTitle}</strong>
+            {signupGroupTitle ? (
+              <>
+                Signing up for: <strong>{signupGroupTitle}</strong>
+              </>
+            ) : (
+              'Sign up'
+            )}
           </Typography>
-        </Box>
-      )}
+          <Stack direction="row" spacing={1}>
+            <Button
+              size="small"
+              variant={guestLanguage === 'en' ? 'contained' : 'outlined'}
+              onClick={() => setGuestLanguage('en')}
+            >
+              EN
+            </Button>
+            <Button
+              size="small"
+              variant={guestLanguage === 'es' ? 'contained' : 'outlined'}
+              onClick={() => setGuestLanguage('es')}
+            >
+              ES
+            </Button>
+          </Stack>
+        </Stack>
+      </Box>
       <Wizard
         tenantId={C1_TENANT_ID}
         tenantSlug="c1"
