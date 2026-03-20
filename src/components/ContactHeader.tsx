@@ -29,6 +29,7 @@ import {
   Person as PersonIcon,
   TrendingUp as TrendingUpIcon,
   BusinessCenter as BusinessCenterIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -116,6 +117,8 @@ interface ContactHeaderProps {
     nickname?: string;
     title?: string;
   }>;
+  /** When the contact's company is linked to a recruiter account, show account icon first in the icon row */
+  linkedAccount?: { id: string; name?: string } | null;
 }
 
 const ContactHeader: React.FC<ContactHeaderProps> = ({
@@ -134,6 +137,7 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
   onAvatarDelete,
   routePrefix = '/crm',
   companyLocations = [],
+  linkedAccount,
 }) => {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -1440,6 +1444,29 @@ const ContactHeader: React.FC<ContactHeaderProps> = ({
             
           {/* Contact Icons */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0, mt: 0, flexWrap: 'wrap' }}>
+            {linkedAccount && (
+              <Tooltip title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}>
+                <IconButton
+                  size="small"
+                  sx={{
+                    p: 1,
+                    color: 'primary.main',
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: 'primary.dark',
+                      bgcolor: 'primary.light',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                    },
+                    transition: 'all 0.2s ease',
+                  }}
+                  onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                >
+                  <AccountBalanceIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </Tooltip>
+            )}
             {contact.email && (
               <Tooltip title={`Send Email to ${contact.email}`}>
                 <IconButton

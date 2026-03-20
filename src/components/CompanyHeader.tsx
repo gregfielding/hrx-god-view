@@ -25,6 +25,7 @@ import {
   AttachMoney as DealIcon,
   AccountTree as AccountTreeIcon,
   Edit as EditIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
@@ -112,6 +113,8 @@ interface CompanyHeaderProps {
   
   // Company name display component (optional - for related company links)
   CompanyNameDisplay?: React.ComponentType<{ tenantId: string; companyId: string }>;
+  /** When the company is linked to a recruiter account, show account icon first in the icon row and link here */
+  linkedAccount?: { id: string; name?: string } | null;
 }
 
 const AngelListIcon = ({ hasUrl }: { hasUrl: boolean }) => (
@@ -152,6 +155,7 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
   onAvatarDelete,
   getIndustryByCode,
   CompanyNameDisplay,
+  linkedAccount,
 }) => {
   const navigate = useNavigate();
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -719,6 +723,29 @@ const CompanyHeader: React.FC<CompanyHeaderProps> = ({
             
             {/* Social Media Icons */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1, flexWrap: 'wrap' }}>
+              {linkedAccount && (
+                <Tooltip title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}>
+                  <IconButton
+                    size="small"
+                    sx={{
+                      p: 1,
+                      color: 'primary.main',
+                      bgcolor: 'action.hover',
+                      borderRadius: 1,
+                      '&:hover': {
+                        color: 'primary.dark',
+                        bgcolor: 'primary.light',
+                        transform: 'translateY(-1px)',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                      },
+                      transition: 'all 0.2s ease',
+                    }}
+                    onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                  >
+                    <AccountBalanceIcon sx={{ fontSize: 20 }} />
+                  </IconButton>
+                </Tooltip>
+              )}
               {company.website && (
                 <Tooltip title={`Visit ${company.website}`}>
                   <IconButton

@@ -111,6 +111,7 @@ import { p } from '../data/firestorePaths';
 import type {
   RecruiterAccount,
   RecruiterAccountAssociations,
+  RecruiterAccountFormData,
   AccountLocationRef,
 } from '../types/recruiter/account';
 import type { AccountPositionPricing, WorkersCompRateByState } from '../types/recruiter/account';
@@ -128,6 +129,7 @@ import AccountOrderDetailsForm from '../components/recruiter/AccountOrderDetails
 import AccountCalendarTab from '../components/recruiter/AccountCalendarTab';
 import ActiveWorkersTable from '../components/recruiter/ActiveWorkersTable';
 import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
+import AddAccountModal from '../components/recruiter/AddAccountModal';
 import type { JobOrder } from '../types/Phase1Types';
 import jobTitlesData from '../data/onetJobTitles.json';
 import { JobsBoardService, type JobsBoardPost } from '../services/recruiter/jobsBoardService';
@@ -388,6 +390,8 @@ interface AccountSidebarProps {
   optionsLoading: boolean;
   saving: boolean;
   visibleSections?: Array<'activity' | 'company' | 'relatedAccounts' | 'location' | 'contacts' | 'jobOrders' | 'deals' | 'salespeople' | 'recruiters' | 'laborPool' | 'jobsBoard'>;
+  /** When set (e.g. for child accounts), location options come from parent's companies instead of account's companyIds. */
+  parentCompanyIds?: string[];
 }
 
 function AccountSidebar({
@@ -413,6 +417,7 @@ function AccountSidebar({
   optionsLoading,
   saving,
   visibleSections = ['activity', 'company', 'relatedAccounts', 'location', 'contacts', 'jobOrders', 'deals', 'salespeople', 'recruiters', 'laborPool'],
+  parentCompanyIds,
 }: AccountSidebarProps) {
   const [manageCompaniesOpen, setManageCompaniesOpen] = useState(false);
   const [manageLocationsOpen, setManageLocationsOpen] = useState(false);
@@ -438,12 +443,14 @@ function AccountSidebar({
   const recruiterIds = assoc.recruiterIds ?? [];
 
   const selectedCompanies = companies.filter((c) => companyIds.includes(c.id));
-  // Contacts from all selected companies (e.g. MSP + end-customer)
-  const contactsInSelectedCompanies = companyIds.length === 0 ? [] : contacts.filter((c) => c.companyId && companyIds.includes(c.companyId));
+  // Contacts: for child accounts use parent's companies (same as Location widget); otherwise account's linked companies
+  const contactSourceCompanyIds = (parentCompanyIds?.length ? parentCompanyIds : companyIds) as string[];
+  const contactsInSelectedCompanies = contactSourceCompanyIds.length === 0 ? [] : contacts.filter((c) => c.companyId && contactSourceCompanyIds.includes(c.companyId));
   const selectedContacts = contacts.filter((c) => contactIds.includes(c.id));
   const selectedContactsInScope = selectedContacts.filter((c) => contactsInSelectedCompanies.some((o) => o.id === c.id));
-  // Locations from all selected companies (e.g. MSP + end-customer)
-  const allLocationOptions: LocationOption[] = companyIds.flatMap((cid) => locationsByCompany[cid] ?? []);
+  // Locations: for child accounts use parent's companies; otherwise account's linked companies
+  const locationSourceCompanyIds = (parentCompanyIds?.length ? parentCompanyIds : companyIds) as string[];
+  const allLocationOptions: LocationOption[] = locationSourceCompanyIds.flatMap((cid) => locationsByCompany[cid] ?? []);
   const selectedLocations = allLocationOptions.filter(
     (loc) => locations.some((l) => l.companyId === loc.companyId && l.locationId === loc.locationId)
   );
@@ -648,9 +655,9 @@ function AccountSidebar({
           </Button>
         }
       >
-        {companyIds.length === 0 ? (
+        {locationSourceCompanyIds.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
-            Select at least one company to add locations.
+            {parentCompanyIds ? 'No locations on parent account yet.' : 'Select at least one company to add locations.'}
           </Typography>
         ) : (
           <>
@@ -702,7 +709,7 @@ function AccountSidebar({
 
       {showSection('contacts') && (
       <SectionCard
-        title="Company Contacts"
+        title="Account Contacts"
         titleHref="/contacts"
         action={
           <Button
@@ -715,9 +722,9 @@ function AccountSidebar({
           </Button>
         }
       >
-        {companyIds.length === 0 && (
+        {contactSourceCompanyIds.length === 0 && (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-            Select at least one company to add contacts.
+            {parentCompanyIds ? 'No contacts from parent account companies yet.' : 'Select at least one company to add contacts.'}
           </Typography>
         )}
         {selectedContactsInScope.length > 0 && (
@@ -1215,7 +1222,7 @@ type DealOption = { id: string; label: string; companyIds?: string[] };
 type LaborPoolOption = { id: string; label: string; type: 'userGroup' | 'savedSmartGroup'; memberCount?: number };
 type PersonOption = { id: string; label: string };
 type AccountOption = { id: string; label: string };
-type EntityOption = { id: string; name: string; entityCode: string; workerType: string };
+type EntityOption = { id: string; name: string; entityCode: string; workerType: string; everifyRequired?: boolean };
 
 const ACCOUNT_TAB_SLUGS = ['overview', 'calendar', 'active-workers', 'locations', 'contacts', 'children', 'pricing', 'job-orders', 'jobs-board', 'labor-pool', 'settings', 'invoicing', 'order-defaults', 'reports', 'activity', 'notes'] as const;
 
@@ -1315,6 +1322,9 @@ const RecruiterAccountDetails: React.FC = () => {
   const [locationsSearchQuery, setLocationsSearchQuery] = useState('');
   const [showAddLocationDialog, setShowAddLocationDialog] = useState(false);
   const [showNewJobOrderModal, setShowNewJobOrderModal] = useState(false);
+  const [showAddSubAccountModal, setShowAddSubAccountModal] = useState(false);
+  const [parentCompanyIds, setParentCompanyIds] = useState<string[]>([]);
+  const [parentAccountLogoUrl, setParentAccountLogoUrl] = useState<string | null>(null);
   const [orderDefaultsSubView, setOrderDefaultsSubView] = useState<'staffInstructions' | 'orderDetails'>('staffInstructions');
   const [addLocationCompanyId, setAddLocationCompanyId] = useState<string>('');
   const [addLocationForm, setAddLocationForm] = useState({
@@ -1358,6 +1368,7 @@ const RecruiterAccountDetails: React.FC = () => {
   const [contactsSearchQuery, setContactsSearchQuery] = useState('');
   const [showAddContactDialog, setShowAddContactDialog] = useState(false);
   const [addContactCompanyId, setAddContactCompanyId] = useState('');
+  const [addContactLocationId, setAddContactLocationId] = useState<{ companyId: string; locationId: string } | null>(null);
   const [addContactForm, setAddContactForm] = useState({
     firstName: '',
     lastName: '',
@@ -1643,6 +1654,7 @@ const RecruiterAccountDetails: React.FC = () => {
               name: dta.name || d.id,
               entityCode: dta.entityCode || '',
               workerType: dta.workerType || '',
+              everifyRequired: !!dta.everifyRequired,
             };
           })
           .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
@@ -1765,6 +1777,56 @@ const RecruiterAccountDetails: React.FC = () => {
     const ids = account?.associations?.companyIds ?? [];
     if (ids.length > 0) loadLocationsForCompanies(ids);
   }, [account?.associations?.companyIds, loadLocationsForCompanies]);
+
+  // Child accounts: load parent's companies so Worksite/Location widget can show parent's locations
+  useEffect(() => {
+    const parentId = account?.parentAccountId;
+    if (!tenantId || !parentId) {
+      setParentCompanyIds([]);
+      return;
+    }
+    let cancelled = false;
+    const parentRef = doc(db, p.recruiterAccount(tenantId, parentId));
+    getDoc(parentRef).then((snap) => {
+      if (cancelled || !isMountedRef.current) return;
+      const assoc = snap.exists() ? (snap.data() as any)?.associations : null;
+      const ids = Array.isArray(assoc?.companyIds) ? assoc.companyIds : [];
+      setParentCompanyIds(ids);
+      if (ids.length > 0) loadLocationsForCompanies(ids);
+    }).catch(() => {
+      if (!cancelled && isMountedRef.current) setParentCompanyIds([]);
+    });
+    return () => { cancelled = true; };
+  }, [tenantId, account?.parentAccountId, loadLocationsForCompanies]);
+
+  // Child account: load parent's first company logo for header avatar
+  useEffect(() => {
+    const parentId = account?.parentAccountId;
+    if (!tenantId || !parentId) {
+      setParentAccountLogoUrl(null);
+      return;
+    }
+    let cancelled = false;
+    const parentRef = doc(db, p.recruiterAccount(tenantId, parentId));
+    getDoc(parentRef).then((snap) => {
+      if (cancelled || !isMountedRef.current) return;
+      const assoc = snap.exists() ? (snap.data() as any)?.associations : null;
+      const firstCompanyId = Array.isArray(assoc?.companyIds) ? assoc.companyIds[0] : null;
+      if (!firstCompanyId) {
+        setParentAccountLogoUrl(null);
+        return;
+      }
+      const companyRef = doc(db, 'tenants', tenantId, 'crm_companies', firstCompanyId);
+      return getDoc(companyRef).then((companySnap) => {
+        if (cancelled || !isMountedRef.current) return;
+        const logo = companySnap.exists() ? (companySnap.data() as any)?.logo ?? null : null;
+        setParentAccountLogoUrl(logo || null);
+      });
+    }).catch(() => {
+      if (!cancelled && isMountedRef.current) setParentAccountLogoUrl(null);
+    });
+    return () => { cancelled = true; };
+  }, [tenantId, account?.parentAccountId]);
 
   // Load first linked company's logo for account avatar
   useEffect(() => {
@@ -2007,11 +2069,12 @@ const RecruiterAccountDetails: React.FC = () => {
   };
 
   const fetchAccountJobOrders = useCallback(async () => {
-    if (!tenantId || !account?.associations?.companyIds?.length) {
+    const companyIdsToUse = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
+    if (!tenantId || companyIdsToUse.length === 0) {
       setAccountJobOrders([]);
       return;
     }
-    const companyIds = new Set(account.associations.companyIds);
+    const companyIds = new Set(companyIdsToUse);
     setAccountJobOrdersLoading(true);
     setAccountJobOrdersError(null);
     try {
@@ -2023,7 +2086,7 @@ const RecruiterAccountDetails: React.FC = () => {
         const companyId = (data as any).companyId || (data as any).deal?.companyId;
         return companyId && companyIds.has(companyId);
       });
-      const newJobOrders: JobOrderWithDetails[] = await Promise.all(
+      let newJobOrders: JobOrderWithDetails[] = await Promise.all(
         docsToMap.map(async (jobOrderDoc) => {
           const data = jobOrderDoc.data() as JobOrder;
           const flatCompanyId = (data as any).companyId || (data as any).deal?.companyId;
@@ -2084,6 +2147,18 @@ const RecruiterAccountDetails: React.FC = () => {
           };
         })
       );
+      if (isChildAccount && accountId) {
+        const locationKeys = new Set(
+          (account?.associations?.locations ?? []).map((loc: { companyId: string; locationId: string }) => `${loc.companyId}:${loc.locationId}`)
+        );
+        newJobOrders = newJobOrders.filter((jo) => {
+          const rid = (jo as any).recruiterAccountId;
+          if (rid === accountId) return true;
+          const cid = (jo as any).companyId || (jo as any).deal?.companyId;
+          const wid = (jo as any).worksiteId || (jo as any).deal?.locationId;
+          return cid && wid && locationKeys.has(`${cid}:${wid}`);
+        });
+      }
       if (!isMountedRef.current) return;
       setAccountJobOrders(newJobOrders);
     } catch (err) {
@@ -2094,23 +2169,26 @@ const RecruiterAccountDetails: React.FC = () => {
     } finally {
       if (isMountedRef.current) setAccountJobOrdersLoading(false);
     }
-  }, [tenantId, account?.associations?.companyIds]);
+  }, [tenantId, accountId, isChildAccount, parentCompanyIds, account?.associations?.companyIds, account?.associations?.locations]);
 
+  const jobOrdersTabCompanyIds = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
   useEffect(() => {
-    if ((tabValue === 2 || tabValue === 7 || tabValue === 9) && account?.associations?.companyIds?.length) {
+    const needsJobOrders = tabValue === 1 || tabValue === 2 || tabValue === 7 || tabValue === 9;
+    if (needsJobOrders && jobOrdersTabCompanyIds.length) {
       fetchAccountJobOrders();
-    } else if ((tabValue === 2 || tabValue === 7) && !account?.associations?.companyIds?.length) {
+    } else if ((tabValue === 2 || tabValue === 7) && !jobOrdersTabCompanyIds.length) {
       setAccountJobOrders([]);
       setAccountJobOrdersError(null);
     }
-  }, [tabValue, account?.associations?.companyIds, fetchAccountJobOrders]);
+  }, [tabValue, jobOrdersTabCompanyIds.length, fetchAccountJobOrders]);
 
   const fetchAccountJobPosts = useCallback(async () => {
-    if (!tenantId || !account?.associations?.companyIds?.length) {
+    const companyIdsToUse = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
+    if (!tenantId || companyIdsToUse.length === 0) {
       setAccountJobPosts([]);
       return;
     }
-    const companyIds = new Set(account.associations.companyIds);
+    const companyIds = new Set(companyIdsToUse);
     setAccountJobPostsLoading(true);
     try {
       const jobsBoardService = JobsBoardService.getInstance();
@@ -2126,15 +2204,23 @@ const RecruiterAccountDetails: React.FC = () => {
     } finally {
       if (isMountedRef.current) setAccountJobPostsLoading(false);
     }
-  }, [tenantId, account?.associations?.companyIds]);
+  }, [tenantId, isChildAccount, parentCompanyIds, account?.associations?.companyIds]);
 
   useEffect(() => {
-    if (tabValue === 7 && account?.associations?.companyIds?.length) {
+    const companyIdsToUse = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
+    if (tabValue === 7 && companyIdsToUse.length) {
       fetchAccountJobPosts();
-    } else if (tabValue === 7 && !account?.associations?.companyIds?.length) {
+    } else if (tabValue === 7 && !companyIdsToUse.length) {
       setAccountJobPosts([]);
     }
-  }, [tabValue, account?.associations?.companyIds, fetchAccountJobPosts]);
+  }, [tabValue, isChildAccount, parentCompanyIds, account?.associations?.companyIds, fetchAccountJobPosts]);
+
+  /** For child account, Jobs Board shows only posts linked to job orders in scope (this account or its worksites). */
+  const scopedAccountJobPosts = useMemo(() => {
+    if (!isChildAccount) return accountJobPosts;
+    const inScopeJobOrderIds = new Set(accountJobOrders.map((jo) => jo.id));
+    return accountJobPosts.filter((p) => p.jobOrderId && inScopeJobOrderIds.has(p.jobOrderId));
+  }, [isChildAccount, accountJobPosts, accountJobOrders]);
 
   const fetchAccountLocations = useCallback(async () => {
     if (!tenantId || !account?.associations?.companyIds?.length) {
@@ -2228,10 +2314,12 @@ const RecruiterAccountDetails: React.FC = () => {
   useEffect(() => {
     if (tabValue === 3 && !isNationalAccount && account?.associations?.companyIds?.length) {
       fetchAccountLocations();
+    } else if (tabValue === 4 && !isChildAccount && account?.associations?.companyIds?.length) {
+      fetchAccountLocations();
     } else if (tabValue === 3 && (isNationalAccount || !account?.associations?.companyIds?.length)) {
       setAccountLocationsList([]);
     }
-  }, [tabValue, isNationalAccount, account?.associations?.companyIds, fetchAccountLocations]);
+  }, [tabValue, isNationalAccount, isChildAccount, account?.associations?.companyIds, fetchAccountLocations]);
 
   // Labor Pool: load applicant counts for each job order (explicit links + job orders for this account's companies)
   useEffect(() => {
@@ -2270,6 +2358,13 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   }, [tabValue, canAccessInvoicing, setAccountTab]);
 
+  // Child accounts don't have a Locations tab; switch to Overview if that tab is selected
+  useEffect(() => {
+    if (isChildAccount && tabValue === 3) {
+      setAccountTab(0);
+    }
+  }, [isChildAccount, tabValue, setAccountTab]);
+
   const fetchChildAccounts = useCallback(async () => {
     if (!tenantId || !account?.id) {
       setChildAccountsList([]);
@@ -2288,7 +2383,7 @@ const RecruiterAccountDetails: React.FC = () => {
           id: d.id,
           name: data.name ?? '',
           active: data.active !== false,
-          accountType: data.accountType ?? null,
+          accountType: data.accountType ?? 'child',
           hiringEntityId: data.hiringEntityId ?? null,
           eVerifyRequired: eVerify ? !!eVerify.eVerifyRequired : false,
         };
@@ -2331,9 +2426,14 @@ const RecruiterAccountDetails: React.FC = () => {
     );
   }, [accountLocationsList, locationsSearchQuery]);
 
-  const fetchAccountContacts = useCallback(async () => {
-    const companyIds = account?.associations?.companyIds;
-    if (!tenantId || !companyIds?.length) {
+  const contactTabCompanyIds = useMemo(
+    () => (isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? [])),
+    [isChildAccount, parentCompanyIds, account?.associations?.companyIds]
+  );
+
+  const fetchAccountContacts = useCallback(async (companyIdsOverride?: string[]) => {
+    const companyIds = companyIdsOverride ?? account?.associations?.companyIds ?? [];
+    if (!tenantId || !companyIds.length) {
       setAccountContactsList([]);
       return;
     }
@@ -2357,29 +2457,73 @@ const RecruiterAccountDetails: React.FC = () => {
   }, [tenantId, account?.associations?.companyIds]);
 
   useEffect(() => {
-    if (tabValue === 4 && account?.associations?.companyIds?.length) {
-      fetchAccountContacts();
+    if (tabValue === 4 && contactTabCompanyIds.length) {
+      fetchAccountContacts(contactTabCompanyIds);
     } else if (tabValue === 4) {
       setAccountContactsList([]);
     }
-  }, [tabValue, account?.associations?.companyIds, fetchAccountContacts]);
+  }, [tabValue, contactTabCompanyIds, fetchAccountContacts]);
+
+  const [contactsWorksiteFilter, setContactsWorksiteFilter] = useState('');
+  const [contactsStateFilter, setContactsStateFilter] = useState('');
+
+  const availableContactWorksites = useMemo(() => {
+    const names = new Set<string>();
+    accountLocationsList.forEach((loc) => {
+      const n = loc.name || loc.nickname || loc.id;
+      if (n) names.add(n);
+    });
+    return Array.from(names).sort();
+  }, [accountLocationsList]);
+
+  const availableContactStates = useMemo(() => {
+    const states = new Set<string>();
+    accountLocationsList.forEach((loc) => {
+      if (loc.state) states.add(loc.state);
+    });
+    return Array.from(states).sort();
+  }, [accountLocationsList]);
 
   const filteredAccountContacts = useMemo(() => {
+    let list = accountContactsList;
     const q = (contactsSearchQuery || '').trim().toLowerCase();
-    if (!q) return accountContactsList;
-    const tokens = q.split(/\s+/).filter(Boolean);
-    return accountContactsList.filter((c) => {
-      const fullName = (c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || '').toLowerCase();
-      const first = (c.firstName || '').toLowerCase();
-      const last = (c.lastName || '').toLowerCase();
-      const email = (c.email || '').toLowerCase();
-      return tokens.every((t) => fullName.includes(t) || first.includes(t) || last.includes(t) || email.includes(t));
-    });
-  }, [accountContactsList, contactsSearchQuery]);
+    if (q) {
+      const tokens = q.split(/\s+/).filter(Boolean);
+      list = list.filter((c) => {
+        const fullName = (c.fullName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || '').toLowerCase();
+        const first = (c.firstName || '').toLowerCase();
+        const last = (c.lastName || '').toLowerCase();
+        const email = (c.email || '').toLowerCase();
+        return tokens.every((t) => fullName.includes(t) || first.includes(t) || last.includes(t) || email.includes(t));
+      });
+    }
+    if (contactsWorksiteFilter) {
+      list = list.filter((c) => {
+        const loc = accountLocationsList.find((l) => l.companyId === c.companyId && l.id === c.locationId);
+        const name = loc?.name || loc?.nickname || '';
+        return name === contactsWorksiteFilter;
+      });
+    }
+    if (contactsStateFilter) {
+      list = list.filter((c) => {
+        const loc = accountLocationsList.find((l) => l.companyId === c.companyId && l.id === c.locationId);
+        return loc?.state === contactsStateFilter;
+      });
+    }
+    return list;
+  }, [accountContactsList, contactsSearchQuery, contactsWorksiteFilter, contactsStateFilter, accountLocationsList]);
 
   const handleSaveAccountContact = useCallback(async () => {
-    const companyId = addContactCompanyId || account?.associations?.companyIds?.[0];
+    const companyId =
+      isChildAccount && addContactLocationId
+        ? addContactLocationId.companyId
+        : addContactCompanyId || account?.associations?.companyIds?.[0] || parentCompanyIds[0];
     if (!tenantId || !companyId || !addContactForm.firstName?.trim() || !addContactForm.lastName?.trim()) return;
+    const accountLocations = account?.associations?.locations ?? [];
+    if (isChildAccount && accountId && accountLocations.length > 0 && !addContactLocationId) {
+      setAddContactError('Select a worksite to associate this contact with.');
+      return;
+    }
     setAddContactSaving(true);
     setAddContactError(null);
     try {
@@ -2397,7 +2541,7 @@ const RecruiterAccountDetails: React.FC = () => {
         }
       }
       const companyName = companies.find((c) => c.id === companyId)?.label ?? '';
-      const contactData = {
+      const contactData: Record<string, any> = {
         ...addContactForm,
         fullName: `${addContactForm.firstName.trim()} ${addContactForm.lastName.trim()}`,
         tenantId,
@@ -2408,8 +2552,16 @@ const RecruiterAccountDetails: React.FC = () => {
         salesOwnerId: user?.uid ?? null,
         accountOwnerId: user?.uid ?? null,
       };
+      if (addContactLocationId) {
+        contactData.locationId = addContactLocationId.locationId;
+      }
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-      await addDoc(contactsRef, contactData);
+      const docRef = await addDoc(contactsRef, contactData);
+      if (accountId) {
+        await updateAccountAssociations({
+          contactIds: [...(account?.associations?.contactIds ?? []), docRef.id],
+        });
+      }
       setAddContactForm({
         firstName: '',
         lastName: '',
@@ -2422,20 +2574,21 @@ const RecruiterAccountDetails: React.FC = () => {
         isActive: true,
         notes: '',
       });
+      setAddContactLocationId(null);
       setShowAddContactDialog(false);
-      fetchAccountContacts();
+      fetchAccountContacts(contactTabCompanyIds);
     } catch (err: any) {
       console.error('Add contact error:', err);
       setAddContactError(err?.message || 'Failed to add contact');
     } finally {
       setAddContactSaving(false);
     }
-  }, [tenantId, account?.associations?.companyIds, addContactCompanyId, addContactForm, companies, user?.uid, fetchAccountContacts]);
+  }, [tenantId, accountId, account?.associations?.companyIds, account?.associations?.contactIds, isChildAccount, addContactCompanyId, addContactLocationId, addContactForm, companies, user?.uid, contactTabCompanyIds, fetchAccountContacts]);
 
   const paginatedAccountJobPosts = useMemo(() => {
     const start = jobPostsPage * jobPostsRowsPerPage;
-    return accountJobPosts.slice(start, start + jobPostsRowsPerPage);
-  }, [accountJobPosts, jobPostsPage, jobPostsRowsPerPage]);
+    return scopedAccountJobPosts.slice(start, start + jobPostsRowsPerPage);
+  }, [scopedAccountJobPosts, jobPostsPage, jobPostsRowsPerPage]);
 
   const uniqueAccountJobOrderCompanies = useMemo(
     () =>
@@ -2720,6 +2873,30 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   };
 
+  const handleAddSubAccount = async (data: RecruiterAccountFormData) => {
+    if (!tenantId || !user?.uid || !account?.id) return;
+    const ref = collection(db, p.recruiterAccounts(tenantId));
+    const docRef = await addDoc(ref, {
+      name: data.name.trim(),
+      active: data.active,
+      parentAccountId: data.parentAccountId || null,
+      childAccountIds: [],
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      createdBy: user.uid,
+      updatedBy: user.uid,
+    });
+    if (data.parentAccountId) {
+      await updateDoc(doc(db, p.recruiterAccount(tenantId, data.parentAccountId)), {
+        childAccountIds: arrayUnion(docRef.id),
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      });
+    }
+    setShowAddSubAccountModal(false);
+    await fetchChildAccounts();
+  };
+
   const updateChildAccountRelationships = async (nextChildAccountIds: string[]) => {
     if (!accountId || !tenantId || !account) return;
     const sanitizedNext = Array.from(new Set(nextChildAccountIds.filter((id) => id && id !== accountId)));
@@ -2918,13 +3095,8 @@ const RecruiterAccountDetails: React.FC = () => {
     !!parentAccount ||
     childAccounts.length > 0;
 
+  // Companies are shown as business icons in the icon row (row 2), not in the associations row (row 4)
   const headerAssociationItems = [
-    ...associatedCompanies.map((c) => ({
-      key: `company-${c.id}`,
-      label: c.label,
-      icon: <BusinessIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
-      to: `/companies/${c.id}`,
-    })),
     ...associatedLocations.map((loc) => ({
       key: `location-${loc.companyId}-${loc.locationId}`,
       label: loc.label,
@@ -2970,7 +3142,7 @@ const RecruiterAccountDetails: React.FC = () => {
     ...childAccounts.map((a) => ({
       key: `child-account-${a.id}`,
       label: a.label,
-      icon: <BusinessIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
+      icon: <AccountTreeIcon sx={{ fontSize: 16, color: 'rgba(0,0,0,0.45)' }} />,
       to: `/accounts/${a.id}`,
     })),
   ];
@@ -2981,17 +3153,17 @@ const RecruiterAccountDetails: React.FC = () => {
         title={
           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
             <Avatar
-              src={accountCompanyLogoUrl || undefined}
+              src={isChildAccount && parentAccount ? (parentAccountLogoUrl || undefined) : (accountCompanyLogoUrl || undefined)}
               sx={{
                 width: 108,
                 height: 108,
-                bgcolor: accountCompanyLogoUrl ? 'transparent' : 'primary.main',
+                bgcolor: (isChildAccount && parentAccount ? !parentAccountLogoUrl : !accountCompanyLogoUrl) ? 'primary.main' : 'transparent',
                 fontSize: '40px',
                 fontWeight: 700,
                 flexShrink: 0,
               }}
             >
-              {initial}
+              {isChildAccount && parentAccount ? (parentAccount.label?.charAt(0)?.toUpperCase() || 'P') : initial}
             </Avatar>
             <Box sx={{ flex: 1, minWidth: 0, minHeight: 108, display: 'flex', flexDirection: 'column' }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0, width: '100%' }}>
@@ -3058,6 +3230,75 @@ const RecruiterAccountDetails: React.FC = () => {
                 </Button>
               </Box>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5, flexWrap: 'wrap' }}>
+                {parentAccount && (
+                  <Tooltip title={parentAccount.label ? `View parent account: ${parentAccount.label}` : 'View parent account'}>
+                    <IconButton
+                      size="small"
+                      onClick={() => navigate(`/accounts/${parentAccount.id}`)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <AccountTreeIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+                {associatedCompanies.map((c) => (
+                  <Tooltip key={`company-${c.id}`} title={c.label ? `View company: ${c.label}` : 'View company'}>
+                    <IconButton
+                      size="small"
+                      onClick={() => navigate(`/companies/${c.id}`)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <BusinessIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                ))}
+                {associatedLocations.map((loc) => (
+                  <Tooltip key={`location-${loc.companyId}-${loc.locationId}`} title={loc.label ? `View location: ${loc.label}` : 'View company location'}>
+                    <IconButton
+                      size="small"
+                      onClick={() => navigate(`/companies/${loc.companyId}/locations/${loc.locationId}`)}
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <LocationOnIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </Tooltip>
+                ))}
                 <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
                   <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
                     <IconButton
@@ -3090,38 +3331,16 @@ const RecruiterAccountDetails: React.FC = () => {
                   variant={account.active ? 'filled' : 'outlined'}
                   sx={{ fontWeight: 500 }}
                 />
+                <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
+                  Account type: {account.accountType === 'national' ? 'National account' : account.accountType === 'child' ? 'Child account' : 'Standalone'}
+                </Typography>
                 {billingEntityName && (
                   <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 500 }}>
                     Hiring Entity: {billingEntityName}
                   </Typography>
                 )}
               </Box>
-              {hasHeaderAssociations && (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mt: 1, flexWrap: 'wrap' }}>
-                  {headerAssociationItems.map((item) => (
-                    <Box
-                      key={item.key}
-                      sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}
-                    >
-                      {item.icon}
-                      <Typography
-                        component="span"
-                        sx={{
-                          color: 'rgb(74, 144, 226)',
-                          cursor: 'pointer',
-                          fontWeight: 600,
-                          fontSize: '0.875rem',
-                          lineHeight: 1.2,
-                          '&:hover': { textDecoration: 'underline' },
-                        }}
-                        onClick={() => navigate(item.to)}
-                      >
-                        {item.label}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
-              )}
+              {/* Row 4 (associations: people, sub-accounts, locations, etc.) hidden per design */}
             </Box>
           </Box>
         }
@@ -3201,24 +3420,26 @@ const RecruiterAccountDetails: React.FC = () => {
               >
                 Active Workers
               </Button>
-              <Button
-                variant={tabValue === 3 ? 'contained' : 'text'}
-                onClick={() => setAccountTab(3)}
-                startIcon={isNationalAccount ? <AccountTreeIcon fontSize="small" /> : <LocationOnIcon fontSize="small" />}
-                sx={{
-                  borderRadius: '18px',
-                  textTransform: 'none',
-                  fontWeight: 500,
-                  px: 2.5,
-                  py: 0.75,
-                  height: 36,
-                  ...(tabValue === 3
-                    ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
-                    : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
-                }}
-              >
-                {isNationalAccount ? 'Sub Accounts' : 'Locations'}
-              </Button>
+              {!isChildAccount && (
+                <Button
+                  variant={tabValue === 3 ? 'contained' : 'text'}
+                  onClick={() => setAccountTab(3)}
+                  startIcon={isNationalAccount ? <AccountTreeIcon fontSize="small" /> : <LocationOnIcon fontSize="small" />}
+                  sx={{
+                    borderRadius: '18px',
+                    textTransform: 'none',
+                    fontWeight: 500,
+                    px: 2.5,
+                    py: 0.75,
+                    height: 36,
+                    ...(tabValue === 3
+                      ? { backgroundColor: '#0B63C5', color: 'white', '&:hover': { backgroundColor: '#0B63C5' } }
+                      : { color: '#6B7280', backgroundColor: 'white', border: '1px solid #E5E7EB', '&:hover': { backgroundColor: '#F3F4F6' } }),
+                  }}
+                >
+                  {isNationalAccount ? 'Sub Accounts' : 'Locations'}
+                </Button>
+              )}
               <Button
                 variant={tabValue === 4 ? 'contained' : 'text'}
                 onClick={() => setAccountTab(4)}
@@ -3453,6 +3674,16 @@ const RecruiterAccountDetails: React.FC = () => {
                   placeholder={isNationalAccount ? 'Search sub accounts…' : 'Search by name, code, city, or state...'}
                 />
               </Box>
+              {isNationalAccount ? (
+                <Button
+                  variant="contained"
+                  startIcon={<AddIcon />}
+                  onClick={() => setShowAddSubAccountModal(true)}
+                  sx={{ flexShrink: 0, textTransform: 'none' }}
+                >
+                  Add Sub Account
+                </Button>
+              ) : null}
               {!isNationalAccount && account?.associations?.companyIds?.length ? (
                 <Button
                   variant="contained"
@@ -3801,6 +4032,17 @@ const RecruiterAccountDetails: React.FC = () => {
         </DialogActions>
       </Dialog>
 
+      <AddAccountModal
+        open={showAddSubAccountModal}
+        onClose={() => setShowAddSubAccountModal(false)}
+        onSubmit={handleAddSubAccount}
+        accountOptions={[
+          ...(account ? [{ id: account.id, label: account.name || 'Unnamed Account' }] : []),
+          ...accountOptions.filter((a) => a.id !== account?.id && a.id !== account?.parentAccountId && !(account?.childAccountIds || []).includes(a.id)),
+        ]}
+        defaultParentAccountId={account?.id ?? null}
+      />
+
       <AddJobOrderModal
         open={showNewJobOrderModal}
         onClose={() => setShowNewJobOrderModal(false)}
@@ -3809,20 +4051,21 @@ const RecruiterAccountDetails: React.FC = () => {
         userId={user?.uid ?? ''}
         defaultHiringEntityId={account?.hiringEntityId ?? null}
         accountCompanies={
-          account?.associations?.companyIds?.length
-            ? associatedCompanies.map((c) => ({
+          (isChildAccount ? parentCompanyIds : account?.associations?.companyIds ?? []).length
+            ? (isChildAccount ? companies.filter((c) => parentCompanyIds.includes(c.id)) : associatedCompanies).map((c) => ({
                 id: c.id,
-                label: c.label,
-                companyName: c.companyName ?? c.label,
-                name: c.label,
+                label: c.label ?? c.companyName ?? c.id,
+                companyName: c.companyName ?? c.label ?? c.id,
+                name: c.label ?? c.id,
               }))
             : undefined
         }
         defaultCompanyId={
-          account?.associations?.companyIds?.length === 1
-            ? account.associations.companyIds[0]
+          (isChildAccount ? parentCompanyIds : account?.associations?.companyIds ?? [])?.length === 1
+            ? (isChildAccount ? parentCompanyIds[0] : account!.associations!.companyIds![0])
             : null
         }
+        recruiterAccountId={accountId ?? null}
       />
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pt: 2, pb: 2 }}>
@@ -3922,7 +4165,11 @@ const RecruiterAccountDetails: React.FC = () => {
                   ) : (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <BusinessIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
+                        {account.accountType === 'child' ? (
+                          <AccountTreeIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
+                        ) : (
+                          <BusinessIcon sx={{ color: 'text.secondary', fontSize: 20 }} />
+                        )}
                         <Typography variant="body1" fontWeight={500}>
                           {account.name || '—'}
                         </Typography>
@@ -4155,7 +4402,12 @@ const RecruiterAccountDetails: React.FC = () => {
                 onMspAccountsChange={updateMspAccountIds}
                 optionsLoading={optionsLoading}
                 saving={saving}
-                visibleSections={(isChildAccount ? ['company', 'location', 'contacts'] : ['company', 'contacts']) as AccountSidebarProps['visibleSections']}
+                visibleSections={
+                  (isChildAccount
+                    ? ['activity', 'relatedAccounts', 'location', 'contacts']
+                    : ['activity', 'company', 'relatedAccounts', 'location', 'contacts']
+                ) as AccountSidebarProps['visibleSections']}
+                parentCompanyIds={isChildAccount ? parentCompanyIds : undefined}
               />
             </Grid>
           </Grid>
@@ -4163,7 +4415,7 @@ const RecruiterAccountDetails: React.FC = () => {
         <TabPanel value={tabValue} index={1}>
           <Grid container spacing={3}>
             <Grid item xs={12} md={9}>
-              <AccountCalendarTab tenantId={tenantId!} account={account} />
+              <AccountCalendarTab tenantId={tenantId!} account={account} scopedJobOrderIds={isChildAccount ? accountJobOrders.map((j) => j.id) : undefined} />
             </Grid>
             <Grid item xs={12} md={3}>
               <AccountSidebar
@@ -4272,7 +4524,7 @@ const RecruiterAccountDetails: React.FC = () => {
                             </TableCell>
                             <TableCell sx={{ py: 1.5, pl: 2, borderBottom: '1px solid', borderColor: 'divider' }}>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                                <BusinessIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                                <AccountTreeIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
                                 <Typography variant="body2" sx={{ fontWeight: 500 }}>{child.name || '—'}</Typography>
                               </Box>
                             </TableCell>
@@ -4280,13 +4532,17 @@ const RecruiterAccountDetails: React.FC = () => {
                               <Chip label={child.active ? 'Active' : 'Inactive'} size="small" color={child.active ? 'success' : 'default'} variant="outlined" sx={{ fontWeight: 500 }} />
                             </TableCell>
                             <TableCell sx={{ py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-                              <Typography variant="body2" color="text.secondary">{child.accountType ?? '—'}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                {child.accountType === 'national' ? 'National account' : child.accountType === 'child' ? 'Child account' : child.accountType ?? '—'}
+                              </Typography>
                             </TableCell>
                             <TableCell sx={{ py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-                              <Typography variant="body2" color="text.secondary">{child.eVerifyRequired ? 'Yes' : 'No'}</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                {(entityOptions.find((e) => e.id === (child.hiringEntityId ?? account?.hiringEntityId))?.everifyRequired ?? child.eVerifyRequired) ? 'Yes' : 'No'}
+                              </Typography>
                             </TableCell>
                             <TableCell sx={{ py: 1.5, borderBottom: '1px solid', borderColor: 'divider' }}>
-                              <Typography variant="body2" color="text.secondary">{entityOptions.find((e) => e.id === child.hiringEntityId)?.name ?? '—'}</Typography>
+                              <Typography variant="body2" color="text.secondary">{entityOptions.find((e) => e.id === (child.hiringEntityId ?? account?.hiringEntityId))?.name ?? '—'}</Typography>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -4480,34 +4736,66 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
               <Typography variant="h6" fontWeight={700}>
                 Contacts
               </Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <TextField
-                  size="small"
-                  placeholder="Search by name or email..."
-                  value={contactsSearchQuery}
-                  onChange={(e) => setContactsSearchQuery(e.target.value)}
-                  sx={{ minWidth: 260 }}
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-                      </InputAdornment>
-                    ),
-                    endAdornment: contactsSearchQuery ? (
-                      <InputAdornment position="end">
-                        <IconButton size="small" onClick={() => setContactsSearchQuery('')} aria-label="Clear">
-                          <ClearIcon fontSize="small" />
-                        </IconButton>
-                      </InputAdornment>
-                    ) : null,
-                  }}
-                />
-                {account?.associations?.companyIds?.length ? (
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                {!isChildAccount && (
+                  <>
+                    <FormControl size="small" sx={{ minWidth: 150, height: 36 }}>
+                      <Select
+                        value={contactsWorksiteFilter}
+                        onChange={(e) => setContactsWorksiteFilter(e.target.value)}
+                        displayEmpty
+                        sx={{ height: 36, fontSize: '0.875rem', backgroundColor: 'white', borderRadius: '6px', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' } }}
+                      >
+                        <MenuItem value=""><em>All Worksites</em></MenuItem>
+                        {availableContactWorksites.map((ws) => (
+                          <MenuItem key={ws} value={ws}>{ws}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <FormControl size="small" sx={{ minWidth: 120, height: 36 }}>
+                      <Select
+                        value={contactsStateFilter}
+                        onChange={(e) => setContactsStateFilter(e.target.value)}
+                        displayEmpty
+                        sx={{ height: 36, fontSize: '0.875rem', backgroundColor: 'white', borderRadius: '6px', '& .MuiOutlinedInput-notchedOutline': { borderColor: '#E5E7EB' }, '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: '#D1D5DB' } }}
+                      >
+                        <MenuItem value=""><em>All States</em></MenuItem>
+                        {availableContactStates.map((st) => (
+                          <MenuItem key={st} value={st}>{st}</MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      size="small"
+                      placeholder="Search by name or email..."
+                      value={contactsSearchQuery}
+                      onChange={(e) => setContactsSearchQuery(e.target.value)}
+                      sx={{ minWidth: 260 }}
+                      InputProps={{
+                        startAdornment: (
+                          <InputAdornment position="start">
+                            <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                          </InputAdornment>
+                        ),
+                        endAdornment: contactsSearchQuery ? (
+                          <InputAdornment position="end">
+                            <IconButton size="small" onClick={() => setContactsSearchQuery('')} aria-label="Clear">
+                              <ClearIcon fontSize="small" />
+                            </IconButton>
+                          </InputAdornment>
+                        ) : null,
+                      }}
+                    />
+                  </>
+                )}
+                {contactTabCompanyIds.length > 0 && (
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}
                     onClick={() => {
-                      setAddContactCompanyId(account?.associations?.companyIds?.[0] ?? '');
+                      const companyIds = account?.associations?.companyIds ?? parentCompanyIds;
+                      setAddContactCompanyId(companyIds[0] ?? '');
+                      setAddContactLocationId(null);
                       setAddContactForm({
                         firstName: '',
                         lastName: '',
@@ -4526,12 +4814,12 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   >
                     Add Contact
                   </Button>
-                ) : null}
+                )}
               </Box>
             </Box>
-            {!account?.associations?.companyIds?.length ? (
+            {!contactTabCompanyIds.length ? (
               <Typography variant="body2" color="text.secondary">
-                Link at least one company to this account to see and add contacts.
+                {isChildAccount ? 'No parent company locations linked. Link worksites in the sidebar to see contacts.' : 'Link at least one company to this account to see and add contacts.'}
               </Typography>
             ) : accountContactsLoading && accountContactsList.length === 0 ? (
               <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -4641,7 +4929,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                     {addContactError}
                   </Alert>
                 )}
-                {account?.associations?.companyIds?.length && (account.associations.companyIds.length > 1 || (account.mspAccountIds?.length ?? 0) > 0) && (
+                {!isChildAccount && account?.associations?.companyIds?.length && (account.associations.companyIds.length > 1 || (account.mspAccountIds?.length ?? 0) > 0) && (
                   <FormControl fullWidth sx={{ mb: 2 }}>
                     <InputLabel>Company</InputLabel>
                     <Select
@@ -4655,6 +4943,39 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                         </MenuItem>
                       ))}
                     </Select>
+                  </FormControl>
+                )}
+                {isChildAccount && (account?.associations?.locations?.length ?? 0) > 0 && (
+                  <FormControl fullWidth required sx={{ mb: 2 }}>
+                    <InputLabel>Worksite / Location</InputLabel>
+                    <Select
+                      value={addContactLocationId ? `${addContactLocationId.companyId}:${addContactLocationId.locationId}` : ''}
+                      label="Worksite / Location"
+                      onChange={(e) => {
+                        const v = e.target.value as string;
+                        if (!v) {
+                          setAddContactLocationId(null);
+                          return;
+                        }
+                        const [companyId, locationId] = v.split(':');
+                        if (companyId && locationId) setAddContactLocationId({ companyId, locationId });
+                      }}
+                    >
+                      <MenuItem value=""><em>Select worksite</em></MenuItem>
+                      {(account?.associations?.locations ?? []).map((loc: { companyId: string; locationId: string }) => {
+                        const option = (locationsByCompany[loc.companyId] || []).find((l) => l.locationId === loc.locationId);
+                        const label = option?.label || loc.locationId;
+                        const companyLabel = companies.find((c) => c.id === loc.companyId)?.label ?? loc.companyId;
+                        return (
+                          <MenuItem key={`${loc.companyId}:${loc.locationId}`} value={`${loc.companyId}:${loc.locationId}`}>
+                            {label} ({companyLabel})
+                          </MenuItem>
+                        );
+                      })}
+                    </Select>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                      This contact will be associated with the company and this worksite for this account.
+                    </Typography>
                   </FormControl>
                 )}
                 <Grid container spacing={2} sx={{ mt: 1 }}>
@@ -4943,7 +5264,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           }}
                         >
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            <BusinessIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                            <AccountTreeIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
                             <Typography variant="body2" sx={{ fontWeight: 500 }}>
                               {child.name || '—'}
                             </Typography>
@@ -4986,7 +5307,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             fontSize: '0.875rem',
                           }}
                         >
-                          {child.eVerifyRequired ? 'Yes' : 'No'}
+                          {(entityOptions.find((e) => e.id === (child.hiringEntityId ?? account?.hiringEntityId))?.everifyRequired ?? child.eVerifyRequired) ? 'Yes' : 'No'}
                         </TableCell>
                         <TableCell
                           sx={{
@@ -4996,9 +5317,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             fontSize: '0.875rem',
                           }}
                         >
-                          {child.hiringEntityId
-                            ? (entityOptions.find((e) => e.id === child.hiringEntityId)?.name ?? '—')
-                            : '—'}
+                          {entityOptions.find((e) => e.id === (child.hiringEntityId ?? account?.hiringEntityId))?.name ?? '—'}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -5653,11 +5972,11 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
           <Grid container spacing={3}>
             <Grid item xs={12}>
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, minHeight: 0 }}>
-                {accountJobPostsLoading && accountJobPosts.length === 0 ? (
+                {accountJobPostsLoading && scopedAccountJobPosts.length === 0 ? (
                   <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
                     <CircularProgress />
                   </Box>
-                ) : !account?.associations?.companyIds?.length ? (
+                ) : !jobOrdersTabCompanyIds.length ? (
                   <Box sx={{ textAlign: 'center', py: 8 }}>
                     <BadgeIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -5667,7 +5986,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       Link companies to this account to see job board postings here.
                     </Typography>
                   </Box>
-                ) : accountJobPosts.length === 0 ? (
+                ) : scopedAccountJobPosts.length === 0 ? (
                   <Box sx={{ textAlign: 'center', py: 8 }}>
                     <BadgeIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -5778,7 +6097,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                       </Table>
                     </TableContainer>
                     <StandardTablePagination
-                      count={accountJobPosts.length}
+                      count={scopedAccountJobPosts.length}
                       page={jobPostsPage}
                       onPageChange={(_, newPage) => setJobPostsPage(newPage)}
                       rowsPerPage={jobPostsRowsPerPage}
@@ -6107,7 +6426,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                 onMspAccountsChange={updateMspAccountIds}
                 optionsLoading={optionsLoading}
                 saving={saving}
-                visibleSections={['relatedAccounts']}
+                visibleSections={[]}
               />
             </Grid>
           </Grid>

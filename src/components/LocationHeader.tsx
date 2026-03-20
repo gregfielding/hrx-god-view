@@ -16,6 +16,7 @@ import {
   Facebook as FacebookIcon,
   Business as BusinessIcon,
   Add as AddIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import MUILink from '@mui/material/Link';
@@ -50,6 +51,8 @@ interface LocationHeaderProps {
   
   // Helper to ensure URL has protocol
   ensureUrlProtocol?: (url: string) => string;
+  /** When the location's company is linked to a recruiter account, show account icon first in the icon row */
+  linkedAccount?: { id: string; name?: string } | null;
 }
 
 const LocationHeader: React.FC<LocationHeaderProps> = ({
@@ -59,6 +62,7 @@ const LocationHeader: React.FC<LocationHeaderProps> = ({
   routePrefix = 'crm',
   onAddNote,
   ensureUrlProtocol,
+  linkedAccount,
 }) => {
   const navigate = useNavigate();
   
@@ -196,6 +200,27 @@ const LocationHeader: React.FC<LocationHeaderProps> = ({
 
             {/* Company Social Media Icons */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 1 }}>
+              {linkedAccount && (
+                <IconButton
+                  size="small"
+                  sx={{
+                    p: 1,
+                    color: 'primary.main',
+                    bgcolor: 'action.hover',
+                    borderRadius: 1,
+                    '&:hover': {
+                      color: 'primary.dark',
+                      bgcolor: 'action.selected',
+                      transform: 'translateY(-1px)',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                    },
+                  }}
+                  onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                  title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}
+                >
+                  <AccountBalanceIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              )}
               <IconButton
                 size="small"
                 sx={{ 

@@ -76,7 +76,7 @@ import {
   Save as SaveIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
-import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, orderBy, limit, serverTimestamp, addDoc, deleteDoc, getCountFromServer } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, collection, getDocs, query, where, orderBy, limit, serverTimestamp, addDoc, deleteDoc, getCountFromServer, arrayUnion } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -899,6 +899,12 @@ export default function AccountLocationDetail() {
   }, [contactsAtLocation, contactsSearch]);
 
   const locationNameForContact = locationDoc?.nickname || locationDoc?.name || locationId || 'Location';
+  const companyNameForContact =
+    accountCompaniesOptions.find((c) => c.id === resolvedCompanyId)?.companyName ||
+    accountCompaniesOptions.find((c) => c.id === resolvedCompanyId)?.name ||
+    accountCompaniesOptions.find((c) => c.id === resolvedCompanyId)?.label ||
+    resolvedCompanyId ||
+    '';
   const handleSaveLocationContact = async () => {
     if (!tenantId || !resolvedCompanyId || !locationId || !addContactForm.firstName?.trim() || !addContactForm.lastName?.trim()) return;
     setAddContactSaving(true);
@@ -911,7 +917,7 @@ export default function AccountLocationDetail() {
         fullName: `${addContactForm.firstName.trim()} ${addContactForm.lastName.trim()}`,
         tenantId,
         companyId: resolvedCompanyId,
-        companyName: account?.name ?? '',
+        companyName: companyNameForContact,
         locationId,
         locationName: locationNameForContact,
         associations: {
@@ -924,7 +930,11 @@ export default function AccountLocationDetail() {
         accountOwnerId: user?.uid ?? null,
       };
       const contactsRef = collection(db, 'tenants', tenantId, 'crm_contacts');
-      await addDoc(contactsRef, contactData);
+      const docRef = await addDoc(contactsRef, contactData);
+      if (accountId) {
+        const accountRef = doc(db, p.recruiterAccount(tenantId, accountId));
+        await updateDoc(accountRef, { 'associations.contactIds': arrayUnion(docRef.id) });
+      }
       setAddContactForm({ firstName: '', lastName: '', email: '', phone: '', jobTitle: '', contactType: 'Unknown', linkedInUrl: '', tags: [], isActive: true, notes: '' });
       setShowAddContactDialog(false);
       const q2 = query(contactsRef, where('companyId', '==', resolvedCompanyId), where('locationId', '==', locationId));
@@ -1640,7 +1650,7 @@ export default function AccountLocationDetail() {
 
                 <Card>
                   <CardHeader
-                    title="Company Contacts"
+                    title="Account Contacts"
                     titleTypographyProps={{ variant: 'h6', fontWeight: 600 }}
                     action={
                       <Button
@@ -1852,11 +1862,17 @@ export default function AccountLocationDetail() {
             </CardContent>
           </Card>
           <Dialog open={showAddContactDialog} onClose={() => !addContactSaving && setShowAddContactDialog(false)} maxWidth="sm" fullWidth>
-            <DialogTitle>Add Contact</DialogTitle>
+            <DialogTitle>Add New Contact</DialogTitle>
             <DialogContent>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                This contact will be associated with this location ({locationNameForContact}).
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                This contact will be associated with the company and this worksite for this account.
               </Typography>
+              <Box sx={{ mb: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+                <Typography variant="caption" color="text.secondary" display="block">Company</Typography>
+                <Typography variant="body2" fontWeight={500}>{companyNameForContact || '—'}</Typography>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>Worksite</Typography>
+                <Typography variant="body2" fontWeight={500}>{locationNameForContact}</Typography>
+              </Box>
               <Grid container spacing={2} sx={{ mt: 0.5 }}>
                 <Grid item xs={12} sm={6}>
                   <TextField fullWidth label="First name" required value={addContactForm.firstName} onChange={(e) => setAddContactForm((f) => ({ ...f, firstName: e.target.value }))} size="small" />

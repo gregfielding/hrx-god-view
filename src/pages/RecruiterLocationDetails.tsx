@@ -66,6 +66,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 
 import { db } from '../firebase';
+import { p } from '../data/firestorePaths';
 import { useAuth } from '../contexts/AuthContext';
 import AddNoteDialog from '../components/AddNoteDialog';
 import CRMNotesTab from '../components/CRMNotesTab';
@@ -812,6 +813,7 @@ const RecruiterLocationDetails: React.FC = () => {
   const [isEditingLocationDetails, setIsEditingLocationDetails] = useState(false);
   const [jobOrders, setJobOrders] = useState<any[]>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
+  const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string } | null>(null);
 
   useEffect(() => {
     if (!companyId || !locationId || !tenantId) {
@@ -908,6 +910,27 @@ const RecruiterLocationDetails: React.FC = () => {
 
     loadLocationData();
   }, [companyId, locationId, tenantId]);
+
+  useEffect(() => {
+    if (!tenantId || !companyId) {
+      setLinkedAccount(null);
+      return;
+    }
+    let cancelled = false;
+    const ref = collection(db, p.recruiterAccounts(tenantId));
+    getDocs(query(ref, where('associations.companyIds', 'array-contains', companyId), limit(1)))
+      .then((snap) => {
+        if (cancelled || snap.empty) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        const d = snap.docs[0];
+        const data = d.data() as { name?: string };
+        setLinkedAccount({ id: d.id, name: data?.name ?? undefined });
+      })
+      .catch(() => { if (!cancelled) setLinkedAccount(null); });
+    return () => { cancelled = true; };
+  }, [tenantId, companyId]);
 
   const loadJobOrdersForLocation = async () => {
     if (!locationId || !tenantId) {
@@ -1083,6 +1106,7 @@ const RecruiterLocationDetails: React.FC = () => {
           }
           return url;
         }}
+        linkedAccount={linkedAccount}
       />
 
       {/* Icon row (Add Note) – match Company layout */}

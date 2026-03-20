@@ -109,6 +109,8 @@ interface JobOrderFormProps {
   recruiters?: any[]; // Optional recruiters list
   jobTitles?: string[]; // Optional job titles list
   groups?: any[]; // Optional groups list
+  /** When creating from Account Details, persist this so Job Orders tab can scope by account (and child by worksite). */
+  recruiterAccountId?: string | null;
 }
 
 const JobOrderForm: React.FC<JobOrderFormProps> = ({ 
@@ -125,7 +127,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   locations: propLocations,
   recruiters: propRecruiters,
   jobTitles: propJobTitles,
-  groups: propGroups
+  groups: propGroups,
+  recruiterAccountId: propRecruiterAccountId,
 }) => {
   const { tenantId: authTenantId, user: authUser } = useAuth();
   const navigate = useNavigate();
@@ -1495,6 +1498,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         // Metadata
         updatedAt: new Date(),
         updatedBy: user.uid,
+        ...(propRecruiterAccountId ? { recruiterAccountId: propRecruiterAccountId } : {}),
       };
 
       if (isEditing && jobOrderId) {

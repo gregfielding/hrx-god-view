@@ -91,6 +91,7 @@ import {
   Clear as ClearIcon,
   ArrowUpward as ArrowUpwardIcon,
   ArrowDownward as ArrowDownwardIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { useChatGPT } from '../../contexts/ChatGPTContext';
@@ -376,6 +377,29 @@ const CompanyDetails: React.FC = () => {
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
+  const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string } | null>(null);
+
+  // Resolve recruiter account linked to this company (associations.companyIds contains companyId)
+  useEffect(() => {
+    if (!tenantId || !companyId) {
+      setLinkedAccount(null);
+      return;
+    }
+    let cancelled = false;
+    const ref = collection(db, 'tenants', tenantId, 'accounts');
+    getDocs(query(ref, where('associations.companyIds', 'array-contains', companyId), limit(1)))
+      .then((snap) => {
+        if (cancelled || snap.empty) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        const d = snap.docs[0];
+        const data = d.data() as { name?: string };
+        setLinkedAccount({ id: d.id, name: data?.name ?? undefined });
+      })
+      .catch(() => { if (!cancelled) setLinkedAccount(null); });
+    return () => { cancelled = true; };
+  }, [tenantId, companyId]);
 
   // Apollo data processing function
   const processApolloData = useCallback(async (apolloData: any) => {
@@ -1043,6 +1067,29 @@ const CompanyDetails: React.FC = () => {
                   flexWrap="wrap" 
                   sx={{ mb: 0.5 }}
                 >
+                  {linkedAccount && (
+                    <Tooltip title={linkedAccount.name ? `View account: ${linkedAccount.name}` : 'View account'}>
+                      <IconButton
+                        size="small"
+                        onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                        sx={{
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                          },
+                          transition: 'all 0.2s ease'
+                        }}
+                      >
+                        <AccountBalanceIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                   {company?.website && (
                     <Tooltip title={`Visit ${company.website}`}>
                       <IconButton
@@ -1536,15 +1583,17 @@ const CompanyDetails: React.FC = () => {
         )
       )}
       
-      {/* Notes tab (index 5 when Vendor Process enabled, index 4 when disabled) */}
+      {/* Activity tab (index 4 when no Vendor Process, index 5 when Vendor Process) — matches Activity button */}
       {tabValue === (company.centralizedVendorProcess ? 5 : 4) && (
+        <CompanyActivityTab company={company} tenantId={tenantId} />
+      )}
+
+      {/* Notes tab (index 5 when no Vendor Process, index 6 when Vendor Process) — matches Notes button */}
+      {tabValue === (company.centralizedVendorProcess ? 6 : 5) && (
         <NotesTab company={company} tenantId={tenantId} />
       )}
 
-      {/* Similar tab (index 6 when Vendor Process enabled, index 5 when disabled) */}
-      {tabValue === (company.centralizedVendorProcess ? 6 : 5) && (
-        <SimilarTab company={company} tenantId={tenantId} />
-      )}
+      {/* Similar Companies — hidden for now (not needed) */}
 
       {/* Job Orders tab (index 7 when Vendor Process enabled, index 6 when disabled) */}
       {tabValue === (company.centralizedVendorProcess ? 7 : 6) && (
@@ -1556,18 +1605,13 @@ const CompanyDetails: React.FC = () => {
         <NewsTab company={company} />
       )}
 
-      {/* Decision Makers tab (index 9 when Vendor Process enabled, index 8 when disabled) */}
+      {/* Find Contacts / Decision Makers (index 8 when no Vendor Process, index 9 when Vendor Process) */}
       {tabValue === (company.centralizedVendorProcess ? 9 : 8) && (
         <DecisionMakersPanel 
           companyName={company.companyName || company.name}
           companyId={company.id}
           tenantId={tenantId}
         />
-      )}
-
-      {/* Activity tab (index 10 when Vendor Process enabled, index 9 when disabled) */}
-      {tabValue === (company.centralizedVendorProcess ? 10 : 9) && (
-        <CompanyActivityTab company={company} tenantId={tenantId} />
       )}
 
         {/* Delete Company Button - Bottom of page */}

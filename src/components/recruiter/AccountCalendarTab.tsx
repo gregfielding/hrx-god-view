@@ -69,9 +69,11 @@ export interface AccountCalendarTabProps {
   account: RecruiterAccount | null;
   /** When set, only show shifts for job orders at this worksite (calendar filtered downstream). */
   locationFilter?: { companyId: string; locationId: string };
+  /** When set (e.g. child account), use these job order ids instead of loading by company scope. */
+  scopedJobOrderIds?: string[];
 }
 
-const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, account, locationFilter }) => {
+const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, account, locationFilter, scopedJobOrderIds }) => {
   const navigate = useNavigate();
   const [view, setView] = useState<CalendarView>('month');
   const [currentDate, setCurrentDate] = useState(new Date());
@@ -148,7 +150,7 @@ const AccountCalendarTab: React.FC<AccountCalendarTabProps> = ({ tenantId, accou
   const jobOrderIdsForCalendar =
     locationFilter
       ? (filteredJobOrderIds ?? [])
-      : accountJobOrderIds;
+      : (scopedJobOrderIds ?? accountJobOrderIds);
 
   const dateRange = useMemo(() => getCalendarRange(view, currentDate), [view, currentDate]);
 

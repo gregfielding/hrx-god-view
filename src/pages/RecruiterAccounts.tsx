@@ -25,7 +25,7 @@ import {
   MenuItem,
   IconButton,
 } from '@mui/material';
-import { Business as BusinessIcon, Add as AddIcon, Star, StarBorder } from '@mui/icons-material';
+import { Business as BusinessIcon, AccountTree as AccountTreeIcon, Add as AddIcon, Star, StarBorder } from '@mui/icons-material';
 import { useOutletContext, useSearchParams, useNavigate } from 'react-router-dom';
 import { collection, query, orderBy, getDocs, addDoc, serverTimestamp, doc, updateDoc, arrayUnion } from 'firebase/firestore';
 
@@ -531,7 +531,11 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
                         }}
                       >
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <BusinessIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                          {(account.accountType === 'child' || account.parentAccountId) ? (
+                            <AccountTreeIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                          ) : (
+                            <BusinessIcon sx={{ fontSize: 20, color: 'text.secondary' }} />
+                          )}
                           <Typography variant="body2" sx={{ fontWeight: 500 }}>
                             {account.name || '—'}
                           </Typography>

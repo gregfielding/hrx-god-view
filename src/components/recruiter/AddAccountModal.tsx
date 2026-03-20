@@ -18,14 +18,28 @@ export interface AddAccountModalProps {
   onClose: () => void;
   onSubmit: (data: RecruiterAccountFormData) => Promise<void>;
   accountOptions?: Array<{ id: string; label: string }>;
+  /** When set, the new account will be created as a child of this account (pre-fills Parent Account). */
+  defaultParentAccountId?: string | null;
 }
 
-const AddAccountModal: React.FC<AddAccountModalProps> = ({ open, onClose, onSubmit, accountOptions = [] }) => {
+const AddAccountModal: React.FC<AddAccountModalProps> = ({
+  open,
+  onClose,
+  onSubmit,
+  accountOptions = [],
+  defaultParentAccountId = null,
+}) => {
   const [name, setName] = useState('');
   const [active, setActive] = useState(true);
   const [parentAccountId, setParentAccountId] = useState<string>('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (open && defaultParentAccountId) {
+      setParentAccountId(defaultParentAccountId);
+    }
+  }, [open, defaultParentAccountId]);
 
   const handleClose = () => {
     if (!submitting) {

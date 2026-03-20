@@ -22,6 +22,8 @@ export interface AddJobOrderModalProps {
   defaultWorksiteId?: string | null;
   /** When opening from Account > Location, restrict Job Title dropdown to positions from that location's Pricing page. */
   jobTitleOptions?: string[];
+  /** When opening from Account Details, pass account id so the job order is associated and child account Job Orders tab can scope. */
+  recruiterAccountId?: string | null;
 }
 
 const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
@@ -35,6 +37,7 @@ const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
   defaultCompanyId,
   defaultWorksiteId,
   jobTitleOptions,
+  recruiterAccountId,
 }) => {
   const handleSave = async () => {
     onClose();
@@ -63,6 +66,7 @@ const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
           initialData={Object.keys(initialData).length ? initialData : undefined}
           companies={accountCompanies}
           jobTitles={jobTitleOptions}
+          recruiterAccountId={recruiterAccountId ?? undefined}
         />
       </DialogContent>
     </Dialog>

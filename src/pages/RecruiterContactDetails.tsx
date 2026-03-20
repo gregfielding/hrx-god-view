@@ -57,6 +57,7 @@ import {
   Add as AddIcon,
   SmartToy as AIIcon,
   CheckCircle as CheckCircleIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import {
   collection,
@@ -70,6 +71,7 @@ import {
   getDocs,
 } from 'firebase/firestore';
 import { db, functions } from '../firebase';
+import { p } from '../data/firestorePaths';
 import { httpsCallable } from 'firebase/functions';
 import { useAuth } from '../contexts/AuthContext';
 import CRMNotesTab from '../components/CRMNotesTab';
@@ -171,11 +173,35 @@ const RecruiterContactDetails: React.FC = () => {
   const [rebuildingActive, setRebuildingActive] = useState(false);
   const [localSuccess, setLocalSuccess] = useState<string | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string } | null>(null);
 
   useEffect(() => {
     if (!contactId || !tenantId) return;
     loadContactData();
   }, [contactId, tenantId]);
+
+  // Resolve recruiter account linked to this contact's company
+  const contactCompanyId = contact?.companyId || company?.id;
+  useEffect(() => {
+    if (!tenantId || !contactCompanyId) {
+      setLinkedAccount(null);
+      return;
+    }
+    let cancelled = false;
+    const ref = collection(db, p.recruiterAccounts(tenantId));
+    getDocs(query(ref, where('associations.companyIds', 'array-contains', contactCompanyId), limit(1)))
+      .then((snap) => {
+        if (cancelled || snap.empty) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        const d = snap.docs[0];
+        const data = d.data() as { name?: string };
+        setLinkedAccount({ id: d.id, name: data?.name ?? undefined });
+      })
+      .catch(() => { if (!cancelled) setLinkedAccount(null); });
+    return () => { cancelled = true; };
+  }, [tenantId, contactCompanyId]);
 
   const loadContactData = async () => {
     if (!contactId || !tenantId) return;
@@ -1194,8 +1220,18 @@ const RecruiterContactDetails: React.FC = () => {
               </Box>
 
               {/* Line 4: Social / contact icons - use toSafeHref so phone numbers in website field don't become invalid links */}
-              {(toSafeHref(contact.linkedInUrl) || toSafeHref(contact.website)) && (
+              {(linkedAccount || toSafeHref(contact.linkedInUrl) || toSafeHref(contact.website)) && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
+                  {linkedAccount && (
+                    <IconButton
+                      size="small"
+                      sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
+                      onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                      title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}
+                    >
+                      <AccountBalanceIcon fontSize="small" />
+                    </IconButton>
+                  )}
                   {toSafeHref(contact.website) && (
                     <IconButton
                       size="small"

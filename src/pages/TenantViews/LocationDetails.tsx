@@ -63,6 +63,7 @@ import {
   Person as PersonIcon,
   Search as SearchIcon,
   Clear as ClearIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, updateDoc, deleteDoc, collection, getDocs, query, where, orderBy, limit } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
@@ -815,6 +816,7 @@ const LocationDetails: React.FC = () => {
   const [isEditingLocationDetails, setIsEditingLocationDetails] = useState(false);
   const [jobOrders, setJobOrders] = useState<any[]>([]);
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
+  const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string } | null>(null);
 
   const opportunitiesSectionRef = useRef<HTMLDivElement | null>(null);
   const jobOrdersSectionRef = useRef<HTMLDivElement | null>(null);
@@ -968,6 +970,34 @@ const LocationDetails: React.FC = () => {
 
     loadLocationData();
   }, [companyId, locationId, tenantId]);
+
+  // Resolve recruiter account linked to this location: prefer account that has this worksite in associations.locations, else first account for company
+  useEffect(() => {
+    if (!tenantId || !companyId || !locationId) {
+      setLinkedAccount(null);
+      return;
+    }
+    let cancelled = false;
+    const ref = collection(db, 'tenants', tenantId, 'accounts');
+    getDocs(query(ref, where('associations.companyIds', 'array-contains', companyId)))
+      .then((snap) => {
+        if (cancelled || snap.empty) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        type LocRef = { companyId?: string; locationId?: string };
+        const locs = (d: { data: () => Record<string, unknown> | undefined }) =>
+          ((d.data()?.associations as { locations?: LocRef[] })?.locations) ?? [];
+        const hasThisWorksite = (d: { data: () => Record<string, unknown> | undefined }) =>
+          locs(d).some((l) => l.companyId === companyId && l.locationId === locationId);
+        const withWorksite = snap.docs.find((d) => hasThisWorksite(d));
+        const d = withWorksite ?? snap.docs[0];
+        const data = d.data() as { name?: string };
+        setLinkedAccount({ id: d.id, name: data?.name ?? undefined });
+      })
+      .catch(() => { if (!cancelled) setLinkedAccount(null); });
+    return () => { cancelled = true; };
+  }, [tenantId, companyId, locationId]);
 
   const loadJobOrdersForLocation = async () => {
     if (!locationId || !tenantId) {
@@ -1175,6 +1205,29 @@ const LocationDetails: React.FC = () => {
 
                 {/* Line 3: Icon row (own row, below address) */}
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap' }}>
+                  {linkedAccount && (
+                    <Tooltip title={linkedAccount.name ? `View account: ${linkedAccount.name}` : 'View account'}>
+                      <IconButton
+                        size="small"
+                        onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                        sx={{
+                          p: 1,
+                          color: 'primary.main',
+                          bgcolor: 'action.hover',
+                          borderRadius: 1,
+                          '&:hover': {
+                            color: 'primary.dark',
+                            bgcolor: 'primary.light',
+                            transform: 'translateY(-1px)',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                          },
+                          transition: 'all 0.2s ease',
+                        }}
+                      >
+                        <AccountBalanceIcon sx={{ fontSize: 20 }} />
+                      </IconButton>
+                    </Tooltip>
+                  )}
                   <Tooltip title="Add Task">
                     <IconButton
                       size="small"

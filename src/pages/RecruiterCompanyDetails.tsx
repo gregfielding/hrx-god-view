@@ -88,6 +88,7 @@ import {
   Save as SaveIcon,
   BusinessCenter as BusinessCenterIcon,
   Handshake as HandshakeIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import MUILink from '@mui/material/Link';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
@@ -113,6 +114,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage
 import { httpsCallable } from 'firebase/functions';
 
 import { db, storage, functions } from '../firebase';
+import { p } from '../data/firestorePaths';
 import { useAuth } from '../contexts/AuthContext';
 import IndustrySelector from '../components/IndustrySelector';
 import { geocodeAddress } from '../utils/geocodeAddress';
@@ -251,6 +253,7 @@ const RecruiterCompanyDetails: React.FC = () => {
   const [logoHover, setLogoHover] = useState(false);
   const [cropOpen, setCropOpen] = useState(false);
   const [pendingImageSrc, setPendingImageSrc] = useState<string | null>(null);
+  const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string } | null>(null);
 
   // Load company data
   useEffect(() => {
@@ -258,6 +261,28 @@ const RecruiterCompanyDetails: React.FC = () => {
       loadCompanyData();
     }
   }, [companyId, tenantId]);
+
+  // Resolve recruiter account linked to this company (associations.companyIds contains companyId)
+  useEffect(() => {
+    if (!tenantId || !companyId) {
+      setLinkedAccount(null);
+      return;
+    }
+    let cancelled = false;
+    const ref = collection(db, p.recruiterAccounts(tenantId));
+    getDocs(query(ref, where('associations.companyIds', 'array-contains', companyId), limit(1)))
+      .then((snap) => {
+        if (cancelled || snap.empty) {
+          if (!cancelled) setLinkedAccount(null);
+          return;
+        }
+        const d = snap.docs[0];
+        const data = d.data() as { name?: string };
+        setLinkedAccount({ id: d.id, name: data?.name ?? undefined });
+      })
+      .catch(() => { if (!cancelled) setLinkedAccount(null); });
+    return () => { cancelled = true; };
+  }, [tenantId, companyId]);
 
   const safeToDate = (value: any): Date | null => {
     try {
@@ -1126,8 +1151,18 @@ const RecruiterCompanyDetails: React.FC = () => {
               </Box>
 
               {/* Line 4: Social / contact icons */}
-              {(ensureUrlProtocol(company?.website) || ensureUrlProtocol(company?.linkedin)) && (
+              {(linkedAccount || ensureUrlProtocol(company?.website) || ensureUrlProtocol(company?.linkedin)) && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mt: 0.5 }}>
+                  {linkedAccount && (
+                    <IconButton
+                      size="small"
+                      sx={{ p: 0.75, color: 'rgb(74, 144, 226)' }}
+                      onClick={() => navigate(`/accounts/${linkedAccount.id}`)}
+                      title={linkedAccount.name ? `Open account: ${linkedAccount.name}` : 'Open account'}
+                    >
+                      <AccountBalanceIcon fontSize="small" />
+                    </IconButton>
+                  )}
                   {ensureUrlProtocol(company?.website) && (
                     <IconButton
                       size="small"
