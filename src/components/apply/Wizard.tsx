@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import {
   Box,
   Button,
@@ -754,6 +755,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     resolve();
     return () => { cancelled = true; };
   }, [tenantId, jobId, posting]);
+
+  /** EEO section is skippable for general/group apply and for C1 Events jobs; not skippable for C1 Workforce or C1 Select. */
+  const eeoSkippable = useMemo(() => {
+    if (!jobId) return true; // general /apply or group application
+    if (!hiringEntityName) return true; // job but entity unknown — allow skip
+    if (/C1 (Workforce|Select)/i.test(hiringEntityName)) return false;
+    return true; // C1 Events or other entities
+  }, [jobId, hiringEntityName]);
 
   // Load shift summary for final step card (when on step 11 and have posting)
   useEffect(() => {
@@ -1622,7 +1631,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           }
         } else if (actualStep === 2) {
           // Work Eligibility → save attestation (not a document) + legacy workEligibility
-          const e = formData.eligibility || {};
+          // Prefer ref so Skip EEO + Next in one tick sees cleared optional fields
+          const e =
+            (formDataRef.current && formDataRef.current.eligibility) || formData.eligibility || {};
           const update: any = { updatedAt: serverTimestamp() };
           const authorizedToWorkUS = typeof e.workAuthorized === 'boolean' ? !!e.workAuthorized : false;
           update.workEligibility = authorizedToWorkUS;
@@ -1769,6 +1780,32 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       setSaving(false);
       advanceStep();
     }
+  };
+
+  /** Clear optional EEO fields and advance (same as Next) so users can skip that block in one tap. */
+  const handleSkipOptionalEeo = async () => {
+    if (actualStep !== 2) return;
+    const el = formData.eligibility || {};
+    if (el.workAuthorized !== true) {
+      alert(t('apply.confirmWorkAuthBeforeSkipEeo'));
+      return;
+    }
+    flushSync(() => {
+      setFormData((prev: any) => {
+        const next = {
+          ...prev,
+          eligibility: {
+            ...(prev.eligibility || {}),
+            gender: '',
+            veteranStatus: '',
+            disabilityStatus: '',
+          },
+        };
+        formDataRef.current = next;
+        return next;
+      });
+    });
+    await handleNext();
   };
 
   const handleBack = () => {
@@ -2574,6 +2611,25 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             console.log('⚠️ No group IDs found to add user to');
           }
         }
+
+        // Group-only apply (/c1/apply/group/:groupId): Apply.tsx does not pass jobId, so the block above
+        // never runs. Still add the new user to the group from the URL.
+        const hasJobContext = Boolean(jobId && String(jobId).trim());
+        if (tenantId && effectiveUid && !hasJobContext && signupGroupId && String(signupGroupId).trim()) {
+          const gid = String(signupGroupId).trim();
+          try {
+            const functions = getFunctions();
+            const addUsersToGroupsFn = httpsCallable(functions as any, 'addUsersToGroups');
+            await addUsersToGroupsFn({
+              userId: effectiveUid,
+              groupIds: [gid],
+              tenantId,
+            });
+            console.log(`✅ Group-only apply: added user ${effectiveUid} to user group ${gid}`);
+          } catch (groupOnlyErr) {
+            console.error('❌ Group-only apply: failed to add user to group', groupOnlyErr);
+          }
+        }
       } catch (e) {
         console.error('Error saving application:', e);
         // Don't redirect if we didn't actually save the application doc.
@@ -2628,6 +2684,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           <WorkEligibilityStep
             value={formData.eligibility || {}}
             onChange={(v) => persist({ eligibility: v })}
+            onSkipOptionalEeo={eeoSkippable ? handleSkipOptionalEeo : undefined}
           />
         );
       case 3:
