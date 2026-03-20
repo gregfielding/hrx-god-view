@@ -1845,6 +1845,13 @@ const UserProfilePage = () => {
                       {(city || state || createdAt) && (
                         <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
                       )}
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{ fontSize: '14px', fontWeight: 400, color: 'rgba(0, 0, 0, 0.55)' }}
+                      >
+                        Authorized to Work:{' '}
+                      </Typography>
                       <WorkAuthorizedChip status={workAuthorizedStatus} size="small" />
                       {!city && !state && !createdAt && jobTitle && (
                         <Typography

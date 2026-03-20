@@ -18,6 +18,8 @@ type Props = {
   jobPosting?: any;
   titleOverride?: string;
   subtitleOverride?: string;
+  /** When true (e.g. admin/Qualifications edit), show only the textarea — no captions, alerts, or inspiration. */
+  compact?: boolean;
 };
 
 const sampleBios = [
@@ -26,7 +28,7 @@ const sampleBios = [
   "I'm dependable, I work hard, and I'm looking for a place where I can grow."
 ];
 
-const BioStep: React.FC<Props> = ({ value, onChange, jobPosting, titleOverride, subtitleOverride }) => {
+const BioStep: React.FC<Props> = ({ value, onChange, jobPosting, titleOverride, subtitleOverride, compact }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const t = useT();
@@ -61,20 +63,37 @@ const BioStep: React.FC<Props> = ({ value, onChange, jobPosting, titleOverride, 
     queueProfileUpdate('professionalBio', sample);
   };
 
+  if (compact) {
+    return (
+      <Box>
+        <TextField
+          fullWidth
+          multiline
+          minRows={3}
+          maxRows={8}
+          value={bio}
+          onChange={(e) => handleBioChange(e.target.value)}
+          onBlur={(e) => handleBioBlur(e.target.value)}
+          placeholder="Bio"
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box>
       <Box sx={{ mb: 2.5 }}>
         <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 0.5 }}>
-          {t('apply.profileImprovementOptional')}
+          {t('apply.profileImprovementOptional') || 'Optional — helps recruiters get to know you'}
         </Typography>
         <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-          ✍️ {titleOverride || t('profile.tellUsAboutYourself')}
+          ✍️ {titleOverride || t('profile.tellUsAboutYourself') || 'Tell Us About Yourself'}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-          {subtitleOverride || t('profile.bioOptional')}
+          {subtitleOverride || t('profile.bioOptional') || 'Optional — helps managers get to know you'}
         </Typography>
         <Alert severity="info" sx={{ mb: 2 }} icon={false}>
-          {t('apply.microcopyBio')}
+          {t('apply.microcopyBio') || 'A short bio helps recruiters match you with the right roles.'}
         </Alert>
 
         <TextField

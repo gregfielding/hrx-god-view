@@ -8,6 +8,8 @@ import { useT } from '../../../i18n';
 type Props = {
   uid: string;
   titleOverride?: string;
+  /** When true (e.g. admin Qualifications panel), only show selected preferences — no subtext, no "add more" options. */
+  displayOnly?: boolean;
 };
 
 const baseShiftOptions = [
@@ -30,10 +32,14 @@ const shiftOptionKeys: Record<string, string> = {
   'Flexible': 'profile.shiftFlexible',
 };
 
-const ShiftPreferencesCard: React.FC<Props> = ({ uid, titleOverride }) => {
+const ShiftPreferencesCard: React.FC<Props> = ({ uid, titleOverride, displayOnly }) => {
   const t = useT();
   const [selectedShifts, setSelectedShifts] = useState<string[]>([]);
-  const shiftLabel = (name: string) => t(shiftOptionKeys[name] || name);
+  const shiftLabel = (name: string) => {
+    const key = shiftOptionKeys[name] || name;
+    const translated = t(key);
+    return translated === key ? name : translated;
+  };
 
   useEffect(() => {
     if (!uid) return;
@@ -66,30 +72,47 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid, titleOverride }) => {
     });
   };
 
+  if (displayOnly) {
+    return (
+      <Box>
+        {selectedShifts.length > 0 ? (
+          <Stack direction="row" flexWrap="wrap" gap={0.75}>
+            {selectedShifts.map((shift: string) => (
+              <Chip key={shift} label={shiftLabel(shift)} size="small" variant="outlined" />
+            ))}
+          </Stack>
+        ) : (
+          <Typography variant="body2" color="text.secondary">No preferences selected.</Typography>
+        )}
+      </Box>
+    );
+  }
+
   const optionalShifts = selectedShifts;
   const allShiftOptions = baseShiftOptions;
+  const titleText = titleOverride || t('profile.shiftPreferences') || 'Availability and preferences';
+  const subtext = t('profile.shiftPreferencesSubtext');
+  const subtextDisplay = subtext === 'profile.shiftPreferencesSubtext' ? 'Select your preferred work schedules' : subtext;
 
   return (
     <Card variant="outlined" sx={{ bgcolor: 'background.paper', borderRadius: 1 }}>
       <CardContent sx={{ p: { xs: 2, md: 3 } }}>
         <Box>
           <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-            ⏰ {titleOverride || t('profile.shiftPreferences')}
+            ⏰ {titleText}
           </Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            {t('profile.shiftPreferencesSubtext')}
+            {subtextDisplay}
           </Typography>
 
-          {/* Your Shift Preferences Section */}
           <Box sx={{ mb: 2 }}>
             <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
-              ➕ {t('profile.yourShiftPreferences')}
+              ➕ {t('profile.yourShiftPreferences') === 'profile.yourShiftPreferences' ? 'Your shift preferences' : t('profile.yourShiftPreferences')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              {t('profile.addShiftPreferencesSubtext')}
+              {t('profile.addShiftPreferencesSubtext') === 'profile.addShiftPreferencesSubtext' ? 'Add additional shift preferences to qualify for more roles' : t('profile.addShiftPreferencesSubtext')}
             </Typography>
 
-            {/* Show added optional shifts */}
             {optionalShifts.length > 0 && (
               <Box sx={{ mb: 2 }}>
                 <Stack direction="row" flexWrap="wrap" gap={1}>
@@ -112,20 +135,19 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid, titleOverride }) => {
               </Box>
             )}
 
-            {/* Available shifts */}
             {optionalShifts.length === 0 && (
               <Box sx={{ mb: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
-                  ⏰ {t('profile.noShiftPreferencesYet')}
+                  ⏰ {t('profile.noShiftPreferencesYet') === 'profile.noShiftPreferencesYet' ? "You haven't added any additional shift preferences yet" : t('profile.noShiftPreferencesYet')}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {t('profile.addShiftToQualify')}
+                  {t('profile.addShiftToQualify') === 'profile.addShiftToQualify' ? 'Add shift preferences to qualify for more roles.' : t('profile.addShiftToQualify')}
                 </Typography>
               </Box>
             )}
 
             <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1, fontSize: '0.85rem' }}>
-              {t('profile.availableShiftsTap')}
+              {t('profile.availableShiftsTap') === 'profile.availableShiftsTap' ? 'Available shifts (tap to add):' : t('profile.availableShiftsTap')}
             </Typography>
             <Stack direction="row" flexWrap="wrap" gap={1}>
               {allShiftOptions

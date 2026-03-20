@@ -567,7 +567,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
         )}
 
         <Chip
-          label={t('profile.addEducation')}
+          label={t('profile.addEducation') || 'Add Education'}
           onClick={(e) => handleOpenEducationDialog(e)}
           icon={<AddCircle />}
           color="primary"
@@ -859,7 +859,7 @@ const EducationStep: React.FC<Props> = ({ value, onChange, context = 'applicatio
         )}
 
         <Chip
-          label={t('profile.addCertification')}
+          label={t('profile.addCertification') || 'Add Certification'}
           onClick={handleOpenCertificationDialog}
           icon={<AddCircle />}
           color="primary"

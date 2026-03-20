@@ -318,6 +318,42 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
+      // Entity employments (Phase 1 onboarding / Employment tab) - recruiters (levels 5–7) read; workers read own; admin/HRX write
+      match /entity_employments/{employmentId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Worker compliance items (Compliance tab / Employment tab) - same read as entity_employments
+      match /worker_compliance_items/{itemId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
+      // Worker payroll accounts (Employment tab) - same read as entity_employments
+      match /worker_payroll_accounts/{accountId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
       // HRX Signatures Spec: document templates + bundles (read tenant roles; write admin/HRX)
       match /document_templates/{docTemplateId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));

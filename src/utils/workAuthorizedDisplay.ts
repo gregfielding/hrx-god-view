@@ -1,6 +1,7 @@
 /**
  * Work Authorized (authorized to work in the US) display helpers.
- * Value comes from workEligibilityAttestation.authorizedToWorkUS or legacy workEligibility.
+ * Only workEligibilityAttestation.authorizedToWorkUS is used; legacy workEligibility is ignored
+ * so that "Skipped" is shown until the user has completed the attestation.
  */
 
 export type WorkAuthorizedStatus = 'yes' | 'no' | 'skipped';
@@ -12,10 +13,10 @@ export interface WorkAuthorizedSource {
 
 /**
  * Derive display status from user data.
- * - yes: explicitly authorized (true)
- * - no: explicitly not authorized (false)
- * - skipped: not answered yet (undefined/null)
- * Accepts any value (e.g. user, candidate, member) and safely reads workEligibility / workEligibilityAttestation.
+ * - yes: user completed attestation and authorizedToWorkUS === true
+ * - no: user completed attestation and authorizedToWorkUS === false
+ * - skipped: not completed (no attestation or authorizedToWorkUS not set)
+ * We do not use legacy workEligibility so that workers who haven't completed the step show Skipped.
  */
 export function getWorkAuthorizedStatus(user: unknown): WorkAuthorizedStatus {
   if (user == null || typeof user !== 'object') return 'skipped';
@@ -23,9 +24,6 @@ export function getWorkAuthorizedStatus(user: unknown): WorkAuthorizedStatus {
   const attestation = u.workEligibilityAttestation;
   if (attestation != null && typeof attestation === 'object' && typeof attestation.authorizedToWorkUS === 'boolean') {
     return attestation.authorizedToWorkUS ? 'yes' : 'no';
-  }
-  if (typeof u.workEligibility === 'boolean') {
-    return u.workEligibility ? 'yes' : 'no';
   }
   return 'skipped';
 }

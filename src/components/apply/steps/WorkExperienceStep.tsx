@@ -309,7 +309,7 @@ const WorkExperienceStep: React.FC<Props> = ({
         )}
 
         <Chip
-          label={t('profile.addWorkExperience')}
+          label={t('profile.addWorkExperience') || 'Add Work Experience'}
           onClick={(e) => handleOpenExperienceDialog(e)}
           icon={<AddCircle />}
           color="primary"
@@ -343,7 +343,7 @@ const WorkExperienceStep: React.FC<Props> = ({
           }
         }}
       >
-        <DialogTitle>{t('profile.addWorkExperience')}</DialogTitle>
+        <DialogTitle>{t('profile.addWorkExperience') || 'Add Work Experience'}</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Autocomplete
