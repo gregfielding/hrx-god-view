@@ -61,6 +61,8 @@ import { useSmartGroupSettings, type CustomMetrosMap } from '../hooks/useSmartGr
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import { formatOneDecimal } from '../utils/scoreSummary';
+import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import FavoriteButton from '../components/FavoriteButton';
 import InterviewCell from '../components/InterviewCell';
@@ -1187,6 +1189,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                 <TableCell sx={{ width: 48, bgcolor: '#FFFFFF' }} />
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Person</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Contact</TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Auth</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Work Status</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Score</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Interview</TableCell>
@@ -1197,7 +1200,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             <TableBody>
               {membersData.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={9} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                  <TableCell colSpan={10} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
                     No members. Click &quot;Update results&quot; to re-run the saved search.
                   </TableCell>
                 </TableRow>
@@ -1275,6 +1278,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                           )}
                           {!m.email && !m.phone && !m.city && !m.state && '—'}
                         </Box>
+                      </TableCell>
+                      <TableCell>
+                        <WorkAuthorizedChip status={getWorkAuthorizedStatus(m)} />
                       </TableCell>
                       <TableCell><Chip size="small" label={ws.label} color={ws.color} /></TableCell>
                       <TableCell>{renderAiScore(m)}</TableCell>

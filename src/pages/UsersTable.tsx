@@ -19,6 +19,8 @@ import { format } from 'date-fns';
 
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 
 
 type User = {
@@ -165,6 +167,7 @@ const UsersTable = () => {
                   <TableCell>Last Name</TableCell>
                   <TableCell>Phone</TableCell>
                   <TableCell>Role</TableCell>
+                  <TableCell>Auth</TableCell>
                   <TableCell>Created At</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
@@ -177,6 +180,9 @@ const UsersTable = () => {
                     <TableCell>{user.lastName}</TableCell>
                     <TableCell>{user.phone}</TableCell>
                     <TableCell>{user.role}</TableCell>
+                    <TableCell>
+                      <WorkAuthorizedChip status={getWorkAuthorizedStatus(user as any)} />
+                    </TableCell>
                     <TableCell>
                       {user.createdAt?.toDate
                         ? format(user.createdAt.toDate(), 'yyyy-MM-dd HH:mm')

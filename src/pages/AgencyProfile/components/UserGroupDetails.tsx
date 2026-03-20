@@ -67,6 +67,8 @@ import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
 import { normalizeScoreSummary } from '../../../utils/scoreSummary';
 import { calculateProfileScore } from '../../../utils/applicantScoring';
+import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../../../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -93,7 +95,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
-  const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin'>('name');
+  const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin' | 'auth'>('name');
   const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
   const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const { isFavorite: isUserFavorite, toggleFavorite: toggleUserFavorite } = useFavorites('users');
@@ -491,6 +493,12 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       }
       case 'lastLogin': {
         cmp = toMillis(a?.lastLoginAt) - toMillis(b?.lastLoginAt);
+        break;
+      }
+      case 'auth': {
+        const aStatus = getWorkAuthorizedStatus(a);
+        const bStatus = getWorkAuthorizedStatus(b);
+        cmp = compareWorkAuthorized(aStatus, bStatus);
         break;
       }
       default:
@@ -1148,6 +1156,15 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       <TableSortLabel
+                        active={membersSortBy === 'auth'}
+                        direction={membersSortBy === 'auth' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('auth')}
+                      >
+                        Auth
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      <TableSortLabel
                         active={membersSortBy === 'workStatus'}
                         direction={membersSortBy === 'workStatus' ? membersSortDirection : 'desc'}
                         onClick={() => handleMembersSort('workStatus')}
@@ -1206,7 +1223,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={11} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={12} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -1296,6 +1313,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                 </Box>
                               )}
                             </Box>
+                          </TableCell>
+
+                          <TableCell>
+                            <WorkAuthorizedChip status={getWorkAuthorizedStatus(u)} />
                           </TableCell>
 
                           <TableCell>

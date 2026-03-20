@@ -55,6 +55,8 @@ import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { normalizeScoreSummary, formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
 import type { ScoreSummary } from '../utils/scoreSummary';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
+import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 
 type SecurityLevel =
   | '0'
@@ -88,6 +90,8 @@ interface RecruiterUser {
   aiJobFitScore?: number;
   userGroupIds: string[];
   skills: string[];
+  workEligibility?: boolean;
+  workEligibilityAttestation?: { authorizedToWorkUS?: boolean };
 }
 
 interface TenantUserGroup {
@@ -154,6 +158,8 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     skills: normalizedSkills,
     city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
     state: userData.state || userData.address?.state || (userData.addressInfo && (userData.addressInfo as any).state) || '',
+    workEligibility: userData.workEligibility,
+    workEligibilityAttestation: userData.workEligibilityAttestation,
   };
 }
 
@@ -234,7 +240,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [groupFilter, setGroupFilter] = useState<string>(cacheState.groupFilter || 'all');
   const [skillFilter, setSkillFilter] = useState<string>(cacheState.skillFilter || 'all');
   const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'interview' | 'accountCreated'>((cacheState.sortBy as any) || 'accountCreated');
+  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'interview' | 'accountCreated' | 'auth'>((cacheState.sortBy as any) || 'accountCreated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
@@ -323,7 +329,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     };
   }, [showFavoritesOnly, favorites, tenantId, users]);
 
-  const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin') => {
+  const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin' | 'auth') => {
     if (sortBy === key) {
       const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
       setSortDirection(newDirection);
@@ -817,6 +823,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             const diff = getInterviewMillis(b) - getInterviewMillis(a);
             return sortDirection === 'desc' ? diff : -diff;
           }
+          case 'auth': {
+            const aStatus = getWorkAuthorizedStatus(a);
+            const bStatus = getWorkAuthorizedStatus(b);
+            const cmp = compareWorkAuthorized(aStatus, bStatus);
+            return sortDirection === 'asc' ? cmp : -cmp;
+          }
           default:
             return 0;
         }
@@ -1159,6 +1171,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 <MenuItem value="accountCreated">Account Creation (Newest)</MenuItem>
                 <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
                 <MenuItem value="lastLogin">Last Login</MenuItem>
+                <MenuItem value="auth">Auth</MenuItem>
                 <MenuItem value="aiScore">AI Score</MenuItem>
                 <MenuItem value="name">Name (A-Z)</MenuItem>
               </Select>
@@ -1349,6 +1362,15 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   <TableSortLabel
+                    active={sortBy === 'auth'}
+                    direction={sortBy === 'auth' ? sortDirection : 'desc'}
+                    onClick={() => handleSort('auth')}
+                  >
+                    Auth
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                  <TableSortLabel
                     active={sortBy === 'aiScore'}
                     direction={sortBy === 'aiScore' ? sortDirection : 'desc'}
                     onClick={() => handleSort('aiScore')}
@@ -1477,6 +1499,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                         />
                       );
                     })()}
+                  </TableCell>
+                  <TableCell>
+                    <WorkAuthorizedChip status={getWorkAuthorizedStatus(user)} />
                   </TableCell>
                   <TableCell>{renderAiScore(user)}</TableCell>
                   <TableCell>

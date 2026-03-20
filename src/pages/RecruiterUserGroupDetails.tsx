@@ -41,6 +41,8 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import { useFavorites } from '../hooks/useFavorites';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 
 type SecurityLevel =
   | '0'
@@ -65,6 +67,8 @@ interface RecruiterUser {
   aiJobFitScore?: number;
   userGroupIds: string[];
   skills: string[];
+  workEligibility?: boolean;
+  workEligibilityAttestation?: { authorizedToWorkUS?: boolean };
 }
 
 interface TenantUserGroup {
@@ -87,7 +91,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [skillFilter, setSkillFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore'>('recentlyUpdated');
+  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'auth'>('recentlyUpdated');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
   const [page, setPage] = useState(0);
@@ -197,6 +201,8 @@ const RecruiterUserGroupDetails: React.FC = () => {
             aiProfileScore,
             userGroupIds: user.userGroupIds || [],
             skills: normalizedSkills,
+            workEligibility: user.workEligibility,
+            workEligibilityAttestation: user.workEligibilityAttestation,
           } as RecruiterUser;
         });
 
@@ -317,6 +323,11 @@ const RecruiterUserGroupDetails: React.FC = () => {
             const aScore = a.aiJobFitScore ?? a.aiProfileScore ?? -1;
             const bScore = b.aiJobFitScore ?? b.aiProfileScore ?? -1;
             return (bScore ?? -1) - (aScore ?? -1);
+          }
+          case 'auth': {
+            const aStatus = getWorkAuthorizedStatus(a);
+            const bStatus = getWorkAuthorizedStatus(b);
+            return compareWorkAuthorized(aStatus, bStatus);
           }
           default:
             return 0;
@@ -608,6 +619,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                     <MenuItem value="lastLogin">Last Login</MenuItem>
                     <MenuItem value="aiScore">AI Score</MenuItem>
                     <MenuItem value="name">Name (A-Z)</MenuItem>
+                    <MenuItem value="auth">Work Authorized</MenuItem>
                   </Select>
                 </FormControl>
               </Box>
@@ -653,6 +665,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
                       Contact
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Auth
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                       Role
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
@@ -672,7 +687,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                 <TableBody>
                   {paginatedMembers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={8} sx={{ textAlign: 'center', py: 4 }}>
+                      <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4 }}>
                         <Typography variant="body2" color="text.secondary">
                           {members.length === 0 ? 'No members in this group.' : 'No members match your filters.'}
                         </Typography>
@@ -741,6 +756,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
                               </Box>
                             )}
                           </Box>
+                        </TableCell>
+                        <TableCell>
+                          <WorkAuthorizedChip status={getWorkAuthorizedStatus(user)} />
                         </TableCell>
                         <TableCell>
                           <Chip

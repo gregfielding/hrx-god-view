@@ -33,6 +33,9 @@ import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebas
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
+import TableSortLabel from '@mui/material/TableSortLabel';
+import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 
 // Security levels for filtering
 type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
@@ -84,7 +87,8 @@ const RecruiterApplicants: React.FC = () => {
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [companyFilter, setCompanyFilter] = useState<string>('all');
   const [jobFilter, setJobFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'lastLogin'>('newest');
+  const [sortBy, setSortBy] = useState<'newest' | 'oldest' | 'name' | 'lastLogin' | 'auth'>('newest');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   
   // Get favorites
@@ -174,6 +178,11 @@ const RecruiterApplicants: React.FC = () => {
           mostRecentApplication = applications[0];
         }
         
+        const workEligibility =
+          userData.workEligibilityAttestation && typeof userData.workEligibilityAttestation.authorizedToWorkUS === 'boolean'
+            ? userData.workEligibilityAttestation.authorizedToWorkUS
+            : userData.workEligibility;
+
         return {
           id: userDoc.id,
           tenantId: userData.tenantId,
@@ -192,6 +201,8 @@ const RecruiterApplicants: React.FC = () => {
           applicationData,
           applicationCount,
           mostRecentApplication,
+          workEligibility,
+          workEligibilityAttestation: userData.workEligibilityAttestation,
         };
       });
       
@@ -314,6 +325,12 @@ const RecruiterApplicants: React.FC = () => {
           return `${a.lastName} ${a.firstName}`.localeCompare(
             `${b.lastName} ${b.firstName}`
           );
+        case 'auth': {
+          const aStatus = getWorkAuthorizedStatus(a);
+          const bStatus = getWorkAuthorizedStatus(b);
+          const cmp = compareWorkAuthorized(aStatus, bStatus);
+          return sortDirection === 'asc' ? cmp : -cmp;
+        }
         default:
           return 0;
       }
@@ -471,7 +488,7 @@ const RecruiterApplicants: React.FC = () => {
           <InputLabel sx={{ fontSize: '0.875rem' }}>Sort By</InputLabel>
           <Select
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'name' | 'lastLogin')}
+            onChange={(e) => setSortBy(e.target.value as 'newest' | 'oldest' | 'name' | 'lastLogin' | 'auth')}
             label="Sort By"
             sx={{
               height: 36,
@@ -490,6 +507,7 @@ const RecruiterApplicants: React.FC = () => {
             <MenuItem value="oldest">Oldest First</MenuItem>
             <MenuItem value="lastLogin">Last Login</MenuItem>
             <MenuItem value="name">Name (A-Z)</MenuItem>
+            <MenuItem value="auth">Work Authorized</MenuItem>
           </Select>
         </FormControl>
       </Box>
@@ -528,6 +546,18 @@ const RecruiterApplicants: React.FC = () => {
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Security Level
+                </TableCell>
+                <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                  <TableSortLabel
+                    active={sortBy === 'auth'}
+                    direction={sortBy === 'auth' ? sortDirection : 'desc'}
+                    onClick={() => {
+                      if (sortBy === 'auth') setSortDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+                      else { setSortBy('auth'); setSortDirection('desc'); }
+                    }}
+                  >
+                    Auth
+                  </TableSortLabel>
                 </TableCell>
                 <TableCell sx={{ fontWeight: 600, color: 'text.secondary', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                   Applications
@@ -602,6 +632,9 @@ const RecruiterApplicants: React.FC = () => {
                       color={getSecurityLevelColor(candidate.securityLevel)}
                       size="small"
                     />
+                  </TableCell>
+                  <TableCell>
+                    <WorkAuthorizedChip status={getWorkAuthorizedStatus(candidate)} />
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" sx={{ fontWeight: 500 }}>

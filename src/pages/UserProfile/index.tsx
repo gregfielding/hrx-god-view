@@ -62,6 +62,8 @@ import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import { logUserActivity } from '../../utils/activityLogger';
 import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
+import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
+import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
 import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
 import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 
@@ -126,6 +128,7 @@ const UserProfilePage = () => {
   const [scoreSummary, setScoreSummary] = useState<ScoreSummary | undefined>(undefined);
   const [reviewsCount, setReviewsCount] = useState<number>(0);
   const [createdAt, setCreatedAt] = useState<any>(null);
+  const [workAuthorizedStatus, setWorkAuthorizedStatus] = useState<'yes' | 'no' | 'skipped'>('skipped');
   const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
   const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
@@ -620,6 +623,12 @@ const UserProfilePage = () => {
 
           // Set createdAt
           setCreatedAt(data.createdAt || null);
+          setWorkAuthorizedStatus(
+            getWorkAuthorizedStatus({
+              workEligibility: data.workEligibility,
+              workEligibilityAttestation: data.workEligibilityAttestation,
+            })
+          );
         }
       }
     };
@@ -1833,6 +1842,10 @@ const UserProfilePage = () => {
                         }
                         return null;
                       })()}
+                      {(city || state || createdAt) && (
+                        <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                      )}
+                      <WorkAuthorizedChip status={workAuthorizedStatus} size="small" />
                       {!city && !state && !createdAt && jobTitle && (
                         <Typography
                           component="span"
