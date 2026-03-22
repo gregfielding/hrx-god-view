@@ -588,9 +588,16 @@ const RecruiterAccounts: React.FC<RecruiterAccountsProps> = ({ onlyMyAccounts = 
                           fontSize: '0.875rem',
                         }}
                       >
-                        {account.hiringEntityId
-                          ? (entityOptions.find((e) => e.id === account.hiringEntityId)?.name ?? '—')
-                          : '—'}
+                        {(() => {
+                          const effectiveId =
+                            account.hiringEntityId ??
+                            (account.parentAccountId
+                              ? accounts.find((a) => a.id === account.parentAccountId)?.hiringEntityId
+                              : null);
+                          return effectiveId
+                            ? (entityOptions.find((e) => e.id === effectiveId)?.name ?? '—')
+                            : '—';
+                        })()}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -190,6 +190,17 @@ function UsersRedirect() {
   return <Navigate to={`/users/${uid}`} replace />;
 }
 
+/** For /c1/users/:uid: workers (securityLevel null or 0–4) go to My Profile; higher levels see UserProfile. */
+function C1UserProfileOrRedirect() {
+  const { user, securityLevel } = useAuth();
+  const level = securityLevel != null ? Number.parseInt(String(securityLevel), 10) : 0;
+  const isWorker = Number.isNaN(level) || level <= 4;
+  if (user && isWorker) {
+    return <Navigate to="/c1/workers/profile" replace />;
+  }
+  return <UserProfile />;
+}
+
 function RecruiterUserGroupsRedirect() {
   const { groupId } = useParams();
   return <Navigate to={`/usergroups/${groupId}`} replace />;
@@ -495,7 +506,7 @@ function App() {
           <Route path="applications" element={<Navigate to="/c1/workers/applications" replace />} />
           <Route path="assignments" element={<MyAssignments />} />
           <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
-          <Route path="users/:uid" element={<UserProfile />} />
+          <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
         </Route>
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
       </Route>

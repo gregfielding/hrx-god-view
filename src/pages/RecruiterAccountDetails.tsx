@@ -2484,8 +2484,32 @@ const RecruiterAccountDetails: React.FC = () => {
     return Array.from(states).sort();
   }, [accountLocationsList]);
 
+  /** Child / sub-accounts: only show contacts tied to this account's linked worksites (not all parent-company contacts). */
+  const linkedWorksitesForContacts = useMemo(
+    () =>
+      (Array.isArray(account?.associations?.locations)
+        ? (account!.associations!.locations as { companyId: string; locationId: string }[])
+        : []) as { companyId: string; locationId: string }[],
+    [account?.associations?.locations]
+  );
+
   const filteredAccountContacts = useMemo(() => {
     let list = accountContactsList;
+    if (isChildAccount) {
+      if (linkedWorksitesForContacts.length === 0) {
+        list = [];
+      } else {
+        list = list.filter((c) =>
+          linkedWorksitesForContacts.some((loc: { companyId: string; locationId: string }) => {
+            if (c.companyId !== loc.companyId) return false;
+            if (c.locationId === loc.locationId) return true;
+            const assocLocs = (c as AccountContactRow & { associations?: { locations?: string[] } }).associations?.locations;
+            if (Array.isArray(assocLocs) && assocLocs.includes(loc.locationId)) return true;
+            return false;
+          })
+        );
+      }
+    }
     const q = (contactsSearchQuery || '').trim().toLowerCase();
     if (q) {
       const tokens = q.split(/\s+/).filter(Boolean);
@@ -2511,7 +2535,15 @@ const RecruiterAccountDetails: React.FC = () => {
       });
     }
     return list;
-  }, [accountContactsList, contactsSearchQuery, contactsWorksiteFilter, contactsStateFilter, accountLocationsList]);
+  }, [
+    accountContactsList,
+    contactsSearchQuery,
+    contactsWorksiteFilter,
+    contactsStateFilter,
+    accountLocationsList,
+    isChildAccount,
+    linkedWorksitesForContacts,
+  ]);
 
   const handleSaveAccountContact = useCallback(async () => {
     const companyId =
@@ -4850,7 +4882,13 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
               </TableContainer>
             ) : filteredAccountContacts.length === 0 ? (
               <Typography variant="body2" color="text.secondary">
-                {contactsSearchQuery ? 'No contacts match your search.' : 'No contacts yet. Add a contact to get started.'}
+                {contactsSearchQuery
+                  ? 'No contacts match your search.'
+                  : isChildAccount && linkedWorksitesForContacts.length > 0
+                    ? 'No contacts are linked to this account\'s worksites yet. Add a contact and pick a worksite, or link existing contacts to this location in CRM.'
+                    : isChildAccount
+                      ? 'Link worksites in the sidebar, then add contacts for those locations.'
+                      : 'No contacts yet. Add a contact to get started.'}
               </Typography>
             ) : (
               <TableContainer component={Paper} variant="outlined" sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -4868,9 +4906,19 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   <TableBody>
                     {filteredAccountContacts.map((contact) => {
                       const fullName = contact.fullName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim() || 'Unnamed';
-                      const locationName = contact.locationId && contact.companyId
-                        ? (accountLocationsList.find((l) => l.companyId === contact.companyId && l.id === contact.locationId)?.name || accountLocationsList.find((l) => l.companyId === contact.companyId && l.id === contact.locationId)?.nickname) || '—'
-                        : '—';
+                      const locationName =
+                        contact.locationId && contact.companyId
+                          ? (() => {
+                              const row = accountLocationsList.find(
+                                (l) => l.companyId === contact.companyId && l.id === contact.locationId
+                              );
+                              if (row?.name || row?.nickname) return row.name || row.nickname || '—';
+                              const opt = locationsByCompany[contact.companyId]?.find(
+                                (l) => l.locationId === contact.locationId
+                              );
+                              return opt?.label || '—';
+                            })()
+                          : '—';
                       const linkedinUrl = contact.linkedinUrl || contact.linkedin || contact.linkedInUrl || contact.linkedIn;
                       const formatPhone = (p: string) => {
                         const cleaned = (p || '').replace(/\D/g, '');
