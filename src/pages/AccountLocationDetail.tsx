@@ -98,6 +98,7 @@ import StandardTablePagination from '../components/StandardTablePagination';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import { getJobOrderAge } from '../utils/dateUtils';
+import { numberInputNoSpinnerSx } from '../utils/numberInputNoSpinner';
 
 type LocationDoc = {
   name?: string;
@@ -2096,7 +2097,7 @@ export default function AccountLocationDetail() {
                                   });
                                 }}
                                 inputProps={{ min: 0, step: 0.01 }}
-                                sx={{ width: 90 }}
+                                sx={{ width: 90, ...numberInputNoSpinnerSx }}
                               />
                             </TableCell>
                             <TableCell align="right">
@@ -2117,7 +2118,7 @@ export default function AccountLocationDetail() {
                                   });
                                 }}
                                 inputProps={{ min: 0, step: 0.5 }}
-                                sx={{ width: 80 }}
+                                sx={{ width: 80, ...numberInputNoSpinnerSx }}
                                 placeholder="—"
                               />
                             </TableCell>
@@ -2137,7 +2138,7 @@ export default function AccountLocationDetail() {
                                   });
                                 }}
                                 inputProps={{ min: 0, step: 0.01 }}
-                                sx={{ width: 90 }}
+                                sx={{ width: 90, ...numberInputNoSpinnerSx }}
                               />
                             </TableCell>
                             <TableCell>
@@ -2177,7 +2178,7 @@ export default function AccountLocationDetail() {
                                   });
                                 }}
                                 inputProps={{ min: 0, step: 0.1 }}
-                                sx={{ width: 70 }}
+                                sx={{ width: 70, ...numberInputNoSpinnerSx }}
                                 placeholder="—"
                                 helperText="Auto from Workers Comp or enter manually"
                               />
@@ -2198,7 +2199,7 @@ export default function AccountLocationDetail() {
                                       });
                                     }}
                                     inputProps={{ min: 0, step: 0.1 }}
-                                    sx={{ width: 70 }}
+                                    sx={{ width: 70, ...numberInputNoSpinnerSx }}
                                     placeholder="—"
                                   />
                                 </TableCell>
@@ -2216,7 +2217,7 @@ export default function AccountLocationDetail() {
                                       });
                                     }}
                                     inputProps={{ min: 0, step: 0.1 }}
-                                    sx={{ width: 70 }}
+                                    sx={{ width: 70, ...numberInputNoSpinnerSx }}
                                     placeholder="—"
                                   />
                                 </TableCell>

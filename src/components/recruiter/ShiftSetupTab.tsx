@@ -874,7 +874,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               disabled={availablePositions.length === 0}
             />
 
-            {/* Total Staff Requested + Overstaff + Toggle — hidden for GIGs (GIG uses per-day Workers + Over) */}
+            {/* Total Staff Requested + Overstaff + Toggle — career only; GIG single-day uses the boxed row below times; GIG multi-day uses per-date rows */}
             {!isGigJob && (
               <Grid container spacing={2}>
                 <Grid item xs={12} md={4}>
@@ -1023,57 +1023,145 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               />
             )}
 
-            {/* Time Fields */}
-            <Box sx={{ display: 'flex', gap: 2 }}>
-              <TextField
-                fullWidth
-                label="Default Start Time"
-                type="time"
-                value={formData.defaultStartTime}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  const nextSchedule =
-                    formData.shiftMode === 'multi'
-                      ? (() => {
-                          const prev = formData.weeklySchedule || {};
-                          const out: typeof prev = { ...prev };
-                          for (const k of Object.keys(out)) {
-                            if (!out[k]) continue;
-                            if (!out[k].startTime) out[k] = { ...out[k], startTime: next };
-                          }
-                          return out;
-                        })()
-                      : formData.weeklySchedule;
-                  setFormData({ ...formData, defaultStartTime: next, weeklySchedule: nextSchedule });
-                }}
-                InputLabelProps={{ shrink: true }}
-                required={!isGigJob}
-              />
-              <TextField
-                fullWidth
-                label="Default End Time"
-                type="time"
-                value={formData.defaultEndTime}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  const nextSchedule =
-                    formData.shiftMode === 'multi'
-                      ? (() => {
-                          const prev = formData.weeklySchedule || {};
-                          const out: typeof prev = { ...prev };
-                          for (const k of Object.keys(out)) {
-                            if (!out[k]) continue;
-                            if (!out[k].endTime) out[k] = { ...out[k], endTime: next };
-                          }
-                          return out;
-                        })()
-                      : formData.weeklySchedule;
-                  setFormData({ ...formData, defaultEndTime: next, weeklySchedule: nextSchedule });
-                }}
-                InputLabelProps={{ shrink: true }}
-                required={!isGigJob}
-              />
-            </Box>
+            {/* Time Fields — hidden for GIG single-day once a date is set (times move into &quot;Shift hours for this day&quot; below). */}
+            {!(isGigJob && formData.shiftMode === 'single' && formData.shiftDate) && (
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <TextField
+                  fullWidth
+                  label="Default Start Time"
+                  type="time"
+                  value={formData.defaultStartTime}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    const nextSchedule =
+                      formData.shiftMode === 'multi'
+                        ? (() => {
+                            const prev = formData.weeklySchedule || {};
+                            const out: typeof prev = { ...prev };
+                            for (const k of Object.keys(out)) {
+                              if (!out[k]) continue;
+                              if (!out[k].startTime) out[k] = { ...out[k], startTime: next };
+                            }
+                            return out;
+                          })()
+                        : formData.weeklySchedule;
+                    setFormData({ ...formData, defaultStartTime: next, weeklySchedule: nextSchedule });
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  required={!isGigJob}
+                />
+                <TextField
+                  fullWidth
+                  label="Default End Time"
+                  type="time"
+                  value={formData.defaultEndTime}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    const nextSchedule =
+                      formData.shiftMode === 'multi'
+                        ? (() => {
+                            const prev = formData.weeklySchedule || {};
+                            const out: typeof prev = { ...prev };
+                            for (const k of Object.keys(out)) {
+                              if (!out[k]) continue;
+                              if (!out[k].endTime) out[k] = { ...out[k], endTime: next };
+                            }
+                            return out;
+                          })()
+                        : formData.weeklySchedule;
+                    setFormData({ ...formData, defaultEndTime: next, weeklySchedule: nextSchedule });
+                  }}
+                  InputLabelProps={{ shrink: true }}
+                  required={!isGigJob}
+                />
+              </Box>
+            )}
+
+            {/* GIG single-day: same grid as multi-day &quot;Shift hours by date&quot; — one row (Start, End, Over, Workers). */}
+            {isGigJob && formData.shiftMode === 'single' && formData.shiftDate && (
+              <Box sx={{ border: '1px solid', borderColor: 'divider', borderRadius: 1.5, p: 2 }}>
+                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                  Shift hours for this day
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Set start and end times and workers needed for this date — same fields as when multi-day is on; only one day is listed.
+                </Typography>
+                <Grid container spacing={1} sx={{ alignItems: 'center' }}>
+                  <Grid item xs={12} md={2}>
+                    <Typography variant="body2" fontWeight={600}>
+                      {formatDayAndDate(formData.shiftDate)}
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={3} md={2}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Start"
+                      type="time"
+                      value={formData.defaultStartTime || ''}
+                      onChange={(e) => setFormData({ ...formData, defaultStartTime: e.target.value })}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={3} md={2}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="End"
+                      type="time"
+                      value={formData.defaultEndTime || ''}
+                      onChange={(e) => setFormData({ ...formData, defaultEndTime: e.target.value })}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={3} md={1.5}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Over"
+                      type="number"
+                      inputProps={{ min: 0, max: 999 }}
+                      value={formData.overstaffCount ?? 0}
+                      onChange={(e) =>
+                        setFormData({ ...formData, overstaffCount: Math.max(0, parseInt(e.target.value, 10) || 0) })
+                      }
+                    />
+                  </Grid>
+                  <Grid item xs={3} md={1.5}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="Workers"
+                      type="number"
+                      inputProps={{ min: 1, max: 999 }}
+                      value={formData.totalStaffRequested ?? 1}
+                      onChange={(e) =>
+                        setFormData({ ...formData, totalStaffRequested: Math.max(1, parseInt(e.target.value, 10) || 1) })
+                      }
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={2}>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<ClearIcon />}
+                      onClick={() =>
+                        setFormData({
+                          ...formData,
+                          defaultStartTime: '',
+                          defaultEndTime: '',
+                        })
+                      }
+                      title="Clear times for this day (date will not appear on job posting)"
+                      aria-label="Clear times for this day"
+                      sx={{ minWidth: 'fit-content' }}
+                    >
+                      Clear
+                    </Button>
+                  </Grid>
+                </Grid>
+              </Box>
+            )}
 
             {/* GIG multi-day: per-date schedule (first day = start date, last = end date). */}
             {formData.shiftMode === 'multi' && isGigJob && formData.shiftDate && formData.endDate && formData.endDate >= formData.shiftDate && (

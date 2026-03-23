@@ -861,6 +861,64 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
   }
 }
 
+/** Internal team / admin security levels (per-tenant or global). */
+function isElevatedSecurityLevel(sl: unknown): boolean {
+  if (sl == null || sl === '') return false;
+  const s = String(sl).trim();
+  if (s === 'Admin') return true;
+  const n = Number.parseInt(s, 10);
+  if (Number.isFinite(n) && n >= 5) return true;
+  return ['5', '6', '7'].includes(s);
+}
+
+/** Caller is internal staff (L5+) for this tenant — same rules as messaging/threadsApi. */
+function isInternalStaffForTenant(user: admin.firestore.DocumentData | undefined, tenantId: string): boolean {
+  if (!user) return false;
+  const u = user as Record<string, unknown>;
+  if (u.role === 'HRX') return true;
+  if (isElevatedSecurityLevel(u.securityLevel)) return true;
+  const tenantIds = u.tenantIds;
+  if (tenantIds && typeof tenantIds === 'object' && tenantId in tenantIds) {
+    const t = (tenantIds as Record<string, { securityLevel?: string | number }>)[tenantId];
+    if (t && isElevatedSecurityLevel(t.securityLevel)) return true;
+  }
+  return false;
+}
+
+/** Target user is a member of the tenant (worker or any role). */
+function userBelongsToTenant(user: admin.firestore.DocumentData | undefined, tenantId: string): boolean {
+  if (!user) return false;
+  const u = user as Record<string, unknown>;
+  if (u.tenantId === tenantId || u.activeTenantId === tenantId) return true;
+  const tenantIds = u.tenantIds;
+  if (Array.isArray(tenantIds) && tenantIds.includes(tenantId)) return true;
+  if (tenantIds && typeof tenantIds === 'object' && tenantId in tenantIds) return true;
+  return false;
+}
+
+/**
+ * Self-serve: caller uid === target. Admin: caller is L5+ for tenantId and target user belongs to tenant.
+ */
+async function canParseResumeForUser(
+  callerUid: string,
+  targetUserId: string,
+  tenantId: string | undefined
+): Promise<boolean> {
+  if (callerUid === targetUserId) return true;
+  if (!tenantId || typeof tenantId !== 'string' || !tenantId.trim()) return false;
+
+  const tid = tenantId.trim();
+  const [callerSnap, targetSnap] = await Promise.all([
+    db.collection('users').doc(callerUid).get(),
+    db.collection('users').doc(targetUserId).get(),
+  ]);
+  const caller = callerSnap.exists ? callerSnap.data() : undefined;
+  const target = targetSnap.exists ? targetSnap.data() : undefined;
+  if (!isInternalStaffForTenant(caller, tid)) return false;
+  if (!userBelongsToTenant(target, tid)) return false;
+  return true;
+}
+
 // HTTP wrapper for parseResume to support localhost development with proper CORS
 export const parseResumeHttp = onRequest({
   cors: true,
@@ -895,7 +953,7 @@ export const parseResumeHttp = onRequest({
     const token = req.headers.authorization.replace('Bearer ', '');
     const decodedToken = await admin.auth().verifyIdToken(token);
     
-    const { fileUrl, fileName, fileSize, userId } = req.body || {};
+    const { fileUrl, fileName, fileSize, userId, tenantId } = req.body || {};
     
     if (!fileUrl || !fileName || !userId) {
       res.set('Access-Control-Allow-Origin', corsOrigin);
@@ -903,8 +961,9 @@ export const parseResumeHttp = onRequest({
       return;
     }
 
-    // Verify user owns the userId or is authorized
-    if (decodedToken.uid !== userId) {
+    // Self-upload OR internal staff (L5+) parsing on behalf of a worker in the same tenant
+    const allowed = await canParseResumeForUser(decodedToken.uid, userId, tenantId);
+    if (!allowed) {
       res.set('Access-Control-Allow-Origin', corsOrigin);
       res.status(403).json({ error: 'Unauthorized to parse resume for this user' });
       return;

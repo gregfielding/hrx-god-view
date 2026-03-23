@@ -71,6 +71,11 @@ export interface CalendarEvent {
      * True when this event represents a multi-day shift "range bar" (month view).
      */
     gigShiftRange?: boolean;
+    /**
+     * Gig job order estimated event window (multi-day range bar in month view).
+     */
+    gigJobOrderRange?: boolean;
+    gigJobOrderId?: string;
   };
   isAllDay: boolean;
   isRecurringInstance: boolean;

@@ -3925,6 +3925,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 <JobOrderForm
                   jobOrderId={jobOrderId}
                   dealId={jobOrder?.dealId}
+                  recruiterAccountId={(jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null}
                   onSave={() => {
                     setIsEditingJobOrderDetails(false);
                     fetchJobOrder();

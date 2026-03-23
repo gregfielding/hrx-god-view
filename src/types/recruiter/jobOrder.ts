@@ -14,6 +14,14 @@ export interface JobOrder {
   createdAt: Date | FieldValue;
   updatedAt: Date | FieldValue;
   poNumber?: string;
+  /** Gig job orders: preliminary total event budget ($) from Financials section */
+  gigEstimatedValue?: number;
+  /** Gig job orders: blended average markup % for preliminary budgeting */
+  gigAverageMarkup?: number;
+  /** Gig: estimated event start (YYYY-MM-DD) */
+  gigEstimatedStartDate?: string | null;
+  /** Gig: estimated event end (YYYY-MM-DD) */
+  gigEstimatedEndDate?: string | null;
   
   // Deal data - unified structure
   deal?: any; // The complete deal data structure

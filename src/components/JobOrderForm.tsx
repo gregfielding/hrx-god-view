@@ -22,6 +22,7 @@ import {
   Autocomplete,
   IconButton,
   Switch,
+  InputAdornment,
 } from '@mui/material';
 import {
   Save as SaveIcon,
@@ -48,6 +49,11 @@ import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequire
 import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
 import { useEntity } from '../hooks/useEntity';
 import { normalizeStateCode } from '../utils/unemploymentRates';
+import {
+  fetchResolvedAccountPricingPositions,
+  buildPricingByJobTitle,
+} from '../utils/accountPricingForJobOrder';
+import type { AccountPositionPricing } from '../types/recruiter/account';
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -71,6 +77,24 @@ const removeUndefinedValues = (obj: any): any => {
   
   return obj;
 };
+
+/** Gig financials: gross profit = estimated value − (estimated value ÷ (1 + markup%)). E.g. $1,000 @ 25% → $200. */
+function formatGigGrossProfit(estimatedValueStr: string, markupPctStr: string): string {
+  const ev = parseFloat(String(estimatedValueStr ?? '').replace(/,/g, ''));
+  const m = parseFloat(String(markupPctStr ?? ''));
+  if (!Number.isFinite(ev) || ev <= 0) return '';
+  if (!Number.isFinite(m) || m < 0) return '';
+  const denom = 1 + m / 100;
+  if (denom <= 0) return '';
+  const gp = ev - ev / denom;
+  if (!Number.isFinite(gp)) return '';
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(gp);
+}
 
 interface Company {
   id: string;
@@ -138,8 +162,21 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
   const wcRatesByStateAndJobTitle = useWorkersCompRatesByJobTitle(tenantId);
 
-  /** Job Title dropdown: when opened from Account > Location, use that location's pricing positions; otherwise full O*NET list */
-  const jobTitleOptions = (propJobTitles && propJobTitles.length > 0) ? propJobTitles : (jobTitlesList as string[]);
+  /** Account Pricing tab positions (child → national fallback); empty ⇒ use O*NET unless propJobTitles overrides */
+  const [resolvedAccountPositions, setResolvedAccountPositions] = useState<AccountPositionPricing[]>([]);
+  const pricingByJobTitle = useMemo(
+    () => buildPricingByJobTitle(resolvedAccountPositions),
+    [resolvedAccountPositions]
+  );
+
+  const jobTitleOptions = useMemo(() => {
+    if (propJobTitles && propJobTitles.length > 0) return propJobTitles;
+    if (resolvedAccountPositions.length > 0) {
+      const titles = resolvedAccountPositions.map((p) => String(p.jobTitle || '').trim()).filter(Boolean);
+      return [...new Set(titles)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+    }
+    return jobTitlesList as string[];
+  }, [propJobTitles, resolvedAccountPositions]);
 
   const [loading, setLoading] = useState(propLoading ?? !!jobOrderId); // Loading if editing
   const [saving, setSaving] = useState(false);
@@ -205,6 +242,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     endDate: '',
     requirements: '',
     notes: '',
+    /** Gig Financials (preliminary event budget) */
+    poNumber: '',
+    gigEstimatedValue: '',
+    gigAverageMarkup: '',
+    gigEstimatedStartDate: '',
+    gigEstimatedEndDate: '',
     
     // Discovery Stage Fields
     currentStaffCount: '',
@@ -302,6 +345,32 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     invoiceContactId: '',
   });
 
+  // Load account Pricing positions for gig job title options (after formData / loadedJobOrderData exist)
+  useEffect(() => {
+    if (!tenantId) return;
+    let cancelled = false;
+    const rid =
+      propRecruiterAccountId ||
+      (loadedJobOrderData as any)?.recruiterAccountId ||
+      (jobOrder as any)?.recruiterAccountId ||
+      null;
+    const cid = formData.companyId || null;
+    (async () => {
+      try {
+        const positions = await fetchResolvedAccountPricingPositions(tenantId, {
+          recruiterAccountId: rid,
+          companyId: cid,
+        });
+        if (!cancelled) setResolvedAccountPositions(positions);
+      } catch {
+        if (!cancelled) setResolvedAccountPositions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, propRecruiterAccountId, formData.companyId, loadedJobOrderData, jobOrder]);
+
   const isEditing = !!jobOrderId;
 
   // Load companies (only when not provided, e.g. from account-scoped modal) and company defaults
@@ -336,6 +405,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       return true;
     });
   }, [companies]);
+
+  const gigGrossProfitDisplay = useMemo(
+    () => formatGigGrossProfit(formData.gigEstimatedValue, formData.gigAverageMarkup),
+    [formData.gigEstimatedValue, formData.gigAverageMarkup]
+  );
 
   // When opening New Job Order from an account/location, pre-fill Company and Worksite
   useEffect(() => {
@@ -886,6 +960,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           billingContactId: (data as any).billingContactId || (data as any).deal?.billingContactId || '',
           safetyContactId: (data as any).safetyContactId || (data as any).deal?.safetyContactId || '',
           invoiceContactId: (data as any).invoiceContactId || (data as any).deal?.invoiceContactId || '',
+          
+          // Gig Financials
+          poNumber: (data as any).poNumber ?? '',
+          gigEstimatedValue:
+            (data as any).gigEstimatedValue != null && (data as any).gigEstimatedValue !== ''
+              ? String((data as any).gigEstimatedValue)
+              : '',
+          gigAverageMarkup:
+            (data as any).gigAverageMarkup != null && (data as any).gigAverageMarkup !== ''
+              ? String((data as any).gigAverageMarkup)
+              : '',
+          gigEstimatedStartDate: toISODate((data as any).gigEstimatedStartDate) || '',
+          gigEstimatedEndDate: toISODate((data as any).gigEstimatedEndDate) || '',
         });
         
         // Load gig positions if job type is gig
@@ -1143,8 +1230,37 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         accountName: companyName || undefined,
         parentAccountName: parentAccountName ?? undefined,
         locationName: worksiteName || undefined,
+        poNumber:
+          (dataToUse as any).jobType === 'gig' ? (dataToUse as any).poNumber || undefined : undefined,
+        gigEstimatedValue:
+          (dataToUse as any).jobType === 'gig'
+            ? (() => {
+                const v = toNumberSafe((dataToUse as any).gigEstimatedValue);
+                return v != null && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigAverageMarkup:
+          (dataToUse as any).jobType === 'gig'
+            ? (() => {
+                const v = toNumberSafe((dataToUse as any).gigAverageMarkup);
+                return v != null && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigEstimatedStartDate:
+          (dataToUse as any).jobType === 'gig'
+            ? (dataToUse as any).gigEstimatedStartDate || null
+            : undefined,
+        gigEstimatedEndDate:
+          (dataToUse as any).jobType === 'gig'
+            ? (dataToUse as any).gigEstimatedEndDate || null
+            : undefined,
         estimatedRevenue: (() => {
-          // Calculate: Bill Rate × 2080 hours × Workers Needed
+          if ((dataToUse as any).jobType === 'gig') {
+            const ev = toNumberSafe((dataToUse as any).gigEstimatedValue);
+            if (ev != null && ev >= 0) return ev;
+            return 0;
+          }
+          // Career: Bill Rate × 2080 hours × Workers Needed
           const billRate = toNumberSafe(dataToUse.billRate) || toNumberSafe(dataToUse.calculatedBillRate) || 0;
           const workersNeeded = parseInt(dataToUse.workersNeeded?.toString() || '1') || 1;
           return billRate * 2080 * workersNeeded;
@@ -1261,7 +1377,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         locationId: formData.worksiteId,
         locationName: worksiteName,
         estimatedRevenue: (() => {
-          // Calculate: Bill Rate × 2080 hours × Workers Needed
+          if (formData.jobType === 'gig') {
+            const v = parseFloat(String(formData.gigEstimatedValue || ''));
+            return !Number.isNaN(v) && v >= 0 ? v : 0;
+          }
           const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
           const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
           return billRate * 2080 * workersNeeded;
@@ -1440,8 +1559,30 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         priority: formData.priority || '',
         employmentType: formData.employmentType || '',
         experienceLevel: formData.experienceLevel || '',
+        poNumber: formData.jobType === 'gig' ? formData.poNumber || undefined : undefined,
+        gigEstimatedValue:
+          formData.jobType === 'gig'
+            ? (() => {
+                const v = parseFloat(String(formData.gigEstimatedValue || ''));
+                return !Number.isNaN(v) && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigAverageMarkup:
+          formData.jobType === 'gig'
+            ? (() => {
+                const v = parseFloat(String(formData.gigAverageMarkup || ''));
+                return !Number.isNaN(v) && v >= 0 ? v : undefined;
+              })()
+            : undefined,
+        gigEstimatedStartDate:
+          formData.jobType === 'gig' ? formData.gigEstimatedStartDate || null : undefined,
+        gigEstimatedEndDate:
+          formData.jobType === 'gig' ? formData.gigEstimatedEndDate || null : undefined,
         estimatedRevenue: (() => {
-          // Calculate: Bill Rate × 2080 hours × Workers Needed
+          if (formData.jobType === 'gig') {
+            const v = parseFloat(String(formData.gigEstimatedValue || ''));
+            return !Number.isNaN(v) && v >= 0 ? v : 0;
+          }
           const billRate = parseFloat(formData.billRate) || parseFloat(formData.calculatedBillRate) || 0;
           const workersNeeded = parseInt(formData.workersNeeded.toString()) || 1;
           return billRate * 2080 * workersNeeded;
@@ -1734,6 +1875,34 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 />
               </Grid>
 
+              {/* Gig: estimated event window (below Company / Worksite) */}
+              {formData.jobType === 'gig' && (
+                <>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Estimated Start Date"
+                      type="date"
+                      value={formData.gigEstimatedStartDate}
+                      onChange={(e) => handleInputChange('gigEstimatedStartDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedStartDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <TextField
+                      fullWidth
+                      label="Estimated End Date"
+                      type="date"
+                      value={formData.gigEstimatedEndDate}
+                      onChange={(e) => handleInputChange('gigEstimatedEndDate', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedEndDate', e.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                  </Grid>
+                </>
+              )}
+
               {/* Only show Start/End Date for Career jobs (not for Gig jobs) */}
               {formData.jobType !== 'gig' && (
                 <>
@@ -1801,6 +1970,64 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 </>
               )}
 
+              {/* Financials — Gig only (preliminary event budget); below Basic Information, above Positions & Compliance */}
+              {formData.jobType === 'gig' && (
+                <>
+                  <Grid item xs={12}>
+                    <Typography variant="h6" gutterBottom sx={{ mt: 2, mb: 1, color: 'primary.main' }}>
+                      Financials
+                    </Typography>
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="PO Number"
+                      value={formData.poNumber}
+                      onChange={(e) => handleInputChange('poNumber', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('poNumber', e.target.value)}
+                      placeholder="e.g. PO-2025-001"
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Estimated Value"
+                      type="number"
+                      value={formData.gigEstimatedValue}
+                      onChange={(e) => handleInputChange('gigEstimatedValue', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigEstimatedValue', e.target.value)}
+                      placeholder="0.00"
+                      inputProps={{ min: 0, step: 0.01 }}
+                      helperText="Preliminary budget for this event"
+                      InputProps={{
+                        startAdornment: <InputAdornment position="start">$</InputAdornment>,
+                      }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Average Markup (%)"
+                      type="number"
+                      value={formData.gigAverageMarkup}
+                      onChange={(e) => handleInputChange('gigAverageMarkup', e.target.value)}
+                      onBlur={(e) => handleFieldBlur('gigAverageMarkup', e.target.value)}
+                      placeholder="e.g. 25"
+                      inputProps={{ min: 0, step: 0.1 }}
+                    />
+                  </Grid>
+                  <Grid item xs={12} sm={6} md={3}>
+                    <TextField
+                      fullWidth
+                      label="Gross Profit"
+                      value={gigGrossProfitDisplay || '—'}
+                      InputProps={{ readOnly: true }}
+                      helperText="Estimate − [estimate ÷ (1 + markup%)]"
+                    />
+                  </Grid>
+                </>
+              )}
+
               {/* Gig Type: Multiple Positions */}
               {formData.jobType === 'gig' && (
                 <Grid item xs={12}>
@@ -1832,9 +2059,36 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                 options={jobTitleOptions}
                                 value={position.jobTitle}
                                 onChange={(event, newValue) => {
-                                  const updated = [...gigPositions];
-                                  updated[index].jobTitle = newValue || '';
-                                  setGigPositions(updated);
+                                  const title = newValue ?? '';
+                                  setGigPositions((prev) => {
+                                    const updated = [...prev];
+                                    const row: any = { ...updated[index], jobTitle: title };
+                                    const preset = String(title).trim()
+                                      ? pricingByJobTitle.get(String(title).trim())
+                                      : undefined;
+                                    if (preset) {
+                                      row.payRate =
+                                        preset.payRate != null ? String(preset.payRate) : row.payRate;
+                                      const m = preset.markupPercent;
+                                      row.markup =
+                                        m != null && !Number.isNaN(Number(m)) ? String(m) : row.markup;
+                                      const payNum = parseFloat(row.payRate) || 0;
+                                      const mNum = parseFloat(String(row.markup || '')) || 0;
+                                      if (mNum > 0 && payNum > 0) {
+                                        row.billRate = String(Number((payNum * (1 + mNum / 100)).toFixed(2)));
+                                      } else if (preset.billRate != null) {
+                                        row.billRate = String(preset.billRate);
+                                      }
+                                      if (preset.workersCompCode) {
+                                        row.workersCompClassCode = String(preset.workersCompCode);
+                                      }
+                                      if (preset.workersCompRate != null) {
+                                        row.workersCompRate = String(preset.workersCompRate);
+                                      }
+                                    }
+                                    updated[index] = row;
+                                    return updated;
+                                  });
                                 }}
                                 renderInput={(params) => (
                                   <TextField
@@ -1842,6 +2096,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                     label="Job Title"
                                     size="small"
                                     required
+                                    helperText={
+                                      resolvedAccountPositions.length > 0
+                                        ? 'From account Pricing; type any title if yours is not listed.'
+                                        : undefined
+                                    }
                                   />
                                 )}
                               />

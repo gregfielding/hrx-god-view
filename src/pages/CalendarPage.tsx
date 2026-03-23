@@ -570,6 +570,14 @@ const CalendarPage: React.FC = () => {
 
     // If it's a Gig job order shift event, navigate to the job order instead
     if (event.calendarId === 'gig-job-orders') {
+      if (event.id.startsWith('gig-job-order-estimated-')) {
+        const jobOrderId =
+          event.colorId || event.hrx?.gigJobOrderId || event.id.replace('gig-job-order-estimated-', '');
+        if (jobOrderId) {
+          navigate(`/jobs/job-orders/${jobOrderId}`);
+          return;
+        }
+      }
       if (event.id.startsWith('gig-shift-')) {
         // Extract jobOrderId from event ID: gig-shift-{jobOrderId}-{shiftId}
         const parts = event.id.replace('gig-shift-', '').split('-');
@@ -1205,7 +1213,9 @@ const CalendarPage: React.FC = () => {
   // Render day view
   const renderDayView = () => {
     const dayEvents = getEventsForDay(currentDate);
-    const allDayEvents = dayEvents.filter((event) => event.isAllDay && !event.hrx?.gigShiftRange);
+    const allDayEvents = dayEvents.filter(
+      (event) => event.isAllDay && !event.hrx?.gigShiftRange && !event.hrx?.gigJobOrderRange
+    );
     const timedEvents = dayEvents.filter((event) => !event.isAllDay);
     const dayLayout = layoutOverlappingTimedEvents(timedEvents);
     

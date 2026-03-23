@@ -135,6 +135,7 @@ import jobTitlesData from '../data/onetJobTitles.json';
 import { JobsBoardService, type JobsBoardPost } from '../services/recruiter/jobsBoardService';
 import { getSutaRateByState, getFutaRateByState, normalizeStateCode, US_STATE_CODES } from '../utils/unemploymentRates';
 import { canAccessAccountInvoicingTab } from '../utils/invoicingAccessControl';
+import { numberInputNoSpinnerSx } from '../utils/numberInputNoSpinner';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import AddNoteDialog from '../components/AddNoteDialog';
@@ -5403,7 +5404,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           value={pricingFlatMarkupPercent}
                           onChange={(e) => setPricingFlatMarkupPercent(e.target.value === '' ? '' : Number(e.target.value))}
                           inputProps={{ min: 0, step: 0.5 }}
-                          sx={{ width: 160 }}
+                          sx={{ width: 160, ...numberInputNoSpinnerSx }}
                           helperText="Applied to all job positions across all sub-accounts (e.g. 45 = 45% over pay rate)"
                         />
                       </Box>
@@ -5583,7 +5584,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                     });
                                   }}
                                   inputProps={{ min: 0, step: 0.01 }}
-                                  sx={{ width: 90 }}
+                                  sx={{ width: 90, ...numberInputNoSpinnerSx }}
                                 />
                               </TableCell>
                               <TableCell align="right">
@@ -5604,7 +5605,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                     });
                                   }}
                                   inputProps={{ min: 0, step: 0.5 }}
-                                  sx={{ width: 80 }}
+                                  sx={{ width: 80, ...numberInputNoSpinnerSx }}
                                   placeholder="—"
                                 />
                               </TableCell>
@@ -5624,7 +5625,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                     });
                                   }}
                                   inputProps={{ min: 0, step: 0.01 }}
-                                  sx={{ width: 90 }}
+                                  sx={{ width: 90, ...numberInputNoSpinnerSx }}
                                 />
                               </TableCell>
                               <TableCell>
@@ -5665,7 +5666,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                     });
                                   }}
                                   inputProps={{ min: 0, step: 0.1 }}
-                                  sx={{ width: 70 }}
+                                  sx={{ width: 70, ...numberInputNoSpinnerSx }}
                                   placeholder="—"
                                   helperText="Auto from Workers Comp or enter manually"
                                 />
@@ -5686,7 +5687,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                         });
                                       }}
                                       inputProps={{ min: 0, step: 0.1 }}
-                                      sx={{ width: 70 }}
+                                      sx={{ width: 70, ...numberInputNoSpinnerSx }}
                                       placeholder="—"
                                     />
                                   </TableCell>
@@ -5704,7 +5705,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                         });
                                       }}
                                       inputProps={{ min: 0, step: 0.1 }}
-                                      sx={{ width: 70 }}
+                                      sx={{ width: 70, ...numberInputNoSpinnerSx }}
                                       placeholder="—"
                                     />
                                   </TableCell>

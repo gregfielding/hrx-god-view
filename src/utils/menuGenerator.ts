@@ -240,6 +240,13 @@ export async function generateMenuItems(
         icon: 'people',
         requiredRoles: ['Recruiter', 'Manager', 'Admin'] as ClaimsRole[], // Recruiter area access
       }]),
+      // Finances & Budgeting: internal team (security levels 5, 6, 7)
+      ...([{
+        text: 'Finances and Budgeting',
+        to: '/finances-budgeting',
+        icon: 'bar_chart',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
       // Global Invoicing (sidebar): security level 7 only – all accounts, reporting, create invoices
       ...([{
         text: 'Invoicing',

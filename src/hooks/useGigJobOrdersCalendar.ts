@@ -6,7 +6,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { collection, documentId, getDocs, query, where, Timestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { CalendarEvent } from '../types/calendar';
-import { eachDayOfInterval, format, isValid, parse, parseISO } from 'date-fns';
+import { eachDayOfInterval, endOfDay, isSameDay, isValid, parseISO, startOfDay } from 'date-fns';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
 import { getDateScheduleEntriesWithHours, formatDateScheduleEntry } from '../utils/dateSchedule';
 
@@ -19,6 +19,105 @@ function parseLocalYyyyMmDd(dateStr: string): Date | null {
 
 function formatLocalYyyyMmDd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/** Parse gig estimated date from string or Firestore Timestamp */
+function normalizeGigEstimatedDate(value: any): string | null {
+  if (value == null || value === '') return null;
+  if (typeof value === 'object' && typeof value.toDate === 'function') {
+    const d = value.toDate();
+    return formatLocalYyyyMmDd(d);
+  }
+  if (typeof value === 'string') {
+    const m = value.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+function formatGigJobOrderBarSummary(jobOrder: any): string {
+  const name = jobOrder?.jobOrderName || jobOrder?.jobTitle || 'Gig job order';
+  const ev = jobOrder?.gigEstimatedValue;
+  const m = jobOrder?.gigAverageMarkup;
+  const parts: string[] = [name];
+  if (ev != null && Number.isFinite(Number(ev))) {
+    parts.push(
+      new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(Number(ev))
+    );
+  }
+  if (
+    ev != null &&
+    Number.isFinite(Number(ev)) &&
+    m != null &&
+    Number.isFinite(Number(m))
+  ) {
+    const denom = 1 + Number(m) / 100;
+    if (denom > 0) {
+      const gp = Number(ev) - Number(ev) / denom;
+      if (Number.isFinite(gp)) {
+        parts.push(
+          new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(gp)
+        );
+      }
+    }
+  }
+  return parts.join(' · ');
+}
+
+/**
+ * All-day span for gig job order estimated start/end (event window on Gig Calendar).
+ */
+function jobOrderEstimatedRangeToEvent(jobOrder: any, timeMin: Date, timeMax: Date): CalendarEvent | null {
+  const startStr = normalizeGigEstimatedDate(jobOrder?.gigEstimatedStartDate);
+  const endStr = normalizeGigEstimatedDate(jobOrder?.gigEstimatedEndDate);
+  if (!startStr || !endStr) return null;
+
+  const startD = parseLocalYyyyMmDd(startStr);
+  const endD = parseLocalYyyyMmDd(endStr);
+  if (!startD || !endD || !isValid(startD) || !isValid(endD)) return null;
+  if (endD < startD) return null;
+
+  const rangeStart = startOfDay(startD);
+  const rangeEnd = endOfDay(endD);
+  if (rangeEnd < timeMin || rangeStart > timeMax) return null;
+
+  const endExclusive = new Date(endD);
+  endExclusive.setDate(endExclusive.getDate() + 1);
+
+  const multiDay = !isSameDay(startD, endD);
+  const summary = formatGigJobOrderBarSummary(jobOrder);
+
+  const created =
+    jobOrder?.createdAt instanceof Timestamp
+      ? jobOrder.createdAt.toDate().toISOString()
+      : jobOrder?.createdAt instanceof Date
+        ? jobOrder.createdAt.toISOString()
+        : new Date().toISOString();
+  const updated =
+    jobOrder?.updatedAt instanceof Timestamp
+      ? jobOrder.updatedAt.toDate().toISOString()
+      : jobOrder?.updatedAt instanceof Date
+        ? jobOrder.updatedAt.toISOString()
+        : created;
+
+  return {
+    id: `gig-job-order-estimated-${jobOrder.id}`,
+    calendarId: GIG_JOB_ORDERS_CALENDAR_ID,
+    status: 'confirmed',
+    summary,
+    description: multiDay ? 'Estimated event window (from job order)' : undefined,
+    start: { date: startStr, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end: { date: formatLocalYyyyMmDd(endExclusive), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    isAllDay: true,
+    isRecurringInstance: false,
+    createdAt: created,
+    updatedAt: updated,
+    colorId: jobOrder?.id || undefined,
+    hrx: {
+      gigJobOrderRange: multiDay,
+      gigJobOrderId: jobOrder.id,
+    },
+  };
 }
 
 function shiftToRangeBarEvent(shift: any, jobOrder: any, jobOrderColor: string): CalendarEvent | null {
@@ -496,6 +595,13 @@ export function useGigJobOrdersCalendar({
           }
         }
 
+        // Gig job orders: estimated event window (Financials — start/end dates)
+        for (const jobOrder of jobOrders) {
+          if ((jobOrder as any).jobType !== 'gig') continue;
+          const evt = jobOrderEstimatedRangeToEvent(jobOrder, timeMin, timeMax);
+          if (evt) calendarEvents.push(evt);
+        }
+
         if (!cancelled) {
           setEvents(calendarEvents);
           // If we aborted due to Firestore errors, set a warning but don't fail completely
@@ -550,7 +656,7 @@ export function getGigJobOrdersCalendarSummary() {
   return {
     id: GIG_JOB_ORDERS_CALENDAR_ID,
     summary: 'Gig Calendar',
-    description: 'All Gig job order shifts from your tenant',
+    description: 'Gig job order shifts and estimated event windows (from job order dates)',
     accessRole: 'reader' as const,
     backgroundColor: '#FF9800', // Default orange color
     foregroundColor: '#FFFFFF',

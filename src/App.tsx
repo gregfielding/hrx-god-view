@@ -152,6 +152,7 @@ import UsersLayout from './pages/UsersLayout';
 import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
+import FinancesBudgetingPage from './pages/FinancesBudgetingPage';
 import WorkersCompRatesPage from './pages/TenantViews/settings/WorkersCompRatesPage';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
@@ -672,6 +673,16 @@ function App() {
           <Route path="my" element={<RecruiterAccounts onlyMyAccounts />} />
         </Route>
         <Route path="my-accounts" element={<Navigate to="/accounts/my" replace />} />
+        <Route
+          path="finances-budgeting"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <FinancesBudgetingPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
         <Route
           path="invoicing"
           element={
