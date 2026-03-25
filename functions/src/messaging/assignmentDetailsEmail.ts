@@ -73,6 +73,244 @@ function nl2br(s: string): string {
   return escapeHtml(s).replace(/\n/g, '<br>\n');
 }
 
+/** Same section keys as worker Assignment Details (see src/pages/AssignmentDetails.tsx). */
+const STAFF_SECTION_KEYS = [
+  'firstDay',
+  'parking',
+  'checkIn',
+  'uniform',
+  'credentials',
+  'other',
+  'attachments',
+] as const;
+
+type StaffSectionMap = Record<string, { text?: unknown; files?: any[] } | undefined>;
+
+function normalizeStaffInstructionMap(input: unknown): StaffSectionMap {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const map = input as Record<string, unknown>;
+  const out: StaffSectionMap = {};
+  for (const key of STAFF_SECTION_KEYS) {
+    const value = map[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const section = value as Record<string, unknown>;
+    out[key] = {
+      text: section.text,
+      files: Array.isArray(section.files) ? section.files : [],
+    };
+  }
+  return out;
+}
+
+type StaffI18nMap = Record<string, { en?: string; es?: string } | undefined>;
+
+function normalizeStaffInstructionI18nMap(input: unknown): StaffI18nMap {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const map = input as Record<string, unknown>;
+  const out: StaffI18nMap = {};
+  for (const key of STAFF_SECTION_KEYS) {
+    const value = map[key];
+    if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+    const section = value as Record<string, unknown>;
+    const en = typeof section.en === 'string' ? section.en : undefined;
+    const es = typeof section.es === 'string' ? section.es : undefined;
+    if (en || es) out[key] = { en, es };
+  }
+  return out;
+}
+
+function hasStaffTextValue(value: unknown): boolean {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const obj = value as Record<string, unknown>;
+  const en = typeof obj.en === 'string' ? obj.en : '';
+  const es = typeof obj.es === 'string' ? obj.es : '';
+  return en.trim().length > 0 || es.trim().length > 0;
+}
+
+/**
+ * Merge staff instruction maps with the same precedence as the worker Assignment Details page:
+ * parent account defaults < account < location defaults < job order < shift < assignment.
+ */
+function mergeStaffInstructionLayers(
+  staffSources: StaffSectionMap[],
+  i18nSources: StaffI18nMap[],
+): { merged: StaffSectionMap; mergedI18n: StaffI18nMap } {
+  const resolvedStaff: StaffSectionMap = {};
+  const resolvedI18n: StaffI18nMap = {};
+
+  for (const sectionKey of STAFF_SECTION_KEYS) {
+    let pickedText: unknown = undefined;
+    let pickedFiles: any[] | undefined = undefined;
+    let pickedI18n: { en?: string; es?: string } | undefined = undefined;
+
+    for (let i = staffSources.length - 1; i >= 0; i -= 1) {
+      const candidate = staffSources[i]?.[sectionKey];
+      if (!candidate) continue;
+      if (pickedText === undefined && hasStaffTextValue(candidate.text)) {
+        pickedText = candidate.text;
+      }
+      if (pickedFiles === undefined && Array.isArray(candidate.files) && candidate.files.length > 0) {
+        pickedFiles = candidate.files;
+      }
+    }
+    for (let i = i18nSources.length - 1; i >= 0; i -= 1) {
+      const candidate = i18nSources[i]?.[sectionKey];
+      if (!candidate) continue;
+      if (
+        !pickedI18n &&
+        ((candidate.en && candidate.en.trim()) || (candidate.es && candidate.es.trim()))
+      ) {
+        pickedI18n = candidate;
+      }
+    }
+    if (pickedText !== undefined || (pickedFiles && pickedFiles.length > 0)) {
+      resolvedStaff[sectionKey] = { text: pickedText, files: pickedFiles || [] };
+    }
+    if (pickedI18n) {
+      resolvedI18n[sectionKey] = pickedI18n;
+    }
+  }
+  return { merged: resolvedStaff, mergedI18n: resolvedI18n };
+}
+
+function getEnglishStaffSectionText(
+  section: string,
+  merged: StaffSectionMap,
+  mergedI18n: StaffI18nMap,
+  assignmentCheckInFallback: string,
+): string {
+  const raw = merged[section]?.text;
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    const en = typeof o.en === 'string' ? o.en : '';
+    const es = typeof o.es === 'string' ? o.es : '';
+    if (en.trim()) return en.trim();
+    if (es.trim()) return es.trim();
+  }
+  const i18n = mergedI18n[section];
+  if (i18n?.en?.trim()) return i18n.en.trim();
+  if (i18n?.es?.trim()) return i18n.es.trim();
+  if (section === 'checkIn') return assignmentCheckInFallback.trim();
+  return '';
+}
+
+/**
+ * Load cascaded staff instructions (account / location / shift / job order / assignment) so the email
+ * matches what workers see on Assignment Details.
+ */
+async function loadMergedStaffInstructions(
+  tenantId: string,
+  a: Record<string, unknown>,
+  jobOrderData: Record<string, unknown> | null,
+  shiftDocData: Record<string, unknown> | null,
+): Promise<{ merged: StaffSectionMap; mergedI18n: StaffI18nMap }> {
+  const assignmentStaff = normalizeStaffInstructionMap(a.staffInstructions);
+  const assignmentStaffI18n = normalizeStaffInstructionI18nMap(a.staffInstructions_i18n);
+  const jobOrderStaff = jobOrderData ? normalizeStaffInstructionMap(jobOrderData.staffInstructions) : {};
+  const jobOrderStaffI18n = jobOrderData
+    ? normalizeStaffInstructionI18nMap(jobOrderData.staffInstructions_i18n)
+    : {};
+  const shiftStaff = shiftDocData ? normalizeStaffInstructionMap(shiftDocData.staffInstructions) : {};
+  const shiftStaffI18n = shiftDocData
+    ? normalizeStaffInstructionI18nMap(shiftDocData.staffInstructions_i18n)
+    : {};
+
+  const accountId =
+    (typeof a.companyId === 'string' && a.companyId) ||
+    (typeof a.accountId === 'string' && a.accountId) ||
+    (jobOrderData && (jobOrderData.accountId as string | undefined)) ||
+    (jobOrderData && (jobOrderData.companyId as string | undefined)) ||
+    undefined;
+  const parentAccountId =
+    (typeof a.parentAccountId === 'string' && a.parentAccountId) ||
+    (jobOrderData && (jobOrderData.parentAccountId as string | undefined)) ||
+    undefined;
+  const locationId =
+    (typeof a.worksiteId === 'string' && a.worksiteId) ||
+    (typeof a.locationId === 'string' && a.locationId) ||
+    (jobOrderData && (jobOrderData.worksiteId as string | undefined)) ||
+    (jobOrderData && (jobOrderData.locationId as string | undefined)) ||
+    undefined;
+  const companyIdForKey = jobOrderData && (jobOrderData.companyId as string | undefined);
+
+  const locationKeyCandidates = [
+    typeof jobOrderData?.locationKey === 'string' ? (jobOrderData.locationKey as string) : '',
+    accountId && locationId ? `${accountId}_${locationId}` : '',
+    companyIdForKey && locationId ? `${companyIdForKey}_${locationId}` : '',
+  ].filter(Boolean);
+
+  let parentAccountStaff: StaffSectionMap = {};
+  let parentAccountStaffI18n: StaffI18nMap = {};
+  let accountStaff: StaffSectionMap = {};
+  let accountStaffI18n: StaffI18nMap = {};
+  let locationStaff: StaffSectionMap = {};
+  let locationStaffI18n: StaffI18nMap = {};
+
+  try {
+    if (parentAccountId) {
+      const snap = await db.doc(`tenants/${tenantId}/accounts/${parentAccountId}`).get();
+      if (snap.exists) {
+        const d = snap.data() || {};
+        const od = (d.orderDefaults as Record<string, unknown> | undefined) || {};
+        parentAccountStaff = normalizeStaffInstructionMap(od.staffInstructions);
+        parentAccountStaffI18n = normalizeStaffInstructionI18nMap(od.staffInstructions_i18n);
+      }
+    }
+  } catch (_) {
+    /* best-effort */
+  }
+
+  try {
+    if (accountId) {
+      const snap = await db.doc(`tenants/${tenantId}/accounts/${accountId}`).get();
+      if (snap.exists) {
+        const d = snap.data() || {};
+        const od = (d.orderDefaults as Record<string, unknown> | undefined) || {};
+        accountStaff = normalizeStaffInstructionMap(od.staffInstructions);
+        accountStaffI18n = normalizeStaffInstructionI18nMap(od.staffInstructions_i18n);
+      }
+    }
+  } catch (_) {
+    /* best-effort */
+  }
+
+  try {
+    if (accountId && locationKeyCandidates.length > 0) {
+      for (const key of locationKeyCandidates) {
+        const snap = await db.doc(`tenants/${tenantId}/accounts/${accountId}/location_defaults/${key}`).get();
+        if (!snap.exists) continue;
+        const d = snap.data() || {};
+        const od = (d.orderDefaults as Record<string, unknown> | undefined) || {};
+        locationStaff = normalizeStaffInstructionMap(od.staffInstructions);
+        locationStaffI18n = normalizeStaffInstructionI18nMap(od.staffInstructions_i18n);
+        break;
+      }
+    }
+  } catch (_) {
+    /* best-effort */
+  }
+
+  const staffSources: StaffSectionMap[] = [
+    parentAccountStaff,
+    accountStaff,
+    locationStaff,
+    jobOrderStaff,
+    shiftStaff,
+    assignmentStaff,
+  ];
+  const i18nSources: StaffI18nMap[] = [
+    parentAccountStaffI18n,
+    accountStaffI18n,
+    locationStaffI18n,
+    jobOrderStaffI18n,
+    shiftStaffI18n,
+    assignmentStaffI18n,
+  ];
+  return mergeStaffInstructionLayers(staffSources, i18nSources);
+}
+
 export interface AssignmentDetailsEmailResult {
   subject: string;
   html: string;
@@ -159,7 +397,7 @@ export async function buildAssignmentDetailsEmail(
     const uniformText = [a.uniformRequirements, a.customUniformRequirements].filter(Boolean).join('\n\n') || PLACEHOLDER;
     const ppeText = a.ppeRequirements || PLACEHOLDER;
 
-    // Shift (schedule)
+    // Shift (schedule) + raw shift doc for cascaded staff instructions (matches worker Assignment Details)
     let scheduleShift: {
       shiftMode?: string;
       weeklySchedule?: Record<string, { enabled?: boolean; startTime?: string; endTime?: string }>;
@@ -169,12 +407,14 @@ export async function buildAssignmentDetailsEmail(
       shiftDescription?: string;
       emailIntro?: string;
     } | null = null;
+    let shiftDocData: Record<string, unknown> | null = null;
     if (a.jobOrderId && a.shiftId) {
       const shiftSnap = await db
         .doc(`tenants/${tenantId}/job_orders/${a.jobOrderId}/shifts/${a.shiftId}`)
         .get();
       if (shiftSnap.exists) {
         const d = shiftSnap.data() || {};
+        shiftDocData = d as Record<string, unknown>;
         scheduleShift = {
           shiftMode: d.shiftMode,
           weeklySchedule: d.weeklySchedule,
@@ -189,7 +429,7 @@ export async function buildAssignmentDetailsEmail(
 
     const jobOrderType = a.jobOrderType === 'gig' || a.jobOrderType === 'career' ? a.jobOrderType : undefined;
 
-    // Job order (for recruiters + staff instructions – job order is source of truth for Staff Instructions tab edits)
+    // Job order (recruiters + cascaded staff instructions)
     let jobOrderData: Record<string, unknown> | null = null;
     if (a.jobOrderId) {
       const jobOrderSnap = await db.doc(`tenants/${tenantId}/job_orders/${a.jobOrderId}`).get();
@@ -197,6 +437,24 @@ export async function buildAssignmentDetailsEmail(
         jobOrderData = (jobOrderSnap.data() || {}) as Record<string, unknown>;
       }
     }
+
+    const shiftCheckIn =
+      shiftDocData && typeof shiftDocData.checkInInstructions === 'string'
+        ? String(shiftDocData.checkInInstructions).trim()
+        : '';
+    const jobOrderCheckIn =
+      jobOrderData && typeof jobOrderData.checkInInstructions === 'string'
+        ? String(jobOrderData.checkInInstructions).trim()
+        : '';
+    const assignmentCheckIn = String(a.checkInInstructions || '').trim();
+    const checkInFallback = assignmentCheckIn || shiftCheckIn || jobOrderCheckIn;
+
+    const { merged: mergedStaff, mergedI18n: mergedStaffI18n } = await loadMergedStaffInstructions(
+      tenantId,
+      a,
+      jobOrderData,
+      shiftDocData,
+    );
 
     // Recruiters
     const recruiters: Array<{ displayName: string; email?: string; phone?: string }> = [];
@@ -308,17 +566,10 @@ export async function buildAssignmentDetailsEmail(
     }
     sections.push(scheduleHtml);
 
-    // Staff Instructions – use job order as primary (user edits there); fallback to assignment
-    const joStaff = (jobOrderData?.staffInstructions ?? {}) as Record<string, { text?: string | { en?: string; es?: string }; files?: any[] } | undefined>;
-    const aStaff = (a.staffInstructions ?? {}) as Record<string, { text?: string | { en?: string; es?: string }; files?: any[] } | undefined>;
-    const getStaffText = (section: string): string => {
-      const raw = joStaff[section]?.text ?? aStaff[section]?.text;
-      if (typeof raw === 'string') return raw.trim();
-      if (raw && typeof raw === 'object' && (raw.en || raw.es)) return ((raw as { en?: string; es?: string }).en || (raw as { en?: string; es?: string }).es || '').trim();
-      if (section === 'checkIn') return (a.checkInInstructions as string ?? '').trim();
-      return '';
-    };
-    const getStaffFiles = (section: string): any[] => joStaff[section]?.files ?? aStaff[section]?.files ?? [];
+    // Staff Instructions – same cascade as worker Assignment Details (account → location → job order → shift → assignment)
+    const getStaffText = (section: string): string =>
+      getEnglishStaffSectionText(section, mergedStaff, mergedStaffI18n, checkInFallback);
+    const getStaffFiles = (section: string): any[] => mergedStaff[section]?.files ?? [];
     const staffSections: Array<{ title: string; text: string; files: any[] }> = [
       { title: 'First Day Instructions', text: getStaffText('firstDay'), files: getStaffFiles('firstDay') },
       { title: 'Parking Instructions', text: getStaffText('parking'), files: getStaffFiles('parking') },
@@ -335,8 +586,9 @@ export async function buildAssignmentDetailsEmail(
         if (Array.isArray(sec.files) && sec.files.length > 0) {
           block += '<p style="margin:8px 0 0 0;">' + sec.files.map((f: any) => {
             const label = f.label || f.name || 'View File';
-            const url = f.url || '#';
-            return `<a href="${escapeHtml(url)}" style="margin-right:8px; color:#1976d2;">${escapeHtml(label)}</a>`;
+            const url = typeof f.url === 'string' ? f.url : typeof f.downloadURL === 'string' ? f.downloadURL : '';
+            const href = url && /^https?:\/\//i.test(url) ? url : url || '#';
+            return `<a href="${escapeHtml(href)}" style="margin-right:8px; color:#1976d2;">${escapeHtml(label)}</a>`;
           }).join('') + '</p>';
         }
         sections.push(block);

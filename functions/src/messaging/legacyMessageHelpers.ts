@@ -331,7 +331,10 @@ export async function sendLegacyAssignmentMessage(args: {
       args.source === 'assignment_created'
         ? SYSTEM_TRIGGER_KEYS.assignmentCreated
         : mapAssignmentStatusToTriggerKey(statusForTrigger);
-    if (triggerKey) {
+    // When we already built the full assignment-details HTML (staff instructions + links), do not
+    // short-circuit through tenant automation rules — those templates omit cascaded instructions and
+    // would block the rich email entirely when rules exist but fail to send.
+    if (triggerKey && !(args.emailSubject && args.emailBody)) {
       const dispatched = await dispatchSystemMessage({
         tenantId: args.tenantId,
         triggerKey,

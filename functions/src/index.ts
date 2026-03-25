@@ -8827,9 +8827,38 @@ export const logAssignmentUpdated = onDocumentUpdated(
         const userDoc = await admin.firestore().doc(`users/${after.userId}`).get();
         const userData = userDoc.data();
         const phoneE164 = (userData?.phoneE164 || userData?.phone || '').trim();
-        // Attempt send when we have any phone number; orchestrator handles consent/opt-out.
-        // Previously we required phoneVerified, which skipped confirmation for many test users.
-        if (phoneE164) {
+        const userEmail = String(userData?.email || '').trim();
+
+        // Full assignment-details HTML for confirmation (matches preview + worker Assignment Details page)
+        let emailSubject: string | undefined;
+        let emailBody: string | undefined;
+        if (after.status === 'confirmed') {
+          try {
+            const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
+            const emailResult = await buildAssignmentDetailsEmail(tenantId, assignmentId);
+            if (emailResult) {
+              emailSubject = emailResult.subject;
+              emailBody = emailResult.html;
+            }
+          } catch (e: any) {
+            logger.warn(
+              `logAssignmentUpdated: could not build assignment details email for ${assignmentId}`,
+              e?.message,
+            );
+          }
+        }
+
+        // SMS requires a phone; email can deliver full instructions when status is confirmed.
+        const canNotify =
+          !!phoneE164 || (after.status === 'confirmed' && !!userEmail && !!emailBody);
+
+        if (!canNotify) {
+          if (after.status === 'confirmed') {
+            logger.warn(
+              `logAssignmentUpdated: confirmed assignment ${assignmentId} skipped — no phone on file and no email/HTML to send`,
+            );
+          }
+        } else {
           let message = '';
           const firstName = after.firstName || userData?.firstName || 'there';
 
@@ -8889,6 +8918,7 @@ export const logAssignmentUpdated = onDocumentUpdated(
               source: 'assignment_status_update',
               sourceId: assignmentId,
               assignmentId,
+              ...(emailSubject && emailBody ? { emailSubject, emailBody } : {}),
               ...((after.status === 'cancelled' || after.status === 'canceled')
                 ? {
                     assignmentData: after,
@@ -8899,9 +8929,9 @@ export const logAssignmentUpdated = onDocumentUpdated(
             });
 
             if (result.success) {
-              logger.info(`SMS sent for assignment status update ${assignmentId} to ${phoneE164}`);
+              logger.info(`Assignment status notification sent for ${assignmentId} (phone: ${phoneE164 ? 'yes' : 'no'})`);
             } else {
-              logger.warn(`SMS failed for assignment status update ${assignmentId} to ${phoneE164}: ${result.error}`);
+              logger.warn(`Assignment status notification failed for ${assignmentId}: ${result.error}`);
             }
           }
         }
