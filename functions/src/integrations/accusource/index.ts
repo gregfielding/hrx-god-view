@@ -5,6 +5,7 @@ export {
   createAccusourceBackgroundCheck,
   testCreateAccusourceBackgroundCheck,
 } from './createBackgroundCheck';
+export { getAccusourceBackgroundCheckPdf } from './getAccusourceBackgroundCheckPdf';
 export type {
   AccusourceEnvironment,
   AccusourceProviderConfig,

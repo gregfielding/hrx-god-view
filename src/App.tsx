@@ -153,6 +153,7 @@ import RecruiterAccountDetails from './pages/RecruiterAccountDetails';
 import AccountLocationDetail from './pages/AccountLocationDetail';
 import GlobalInvoicingPage from './pages/GlobalInvoicingPage';
 import FinancesBudgetingPage from './pages/FinancesBudgetingPage';
+import StaffOnboardingCenter from './pages/StaffOnboardingCenter';
 import WorkersCompRatesPage from './pages/TenantViews/settings/WorkersCompRatesPage';
 import RecruiterContacts from './pages/RecruiterContacts';
 import RecruiterContactDetails from './pages/RecruiterContactDetails';
@@ -679,6 +680,16 @@ function App() {
             <ProtectedRoute requiredSecurityLevel="5">
               <RecruiterAccessGuard>
                 <FinancesBudgetingPage />
+              </RecruiterAccessGuard>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="staff-onboarding"
+          element={
+            <ProtectedRoute requiredSecurityLevel="5">
+              <RecruiterAccessGuard>
+                <StaffOnboardingCenter />
               </RecruiterAccessGuard>
             </ProtectedRoute>
           }

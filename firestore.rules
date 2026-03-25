@@ -2031,6 +2031,30 @@ service cloud.firestore {
       allow write: if false; // Only allow writes from Cloud Functions
     }
 
+    // --- BACKGROUND CHECKS (AccuSource; top-level). Writes via Cloud Functions / Admin only. ---
+    match /backgroundChecks/{checkId} {
+      allow read: if isAuthenticated() && (
+        isHRX() ||
+        (
+          resource.data.tenantId != null &&
+          isAssignedToTenant(resource.data.tenantId) &&
+          hasSecurityLevel(resource.data.tenantId, 5)
+        )
+      );
+      allow create, update, delete: if false;
+      match /events/{eventId} {
+        allow read: if isAuthenticated() && (
+          isHRX() ||
+          (
+            get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId != null &&
+            isAssignedToTenant(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId) &&
+            hasSecurityLevel(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId, 5)
+          )
+        );
+        allow create, update, delete: if false;
+      }
+    }
+
     // --- DEFAULT CATCH-ALL ---
     match /{document=**} {
       allow read, write: if false;

@@ -43,6 +43,7 @@ import { useNavigate } from 'react-router-dom';
 import { collection, doc, getDocs, query, where, updateDoc, deleteDoc, getDoc, serverTimestamp } from 'firebase/firestore';
 
 import { db } from '../firebase';
+import { LOCATION_FACILITY_TYPE_OPTIONS } from '../constants/locationFacilityTypeOptions';
 import { CRMLocation, CRMContact, CRMDeal } from '../types/CRM';
 
 import CRMNotesTab from './CRMNotesTab';
@@ -506,37 +507,7 @@ const LocationDetails: React.FC<LocationDetailsProps> = ({
                   <Autocomplete
                     fullWidth
                     freeSolo
-                    options={[
-                      'Office',
-                      'Warehouse',
-                      'Plant',
-                      'Distribution Center',
-                      'Manufacturing',
-                      'Retail',
-                      'Branch',
-                      'Headquarters',
-                      'Data Center',
-                      'Call Center',
-                      'Research & Development',
-                      'Training Center',
-                      'Service Center',
-                      'Showroom',
-                      'Storage Facility',
-                      'Hotel',
-                      'Medical Clinic',
-                      'Hospital',
-                      'Retirement Home',
-                      'Sports Arena',
-                      'Sports Stadium',
-                      'Golf Course',
-                      'Race Track',
-                      'Fairgrounds',
-                      'Concert Venue',
-                      'Convention Center',
-                      'College',
-                      'High School',
-                      'Dining Hall',
-                    ]}
+                    options={LOCATION_FACILITY_TYPE_OPTIONS}
                     value={editForm.type || ''}
                     onChange={(_, newValue) => setEditForm(prev => ({ ...prev, type: newValue || '' }))}
                     renderInput={(params) => (

@@ -27,6 +27,7 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import {
   addWeeks,
+  differenceInCalendarDays,
   endOfWeek,
   format,
   startOfWeek,
@@ -41,6 +42,7 @@ import {
   computeJobOrderWeekShiftFinance,
   DEFAULT_FUTA_RATE_ON_PAY,
   DEFAULT_SUTA_RATE_ON_PAY,
+  expandGigShiftToOccurrences,
 } from '../utils/gigFinanceFromShifts';
 
 const WEEKS_COUNT = 12;
@@ -70,6 +72,44 @@ function weekRangeOverlapsJob(weekMonday: Date, start: Date | null, end: Date | 
   if (!start || !end) return false;
   const weekSunday = endOfWeek(weekMonday, { weekStartsOn: 1 });
   return start <= weekSunday && end >= weekMonday;
+}
+
+/** Inclusive calendar days from start through end (local dates). */
+function calendarDaysInclusive(start: Date, end: Date): number {
+  if (end < start) return 0;
+  return differenceInCalendarDays(end, start) + 1;
+}
+
+/** How many calendar days of [eventStart, eventEnd] fall in Mon–Sun week of weekMonday. */
+function eventCalendarDaysInWeek(weekMonday: Date, eventStart: Date, eventEnd: Date): number {
+  const weekSunday = endOfWeek(weekMonday, { weekStartsOn: 1 });
+  const overlapStart = eventStart > weekMonday ? eventStart : weekMonday;
+  const overlapEnd = eventEnd < weekSunday ? eventEnd : weekSunday;
+  if (overlapStart > overlapEnd) return 0;
+  return calendarDaysInclusive(overlapStart, overlapEnd);
+}
+
+/**
+ * Spread full-event estimated value across calendar days, then sum only days in this week.
+ * If dates are missing, returns full value (no proration).
+ */
+function proratedEstimateForWeek(
+  fullEstimatedValue: number | null | undefined,
+  weekMonday: Date,
+  eventStart: Date | null,
+  eventEnd: Date | null
+): number | null {
+  if (fullEstimatedValue == null || !Number.isFinite(Number(fullEstimatedValue))) return null;
+  const ev = Number(fullEstimatedValue);
+  if (ev <= 0) return null;
+  if (!eventStart || !eventEnd) return null;
+  const totalDays = calendarDaysInclusive(eventStart, eventEnd);
+  if (totalDays <= 0) return null;
+  const daysThisWeek = eventCalendarDaysInWeek(weekMonday, eventStart, eventEnd);
+  if (daysThisWeek <= 0) return null;
+  const dayValue = ev / totalDays;
+  const prorated = dayValue * daysThisWeek;
+  return Number.isFinite(prorated) ? prorated : null;
 }
 
 function formatWeekHeading(weekMonday: Date): string {
@@ -118,11 +158,79 @@ interface GigJobOrderRow {
   companyName: string;
   gigEstimatedStartDate?: unknown;
   gigEstimatedEndDate?: unknown;
+  /** Job order header dates (fallback when gig Financials dates not set) */
+  startDate?: unknown;
+  endDate?: unknown;
   gigEstimatedValue?: number;
   gigAverageMarkup?: number;
   gigPositions?: any[];
   poNumber?: string;
   status?: string;
+}
+
+/** Min/max calendar days from all shift occurrences (gig shifts). */
+function dateRangeFromShifts(shifts: any[]): { start: Date | null; end: Date | null } {
+  const ymds: string[] = [];
+  for (const shift of shifts) {
+    const occ = expandGigShiftToOccurrences(shift, {});
+    occ.forEach((o) => ymds.push(o.dateStr));
+  }
+  if (ymds.length === 0) return { start: null, end: null };
+  ymds.sort();
+  return { start: parseYmd(ymds[0]), end: parseYmd(ymds[ymds.length - 1]) };
+}
+
+/**
+ * Calendar range for which week a gig appears + proration denominator.
+ * 1) gigEstimatedStartDate / gigEstimatedEndDate (Financials)
+ * 2) job startDate / endDate (if end missing, single-day event)
+ * 3) min–max dates from scheduled shifts
+ */
+function getBudgetingEventRange(jo: GigJobOrderRow, shifts: any[]): { start: Date | null; end: Date | null } {
+  const gStart = parseYmd(jo.gigEstimatedStartDate);
+  const gEnd = parseYmd(jo.gigEstimatedEndDate);
+  if (gStart && gEnd) return { start: gStart, end: gEnd };
+
+  const jdStart = parseYmd(jo.startDate);
+  const jdEnd = parseYmd(jo.endDate);
+  if (jdStart && jdEnd) return { start: jdStart, end: jdEnd };
+  if (jdStart && !jdEnd) return { start: jdStart, end: jdStart };
+
+  return dateRangeFromShifts(shifts);
+}
+
+/**
+ * Sum for the week: each row uses shift Bill & Gross when this week has shift hours; otherwise prorated
+ * Est. value and Est. gross (same logic as the table cells).
+ */
+function weekFinancialTotals(
+  rows: GigJobOrderRow[],
+  weekMonday: Date,
+  shiftsByJobOrderId: Record<string, any[]>
+): { sumBill: number; sumGross: number } {
+  let sumBill = 0;
+  let sumGross = 0;
+  for (const jo of rows) {
+    const shifts = shiftsByJobOrderId[jo.id] || [];
+    const { start: startStr, end: endStr } = getBudgetingEventRange(jo, shifts);
+    const evWeek = proratedEstimateForWeek(jo.gigEstimatedValue, weekMonday, startStr, endStr);
+    const estGross = grossProfitFromEvMarkup(evWeek ?? undefined, jo.gigAverageMarkup);
+    const calc = computeJobOrderWeekShiftFinance(
+      { gigPositions: jo.gigPositions },
+      shifts,
+      weekMonday,
+      DEFAULT_FUTA_RATE_ON_PAY,
+      DEFAULT_SUTA_RATE_ON_PAY
+    );
+    if (calc.occurrenceCount > 0) {
+      sumBill += Number(calc.billTotal) || 0;
+      sumGross += Number(calc.grossProfit) || 0;
+    } else {
+      if (evWeek != null) sumBill += evWeek;
+      if (estGross != null) sumGross += estGross;
+    }
+  }
+  return { sumBill, sumGross };
 }
 
 const FinancesBudgetingPage: React.FC = () => {
@@ -165,6 +273,8 @@ const FinancesBudgetingPage: React.FC = () => {
           companyName: companyDisplayFromJobOrderDoc(data as Record<string, unknown>),
           gigEstimatedStartDate: data.gigEstimatedStartDate,
           gigEstimatedEndDate: data.gigEstimatedEndDate,
+          startDate: data.startDate,
+          endDate: data.endDate,
           gigEstimatedValue: data.gigEstimatedValue,
           gigAverageMarkup: data.gigAverageMarkup,
           gigPositions: Array.isArray(data.gigPositions) ? data.gigPositions : [],
@@ -207,15 +317,15 @@ const FinancesBudgetingPage: React.FC = () => {
     (weekMonday: Date) => {
       return jobOrders
         .filter((jo) => {
-          const start = parseYmd(jo.gigEstimatedStartDate);
-          const end = parseYmd(jo.gigEstimatedEndDate);
+          const shifts = shiftsByJobOrderId[jo.id] || [];
+          const { start, end } = getBudgetingEventRange(jo, shifts);
           return weekRangeOverlapsJob(weekMonday, start, end);
         })
         .sort((a, b) =>
           (a.jobOrderName || '').localeCompare(b.jobOrderName || '', undefined, { sensitivity: 'base' })
         );
     },
-    [jobOrders]
+    [jobOrders, shiftsByJobOrderId]
   );
 
   const calcHeader = (
@@ -246,11 +356,49 @@ const FinancesBudgetingPage: React.FC = () => {
 
   const renderWeekTable = (weekMonday: Date) => {
     const rows = jobsForWeek(weekMonday);
+    const weekTotals = weekFinancialTotals(rows, weekMonday, shiftsByJobOrderId);
     return (
       <Box key={weekMonday.toISOString()} sx={{ mb: 4 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'primary.main', mb: 1.5 }}>
-          {formatWeekHeading(weekMonday)}
-        </Typography>
+        <Box
+          sx={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'baseline',
+            gap: { xs: 1, sm: 2 },
+            mb: 1.5,
+            rowGap: 1,
+          }}
+        >
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, color: 'primary.main' }}>
+            {formatWeekHeading(weekMonday)}
+          </Typography>
+          {rows.length > 0 && (
+            <Tooltip
+              title={
+                <Typography variant="caption" component="span" display="block" sx={{ maxWidth: 320 }}>
+                  Week total: each job uses <strong>shift Bill</strong> and <strong>shift Gross</strong> when this week has
+                  scheduled shift hours; otherwise prorated <strong>Est. value</strong> and <strong>Est. gross</strong>.
+                </Typography>
+              }
+              arrow
+              placement="top"
+            >
+              <Typography
+                variant="body2"
+                component="span"
+                sx={{
+                  fontWeight: 500,
+                  color: 'text.primary',
+                  borderBottom: '1px dotted',
+                  borderColor: 'text.secondary',
+                  cursor: 'help',
+                }}
+              >
+                Bill {formatCurrency(weekTotals.sumBill)} · Gross {formatCurrency(weekTotals.sumGross)}
+              </Typography>
+            </Tooltip>
+          )}
+        </Box>
         <TableContainer component={Paper} variant="outlined" sx={{ borderRadius: 1, overflowX: 'auto' }}>
           <Table size="small" sx={{ minWidth: 1100 }}>
             <TableHead>
@@ -268,7 +416,15 @@ const FinancesBudgetingPage: React.FC = () => {
                   Est. end
                 </TableCell>
                 <TableCell align="center" colSpan={2} sx={{ borderBottom: 'none', bgcolor: 'action.hover' }}>
-                  Job order estimate (whole event)
+                  <Tooltip
+                    title="Total Financials value is spread evenly across each calendar day of the event; only days that fall in this week are included here."
+                    arrow
+                    placement="top"
+                  >
+                    <Box component="span" sx={{ cursor: 'help', borderBottom: '1px dotted', borderColor: 'text.secondary' }}>
+                      Budget estimate (this week)
+                    </Box>
+                  </Tooltip>
                 </TableCell>
                 <TableCell align="center" colSpan={3} sx={{ borderBottom: 'none', bgcolor: 'primary.50' }}>
                   {calcHeader}
@@ -303,19 +459,18 @@ const FinancesBudgetingPage: React.FC = () => {
                 <TableRow>
                   <TableCell colSpan={11}>
                     <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-                      No gig job orders with estimated start/end dates overlap this week.
+                      No gig job orders with a resolvable date range (Financials, job dates, or shifts) overlap this
+                      week.
                     </Typography>
                   </TableCell>
                 </TableRow>
               ) : (
                 rows.map((jo) => {
-                  const ev = jo.gigEstimatedValue;
-                  const m = jo.gigAverageMarkup;
-                  const estGross = grossProfitFromEvMarkup(ev, m);
-                  const startStr = parseYmd(jo.gigEstimatedStartDate);
-                  const endStr = parseYmd(jo.gigEstimatedEndDate);
-
                   const shifts = shiftsByJobOrderId[jo.id] || [];
+                  const { start: eventStart, end: eventEnd } = getBudgetingEventRange(jo, shifts);
+                  const evWeek = proratedEstimateForWeek(jo.gigEstimatedValue, weekMonday, eventStart, eventEnd);
+                  const m = jo.gigAverageMarkup;
+                  const estGross = grossProfitFromEvMarkup(evWeek ?? undefined, m);
                   const jobOrderPayload = {
                     gigPositions: jo.gigPositions,
                   };
@@ -337,9 +492,9 @@ const FinancesBudgetingPage: React.FC = () => {
                     >
                       <TableCell sx={{ fontWeight: 500 }}>{jo.jobOrderName}</TableCell>
                       <TableCell>{jo.companyName}</TableCell>
-                      <TableCell>{startStr ? format(startStr, 'MMM d, yyyy') : '—'}</TableCell>
-                      <TableCell>{endStr ? format(endStr, 'MMM d, yyyy') : '—'}</TableCell>
-                      <TableCell align="right">{formatCurrency(ev)}</TableCell>
+                      <TableCell>{eventStart ? format(eventStart, 'MMM d, yyyy') : '—'}</TableCell>
+                      <TableCell>{eventEnd ? format(eventEnd, 'MMM d, yyyy') : '—'}</TableCell>
+                      <TableCell align="right">{formatCurrency(evWeek)}</TableCell>
                       <TableCell align="right">{estGross != null ? formatCurrency(estGross) : '—'}</TableCell>
                       <TableCell align="right" sx={{ bgcolor: 'primary.50' }}>
                         {hasShiftCalc ? formatCurrency(calc.billTotal) : '—'}
@@ -366,8 +521,9 @@ const FinancesBudgetingPage: React.FC = () => {
           </Table>
         </TableContainer>
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-          Estimates come from the job order Financials (full event). Shift columns only include hours that fall in this
-          week; they replace intuition as you add shifts — not yet timesheet actuals.
+          Est. value and est. gross use the job order Financials total spread evenly per calendar day; this row shows
+          only the portion for days that fall in this week. Shift columns only include hours in this week — not yet
+          timesheet actuals.
         </Typography>
       </Box>
     );
@@ -392,9 +548,11 @@ const FinancesBudgetingPage: React.FC = () => {
       <Box sx={{ px: { xs: 2, md: 3 }, pb: 2 }}>
         <Alert severity="info" sx={{ mb: 2 }} icon={false}>
           <Typography variant="body2">
-            <strong>Estimates</strong> use Financials on the job order (whole event). <strong>Shift columns</strong> sum
-            scheduled hours in <em>this week only</em>, using gig position pay/bill/WC rates. When shifts exist, use them
-            to refine the plan; timesheets and extra costs (travel, etc.) will layer on later.
+            A gig appears in a week when its date range overlaps Mon–Sun. We use <strong>Financials estimated start/end</strong>{' '}
+            first; if those aren&apos;t set, <strong>job start/end</strong>; if still missing, the <strong>min–max dates
+            from shifts</strong>. <strong>Est. value / est. gross</strong> spread the Financials total across calendar
+            days in that range (multi-week events don&apos;t double-count). <strong>Shift columns</strong> use hours in
+            this week only.
           </Typography>
         </Alert>
 

@@ -50,6 +50,25 @@ export interface BackgroundCheckDocument {
   lastSyncAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
   syncError?: string | null;
   updatedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
+  /** Latest component from `service_status_change` webhooks. */
+  lastServiceComponent?: {
+    serviceId?: string | null;
+    serviceName?: string | null;
+    status?: string | null;
+    statusId?: string | number | null;
+    updatedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
+  } | null;
+  /** Keyed by SourceDirect service id (string); merged on each `service_status_change`. */
+  providerServiceOrderStatus?: Record<
+    string,
+    {
+      serviceId?: unknown;
+      serviceName?: string | null;
+      status?: string | null;
+      statusId?: string | number | null;
+      updatedAt?: admin.firestore.Timestamp | admin.firestore.FieldValue | null;
+    }
+  > | null;
 }
 
 export interface BackgroundCheckEventDocument {

@@ -66,6 +66,7 @@ import { getFunctions, httpsCallable } from 'firebase/functions';
 import { GoogleMap, MarkerF } from '@react-google-maps/api';
 
 import { db } from '../firebase';
+import { LOCATION_FACILITY_TYPE_OPTIONS } from '../constants/locationFacilityTypeOptions';
 import { p } from '../data/firestorePaths';
 import { useAuth } from '../contexts/AuthContext';
 import AddNoteDialog from '../components/AddNoteDialog';
@@ -1271,37 +1272,7 @@ const RecruiterLocationDetails: React.FC = () => {
                         fullWidth
                         freeSolo
                         size="small"
-                        options={[
-                          'Office',
-                          'Warehouse',
-                          'Plant',
-                          'Distribution Center',
-                          'Manufacturing',
-                          'Retail',
-                          'Branch',
-                          'Headquarters',
-                          'Data Center',
-                          'Call Center',
-                          'Research & Development',
-                          'Training Center',
-                          'Service Center',
-                          'Showroom',
-                          'Storage Facility',
-                          'Hotel',
-                          'Medical Clinic',
-                          'Hospital',
-                          'Retirement Home',
-                          'Sports Arena',
-                          'Sports Stadium',
-                          'Golf Course',
-                          'Race Track',
-                          'Fairgrounds',
-                          'Concert Venue',
-                          'Convention Center',
-                          'College',
-                          'High School',
-                          'Dining Hall',
-                        ]}
+                        options={LOCATION_FACILITY_TYPE_OPTIONS}
                         value={location.type || ''}
                         onChange={(_, newValue) => {
                           if (newValue !== null && newValue !== location.type) {

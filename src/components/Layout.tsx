@@ -30,6 +30,7 @@ import HelpIcon from '@mui/icons-material/Help';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
 import AssignmentTurnedInIcon from '@mui/icons-material/AssignmentTurnedIn';
+import HowToRegIcon from '@mui/icons-material/HowToReg';
 import GroupsIcon from '@mui/icons-material/Groups';
 import Diversity3Icon from '@mui/icons-material/Diversity3';
 import WavesIcon from '@mui/icons-material/Waves';
@@ -915,7 +916,7 @@ const Layout: React.FC = function Layout() {
       'Recruiter': <WorkIcon />,
       'Jobs': <WorkIcon />,
       'Finances and Budgeting': <BarChartIcon />,
-      'Onboarding': <AssignmentTurnedInIcon />,
+      'Onboarding': <HowToRegIcon />,
       'Workforce': <PeopleIcon />,
       'Users': <GroupsIcon />,
       'Accounts': <AccountBalanceIcon />,

@@ -22,3 +22,31 @@ export function getJobPostingDisplayText(
   const value = (i18n?.[lang] ?? i18n?.en ?? (typeof legacy === 'string' ? legacy : undefined))?.trim();
   return value ?? '';
 }
+
+/**
+ * Many job descriptions use English template labels (Job Title:, Location:, Pay Rate:, Zip Code:).
+ * When the UI is in Spanish, rewrite those lines so the template reads naturally.
+ * Full paragraph translation still comes from jobDescription_i18n.es when recruiters provide it.
+ */
+export function localizeJobDescriptionEmbeddedLabels(text: string, lang: LanguageCode): string {
+  if (lang !== 'es' || !text?.trim()) return text;
+  let s = text;
+  // Longer / more specific patterns first
+  const replacements: [RegExp, string][] = [
+    [/\(Zip Code:\s*/gi, '(Código postal: '],
+    [/Zip Code:\s*/gi, 'Código postal: '],
+    [/Job Title:\s*/gi, 'Puesto: '],
+    [/Location:\s*/gi, 'Ubicación: '],
+    [/Pay Rate:\s*/gi, 'Salario: '],
+    [/Company:\s*/gi, 'Empresa: '],
+    [/Hours:\s*/gi, 'Horas: '],
+    [/Schedule:\s*/gi, 'Horario: '],
+    [/\$([\d,.]+)\s*\/\s*hour\b/gi, '$$$1/hora'],
+    [/\$([\d,.]+)\/hour\b/gi, '$$$1/hora'],
+    [/\$([\d,.]+)\/hr\b/gi, '$$$1/h'],
+  ];
+  for (const [re, repl] of replacements) {
+    s = s.replace(re, repl);
+  }
+  return s;
+}

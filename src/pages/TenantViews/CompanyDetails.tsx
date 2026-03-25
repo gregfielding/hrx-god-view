@@ -133,6 +133,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 
 import { db, storage , functions } from '../../firebase';
+import { LOCATION_FACILITY_TYPE_OPTIONS } from '../../constants/locationFacilityTypeOptions';
 import FastAssociationsCard from '../../components/FastAssociationsCard';
 import { useAuth } from '../../contexts/AuthContext';
 import { auth } from '../../firebase';
@@ -5739,37 +5740,7 @@ const LocationsTab: React.FC<{ company: any; currentTab: number; contacts?: any[
                   <Autocomplete
                     fullWidth
                     freeSolo
-                    options={[
-                      'Office',
-                      'Warehouse',
-                      'Plant',
-                      'Distribution Center',
-                      'Manufacturing',
-                      'Retail',
-                      'Branch',
-                      'Headquarters',
-                      'Data Center',
-                      'Call Center',
-                      'Research & Development',
-                      'Training Center',
-                      'Service Center',
-                      'Showroom',
-                      'Storage Facility',
-                      'Hotel',
-                      'Medical Clinic',
-                      'Hospital',
-                      'Retirement Home',
-                      'Sports Arena',
-                      'Sports Stadium',
-                      'Golf Course',
-                      'Race Track',
-                      'Fairgrounds',
-                      'Concert Venue',
-                      'Convention Center',
-                      'College',
-                      'High School',
-                      'Dining Hall',
-                    ]}
+                    options={LOCATION_FACILITY_TYPE_OPTIONS}
                     value={newLocation.type || ''}
                     onChange={(_, newValue) => setNewLocation(prev => ({ ...prev, type: newValue || '' }))}
                     renderInput={(params) => (

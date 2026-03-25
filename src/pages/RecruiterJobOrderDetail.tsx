@@ -78,10 +78,11 @@ import {
   Email as EmailIcon,
   Sms as SmsIcon,
   Lock as LockedIcon,
+  AccountBalance as AccountBalanceIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, limit, deleteField, type DocumentSnapshot } from 'firebase/firestore';
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, limit, deleteField, deleteDoc, type DocumentSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -2746,6 +2747,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
+  const [deleteJobOrderDialogOpen, setDeleteJobOrderDialogOpen] = useState(false);
+  const [deleteJobOrderSubmitting, setDeleteJobOrderSubmitting] = useState(false);
 
   const { isFavorite: isJobOrderFavorite, toggleFavorite: toggleJobOrderFavorite } = useFavorites('jobOrders');
 
@@ -3467,6 +3470,46 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   };
 
+  /** Permanently remove job order, linked job posts, shifts, placements on those shifts, and nested application stubs. */
+  const handleConfirmDeleteJobOrder = async () => {
+    if (!tenantId || !jobOrderId) return;
+    setDeleteJobOrderSubmitting(true);
+    try {
+      const jobsBoardService = JobsBoardService.getInstance();
+      const posts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
+      for (const post of posts) {
+        await jobsBoardService.deletePost(tenantId, post.id);
+      }
+
+      const shiftsRef = collection(db, p.shifts(tenantId, jobOrderId));
+      const shiftsSnap = await getDocs(shiftsRef);
+      const placementsRef = collection(db, 'tenants', tenantId, 'placements');
+      for (const shiftDoc of shiftsSnap.docs) {
+        const shiftId = shiftDoc.id;
+        const placeSnap = await getDocs(query(placementsRef, where('shiftId', '==', shiftId)));
+        for (const pd of placeSnap.docs) {
+          await deleteDoc(pd.ref);
+        }
+        await deleteDoc(shiftDoc.ref);
+      }
+
+      const nestedAppsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications');
+      const nestedAppsSnap = await getDocs(nestedAppsRef);
+      for (const ad of nestedAppsSnap.docs) {
+        await deleteDoc(ad.ref);
+      }
+
+      await deleteDoc(doc(db, p.jobOrder(tenantId, jobOrderId)));
+      navigate('/jobs/job-orders');
+    } catch (err: any) {
+      console.error('Delete job order failed:', err);
+      alert(err?.message || 'Could not delete this job order. Check permissions or try again.');
+    } finally {
+      setDeleteJobOrderSubmitting(false);
+      setDeleteJobOrderDialogOpen(false);
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
@@ -3538,6 +3581,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
     indeedUrl: (jobOrder as any)?.indeedUrl,
     craigslistUrl: (jobOrder as any)?.craigslistUrl,
   });
+
+  const linkedRecruiterAccountId =
+    (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
 
   return (
     <Box sx={{ p: 0 }}>
@@ -3778,12 +3824,46 @@ const RecruiterJobOrderDetail: React.FC = () => {
                 ))}
               </Stack>
 
-              {/* Line 5: Icon row (Add Note, Add Task, Log Activity) */}
+              {/* Line 5: Icon row (Account, Add Note, Add Task, Log Activity) */}
               <Stack
                 direction="row"
                 spacing={1}
                 sx={{ alignItems: 'center', mt: 1.5 }}
               >
+                <Tooltip
+                  title={
+                    linkedRecruiterAccountId
+                      ? 'Open linked account'
+                      : 'No recruiter account linked to this job’s company yet'
+                  }
+                >
+                  <span>
+                    <IconButton
+                      size="small"
+                      disabled={!linkedRecruiterAccountId}
+                      onClick={() =>
+                        linkedRecruiterAccountId && navigate(`/accounts/${linkedRecruiterAccountId}`)
+                      }
+                      aria-label="Open linked account"
+                      sx={{
+                        p: 1,
+                        color: 'primary.main',
+                        bgcolor: 'action.hover',
+                        borderRadius: 1,
+                        '&:hover': {
+                          color: 'primary.dark',
+                          bgcolor: 'primary.light',
+                          transform: 'translateY(-1px)',
+                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        },
+                        '&.Mui-disabled': { opacity: 0.45 },
+                        transition: 'all 0.2s ease',
+                      }}
+                    >
+                      <AccountBalanceIcon sx={{ fontSize: 20 }} />
+                    </IconButton>
+                  </span>
+                </Tooltip>
                 <Tooltip title="Add Note">
                   <IconButton
                     size="small"
@@ -3896,6 +3976,21 @@ const RecruiterJobOrderDetail: React.FC = () => {
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Button
               variant="outlined"
+              color="error"
+              startIcon={<DeleteIcon />}
+              onClick={() => setDeleteJobOrderDialogOpen(true)}
+              sx={{
+                textTransform: 'none',
+                borderRadius: '24px',
+                height: '40px',
+                px: 2,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Delete
+            </Button>
+            <Button
+              variant="outlined"
               startIcon={<ArrowBackIcon />}
               onClick={() => navigate('/jobs/job-orders')}
                     sx={{
@@ -3911,6 +4006,43 @@ const RecruiterJobOrderDetail: React.FC = () => {
               </Box>
             } 
           />
+
+      <Dialog
+        open={deleteJobOrderDialogOpen}
+        onClose={() => !deleteJobOrderSubmitting && setDeleteJobOrderDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Delete this job order?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ mb: 2 }}>
+            This permanently deletes <strong>{jobOrder.jobOrderName || 'this job order'}</strong> ({formatJobOrderNumber(jobOrder.jobOrderNumber || '')}
+            ). Linked job board posts, all shifts, placements on those shifts, and nested application links under this
+            order will be removed. This cannot be undone.
+          </Typography>
+          {(applicantsCount > 0 || assignmentsCount > 0) && (
+            <Alert severity="warning" sx={{ mb: 1 }}>
+              This order has {applicantsCount > 0 ? `${applicantsCount} application(s)` : ''}
+              {applicantsCount > 0 && assignmentsCount > 0 ? ' and ' : ''}
+              {assignmentsCount > 0 ? `${assignmentsCount} assignment(s)` : ''} recorded. Tenant-level application and
+              assignment documents may still exist; clean those up separately if needed.
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => setDeleteJobOrderDialogOpen(false)} disabled={deleteJobOrderSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={deleteJobOrderSubmitting}
+            onClick={() => void handleConfirmDeleteJobOrder()}
+          >
+            {deleteJobOrderSubmitting ? 'Deleting…' : 'Delete job order'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Tab Panels */}
       <TabPanel value={activeTab} index={0}>

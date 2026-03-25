@@ -56,6 +56,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useGuestLanguage } from '../hooks/useGuestLanguage';
 import { useT, setLanguage, useLanguage } from '../i18n';
 import { formatDistanceToNow, format } from 'date-fns';
+import { enUS, es as esLocale } from 'date-fns/locale';
 import ShiftSelector from '../components/ShiftSelector';
 import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
@@ -70,7 +71,7 @@ import { updateUserSmartGroupOnWithdraw } from '../services/smartGroupService';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import { getRequirementsWithStatus, getRequirementsWithStatusForJobPost, getEligibilitySummary } from '../utils/jobRequirementStatus';
 import { RequirementInteraction } from '../components/RequirementInteraction';
-import { getJobPostingDisplayText } from '../utils/jobPostingI18n';
+import { getJobPostingDisplayText, localizeJobDescriptionEmbeddedLabels } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
 import { buildCanonicalWorkerProfileWritePatch } from '../utils/workerReadinessWriteModel';
 import AuthDialog from '../components/AuthDialog';
@@ -183,6 +184,7 @@ const JobPostingDetail: React.FC = () => {
   };
   // Single source of truth for content language: i18n (layout + app bar when logged in; guest selector when guest)
   const displayLanguage = useLanguage();
+  const dateFnsLocale = displayLanguage === 'es' ? esLocale : enUS;
 
   // Eligibility for requirements UX (must be before any early return to satisfy rules-of-hooks)
   const eligibilitySummary = useMemo(
@@ -830,7 +832,7 @@ const JobPostingDetail: React.FC = () => {
 
   // Helper to safely format calendar dates (avoids UTC→local timezone shift showing wrong day)
   const formatDate = (date: any): string => {
-    if (!date) return 'Date TBD';
+    if (!date) return t('jobs.dateTbd');
     try {
       let d: Date;
       if (date?.toDate) {
@@ -838,13 +840,13 @@ const JobPostingDetail: React.FC = () => {
       } else {
         d = new Date(date);
       }
-      if (isNaN(d.getTime())) return 'Date TBD';
+      if (isNaN(d.getTime())) return t('jobs.dateTbd');
       const m = d.getUTCMonth() + 1;
       const day = d.getUTCDate();
       const y = d.getUTCFullYear();
       return `${m}/${day}/${y}`;
     } catch {
-      return 'Date TBD';
+      return t('jobs.dateTbd');
     }
   };
 
@@ -1703,7 +1705,7 @@ const JobPostingDetail: React.FC = () => {
   if (error || !posting) {
     return (
       <Box p={3}>
-        <Alert severity="error">{error || 'Job posting not found'}</Alert>
+        <Alert severity="error">{error || t('jobs.jobPostingNotFound')}</Alert>
         <Button
           startIcon={<ArrowBackIcon />}
           onClick={() => navigate('/c1/jobs-board')}
@@ -1919,7 +1921,7 @@ const JobPostingDetail: React.FC = () => {
               setGuestLanguage('en');
             }}
           >
-            English (EN)
+            {t('nav.englishEn')}
           </MenuItem>
           <MenuItem
             selected={guestLanguage === 'es'}
@@ -1928,7 +1930,7 @@ const JobPostingDetail: React.FC = () => {
               setGuestLanguage('es');
             }}
           >
-            Español (ES)
+            {t('nav.espanolEs')}
           </MenuItem>
         </Menu>
       )}
@@ -1985,7 +1987,7 @@ const JobPostingDetail: React.FC = () => {
                   lineHeight: 1.2,
                 }}
               >
-                ${Number(posting.payRate)}/hr
+                {t('jobs.hourlyRateDisplay', { amount: Number(posting.payRate).toFixed(0) })}
               </Typography>
             )}
 
@@ -2181,7 +2183,7 @@ const JobPostingDetail: React.FC = () => {
                         )}
                         <Chip
                           size="small"
-                          label={`Score: ${Math.round(applicationJobScore.jobScore)}`}
+                          label={t('jobs.scoreChip', { score: Math.round(applicationJobScore.jobScore) })}
                           color={applicationJobScore.eligible ? 'success' : 'default'}
                         />
                         {(() => {
@@ -2235,10 +2237,11 @@ const JobPostingDetail: React.FC = () => {
           {(() => {
             const rawDesc = getJobPostingDisplayText(posting, 'jobDescription', displayLanguage) || posting.jobDescription || '';
             const cleanedDesc = rawDesc.replace(/\*\*([^*]+):\*\*/g, '$1:').replace(/\*\*([^*]+)\*\*/g, '$1').trim();
+            const localizedDesc = localizeJobDescriptionEmbeddedLabels(cleanedDesc, displayLanguage);
             const charLimit = isMobile ? 280 : 400;
-            const isLong = cleanedDesc.length > charLimit;
+            const isLong = localizedDesc.length > charLimit;
             const showTruncated = isLong && !descriptionExpanded;
-            const displayText = showTruncated ? cleanedDesc.slice(0, charLimit) + '…' : cleanedDesc;
+            const displayText = showTruncated ? localizedDesc.slice(0, charLimit) + '…' : localizedDesc;
             return (
               <Card sx={{ ...cardBaseSx, mb: 3 }} elevation={2}>
                 <CardContent sx={{ p: 0 }}>
@@ -2312,7 +2315,7 @@ const JobPostingDetail: React.FC = () => {
                       {addressStr && (
                         <Box
                           component="iframe"
-                          title="Map"
+                          title={t('jobs.mapEmbedTitle')}
                           src={`https://www.google.com/maps?q=${mapsQuery}&output=embed`}
                           sx={{
                             width: '100%',
@@ -2368,7 +2371,11 @@ const JobPostingDetail: React.FC = () => {
                           <Box>
                             <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
                             <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                              {assignmentData.payRate != null ? `$${assignmentData.payRate}/hr` : (posting?.payRate != null ? `$${posting.payRate}/hr` : '—')}
+                              {assignmentData.payRate != null
+                                ? t('jobs.hourlyRateDisplay', { amount: String(assignmentData.payRate) })
+                                : posting?.payRate != null
+                                  ? t('jobs.hourlyRateDisplay', { amount: String(posting.payRate) })
+                                  : '—'}
                             </Typography>
                           </Box>
                         </Stack>
@@ -2838,7 +2845,7 @@ const JobPostingDetail: React.FC = () => {
                             )}
                             <Chip
                               size="small"
-                              label={`Score: ${Math.round(applicationJobScore.jobScore)}`}
+                              label={t('jobs.scoreChip', { score: Math.round(applicationJobScore.jobScore) })}
                               color={applicationJobScore.eligible ? 'success' : 'default'}
                             />
                             {(() => {
@@ -2893,7 +2900,10 @@ const JobPostingDetail: React.FC = () => {
         posting &&
         (() => {
           const isGigWithShifts = posting.jobType === 'gig' && dynamicShifts.length > 0;
-          const payLabel = posting.showPayRate && posting.payRate != null ? `$${Number(posting.payRate)}/hr` : null;
+          const payLabel =
+            posting.showPayRate && posting.payRate != null
+              ? t('jobs.hourlyRateDisplay', { amount: Number(posting.payRate).toFixed(0) })
+              : null;
           let nextLabel = '';
           if (isGigWithShifts && dynamicShifts.length > 0) {
             const first = dynamicShifts.find((s: any) => !appliedShifts.includes(s.shiftId) && ((s.spotsRemaining ?? 1) > 0)) ?? dynamicShifts[0];
@@ -2905,17 +2915,22 @@ const JobPostingDetail: React.FC = () => {
                     const e = first.endTime.includes(':') ? first.endTime : `${first.endTime}:00`;
                     const sd = new Date(`2000-01-01T${s}`);
                     const ed = new Date(`2000-01-01T${e}`);
-                    return `${format(sd, 'ha')}–${format(ed, 'ha')}`.toLowerCase().replace(/\s/g, '');
+                    return `${format(sd, 'ha', { locale: dateFnsLocale })}–${format(ed, 'ha', { locale: dateFnsLocale })}`
+                      .toLowerCase()
+                      .replace(/\s/g, '');
                   } catch {
                     return '';
                   }
                 })()
               : '';
-            nextLabel = d && !isNaN(d.getTime()) ? `${format(d, 'EEE MMM d')}${timeStr ? ` ${timeStr}` : ''}` : 'Next shift';
+            nextLabel =
+              d && !isNaN(d.getTime())
+                ? `${format(d, 'EEE MMM d', { locale: dateFnsLocale })}${timeStr ? ` ${timeStr}` : ''}`
+                : t('jobs.stickyNextShiftFallback');
           } else if (posting.startDate) {
-            nextLabel = `Starts ${formatDate(posting.startDate)}`;
+            nextLabel = t('jobs.startsLabel', { date: formatDate(posting.startDate) });
           } else {
-            nextLabel = 'Apply now';
+            nextLabel = t('jobs.stickyApplyNow');
           }
           return (
             <Box
@@ -2970,7 +2985,7 @@ const JobPostingDetail: React.FC = () => {
               onClick={closeOfferConfirmationSheet}
               disabled={offerConfirmSubmitting || assignmentDecisionLoading}
             >
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button
               variant="contained"

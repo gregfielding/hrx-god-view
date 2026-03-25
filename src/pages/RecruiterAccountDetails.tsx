@@ -105,6 +105,7 @@ import {
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
 import { db, storage } from '../firebase';
+import { LOCATION_FACILITY_TYPE_OPTIONS } from '../constants/locationFacilityTypeOptions';
 import { getDealCompanyIds } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
 import { p } from '../data/firestorePaths';
@@ -3867,37 +3868,7 @@ const RecruiterAccountDetails: React.FC = () => {
                 <Autocomplete
                   fullWidth
                   freeSolo
-                  options={[
-                    'Office',
-                    'Warehouse',
-                    'Plant',
-                    'Distribution Center',
-                    'Manufacturing',
-                    'Retail',
-                    'Branch',
-                    'Headquarters',
-                    'Data Center',
-                    'Call Center',
-                    'Research & Development',
-                    'Training Center',
-                    'Service Center',
-                    'Showroom',
-                    'Storage Facility',
-                    'Hotel',
-                    'Medical Clinic',
-                    'Hospital',
-                    'Retirement Home',
-                    'Sports Arena',
-                    'Sports Stadium',
-                    'Golf Course',
-                    'Race Track',
-                    'Fairgrounds',
-                    'Concert Venue',
-                    'Convention Center',
-                    'College',
-                    'High School',
-                    'Dining Hall',
-                  ]}
+                  options={LOCATION_FACILITY_TYPE_OPTIONS}
                   value={addLocationForm.type || ''}
                   onChange={(_, newValue) => setAddLocationForm((prev) => ({ ...prev, type: newValue || '' }))}
                   renderInput={(params) => <TextField {...params} label="Type" />}

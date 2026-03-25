@@ -238,6 +238,7 @@ export {
   apiIntegrationsAccusourceWebhooks,
   createAccusourceBackgroundCheck,
   testCreateAccusourceBackgroundCheck,
+  getAccusourceBackgroundCheckPdf,
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
 export { workerSupportAssistant } from './workerSupportAssistant';

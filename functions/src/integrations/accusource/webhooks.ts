@@ -23,6 +23,16 @@ function toRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 }
 
+/**
+ * SourceDirect webhooks often send `{ type, payload: { profile_id, client_id, ... } }`.
+ * Merge nested `payload` / `data` so extractors see profile_id at top level.
+ */
+function mergeWebhookPayload(raw: Record<string, unknown>): Record<string, unknown> {
+  const inner = toRecord(raw.payload);
+  const data = toRecord(raw.data);
+  return { ...inner, ...data, ...raw };
+}
+
 function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((v) => stableStringify(v)).join(',')}]`;
@@ -44,8 +54,16 @@ function extractEventType(payload: Record<string, unknown>): string {
 
 function extractProviderProfileId(payload: Record<string, unknown>): string | null {
   const data = toRecord(payload.data);
-  const profile = payload.providerProfileId || payload.profileId || payload.profile_id || payload.applicantId || data.providerProfileId || data.profileId || data.profile_id || data.applicantId;
-  const value = String(profile || '').trim();
+  const profile =
+    payload.providerProfileId ||
+    payload.profileId ||
+    payload.profile_id ||
+    payload.applicantId ||
+    data.providerProfileId ||
+    data.profileId ||
+    data.profile_id ||
+    data.applicantId;
+  const value = profile != null && profile !== '' ? String(profile).trim() : '';
   return value || null;
 }
 
@@ -78,6 +96,11 @@ function mapWebhookToStatusProjection(eventType: string, payload: Record<string,
   const providerStatusRaw = payload.status || data.status || eventType;
   const providerStatus = String(providerStatusRaw || eventType || 'unknown');
   const status: WebhookStatusProjection = { providerStatus };
+
+  // Per-service updates: do not promote to overall hrxStatus from inner "Completed" alone.
+  if (event === 'service_status_change' || event.includes('service_status_change')) {
+    return status;
+  }
 
   if (event.includes('awaiting') || event.includes('applicant') || event.includes('invite')) {
     status.hrxStatus = 'awaiting_applicant';
@@ -142,8 +165,41 @@ async function findBackgroundCheckMatch(
   return null;
 }
 
+function applyServiceStatusChange(
+  payload: Record<string, unknown>,
+  parentUpdate: Record<string, unknown>,
+): void {
+  const serviceIdRaw = payload.service_id ?? payload.serviceId;
+  const serviceName = String(payload.service_name ?? payload.serviceName ?? '').trim();
+  const st = String(payload.status ?? '').trim();
+  const statusId = payload.status_id ?? payload.statusId;
+  const key = serviceIdRaw != null && String(serviceIdRaw).trim() !== '' ? String(serviceIdRaw).trim() : 'unknown';
+
+  const line = serviceName && st ? `${serviceName}: ${st}` : st || serviceName;
+  if (line) {
+    parentUpdate.providerStatus = line;
+  }
+
+  parentUpdate.lastServiceComponent = {
+    serviceId: key,
+    serviceName: serviceName || null,
+    status: st || null,
+    statusId: statusId ?? null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  parentUpdate[`providerServiceOrderStatus.${key}`] = {
+    serviceId: serviceIdRaw,
+    serviceName: serviceName || null,
+    status: st || null,
+    statusId: statusId ?? null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+}
+
 async function processWebhookPayload(payloadInput: unknown): Promise<{ id: string; duplicate: boolean; matched: boolean }> {
-  const payload = toRecord(payloadInput);
+  const raw = toRecord(payloadInput);
+  const payload = mergeWebhookPayload(raw);
   const eventType = extractEventType(payload);
   const providerProfileId = extractProviderProfileId(payload);
   const clientId = extractClientId(payload);
@@ -193,6 +249,12 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
     providerStatus: statusProjection.providerStatus,
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   };
+
+  const et = eventType.toLowerCase();
+  if (et === 'service_status_change' || et.includes('service_status')) {
+    applyServiceStatusChange(payload, parentUpdate);
+  }
+
   if (statusProjection.hrxStatus) parentUpdate.hrxStatus = statusProjection.hrxStatus;
   if (statusProjection.finalReportReady !== undefined) parentUpdate.finalReportReady = statusProjection.finalReportReady;
   if (statusProjection.drugReportReady !== undefined) parentUpdate.drugReportReady = statusProjection.drugReportReady;

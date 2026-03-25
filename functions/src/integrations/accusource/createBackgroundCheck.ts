@@ -9,6 +9,7 @@ import {
   type CreateBackgroundCheckInput,
 } from './mapper';
 import type { BackgroundCheckDocument } from './types';
+import { ensureAccusourceAdmin } from './accusourceAdminGate';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -21,21 +22,6 @@ function normalizeStatus(status: string | null): 'submitted' | 'awaiting_applica
     return 'awaiting_applicant';
   }
   return 'submitted';
-}
-
-async function ensureAdminOperator(uid: string): Promise<void> {
-  const userSnap = await db.collection('users').doc(uid).get();
-  if (!userSnap.exists) {
-    throw new HttpsError('permission-denied', 'User profile not found.');
-  }
-  const data = userSnap.data() || {};
-  const role = String((data as Record<string, unknown>).role || '').toLowerCase();
-  const securityLevelRaw = (data as Record<string, unknown>).securityLevel;
-  const securityLevel = Number.parseInt(String(securityLevelRaw || '0'), 10) || 0;
-  const isAdminRole = role === 'admin' || role === 'super_admin' || role === 'manager';
-  if (!isAdminRole && securityLevel < 5) {
-    throw new HttpsError('permission-denied', 'Admin privileges required.');
-  }
 }
 
 function buildDraftDocument(
@@ -185,7 +171,7 @@ export const createAccusourceBackgroundCheck = onCall(async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
-  await ensureAdminOperator(request.auth.uid);
+  await ensureAccusourceAdmin(request.auth.uid);
 
   const input = (request.data || {}) as CallablePayload;
   return createBackgroundCheckInternal(input, request.auth.uid);
@@ -199,7 +185,7 @@ export const testCreateAccusourceBackgroundCheck = onCall(async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
-  await ensureAdminOperator(request.auth.uid);
+  await ensureAccusourceAdmin(request.auth.uid);
 
   const now = Date.now();
   const mockPayload: CallablePayload = {
