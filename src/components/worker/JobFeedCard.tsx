@@ -18,6 +18,7 @@ import {
 } from '@mui/icons-material';
 import { useT } from '../../i18n';
 import { emitWorkerCardSignal } from '../../utils/workerCardSignals';
+import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
 import { getCategoryForTitle } from '../../utils/dashboardCardCategory';
 import { CARD_THEMES } from './dashboard/cards/types';
 import type { JobCategory } from './dashboard/cards/types';
@@ -76,9 +77,7 @@ const JobFeedCard: React.FC<JobFeedCardProps> = ({
   const { bg, contrast } = theme;
 
   const locationStr =
-    job.worksiteAddress?.city && job.worksiteAddress?.state
-      ? `${job.worksiteAddress.city}, ${job.worksiteAddress.state}`
-      : job.worksiteName || undefined;
+    formatWorksiteCityStateZip(job.worksiteAddress) || job.worksiteName || undefined;
 
   const commitAction = useCallback(
     (action: 'skip' | 'save' | 'view') => {

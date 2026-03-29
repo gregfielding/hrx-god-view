@@ -40,7 +40,7 @@ const NewJobOrder: React.FC = () => {
       </Box>
 
       {/* Form */}
-      <JobOrderForm />
+      <JobOrderForm requireAccountSelection />
     </Box>
   );
 };

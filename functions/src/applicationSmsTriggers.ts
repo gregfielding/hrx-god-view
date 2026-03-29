@@ -41,6 +41,31 @@ function normalizeStringToken(value: unknown): string {
   return String(value || '').trim().toLowerCase();
 }
 
+/** Milliseconds from Firestore Timestamp / admin.Timestamp-like / plain {_seconds}. */
+function firestoreTsMillis(value: unknown): number {
+  if (value == null) return 0;
+  const v = value as { toMillis?: () => number; _seconds?: number };
+  if (typeof v.toMillis === 'function') return v.toMillis();
+  if (typeof v._seconds === 'number') return v._seconds * 1000;
+  return 0;
+}
+
+/**
+ * One "thanks for applying" / application_received wave per application doc submission.
+ * Uses submittedAt (preferred), else appliedAt, else updatedAt — so re-apply after withdraw gets a new timestamp and a new message.
+ */
+function applicationReceivedThanksDedupeSuffix(data: Record<string, any>): string {
+  const m =
+    firestoreTsMillis(data.submittedAt) ||
+    firestoreTsMillis(data.appliedAt) ||
+    firestoreTsMillis(data.updatedAt);
+  return m > 0 ? String(m) : '0';
+}
+
+function isSubmittedApplicationStatus(status: unknown): boolean {
+  return normalizeStringToken(status) === 'submitted';
+}
+
 if (!admin.apps.length) {
   admin.initializeApp();
 }
@@ -81,6 +106,14 @@ export const onApplicationCreated = onDocumentCreated(
     // Application created with status 'accepted' = created by assignment flow (e.g. placementsCreateAssignments), not worker submit. Skip "thank you for applying" — assignment_created trigger will send the correct message.
     if ((applicationData.status || '').toLowerCase() === 'accepted') {
       logger.info(`Application ${applicationId} created with status accepted (assignment-driven), skipping application_received notification`);
+      return { success: true };
+    }
+
+    // Mirror drafts (e.g. apply wizard) create `in_progress` first; thank-you must run only when they submit — handled by onApplicationStatusChanged.
+    if (!isSubmittedApplicationStatus(applicationData.status)) {
+      logger.info(
+        `Application ${applicationId} created with status ${JSON.stringify(applicationData.status ?? '(none)')} — skipping application_received onCreate (only \`submitted\` sends thank-you here; in_progress/draft wait for status transition)`
+      );
       return { success: true };
     }
 
@@ -196,6 +229,20 @@ export const onApplicationCreated = onDocumentCreated(
           if (!shouldSend) {
             logger.info(`SMS disabled for user ${userId} - skipping application created notification`);
             return { success: true };
+          }
+
+          const thanksSuffix = applicationReceivedThanksDedupeSuffix(applicationData);
+          const claimedThanks = await markLifecycleEventIfFirst({
+            tenantId,
+            dedupeKey: `application_received_thanks__${applicationId}__${thanksSuffix}`,
+            eventType: 'application_received_thanks',
+            context: { applicationId, userId, source: 'onCreate' },
+          });
+          if (!claimedThanks) {
+            logger.info(
+              `Application ${applicationId}: application_received thanks deduped for wave ${thanksSuffix} (status handler or duplicate)`
+            );
+            return { success: true, deduped: true };
           }
 
           const emailSubject = `${variables.firstName}, Your Application Was Received`;
@@ -732,13 +779,21 @@ export const onApplicationStatusChanged = onDocumentUpdated(
                   ? 'Application under review'
                   : 'Application status updated';
         try {
-          await sendApplicationStatusChangedNotification({
-            uid: userId,
-            tenantId,
-            jobPostId,
-            title: statusTitle,
-            body: message || statusTitle,
-          });
+          // `submitted` thank-you is delivered by sendLegacyApplicationStatusMessage → routingOrchestrator (SMS, email, push, inbox).
+          // Avoid duplicate FCM + inbox rows from sendApplicationStatusChangedNotification.
+          if (newStatus !== 'submitted') {
+            await sendApplicationStatusChangedNotification({
+              uid: userId,
+              tenantId,
+              jobPostId,
+              title: statusTitle,
+              body: message || statusTitle,
+            });
+          } else {
+            logger.info(
+              `Application ${applicationId}: skipping worker push/inbox duplicate for status=submitted (orchestrator handles application_received)`
+            );
+          }
         } catch (pushErr: any) {
           logger.warn(`Application status push/inbox failed for ${applicationId}: ${pushErr?.message || pushErr}`);
         }
@@ -750,6 +805,22 @@ export const onApplicationStatusChanged = onDocumentUpdated(
           if (!shouldSend) {
             logger.info(`SMS disabled for user ${userId} - skipping application status change notification`);
             return { success: true };
+          }
+
+          if (newStatus === 'submitted') {
+            const wave = applicationReceivedThanksDedupeSuffix(after);
+            const claimedThanks = await markLifecycleEventIfFirst({
+              tenantId,
+              dedupeKey: `application_received_thanks__${applicationId}__${wave}`,
+              eventType: 'application_received_thanks',
+              context: { applicationId, userId, source: 'onUpdate' },
+            });
+            if (!claimedThanks) {
+              logger.info(
+                `Application ${applicationId}: application_received thanks deduped for wave ${wave} (onCreate already sent or duplicate)`
+              );
+              return { success: true, deduped: true };
+            }
           }
 
           logger.info(`Sending application status SMS for ${applicationId} (${oldStatus} → ${newStatus}) to ${phoneE164}`);

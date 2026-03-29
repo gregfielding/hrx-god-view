@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation, useOutletContext, useSearchParams } from 'react-router-dom';
 import {
   Box,
@@ -48,7 +48,9 @@ import credentialsSeed from '../../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
+import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../../utils/dedupeUserGroupsForUi';
 import { generateJobDescriptionWithAi } from '../../utils/jobDescriptionAiGenerate';
+import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
 
 /** Firestore Timestamp, {seconds}, Date, or ISO string → ms for sorting/display */
 function toMillisFromUnknown(value: unknown): number {
@@ -405,6 +407,26 @@ const JobsBoard: React.FC = () => {
     autoAddToUserGroups: [] as string[],
     coordinates: undefined as { lat: number; lng: number } | undefined,
   });
+
+  const userGroupsForUi = useMemo(() => dedupeUserGroupsForUi(userGroups), [userGroups]);
+
+  const autoAddGroupsAutocompleteValue = useMemo(
+    () => autoAddGroupsPickerValue(newPost.autoAddToUserGroups, userGroups, userGroupsForUi),
+    [newPost.autoAddToUserGroups, userGroups, userGroupsForUi]
+  );
+
+  const canonicalAutoAddGroupIds = useMemo(
+    () => autoAddGroupsAutocompleteValue.map((g) => g.id),
+    [autoAddGroupsAutocompleteValue]
+  );
+
+  useEffect(() => {
+    if (userGroups.length === 0) return;
+    const a = [...newPost.autoAddToUserGroups].sort().join('\0');
+    const b = [...canonicalAutoAddGroupIds].sort().join('\0');
+    if (a === b) return;
+    setNewPost((prev) => ({ ...prev, autoAddToUserGroups: [...canonicalAutoAddGroupIds] }));
+  }, [userGroups.length, canonicalAutoAddGroupIds, newPost.autoAddToUserGroups]);
 
   // Load jobs board posts from Firestore
   useEffect(() => {
@@ -1500,7 +1522,9 @@ const JobsBoard: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {paginatedJobs.map((post) => (
+              {paginatedJobs.map((post) => {
+                const worksiteLocationLine = formatWorksiteCityStateZip(post.worksiteAddress);
+                return (
                 <TableRow 
                   key={post.id}
                   hover
@@ -1552,11 +1576,11 @@ const JobsBoard: React.FC = () => {
                     <Typography variant="body2" color="text.primary">
                       {post.worksiteName}
                     </Typography>
-                    {post.worksiteAddress?.city && post.worksiteAddress?.state && (
+                    {worksiteLocationLine ? (
                       <Typography variant="caption" color="text.secondary" display="block">
-                        {post.worksiteAddress.city}, {post.worksiteAddress.state}
+                        {worksiteLocationLine}
                       </Typography>
-                    )}
+                    ) : null}
                   </TableCell>
                   <TableCell>
                     {post.startDate ? (
@@ -1639,7 +1663,8 @@ const JobsBoard: React.FC = () => {
                     </Typography>
                   </TableCell>
                 </TableRow>
-              ))}
+              );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
@@ -2229,10 +2254,10 @@ const JobsBoard: React.FC = () => {
                     >
                       {loadingUserGroups ? (
                         <MenuItem value="" disabled>Loading user groups...</MenuItem>
-                      ) : userGroups.length === 0 ? (
+                      ) : userGroupsForUi.length === 0 ? (
                         <MenuItem value="" disabled>No user groups available</MenuItem>
                       ) : (
-                        userGroups.map((group) => (
+                        userGroupsForUi.map((group) => (
                           <MenuItem key={group.id} value={group.id}>
                             {group.name}
                           </MenuItem>
@@ -2951,9 +2976,10 @@ const JobsBoard: React.FC = () => {
 
             <Autocomplete
               multiple
-              options={userGroups}
+              options={userGroupsForUi}
               getOptionLabel={(option) => option.name || 'Unnamed Group'}
-              value={userGroups.filter((group) => newPost.autoAddToUserGroups.includes(group.id))}
+              isOptionEqualToValue={(opt, val) => opt.id === val.id}
+              value={autoAddGroupsAutocompleteValue}
               onChange={(_, newValue) =>
                 setNewPost({ ...newPost, autoAddToUserGroups: newValue.map((group) => group.id) })
               }

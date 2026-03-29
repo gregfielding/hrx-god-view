@@ -6,8 +6,8 @@
  * Job Orders is the default active tab.
  */
 
-import React, { useState, useEffect } from 'react';
-import { Box, Button, useTheme } from '@mui/material';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Button } from '@mui/material';
 import {
   Work as WorkIcon,
   Assignment as AssignmentIcon,
@@ -20,6 +20,7 @@ import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useAuth } from '../contexts/AuthContext';
+import AddJobOrderModal from '../components/recruiter/AddJobOrderModal';
 
 export type RecruiterTab =
   | 'job-orders'
@@ -33,13 +34,16 @@ export type RecruiterOutletContext = {
   setSearch: (value: string) => void;
   showFavoritesOnly: boolean;
   setShowFavoritesOnly: (value: boolean) => void;
+  /** Set by Job Orders / My Job Orders list so the header modal can refresh after creating an order. */
+  jobOrdersListRefreshRef?: React.MutableRefObject<(() => Promise<void>) | null>;
 };
 
 const RecruiterDashboard: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { activeTenant } = useAuth();
-  const theme = useTheme();
+  const { tenantId, user } = useAuth();
+  const jobOrdersListRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  const [newJobOrderModalOpen, setNewJobOrderModalOpen] = useState(false);
 
   const normalizedPath = location.pathname.replace(/\/+$/, '');
   const pathParts = normalizedPath.split('/').filter(Boolean); // e.g. ['jobs', 'job-orders', ':id?']
@@ -157,7 +161,7 @@ const RecruiterDashboard: React.FC = () => {
                   <Button
                     variant="contained"
                     startIcon={<AddIcon />}
-                    onClick={() => navigate('/jobs/job-orders/new')}
+                    onClick={() => setNewJobOrderModalOpen(true)}
                     sx={{
                       textTransform: 'none',
                       borderRadius: '24px',
@@ -210,6 +214,17 @@ const RecruiterDashboard: React.FC = () => {
         />
       )}
 
+      <AddJobOrderModal
+        open={newJobOrderModalOpen}
+        onClose={() => setNewJobOrderModalOpen(false)}
+        onSaved={async () => {
+          await jobOrdersListRefreshRef.current?.();
+        }}
+        tenantId={tenantId ?? null}
+        userId={user?.uid ?? ''}
+        requireAccountSelection
+      />
+
       <Box
         sx={{
           flex: 1,
@@ -228,6 +243,7 @@ const RecruiterDashboard: React.FC = () => {
             setSearch,
             showFavoritesOnly,
             setShowFavoritesOnly,
+            jobOrdersListRefreshRef,
           } satisfies RecruiterOutletContext}
         />
       </Box>

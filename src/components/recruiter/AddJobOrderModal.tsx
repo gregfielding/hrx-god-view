@@ -24,6 +24,8 @@ export interface AddJobOrderModalProps {
   jobTitleOptions?: string[];
   /** When opening from Account Details, pass account id so the job order is associated and child account Job Orders tab can scope. */
   recruiterAccountId?: string | null;
+  /** Jobs hub: user must pick account before company. */
+  requireAccountSelection?: boolean;
 }
 
 const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
@@ -38,6 +40,7 @@ const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
   defaultWorksiteId,
   jobTitleOptions,
   recruiterAccountId,
+  requireAccountSelection = false,
 }) => {
   const handleSave = async () => {
     onClose();
@@ -67,6 +70,7 @@ const AddJobOrderModal: React.FC<AddJobOrderModalProps> = ({
           companies={accountCompanies}
           jobTitles={jobTitleOptions}
           recruiterAccountId={recruiterAccountId ?? undefined}
+          requireAccountSelection={requireAccountSelection}
         />
       </DialogContent>
     </Dialog>

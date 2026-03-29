@@ -77,6 +77,7 @@ import EligibilityModal from '../components/EligibilityModal';
 import { checkMissingCertifications } from '../utils/checkMissingCertifications';
 import { toChipLabel } from '../utils/chipLabel';
 import { getLastShiftDateFromShifts } from '../utils/dateSchedule';
+import { formatWorksiteCityStateZip } from '../utils/formatWorksiteAddress';
 import CardDeck from '../components/worker/cards/CardDeck';
 import JobRecommendationCard from '../components/worker/dashboard/cards/JobRecommendationCard';
 import JobFeedCard from '../components/worker/JobFeedCard';
@@ -1868,9 +1869,8 @@ const PublicJobsBoard: React.FC = () => {
         >
           {filteredJobs[deckIndex] && (() => {
             const job = filteredJobs[deckIndex];
-            const baseLocation = job.worksiteAddress?.city && job.worksiteAddress?.state
-              ? `${job.worksiteAddress.city}, ${job.worksiteAddress.state}`
-              : job.worksiteName || undefined;
+            const formattedAddr = formatWorksiteCityStateZip(job.worksiteAddress);
+            const baseLocation = formattedAddr || job.worksiteName || undefined;
             const distanceLabel = getDistanceLabel(getJobDistanceMiles(job));
             const location = distanceLabel && baseLocation
               ? `${baseLocation} • ${distanceLabel}`
@@ -1985,12 +1985,7 @@ const PublicJobsBoard: React.FC = () => {
                     <LocationOn sx={{ fontSize: 18, mr: 1, color: 'text.secondary' }} />
                     <Box>
                       <Typography variant="body2" color="text.secondary">
-                        {job.worksiteAddress?.city && job.worksiteAddress?.state && 
-                        job.worksiteAddress.city.trim() && job.worksiteAddress.state.trim() ? (
-                          `${job.worksiteAddress.city}, ${job.worksiteAddress.state}${job.worksiteAddress.zipCode ? ` ${job.worksiteAddress.zipCode}` : ''}`
-                        ) : (
-                          'Location TBD'
-                        )}
+                        {formatWorksiteCityStateZip(job.worksiteAddress) || 'Location TBD'}
                       </Typography>
                       {jobDistanceLabel ? (
                         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
@@ -2111,12 +2106,7 @@ const PublicJobsBoard: React.FC = () => {
                     <LocationOn sx={{ fontSize: 20, color: 'text.secondary' }} />
                     <Box>
                       <Typography variant="body1">
-                        {selectedJob.worksiteAddress?.city && selectedJob.worksiteAddress?.state &&
-                        selectedJob.worksiteAddress.city.trim() && selectedJob.worksiteAddress.state.trim() ? (
-                          `${selectedJob.worksiteAddress.city}, ${selectedJob.worksiteAddress.state}${selectedJob.worksiteAddress.zipCode ? ` ${selectedJob.worksiteAddress.zipCode}` : ''}`
-                        ) : (
-                          'Location TBD'
-                        )}
+                        {formatWorksiteCityStateZip(selectedJob.worksiteAddress) || 'Location TBD'}
                       </Typography>
                       {(() => {
                         const selectedDistanceLabel = getDistanceLabel(getJobDistanceMiles(selectedJob));

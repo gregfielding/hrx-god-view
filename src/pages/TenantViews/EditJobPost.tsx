@@ -27,6 +27,7 @@ import {
   Groups as GroupIcon,
   Insights as InsightsIcon,
   ContentCopy as ContentCopyIcon,
+  LocationOn as LocationOnIcon,
 } from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
@@ -49,6 +50,8 @@ import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from '../../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../../components/EVerifyComfortChip';
+import JobBoardPostStatusChip from '../../components/JobBoardPostStatusChip';
+import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
 
 const EditJobPost: React.FC = () => {
   const { tenantId, activeTenant } = useAuth();
@@ -628,9 +631,32 @@ const EditJobPost: React.FC = () => {
                 >
                   {post.postTitle}
                 </Typography>
-                <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
-                  Status: {(post.status || 'draft').toUpperCase()} • Type: {post.jobType === 'career' ? 'Career' : 'Gig'}
-                </Typography>
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    gap: 0.75,
+                    mt: 0.75,
+                  }}
+                >
+                  <Typography
+                    component="span"
+                    sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 400 }}
+                  >
+                    Status:{' '}
+                  </Typography>
+                  <JobBoardPostStatusChip status={post.status} />
+                  <Typography component="span" sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.3)' }}>
+                    •
+                  </Typography>
+                  <Typography
+                    component="span"
+                    sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', fontWeight: 400 }}
+                  >
+                    Type: {post.jobType === 'career' ? 'Career' : 'Gig'}
+                  </Typography>
+                </Box>
                 {!post.jobOrderId &&
                   hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl) && (
                     <JobBoardSyndicationIconRow
@@ -639,9 +665,17 @@ const EditJobPost: React.FC = () => {
                       sx={{ mt: 0.5 }}
                     />
                   )}
-                <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
-                  {post.companyName || '—'} • {post.worksiteName || '—'}
-                </Typography>
+                <Box sx={{ mt: 0.75, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+                  <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)' }}>
+                    {post.companyName || '—'} • {post.worksiteName || '—'}
+                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <LocationOnIcon sx={{ fontSize: 18, color: 'rgba(0,0,0,0.45)', flexShrink: 0 }} />
+                    <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)' }}>
+                      {formatWorksiteCityStateZip(post.worksiteAddress) || '—'}
+                    </Typography>
+                  </Box>
+                </Box>
               </Box>
             </Box>
           }
@@ -733,6 +767,26 @@ const EditJobPost: React.FC = () => {
               {post.postTitle}
             </Typography>
           </Breadcrumbs>
+          <Box
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 0.75,
+              mt: 1.5,
+            }}
+          >
+            <Typography component="span" variant="body2" color="text.secondary">
+              Status:{' '}
+            </Typography>
+            <JobBoardPostStatusChip status={post.status} />
+            <Typography component="span" variant="body2" sx={{ color: 'text.disabled' }}>
+              •
+            </Typography>
+            <Typography component="span" variant="body2" color="text.secondary">
+              Type: {post.jobType === 'career' ? 'Career' : 'Gig'}
+            </Typography>
+          </Box>
         </Box>
       )}
 

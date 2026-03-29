@@ -133,7 +133,7 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
       logger.info(`No channels available for message ${context.messageTypeId} to user ${context.userId}: ${routingDecision.reason}`);
       
       // Log the attempt even if no channels
-      await logMessageAttempt(context, routingDecision, []);
+      await logMessageAttempt(context, routingDecision, [], userData);
       
       return {
         success: false,
@@ -162,7 +162,7 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
     }
     
     // 5. Log the message attempt
-    const messageLogId = await logMessageAttempt(context, routingDecision, deliveryResults);
+    const messageLogId = await logMessageAttempt(context, routingDecision, deliveryResults, userData);
     
     // 6. Determine overall success
     const overallSuccess = deliveryResults.some(r => r.success) || 
@@ -428,6 +428,24 @@ function toE164(phone: string | undefined): string | null {
   return digits.length >= 10 ? `+${digits}` : null;
 }
 
+/** Best-effort destination for audit / admin UI (message history modal). */
+function outboundRecipientForChannel(
+  channel: Channel,
+  userData: admin.firestore.DocumentData
+): { recipientPhoneE164?: string; recipientEmail?: string } {
+  if (channel === 'sms') {
+    const rawPhone = (userData.phoneE164 || userData.phone || '').trim();
+    if (!rawPhone) return {};
+    const e164 = rawPhone.startsWith('+') ? rawPhone : toE164(rawPhone);
+    return { recipientPhoneE164: (e164 || rawPhone) as string };
+  }
+  if (channel === 'email') {
+    const em = (userData.email || '').trim();
+    return em ? { recipientEmail: em } : {};
+  }
+  return {};
+}
+
 /**
  * Deliver SMS message
  * 
@@ -556,6 +574,7 @@ async function deliverSMS(
         status: 'suppressed_rate_limit',
         failureReason: JSON.stringify(rateLimitCheck.details),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...outboundRecipientForChannel('sms', userData),
       };
       
       await logRef.set(logDoc);
@@ -602,6 +621,7 @@ async function deliverSMS(
         language: preferredLanguage,
         status: 'suppressed_quiet_hours',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...outboundRecipientForChannel('sms', userData),
       };
       
       await logRef.set(logDoc);
@@ -615,6 +635,10 @@ async function deliverSMS(
         error: 'Message suppressed due to quiet hours',
       };
     }
+
+    // Resolve recipient: allow phoneE164 or phone (application flow may only have phone)
+    const rawPhone = (userData.phoneE164 || userData.phone || '').trim();
+    const toPhoneE164 = rawPhone.startsWith('+') ? rawPhone : toE164(rawPhone);
 
     // Create initial log entry (status: queued)
     const logRef = db
@@ -639,13 +663,10 @@ async function deliverSMS(
       language: preferredLanguage,
       status: 'queued',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...outboundRecipientForChannel('sms', userData),
     };
     
     await logRef.set(logDoc);
-    
-    // Resolve recipient: allow phoneE164 or phone (application flow may only have phone)
-    const rawPhone = (userData.phoneE164 || userData.phone || '').trim();
-    const toPhoneE164 = rawPhone.startsWith('+') ? rawPhone : toE164(rawPhone);
     if (!toPhoneE164) {
       return {
         channel: 'sms',
@@ -831,6 +852,7 @@ async function deliverEmail(
           language: preferredLanguage,
           status: 'suppressed_rate_limit',
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...outboundRecipientForChannel('email', userData),
         });
         
         return {
@@ -865,6 +887,7 @@ async function deliverEmail(
           language: preferredLanguage,
           status: 'suppressed_quiet_hours',
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          ...outboundRecipientForChannel('email', userData),
         });
         
         return {
@@ -1054,6 +1077,7 @@ async function deliverEmail(
         status: 'suppressed_rate_limit',
         failureReason: JSON.stringify(rateLimitCheck.details),
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...outboundRecipientForChannel('email', userData),
       };
       
       await logRef.set(logDoc);
@@ -1098,6 +1122,7 @@ async function deliverEmail(
         language: preferredLanguage,
         status: 'suppressed_quiet_hours',
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...outboundRecipientForChannel('email', userData),
       };
       
       await logRef.set(logDoc);
@@ -1135,6 +1160,7 @@ async function deliverEmail(
       language: preferredLanguage,
       status: 'queued',
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...outboundRecipientForChannel('email', userData),
     };
     
     await logRef.set(logDoc);
@@ -1571,7 +1597,8 @@ async function getDeviceTokensForUser(userId: string): Promise<string[]> {
 async function logMessageAttempt(
   context: MessageContext,
   routingDecision: RoutingDecision,
-  deliveryResults: DeliveryResult[]
+  deliveryResults: DeliveryResult[],
+  userData: admin.firestore.DocumentData
 ): Promise<string> {
   try {
     // Log each channel separately for better tracking
@@ -1606,6 +1633,7 @@ async function logMessageAttempt(
         status: (result.success ? 'sent' : 'failed') as MessageStatus,
         failureReason: result.error,
         providerMessageId: result.messageId,
+        ...outboundRecipientForChannel(result.channel, userData),
       };
       
       const logId = await logMessage(messageLog);
@@ -1618,17 +1646,19 @@ async function logMessageAttempt(
     if (deliveryResults.length === 0 && !routingDecision.shouldSend) {
       // Get message type config for default channel
       const messageTypeConfig = await getMessageTypeConfig(context.tenantId, context.messageTypeId);
+      const defaultCh = messageTypeConfig?.defaultChannels[0] || 'sms';
       const messageLog: Omit<MessageLog, 'id' | 'createdAt'> = {
         userId: context.userId,
         tenantId: context.tenantId,
         messageTypeId: context.messageTypeId,
-        channel: messageTypeConfig?.defaultChannels[0] || 'sms',
+        channel: defaultCh,
         direction: 'outbound' as MessageDirection,
         fromIdentity: 'system' as MessageFromIdentity,
         contentSent: `Message not sent: ${routingDecision.reason}`,
         language: 'en' as MessageLanguage,
         status: 'not_sent' as MessageStatus,
         failureReason: routingDecision.reason,
+        ...outboundRecipientForChannel(defaultCh, userData),
       };
       
       const logId = await logMessage(messageLog);

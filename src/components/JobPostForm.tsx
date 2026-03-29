@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { TextFieldProps } from '@mui/material';
 import {
   Box,
@@ -32,6 +32,7 @@ import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, ge
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
 import { generateJobDescriptionWithAi } from '../utils/jobDescriptionAiGenerate';
+import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../utils/dedupeUserGroupsForUi';
 
 /** Single-line display for city / state / ZIP (edit form + Google Places input). */
 function formatCityStateZipInput(city: string, state: string, zipCode: string): string {
@@ -283,6 +284,38 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const [loadingJobOrders, setLoadingJobOrders] = useState(false);
   const [userGroups, setUserGroups] = useState<Array<{ id: string; name: string }>>([]);
   const [loadingUserGroups, setLoadingUserGroups] = useState(false);
+
+  /** One row per doc id, then one per display name (avoids duplicate labels from legacy/duplicate Firestore user group docs). */
+  const userGroupsForUi = useMemo(() => dedupeUserGroupsForUi(userGroups), [userGroups]);
+
+  /** Collapse stored group ids that share the same display name to the canonical doc used in the picker. */
+  const autoAddGroupsAutocompleteValue = useMemo(
+    () =>
+      autoAddGroupsPickerValue(formData.autoAddToUserGroups, userGroups, userGroupsForUi),
+    [formData.autoAddToUserGroups, userGroups, userGroupsForUi]
+  );
+
+  const canonicalAutoAddGroupIds = useMemo(
+    () => autoAddGroupsAutocompleteValue.map((g) => g.id),
+    [autoAddGroupsAutocompleteValue]
+  );
+
+  /** Collapse duplicate Firestore user group docs in stored `autoAddToUserGroups` to one id per display name. */
+  useEffect(() => {
+    if (userGroups.length === 0) return;
+    const a = [...formData.autoAddToUserGroups].sort().join('\0');
+    const b = [...canonicalAutoAddGroupIds].sort().join('\0');
+    if (a === b) return;
+    setFormData((prev) => ({ ...prev, autoAddToUserGroups: [...canonicalAutoAddGroupIds] }));
+    if (autoSave && mode === 'edit') maybeTickPersist(0);
+  }, [
+    userGroups.length,
+    canonicalAutoAddGroupIds,
+    formData.autoAddToUserGroups,
+    autoSave,
+    mode,
+    maybeTickPersist,
+  ]);
 
   // City autocomplete
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
@@ -1680,10 +1713,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 >
                   {loadingUserGroups ? (
                     <MenuItem value="" disabled>Loading user groups...</MenuItem>
-                  ) : userGroups.length === 0 ? (
+                  ) : userGroupsForUi.length === 0 ? (
                     <MenuItem value="" disabled>No user groups available</MenuItem>
                   ) : (
-                    userGroups.map((group) => (
+                    userGroupsForUi.map((group) => (
                       <MenuItem key={group.id} value={group.id}>
                         {group.name}
                       </MenuItem>
@@ -2305,9 +2338,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
         <Autocomplete
           multiple
-          options={userGroups}
+          options={userGroupsForUi}
           getOptionLabel={(option) => option.name || 'Unnamed Group'}
-          value={userGroups.filter((group) => formData.autoAddToUserGroups.includes(group.id))}
+          isOptionEqualToValue={(opt, val) => opt.id === val.id}
+          value={autoAddGroupsAutocompleteValue}
           onChange={(_, newValue) => {
             setFormData({ ...formData, autoAddToUserGroups: newValue.map((group) => group.id) });
             maybeTickPersist();

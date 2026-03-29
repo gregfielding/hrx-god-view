@@ -62,6 +62,9 @@ interface MessageLog {
   status: string;
   failureReason?: string;
   providerMessageId?: string;
+  /** Set on newer outbound logs (orchestrator). */
+  recipientPhoneE164?: string;
+  recipientEmail?: string;
   createdAt: Timestamp | Date;
 }
 
@@ -126,7 +129,13 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
   const [emailThreadDrawerOpen, setEmailThreadDrawerOpen] = useState(false);
   const [messageModalOpen, setMessageModalOpen] = useState(false);
   const [selectedMessage, setSelectedMessage] = useState<MessageLog | null>(null);
-  
+  /** Fallback when older messageLogs lack recipient fields. */
+  const [profileContact, setProfileContact] = useState<{
+    email?: string;
+    phoneE164?: string;
+    phone?: string;
+  }>({});
+
   // Pagination state
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
@@ -134,6 +143,30 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
   const [emailThreadRowsPerPage, setEmailThreadRowsPerPage] = useState(25);
 
   const effectiveTenantId = tenantId || activeTenant?.id;
+
+  useEffect(() => {
+    if (!uid) {
+      setProfileContact({});
+      return;
+    }
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', uid));
+        const d = snap.data();
+        if (!d) {
+          setProfileContact({});
+          return;
+        }
+        setProfileContact({
+          email: typeof d.email === 'string' ? d.email : undefined,
+          phoneE164: typeof d.phoneE164 === 'string' ? d.phoneE164 : undefined,
+          phone: typeof d.phone === 'string' ? d.phone : undefined,
+        });
+      } catch {
+        setProfileContact({});
+      }
+    })();
+  }, [uid]);
 
   useEffect(() => {
     if (!uid || !effectiveTenantId) return;
@@ -906,6 +939,37 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
                   </Typography>
                   <Typography variant="body2">{selectedMessage.messageTypeId}</Typography>
                 </Box>
+
+                {selectedMessage.direction === 'outbound' &&
+                  (selectedMessage.channel === 'sms' || selectedMessage.channel === 'email') && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
+                        {selectedMessage.channel === 'sms' ? 'Sent to (phone)' : 'Sent to (email)'}
+                      </Typography>
+                      <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
+                        {selectedMessage.channel === 'sms'
+                          ? selectedMessage.recipientPhoneE164 ||
+                            profileContact.phoneE164 ||
+                            profileContact.phone ||
+                            '—'
+                          : selectedMessage.recipientEmail || profileContact.email || '—'}
+                      </Typography>
+                      {selectedMessage.channel === 'sms' &&
+                        !selectedMessage.recipientPhoneE164 &&
+                        (profileContact.phoneE164 || profileContact.phone) && (
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                            From user profile (not stored on this log entry).
+                          </Typography>
+                        )}
+                      {selectedMessage.channel === 'email' &&
+                        !selectedMessage.recipientEmail &&
+                        profileContact.email && (
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+                            From user profile (not stored on this log entry).
+                          </Typography>
+                        )}
+                    </Box>
+                  )}
 
                 {/* Subject/Title (for email and push) */}
                 {(selectedMessage.channel === 'email' || selectedMessage.channel === 'push') && (

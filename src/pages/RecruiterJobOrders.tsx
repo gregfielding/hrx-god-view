@@ -344,6 +344,15 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     }
   }, [tenantId, statusFilter, sortField, sortDirection, effectiveOnlyMyOrders, user?.uid]);
 
+  useEffect(() => {
+    const ref = outletCtx?.jobOrdersListRefreshRef;
+    if (!ref) return;
+    ref.current = fetchJobOrders;
+    return () => {
+      ref.current = null;
+    };
+  }, [fetchJobOrders, outletCtx]);
+
   // Reset and reload when filters/search/sort change
   useEffect(() => {
     if (tenantId) {

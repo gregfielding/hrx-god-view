@@ -47,6 +47,10 @@ export interface MessageLog {
   status: MessageStatus;
   failureReason?: string;
   providerMessageId?: string;       // Twilio message SID, email message ID, etc.
+  /** Outbound SMS: E.164 (or best-effort) destination. */
+  recipientPhoneE164?: string;
+  /** Outbound email: recipient address at send time. */
+  recipientEmail?: string;
   createdAt: admin.firestore.Timestamp | admin.firestore.FieldValue;
 }
 
