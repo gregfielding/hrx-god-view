@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import type { TextFieldProps } from '@mui/material';
 import {
   Box,
@@ -20,8 +21,14 @@ import {
   Snackbar,
 } from '@mui/material';
 import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
-import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
-import { JobsBoardPost } from '../services/recruiter/jobsBoardService';
+import JobPostWorksiteCityPlacesField, {
+  type JobPostWorksiteCityCommit,
+} from './JobPostWorksiteCityPlacesField';
+import {
+  JobsBoardPost,
+  coerceStringArrayField,
+  stripReadOnlyJobPostFields,
+} from '../services/recruiter/jobsBoardService';
 import { useAuth } from '../contexts/AuthContext';
 import jobTitlesList from '../data/onetJobTitles.json';
 import onetSkills from '../data/onetSkills.json';
@@ -31,45 +38,9 @@ import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOption
 import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
+import { formatCityStateZipInput, parseCityStateZipFromWorksiteName } from '../utils/cityStateZipInput';
 import { generateJobDescriptionWithAi } from '../utils/jobDescriptionAiGenerate';
 import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../utils/dedupeUserGroupsForUi';
-
-/** Single-line display for city / state / ZIP (edit form + Google Places input). */
-function formatCityStateZipInput(city: string, state: string, zipCode: string): string {
-  const c = (city || '').trim();
-  const s = (state || '').trim();
-  const z = (zipCode || '').trim();
-  if (!c && !s) return '';
-  const core = [c, s].filter(Boolean).join(', ');
-  return z ? `${core} ${z}`.trim() : core;
-}
-
-/**
- * Parse manual "City, ST" or "City, ST 12345" input into structured fields.
- */
-function parseCityStateZipInput(raw: string): { city: string; state: string; zipCode: string } {
-  const value = raw.trim();
-  if (!value) return { city: '', state: '', zipCode: '' };
-  const idx = value.indexOf(',');
-  if (idx === -1) {
-    return { city: value, state: '', zipCode: '' };
-  }
-  const city = value.slice(0, idx).trim();
-  const after = value.slice(idx + 1).trim().replace(/\s+/g, ' ');
-  if (!after) return { city, state: '', zipCode: '' };
-  const stateZip = after.match(/^([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/);
-  if (stateZip) {
-    return {
-      city,
-      state: stateZip[1].toUpperCase(),
-      zipCode: stateZip[2] || '',
-    };
-  }
-  if (after.length === 2) {
-    return { city, state: after.toUpperCase(), zipCode: '' };
-  }
-  return { city, state: '', zipCode: '' };
-}
 
 function zipFromWorksiteAddress(wa: Record<string, unknown> | undefined): string {
   if (!wa || typeof wa !== 'object') return '';
@@ -79,26 +50,6 @@ function zipFromWorksiteAddress(wa: Record<string, unknown> | undefined): string
     (wa.zip as string) ||
     '';
   return typeof z === 'string' ? z : '';
-}
-
-/** e.g. "Philadelphia, PA, USA" or "Dallas, TX 75201" from public display strings */
-function parseCityStateZipFromWorksiteName(name: string): {
-  city: string;
-  state: string;
-  zipCode: string;
-} {
-  const s = (name || '').trim();
-  if (!s) return { city: '', state: '', zipCode: '' };
-  const noCountry = s.replace(/,?\s*USA\s*$/i, '').trim();
-  const m = noCountry.match(/^([^,]+),\s*([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?\s*$/);
-  if (m) {
-    return {
-      city: m[1].trim(),
-      state: m[2].toUpperCase(),
-      zipCode: m[3] || '',
-    };
-  }
-  return { city: '', state: '', zipCode: '' };
 }
 
 export interface JobPostFormProps {
@@ -215,10 +166,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const persistChainRef = useRef(Promise.resolve());
   /** When auto-saving edits, parent may refresh `post` after each save; skip re-applying initialData if same document. */
   const lastSyncedAutoSavePostIdRef = useRef<string | null>(null);
-  const cityInputRef = useRef<HTMLInputElement | null>(null);
 
   const buildPayloadFromFormData = useCallback((fd: typeof formData): Partial<JobsBoardPost> => {
-    return {
+    const craigslistTrimmed = typeof fd.craigslistUrl === 'string' ? fd.craigslistUrl.trim() : '';
+    const indeedTrimmed = typeof fd.indeedUrl === 'string' ? fd.indeedUrl.trim() : '';
+    return stripReadOnlyJobPostFields({
       ...fd,
       startDate: fd.startDate ? new Date(fd.startDate) : undefined,
       endDate: fd.endDate ? new Date(fd.endDate) : undefined,
@@ -233,7 +185,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       payRate: fd.payRate ? parseFloat(fd.payRate.toString()) : undefined,
       autoAddToUserGroups: fd.autoAddToUserGroups,
       autoAddToUserGroup: fd.autoAddToUserGroups.length === 1 ? fd.autoAddToUserGroups[0] : undefined,
-    };
+      craigslistUrl: craigslistTrimmed,
+      indeedUrl: indeedTrimmed,
+    } as Record<string, unknown>) as Partial<JobsBoardPost>;
   }, []);
 
   const schedulePersist = useCallback(() => {
@@ -257,6 +211,26 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     [autoSave, mode, schedulePersist]
   );
 
+  const handleWorksiteCityCommit = useCallback(
+    (patch: JobPostWorksiteCityCommit) => {
+      flushSync(() => {
+        setFormData((prev) => ({
+          ...prev,
+          city: patch.city,
+          state: patch.state,
+          zipCode: patch.zipCode,
+          worksiteName: patch.worksiteName,
+          coordinates: patch.coordinates,
+          ...(patch.street !== undefined ? { street: patch.street } : {}),
+        }));
+      });
+      if (autoSave && mode === 'edit') {
+        window.setTimeout(() => schedulePersist(), 0);
+      }
+    },
+    [autoSave, mode, schedulePersist]
+  );
+
   function AutoSaveTextField(props: TextFieldProps) {
     const { onBlur, ...rest } = props;
     return (
@@ -264,7 +238,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         {...rest}
         onBlur={(e) => {
           onBlur?.(e);
-          if (autoSave && mode === 'edit') schedulePersist();
+          // Defer persist until after React applies the last onChange from this field (blur can run in the same tick).
+          if (autoSave && mode === 'edit') {
+            window.setTimeout(() => schedulePersist(), 0);
+          }
         }}
       />
     );
@@ -317,8 +294,6 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     maybeTickPersist,
   ]);
 
-  // City autocomplete
-  const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
 
@@ -327,7 +302,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
   // Shift options for Career job type
   const shiftOptions = [
-    'Full Time', 'Part Time', 'Temporary',
+    'Full Time', 'Part Time', 'Temporary', 'On Call',
     'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift',
     'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights',
     '8 Hour', '10 Hour', '12 Hour'
@@ -426,29 +401,90 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         },
         autoAddToUserGroups: normalizeGroupIds(initialData.autoAddToUserGroups ?? initialData.autoAddToUserGroup),
         // Ensure skills and other arrays are properly set
-        skills: Array.isArray(initialData.skills) ? initialData.skills : (initialData.skills ? [initialData.skills] : (prev.skills || [])),
-        showSkills: initialData.showSkills !== undefined ? initialData.showSkills : (Array.isArray(initialData.skills) && initialData.skills.length > 0),
-        // Ensure uniform requirements are properly set (handle both string and array formats)
-        uniformRequirements: (() => {
-          const uniform = initialData.uniformRequirements;
-          if (Array.isArray(uniform)) {
-            return uniform;
-          } else if (typeof uniform === 'string' && uniform) {
-            return [uniform];
-          }
-          return prev.uniformRequirements || [];
-        })(),
-        showUniformRequirements: initialData.showUniformRequirements !== undefined 
-          ? initialData.showUniformRequirements 
-          : (() => {
-            const uniform: any = initialData.uniformRequirements;
-            if (Array.isArray(uniform)) {
-              return uniform.length > 0;
-            } else if (typeof uniform === 'string') {
-              return uniform.length > 0;
-            }
-            return false;
-          })(),
+        skills: coerceStringArrayField(
+          initialData.skills !== undefined && initialData.skills !== null ? initialData.skills : prev.skills
+        ),
+        showSkills:
+          initialData.showSkills !== undefined
+            ? initialData.showSkills
+            : coerceStringArrayField(initialData.skills !== undefined ? initialData.skills : prev.skills).length > 0,
+        licensesCerts: coerceStringArrayField(
+          initialData.licensesCerts !== undefined && initialData.licensesCerts !== null
+            ? initialData.licensesCerts
+            : prev.licensesCerts
+        ),
+        showLicensesCerts:
+          initialData.showLicensesCerts !== undefined
+            ? initialData.showLicensesCerts
+            : coerceStringArrayField(
+                initialData.licensesCerts !== undefined ? initialData.licensesCerts : prev.licensesCerts
+              ).length > 0,
+        experienceLevels: coerceStringArrayField(
+          initialData.experienceLevels !== undefined && initialData.experienceLevels !== null
+            ? initialData.experienceLevels
+            : prev.experienceLevels
+        ),
+        showExperience:
+          initialData.showExperience !== undefined
+            ? initialData.showExperience
+            : coerceStringArrayField(
+                initialData.experienceLevels !== undefined ? initialData.experienceLevels : prev.experienceLevels
+              ).length > 0,
+        educationLevels: coerceStringArrayField(
+          initialData.educationLevels !== undefined && initialData.educationLevels !== null
+            ? initialData.educationLevels
+            : prev.educationLevels
+        ),
+        showEducation:
+          initialData.showEducation !== undefined
+            ? initialData.showEducation
+            : coerceStringArrayField(
+                initialData.educationLevels !== undefined ? initialData.educationLevels : prev.educationLevels
+              ).length > 0,
+        languages: coerceStringArrayField(
+          initialData.languages !== undefined && initialData.languages !== null ? initialData.languages : prev.languages
+        ),
+        showLanguages:
+          initialData.showLanguages !== undefined
+            ? initialData.showLanguages
+            : coerceStringArrayField(initialData.languages !== undefined ? initialData.languages : prev.languages)
+                .length > 0,
+        physicalRequirements: coerceStringArrayField(
+          initialData.physicalRequirements !== undefined && initialData.physicalRequirements !== null
+            ? initialData.physicalRequirements
+            : prev.physicalRequirements
+        ),
+        showPhysicalRequirements:
+          initialData.showPhysicalRequirements !== undefined
+            ? initialData.showPhysicalRequirements
+            : coerceStringArrayField(
+                initialData.physicalRequirements !== undefined
+                  ? initialData.physicalRequirements
+                  : prev.physicalRequirements
+              ).length > 0,
+        requiredPpe: coerceStringArrayField(
+          initialData.requiredPpe !== undefined && initialData.requiredPpe !== null
+            ? initialData.requiredPpe
+            : prev.requiredPpe
+        ),
+        showRequiredPpe:
+          initialData.showRequiredPpe !== undefined
+            ? initialData.showRequiredPpe
+            : coerceStringArrayField(initialData.requiredPpe !== undefined ? initialData.requiredPpe : prev.requiredPpe)
+                .length > 0,
+        uniformRequirements: coerceStringArrayField(
+          initialData.uniformRequirements !== undefined && initialData.uniformRequirements !== null
+            ? initialData.uniformRequirements
+            : prev.uniformRequirements
+        ),
+        showUniformRequirements:
+          initialData.showUniformRequirements !== undefined
+            ? initialData.showUniformRequirements
+            : coerceStringArrayField(
+                initialData.uniformRequirements !== undefined
+                  ? initialData.uniformRequirements
+                  : prev.uniformRequirements
+              ).length > 0,
         customUniformRequirements: initialData.customUniformRequirements !== undefined ? initialData.customUniformRequirements : (prev.customUniformRequirements || ''),
         showCustomUniformRequirements: initialData.showCustomUniformRequirements !== undefined ? initialData.showCustomUniformRequirements : (!!initialData.customUniformRequirements),
         jobDescription: (() => {
@@ -696,51 +732,6 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     maybeTickPersist(0);
   };
 
-  const onCityAutocompleteLoad = (autocomplete: google.maps.places.Autocomplete) => {
-    setCityAutocomplete(autocomplete);
-  };
-
-  const onCityPlaceChanged = () => {
-    if (cityAutocomplete) {
-      const place = cityAutocomplete.getPlace();
-      if (place && place.geometry && place.geometry.location) {
-        let city = '';
-        let state = '';
-        let zipCode = '';
-        
-        place.address_components?.forEach((component) => {
-          if (component.types.includes('locality')) {
-            city = component.long_name;
-          }
-          if (component.types.includes('administrative_area_level_1')) {
-            state = component.short_name;
-          }
-          if (component.types.includes('postal_code')) {
-            zipCode = component.long_name;
-          }
-        });
-
-        // Extract coordinates from Google Places API
-        const coordinates = {
-          lat: place.geometry.location.lat(),
-          lng: place.geometry.location.lng()
-        };
-
-        setFormData(prev => ({
-          ...prev,
-          worksiteName: place.formatted_address || `${city}, ${state}`,
-          street: '',
-          city,
-          state,
-          zipCode,
-          // Store coordinates for distance calculations
-          coordinates
-        }));
-        maybeTickPersist(0);
-      }
-    }
-  };
-
   // Geocode city and state to get coordinates
   const geocodeCityState = async (city: string, state: string, zipCode?: string) => {
     if (!city?.trim() || !state?.trim()) {
@@ -766,10 +757,16 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     }
   };
 
-  // Auto-geocode when both city and state are entered
+  // Auto-geocode when city + full 2-letter state are present (skip while user is still typing "F" → "FL")
   useEffect(() => {
-    if (!useCompanyLocation && formData.city?.trim() && formData.state?.trim() && !formData.coordinates) {
-      // Debounce geocoding
+    const st = (formData.state || '').trim();
+    if (
+      !useCompanyLocation &&
+      formData.city?.trim() &&
+      st.length === 2 &&
+      /^[A-Za-z]{2}$/.test(st) &&
+      !formData.coordinates
+    ) {
       const timeoutId = setTimeout(() => {
         geocodeCityState(formData.city, formData.state, formData.zipCode);
       }, 1000);
@@ -992,7 +989,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
     try {
       // Convert string dates to Date objects and string payRate to number
-      const dataToSave = {
+      const dataToSave = stripReadOnlyJobPostFields({
         ...formData,
         startDate: formData.startDate ? new Date(formData.startDate) : undefined,
         endDate: formData.endDate ? new Date(formData.endDate) : undefined,
@@ -1007,8 +1004,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         payRate: formData.payRate ? parseFloat(formData.payRate.toString()) : undefined,
         autoAddToUserGroups: formData.autoAddToUserGroups,
         autoAddToUserGroup: formData.autoAddToUserGroups.length === 1 ? formData.autoAddToUserGroups[0] : undefined,
-      };
-      
+      } as Record<string, unknown>) as Partial<JobsBoardPost>;
+
       await onSave(dataToSave);
     } catch (err: any) {
       setError(err.message || 'Failed to save job post');
@@ -1574,61 +1571,22 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             
             {/* Always show City/State when no company is selected */}
             <Box sx={{ mt: 2 }}>
-              {isGoogleMapsLoaded ? (
-                <GoogleAutocomplete
-                  onLoad={onCityAutocompleteLoad}
-                  onPlaceChanged={onCityPlaceChanged}
-                  options={{
-                    types: ['(cities)'],
-                    componentRestrictions: { country: 'us' }
-                  }}
-                >
-                  <AutoSaveTextField
-                    fullWidth
-                    label="City, State"
-                    required
-                    value={formatCityStateZipInput(formData.city, formData.state, formData.zipCode)}
-                    onChange={(e) => {
-                      const raw = e.target.value;
-                      const parsed = parseCityStateZipInput(raw);
-                      const hasLoc = !!(parsed.city?.trim() && parsed.state?.trim());
-                      setFormData((prev) => ({
-                        ...prev,
-                        ...parsed,
-                        coordinates: undefined,
-                        worksiteName: hasLoc
-                          ? formatCityStateZipInput(parsed.city, parsed.state, parsed.zipCode)
-                          : '',
-                      }));
-                    }}
-                    placeholder="Search for a city or type City, ST (ZIP optional)..."
-                    helperText="Search and select a city, or type e.g. Philadelphia, PA 19107 — coordinates save automatically"
-                    inputRef={cityInputRef}
-                  />
-                </GoogleAutocomplete>
-              ) : (
-                <AutoSaveTextField
-                  fullWidth
-                  label="City, State"
-                  value={formatCityStateZipInput(formData.city, formData.state, formData.zipCode)}
-                  onChange={(e) => {
-                    const raw = e.target.value;
-                    const parsed = parseCityStateZipInput(raw);
-                    const hasLoc = !!(parsed.city?.trim() && parsed.state?.trim());
-                    setFormData((prev) => ({
-                      ...prev,
-                      ...parsed,
-                      coordinates: undefined,
-                      worksiteName: hasLoc
-                        ? formatCityStateZipInput(parsed.city, parsed.state, parsed.zipCode)
-                        : '',
-                    }));
-                  }}
-                  required
-                  placeholder="City, ST or City, ST ZIP (Google Maps loading...)"
-                  helperText="Loading Google Maps... (you can type manually: City, ST or City, ST 12345)"
-                />
-              )}
+              <JobPostWorksiteCityPlacesField
+                mapsReady={isGoogleMapsLoaded}
+                committedLine={formatCityStateZipInput(formData.city, formData.state, formData.zipCode)}
+                onCommit={handleWorksiteCityCommit}
+                required
+                placeholder={
+                  isGoogleMapsLoaded
+                    ? 'Search for a city or type City, ST (ZIP optional)…'
+                    : 'City, ST or City, ST ZIP (Maps loading…)'
+                }
+                helperText={
+                  isGoogleMapsLoaded
+                    ? 'Use suggestions for coordinates, or type e.g. Orlando, FL — tab out to save and geocode.'
+                    : 'Loading Google Maps… you can still type City, ST and tab out.'
+                }
+              />
               {formData.city && formData.state && (
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1, mt: 2 }}>
                   {geocoding ? (

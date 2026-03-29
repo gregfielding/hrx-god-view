@@ -5,7 +5,10 @@ export type GeocodeDetails = {
   lng: number;
   street?: string;
   city?: string;
+  /** Long name, e.g. "Florida" */
   state?: string;
+  /** USPS-style abbreviation when present, e.g. "FL" */
+  stateCode?: string;
   zip?: string;
   formattedAddress?: string;
 };
@@ -43,7 +46,11 @@ export async function geocodeAddressDetailed(address: string): Promise<GeocodeDe
     getComponent(components, ['locality']) ||
     getComponent(components, ['sublocality']) ||
     getComponent(components, ['administrative_area_level_2']);
-  const state = getComponent(components, ['administrative_area_level_1']);
+  const stateComp = components.find(
+    (c: { types?: string[] }) => c.types?.includes('administrative_area_level_1'),
+  ) as { long_name?: string; short_name?: string } | undefined;
+  const state = stateComp?.long_name || '';
+  const stateCode = stateComp?.short_name || '';
   const zip = getComponent(components, ['postal_code']);
 
   return {
@@ -52,6 +59,7 @@ export async function geocodeAddressDetailed(address: string): Promise<GeocodeDe
     street: street || undefined,
     city: city || undefined,
     state: state || undefined,
+    stateCode: stateCode || undefined,
     zip: zip || undefined,
     formattedAddress: result.formatted_address,
   };

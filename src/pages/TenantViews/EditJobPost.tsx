@@ -43,6 +43,8 @@ import { toChipLabel } from '../../utils/chipLabel';
 import PageHeader from '../../components/PageHeader';
 import StandardTablePagination from '../../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
+import UserTableResumeIcon from '../../components/tables/UserTableResumeIcon';
+import { pickResumeFromUserDoc } from '../../utils/userResumeOpen';
 import { hasJobBoardSyndicationUrl } from '../../utils/jobBoardSyndicationUrls';
 import JobBoardSyndicationIconRow from '../../components/JobBoardSyndicationIconRow';
 import { normalizeScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
@@ -353,6 +355,7 @@ const EditJobPost: React.FC = () => {
             workEligibilityAttestation: user.workEligibilityAttestation,
             comfortableEVerify: user.comfortableEVerify,
             workerAttestations: user.workerAttestations,
+            resume: user.resume,
           };
         });
 
@@ -947,13 +950,34 @@ const EditJobPost: React.FC = () => {
                                 <Avatar src={user.avatar} alt={`${user.firstName} ${user.lastName}`} sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE }}>
                                   {user.firstName?.[0]}
                                 </Avatar>
-                                <Box>
+                                <Box sx={{ minWidth: 0 }}>
                                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                     {user.firstName} {user.lastName}
                                   </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    #{user.id.slice(-6)}
-                                  </Typography>
+                                  {(user.createdAt ||
+                                    pickResumeFromUserDoc(user as Record<string, unknown>)) && (
+                                    <Box
+                                      sx={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        flexWrap: 'nowrap',
+                                        gap: '6px',
+                                        mt: 0.25,
+                                      }}
+                                    >
+                                      {user.createdAt && (
+                                        <Typography
+                                          variant="caption"
+                                          color="text.secondary"
+                                          component="span"
+                                          sx={{ lineHeight: 1.2 }}
+                                        >
+                                          {formatDate(user.createdAt)}
+                                        </Typography>
+                                      )}
+                                      <UserTableResumeIcon user={user as Record<string, unknown>} />
+                                    </Box>
+                                  )}
                                 </Box>
                               </Box>
                             </TableCell>

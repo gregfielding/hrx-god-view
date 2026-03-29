@@ -3,6 +3,9 @@
 Vendor handoff notes, contacts, and **pre-production questionnaire** (AccuSource requires answers before production cutover).  
 Technical API details: [`SOURCEDIRECT_API_REFERENCE.md`](./SOURCEDIRECT_API_REFERENCE.md).
 
+**Controlled production validation (HRX-only orders, log prefixes, automation pause):**  
+[`ACCUSOURCE_PRODUCTION_VALIDATION_RUNBOOK.md`](./ACCUSOURCE_PRODUCTION_VALIDATION_RUNBOOK.md) · [`ACCUSOURCE_PRODUCTION_VALIDATION_EXECUTION_CHECKLIST.md`](./ACCUSOURCE_PRODUCTION_VALIDATION_EXECUTION_CHECKLIST.md)
+
 ---
 
 ## Vendor contacts

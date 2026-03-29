@@ -488,6 +488,142 @@ async function generateResumeDownloadUrl(storagePath: string): Promise<string> {
   }
 }
 
+/** Map parser `experience` rows to profile `workExperience` / `workHistory` shape. */
+function mapExperienceToWorkExperience(rows: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map((exp: any) => ({
+      jobTitle: String(exp?.jobTitle || exp?.title || '').trim(),
+      company: String(exp?.company || '').trim(),
+      location: String(exp?.location || '').trim(),
+      startDate: String(exp?.startDate || '').trim(),
+      endDate: String(exp?.endDate || '').trim(),
+      current: Boolean(exp?.current),
+      description: String(exp?.description || '').trim(),
+      responsibilities: Array.isArray(exp?.responsibilities) ? exp.responsibilities : [],
+      achievements: Array.isArray(exp?.achievements) ? exp.achievements : [],
+      skillsUsed: Array.isArray(exp?.skillsUsed) ? exp.skillsUsed : [],
+    }))
+    .filter((row) => row.jobTitle || row.company);
+}
+
+function normalizeSkillsForUser(skills: unknown): Array<{ name: string; type: string }> {
+  if (!Array.isArray(skills)) return [];
+  const out: Array<{ name: string; type: string }> = [];
+  for (const s of skills) {
+    const raw = (s as any)?.name;
+    const name = typeof raw === 'string' ? raw.trim() : String(raw || '').trim();
+    if (!name) continue;
+    const cat = (s as any)?.category ?? (s as any)?.type ?? 'Other';
+    out.push({ name, type: String(cat || 'Other') });
+  }
+  return out;
+}
+
+function proficiencyDisplay(p: unknown): string {
+  const v = String(p || 'conversational').toLowerCase();
+  const map: Record<string, string> = {
+    basic: 'Basic',
+    conversational: 'Conversational',
+    fluent: 'Fluent',
+    native: 'Native',
+  };
+  return map[v] || 'Conversational';
+}
+
+/**
+ * Only profile fields the app reads — not full parsed blob (parsedText, aiAnalysis, etc.).
+ */
+function buildUserProfileMergePatch(mergedData: Record<string, any>): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+
+  const bioText = [mergedData.bio, mergedData.summary].find(
+    (x) => typeof x === 'string' && x.trim().length > 0
+  ) as string | undefined;
+  if (bioText) {
+    const t = bioText.trim();
+    patch.professionalBio = t;
+    patch.bio = t;
+  }
+
+  const workExp = mapExperienceToWorkExperience(mergedData.experience);
+  if (workExp.length > 0) {
+    patch.workExperience = workExp;
+    patch.workHistory = workExp;
+    patch.employmentHistory = workExp;
+  }
+
+  if (Array.isArray(mergedData.education) && mergedData.education.length > 0) {
+    patch.education = mergedData.education;
+  }
+
+  const skills = normalizeSkillsForUser(mergedData.skills);
+  if (skills.length > 0) {
+    patch.skills = skills;
+  }
+
+  if (Array.isArray(mergedData.certifications) && mergedData.certifications.length > 0) {
+    patch.certifications = mergedData.certifications
+      .map((c: any) => ({
+        name: String(c?.name || '').trim(),
+        issuer: String(c?.issuer || 'Unknown').trim(),
+        dateObtained:
+          String(c?.dateObtained || '').trim() || new Date().toISOString().split('T')[0],
+        credentialId: String(c?.credentialId || '').trim(),
+      }))
+      .filter((c: any) => c.name);
+  }
+
+  if (Array.isArray(mergedData.languages) && mergedData.languages.length > 0) {
+    patch.languages = mergedData.languages
+      .map((lang: any) => ({
+        language: String(lang?.language || '').trim(),
+        proficiency: proficiencyDisplay(lang?.proficiency),
+        isNative: Boolean(lang?.isNative),
+      }))
+      .filter((l: any) => l.language);
+  }
+
+  const analysis = mergedData.aiAnalysis;
+  if (analysis && typeof analysis === 'object') {
+    const y = (analysis as any).yearsOfExperience;
+    if (typeof y === 'number' && Number.isFinite(y)) {
+      patch.yearsExperience = y;
+    } else if (typeof y === 'string' && y.trim()) {
+      const n = parseFloat(y);
+      if (!Number.isNaN(n)) patch.yearsExperience = n;
+    }
+    const el = (analysis as any).educationLevel;
+    if (typeof el === 'string' && el.trim()) {
+      patch.educationLevel = el.trim();
+    }
+  }
+
+  patch.updatedAt = new Date();
+  return patch;
+}
+
+/**
+ * CORS: static list + optional RESUME_PARSE_ALLOWED_ORIGINS (comma-separated) + *.hrxone.com + localhost ports.
+ */
+function pickCorsOrigin(requestOrigin: string | undefined): string {
+  const o = (requestOrigin || '').trim();
+  const defaults = new Set([
+    'http://localhost:3000',
+    'https://hrxone.com',
+    'https://www.hrxone.com',
+  ]);
+  const extra = (process.env.RESUME_PARSE_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  extra.forEach((e) => defaults.add(e));
+  if (o && defaults.has(o)) return o;
+  if (o && /^https:\/\/([a-z0-9-]+\.)*hrxone\.com$/i.test(o)) return o;
+  if (o && /^http:\/\/(localhost|127\.0\.0\.1):\d+$/i.test(o)) return o;
+  return 'https://hrxone.com';
+}
+
 /**
  * Commit merge with atomic batch writes
  */
@@ -508,13 +644,12 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
   // Apply accepted changes with confidence-based merging
   const mergedData = await applyConfidenceBasedMerge(parsedData, acceptedChanges);
   
-  // Generate resume URL and add to merged data
+  // Generate resume URL and add to merged data (for in-memory / logging only — not written to user root)
   try {
     console.log('Generating resume download URL for storagePath:', parsedResume.storagePath);
     const resumeUrl = await generateResumeDownloadUrl(parsedResume.storagePath);
     console.log('Generated resume URL:', resumeUrl);
     
-    // Add resume URL and metadata to the merged data
     mergedData.resumeUrl = resumeUrl;
     mergedData.resumeFileName = parsedResume.fileName;
     mergedData.resumeUploadDate = parsedResume.uploadDate;
@@ -531,8 +666,6 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
       fileName: parsedResume.fileName
     });
     
-    // Even if URL generation fails, save the storage path and metadata
-    // The frontend can use getResumeSignedUrl as a fallback
     mergedData.resumeStoragePath = parsedResume.storagePath;
     mergedData.resumeFileName = parsedResume.fileName;
     mergedData.resumeUploadDate = parsedResume.uploadDate;
@@ -544,9 +677,14 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
     });
   }
   
-  // Update user profile
+  const userProfilePatch = buildUserProfileMergePatch(mergedData as Record<string, any>);
+  if (Object.keys(userProfilePatch).length <= 1 && userProfilePatch.updatedAt) {
+    console.warn('commitMerge: no profile fields to merge beyond updatedAt; parsed data may be empty');
+  }
+
+  // Update user profile — mapped fields only (not parsedText / aiAnalysis / experience key)
   const userRef = db.collection('users').doc(uid);
-  batch.update(userRef, mergedData);
+  batch.update(userRef, userProfilePatch);
   
   // Update merge proposal
   const mergeProposalRef = db.collection('mergeProposals').doc(`${uid}_${uploadId}`);
@@ -566,7 +704,7 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
     uploadId,
     userId: uid,
     changesCount: Object.keys(acceptedChanges).length,
-    confidenceScores: Object.values(parsedData).map((item: any) => item.confidence || 0),
+    confidenceScores: typeof (parsedData as any)?.confidence === 'number' ? [(parsedData as any).confidence] : [],
     timestamp: new Date()
   });
   
@@ -629,9 +767,21 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     console.log('Uploading file to Firebase Storage at path:', storagePath);
     const bucket = getStorage().bucket(getStorageBucketName());
     const file = bucket.file(storagePath);
+    const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+    const resumeMime =
+      ext === 'pdf'
+        ? 'application/pdf'
+        : ext === 'docx'
+          ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+          : ext === 'doc'
+            ? 'application/msword'
+            : ext === 'txt'
+              ? 'text/plain'
+              : 'application/octet-stream';
+
     await file.save(fileBuffer, {
       metadata: {
-        contentType: fileName.endsWith('.pdf') ? 'application/pdf' : 'application/octet-stream',
+        contentType: resumeMime,
         metadata: {
           originalName: fileName,
           userId: userId,
@@ -639,15 +789,10 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
         }
       }
     });
-    
-    // Make the file publicly readable
-    console.log('Setting file permissions to public read...');
-    await file.makePublic();
-    console.log('File uploaded to Storage successfully and made public');
-    
-    const bucketName = getStorageBucketName();
-    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media`;
-    console.log('Generated public URL:', publicUrl);
+
+    // Token-based download URL (works with uniform bucket-level access; avoid makePublic ACL errors)
+    const resumeDownloadUrl = await generateResumeDownloadUrl(storagePath);
+    console.log('Resume stored; download URL created (token-based)');
     
     // Store the storage path and public URL
     console.log('Resume uploaded to storage path:', storagePath);
@@ -720,6 +865,14 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
       case 'txt':
         parsedText = fileBuffer.toString('utf-8');
         break;
+      case 'jpg':
+      case 'jpeg':
+      case 'png':
+      case 'webp':
+      case 'heic':
+      case 'heif':
+        parsedText = await performOCR(fileBuffer);
+        break;
       default:
         throw new functions.https.HttpsError('invalid-argument', 'Unsupported file format');
     }
@@ -734,7 +887,11 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     if (parsedData.summary) {
       try {
         console.log('Generating enhanced bio from resume summary...');
-        const enhancedBio = await generateEnhancedBio(parsedData.summary, parsedData.contact.name, openai);
+        const enhancedBio = await generateEnhancedBio(
+          parsedData.summary,
+          parsedData.contact?.name || '',
+          openai
+        );
         if (enhancedBio) {
           parsedData.bio = enhancedBio;
           console.log('Enhanced bio generated:', enhancedBio);
@@ -794,7 +951,7 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
         sizeKB: Math.round(fileSize / 1024),
         timestamp: new Date(),
         storagePath: storagePath,
-        downloadUrl: publicUrl
+        downloadUrl: resumeDownloadUrl
       },
       updatedAt: new Date()
     });
@@ -941,12 +1098,7 @@ export const parseResumeHttp = onRequest({
   maxInstances: 5
 }, async (req, res) => {
   const requestOrigin = (req.headers.origin as string) || '';
-  const allowedOrigins = new Set([
-    'http://localhost:3000',
-    'https://hrxone.com',
-    'https://www.hrxone.com',
-  ]);
-  const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
+  const corsOrigin = pickCorsOrigin(requestOrigin);
 
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
@@ -1242,12 +1394,15 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
     console.log('Prompt length:', prompt.length);
     console.log('Text length:', text.length);
     
+    const extractionModel = process.env.RESUME_EXTRACTION_MODEL || 'gpt-4o-mini';
+    const jsonMode = /gpt-4o|gpt-4-turbo|o1|o3|gpt-5/i.test(extractionModel);
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: extractionModel,
       messages: [
         {
           role: "system",
-          content: "You are an expert resume parser. Extract structured information accurately and return valid JSON only."
+          content:
+            'You are an expert resume parser. Extract structured information accurately and return a single valid JSON object only (no markdown).'
         },
         {
           role: "user",
@@ -1255,7 +1410,8 @@ ${text.substring(0, 4000)} // Limit to first 4000 characters for API efficiency
         }
       ],
       temperature: 0.1,
-      max_completion_tokens: 2000
+      max_completion_tokens: 8192,
+      ...(jsonMode ? { response_format: { type: 'json_object' as const } } : {})
     });
 
     console.log('OpenAI API call completed');
@@ -1455,30 +1611,41 @@ function extractEducationInfo(lines: string[], index: number): Education | null 
  * Merge AI and NLP extractions
  */
 function mergeExtractions(aiExtraction: any, nlpExtraction: any) {
-  // Merge contact information
+  const ac = aiExtraction?.contact && typeof aiExtraction.contact === 'object' ? aiExtraction.contact : {};
+  const nc = nlpExtraction?.contact && typeof nlpExtraction.contact === 'object' ? nlpExtraction.contact : {};
   const contact = {
-    ...aiExtraction.contact,
-    name: aiExtraction.contact.name || nlpExtraction.contact.name,
-    email: aiExtraction.contact.email || nlpExtraction.contact.email,
-    phone: aiExtraction.contact.phone || nlpExtraction.contact.phone
+    ...nc,
+    ...ac,
+    name: ac.name || nc.name || '',
+    email: ac.email || nc.email || '',
+    phone: ac.phone || nc.phone || '',
+    address: ac.address || nc.address || '',
+    linkedin: ac.linkedin || nc.linkedin,
+    website: ac.website || nc.website
   };
   
   // Merge skills (avoid duplicates)
-  const skillsMap = new Map();
-  [...(aiExtraction.skills || []), ...(nlpExtraction.skills || [])].forEach(skill => {
-    const key = skill.name.toLowerCase();
+  const skillsMap = new Map<string, any>();
+  [...(aiExtraction.skills || []), ...(nlpExtraction.skills || [])].forEach((skill: any) => {
+    const rawName = skill?.name;
+    const name = typeof rawName === 'string' ? rawName.trim() : String(rawName || '').trim();
+    if (!name) return;
+    const key = name.toLowerCase();
     if (!skillsMap.has(key)) {
-      skillsMap.set(key, skill);
+      skillsMap.set(key, { ...skill, name });
     }
   });
   const skills = Array.from(skillsMap.values());
   
   // Merge education (avoid duplicates)
-  const educationMap = new Map();
-  [...(aiExtraction.education || []), ...(nlpExtraction.education || [])].forEach(edu => {
-    const key = edu.institution.toLowerCase();
+  const educationMap = new Map<string, any>();
+  [...(aiExtraction.education || []), ...(nlpExtraction.education || [])].forEach((edu: any) => {
+    const rawInst = edu?.institution;
+    const inst = typeof rawInst === 'string' ? rawInst.trim() : String(rawInst || '').trim();
+    if (!inst) return;
+    const key = inst.toLowerCase();
     if (!educationMap.has(key)) {
-      educationMap.set(key, edu);
+      educationMap.set(key, { ...edu, institution: inst });
     }
   });
   const education = Array.from(educationMap.values());
@@ -1528,12 +1695,15 @@ ${originalText.substring(0, 2000)}
 `;
 
   try {
+    const analysisModel = process.env.RESUME_ANALYSIS_MODEL || 'gpt-4o-mini';
+    const analysisJsonMode = /gpt-4o|gpt-4-turbo|o1|o3|gpt-5/i.test(analysisModel);
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: analysisModel,
       messages: [
         {
           role: "system",
-          content: "You are an expert resume analyst. Provide detailed analysis and return valid JSON only."
+          content:
+            'You are an expert resume analyst. Return a single valid JSON object only (no markdown).'
         },
         {
           role: "user",
@@ -1541,7 +1711,8 @@ ${originalText.substring(0, 2000)}
         }
       ],
       temperature: 0.3,
-      max_completion_tokens: 1500
+      max_completion_tokens: 4096,
+      ...(analysisJsonMode ? { response_format: { type: 'json_object' as const } } : {})
     });
 
     const response = completion.choices[0]?.message?.content;
@@ -1621,8 +1792,9 @@ Generate a compelling bio that captures the essence of this professional's story
 `;
 
   try {
+    const bioModel = process.env.RESUME_BIO_MODEL || 'gpt-4o-mini';
     const completion = await openai.chat.completions.create({
-      model: "gpt-4",
+      model: bioModel,
       messages: [
         {
           role: "system",
@@ -1634,7 +1806,7 @@ Generate a compelling bio that captures the essence of this professional's story
         }
       ],
       temperature: 0.7,
-      max_completion_tokens: 200
+      max_completion_tokens: 400
     });
 
     const response = completion.choices[0]?.message?.content;

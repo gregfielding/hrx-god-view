@@ -60,6 +60,7 @@ import { runSavedSmartGroupSearch, type SavedSmartGroupFilters } from '../servic
 import { useSmartGroupSettings, type CustomMetrosMap } from '../hooks/useSmartGroupSettings';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
 import { formatOneDecimal } from '../utils/scoreSummary';
 import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
@@ -104,6 +105,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     avatar?: string;
     city?: string;
     state?: string;
+    createdAt?: any;
+    resume?: Record<string, unknown> | null;
     scoreSummary?: { aiScore?: number; interviewLastAt?: any; interviewLastScore10?: number };
     securityLevel?: string;
     skills?: string[];
@@ -237,6 +240,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           avatar?: string;
           city?: string;
           state?: string;
+          createdAt?: any;
+          resume?: Record<string, unknown> | null;
           scoreSummary?: any;
           securityLevel?: string;
           skills?: string[];
@@ -259,6 +264,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
               avatar: d?.avatar || tenantData?.avatar,
               city: addr?.city ?? d?.city,
               state: addr?.state ?? d?.state,
+              createdAt: d?.createdAt,
+              resume: d?.resume ?? null,
               scoreSummary: d?.scoreSummary,
               securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
               skills: Array.isArray(d?.skills) ? d.skills : [],
@@ -373,6 +380,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         avatar?: string;
         city?: string;
         state?: string;
+        createdAt?: any;
+        resume?: Record<string, unknown> | null;
         scoreSummary?: any;
         securityLevel?: string;
         skills?: string[];
@@ -394,6 +403,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             avatar: d?.avatar || tenantData?.avatar,
             city: addr?.city ?? d?.city,
             state: addr?.state ?? d?.state,
+            createdAt: d?.createdAt,
+            resume: d?.resume ?? null,
             scoreSummary: d?.scoreSummary,
             securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
             skills: Array.isArray(d?.skills) ? d.skills : [],
@@ -493,6 +504,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         avatar?: string;
         city?: string;
         state?: string;
+        createdAt?: any;
+        resume?: Record<string, unknown> | null;
         scoreSummary?: any;
         securityLevel?: string;
         skills?: string[];
@@ -514,6 +527,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             avatar: d?.avatar || tenantData?.avatar,
             city: addr?.city ?? d?.city,
             state: addr?.state ?? d?.state,
+            createdAt: d?.createdAt,
+            resume: d?.resume ?? null,
             scoreSummary: d?.scoreSummary,
             securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
             skills: Array.isArray(d?.skills) ? d.skills : [],
@@ -1293,7 +1308,25 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                             <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
                               {[m.firstName, m.lastName].filter(Boolean).join(' ').trim() || m.id}
                             </Typography>
-                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>#{String(m.id).slice(-6)}</Typography>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flexWrap: 'nowrap',
+                                gap: '6px',
+                                mt: 0.25,
+                              }}
+                            >
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                component="span"
+                                sx={{ lineHeight: 1.2 }}
+                              >
+                                {m.createdAt ? formatDate(m.createdAt) : '—'}
+                              </Typography>
+                              <UserTableResumeIcon user={m as Record<string, unknown>} />
+                            </Box>
                           </Box>
                         </Box>
                       </TableCell>

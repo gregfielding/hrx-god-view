@@ -64,6 +64,7 @@ import { toChipLabel } from '../../../utils/chipLabel';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
+import UserTableResumeIcon from '../../../components/tables/UserTableResumeIcon';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
 import { normalizeScoreSummary } from '../../../utils/scoreSummary';
 import { calculateProfileScore } from '../../../utils/applicantScoring';
@@ -1304,9 +1305,25 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                 <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
                                   {String(u.firstName || '').trim()} {String(u.lastName || '').trim()}
                                 </Typography>
-                                <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                  {u.createdAt ? formatDate(u.createdAt) : '—'}
-                                </Typography>
+                                <Box
+                                  sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    flexWrap: 'nowrap',
+                                    gap: '6px',
+                                    mt: 0.25,
+                                  }}
+                                >
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    component="span"
+                                    sx={{ lineHeight: 1.2 }}
+                                  >
+                                    {u.createdAt ? formatDate(u.createdAt) : '—'}
+                                  </Typography>
+                                  <UserTableResumeIcon user={u as Record<string, unknown>} />
+                                </Box>
                               </Box>
                             </Box>
                           </TableCell>

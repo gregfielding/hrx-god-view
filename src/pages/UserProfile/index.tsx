@@ -240,6 +240,12 @@ const UserProfilePage = () => {
         if (mounted) setViewerGmailConnected(false);
         return;
       }
+      const level =
+        Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
+      if (level < 5 || level > 7) {
+        if (mounted) setViewerGmailConnected(false);
+        return;
+      }
 
       try {
         const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
@@ -264,7 +270,13 @@ const UserProfilePage = () => {
     return () => {
       mounted = false;
     };
-  }, [user?.uid]);
+  }, [user?.uid, currentClaimsSecurityLevel, securityLevel]);
+
+  const canComposeEmailViaGmail = useMemo(() => {
+    const level =
+      Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
+    return level >= 5 && level <= 7 && viewerGmailConnected;
+  }, [currentClaimsSecurityLevel, securityLevel, viewerGmailConnected]);
 
   // Determine if viewer can use in-app SMS compose.
   // Internal users (security 5-7) can always use the shared Twilio sender.
@@ -1573,15 +1585,15 @@ const UserProfilePage = () => {
                   {email && (
                     <Tooltip
                       title={
-                        viewerGmailConnected
-                          ? `Email ${email} (send via HRX)`
+                        canComposeEmailViaGmail
+                          ? `Email ${email} (send from your Gmail)`
                           : `Email ${email} (open mail app)`
                       }
                     >
                       <IconButton
                         size="small"
                         onClick={() => {
-                          if (viewerGmailConnected) {
+                          if (canComposeEmailViaGmail) {
                             setEmailComposeOpen(true);
                           } else {
                             window.location.href = `mailto:${email}`;

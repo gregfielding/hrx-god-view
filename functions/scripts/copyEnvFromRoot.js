@@ -2,6 +2,11 @@
 /**
  * Copies param keys from repo root .env into functions/.env so Firebase deploy
  * doesn't prompt. Run before build (predeploy). Single source of truth: root .env.
+ *
+ * Firebase also loads `functions/.env.<PROJECT_ID>` (e.g. `.env.hrx1-d3beb`) when
+ * you deploy to that project — those values OVERRIDE `functions/.env` for the same keys.
+ * This script merges PARAM_KEYS into any existing `.env.<projectId>` from `.firebaserc`
+ * so root `.env` wins and you don't stay stuck on old sandbox AccuSource settings.
  */
 const fs = require('fs');
 const path = require('path');
@@ -74,6 +79,7 @@ const PARAM_KEYS = [
   'ACCUSOURCE_WEBHOOK_SECRET',
   'SOURCEDIRECT_WEBHOOK_SECRET',
   'ACCUSOURCE_CREATE_PROFILE_PATH',
+  'ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY',
 ];
 
 function parseEnv(content) {
@@ -91,6 +97,53 @@ function getValue(rootVars, paramKey) {
   const reactKey = 'REACT_APP_' + paramKey;
   if (rootVars[reactKey] != null && rootVars[reactKey] !== '') return rootVars[reactKey];
   return null;
+}
+
+function getFirebaseProjectIds() {
+  const rcPath = path.join(FUNCTIONS_DIR, '..', '.firebaserc');
+  if (!fs.existsSync(rcPath)) return [];
+  try {
+    const j = JSON.parse(fs.readFileSync(rcPath, 'utf8'));
+    const ids = new Set();
+    if (j.projects && typeof j.projects === 'object') {
+      for (const v of Object.values(j.projects)) {
+        if (typeof v === 'string' && v.trim()) ids.add(v.trim());
+      }
+    }
+    return [...ids];
+  } catch (_) {
+    return [];
+  }
+}
+
+/**
+ * Upsert PARAM_KEYS present in envVars into an existing project-specific .env file.
+ */
+function mergeParamKeysIntoProjectEnvFile(targetPath, envVars) {
+  const keysToWrite = PARAM_KEYS.filter((k) => envVars[k] != null && envVars[k] !== '');
+  if (keysToWrite.length === 0 || !fs.existsSync(targetPath)) return 0;
+
+  const content = fs.readFileSync(targetPath, 'utf8');
+  const lines = content.split('\n');
+  const keySet = new Set(keysToWrite);
+  const updated = new Set();
+  const out = [];
+
+  for (const line of lines) {
+    const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+    if (m && keySet.has(m[1])) {
+      out.push(`${m[1]}=${envVars[m[1]]}`);
+      updated.add(m[1]);
+    } else {
+      out.push(line);
+    }
+  }
+  for (const k of keysToWrite) {
+    if (!updated.has(k)) out.push(`${k}=${envVars[k]}`);
+  }
+
+  fs.writeFileSync(targetPath, out.join('\n').replace(/\n*$/, '\n'), 'utf8');
+  return keysToWrite.length;
 }
 
 // Build merged vars: root .env (and REACT_APP_* fallbacks) first, then firebase.json environmentVariables as fallback
@@ -142,3 +195,11 @@ if (copied === 0) {
 }
 fs.writeFileSync(OUT_ENV, lines.join('\n') + '\n', 'utf8');
 console.log('[copy-env] Wrote', copied, 'params to functions/.env');
+
+for (const projectId of getFirebaseProjectIds()) {
+  const projectEnvPath = path.join(FUNCTIONS_DIR, `.env.${projectId}`);
+  const n = mergeParamKeysIntoProjectEnvFile(projectEnvPath, envVars);
+  if (n > 0) {
+    console.log('[copy-env] Merged', n, 'param keys into', path.basename(projectEnvPath), '(overrides base .env for Firebase deploy)');
+  }
+}

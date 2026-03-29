@@ -102,6 +102,9 @@ const FUNCTIONS_HTTP_BASE = (
 ).replace(/\/$/, '');
 const PARSE_RESUME_HTTP_URL = `${FUNCTIONS_HTTP_BASE}/parseResumeHttp`;
 
+/** Matches Cloud Function timeout (up to 540s); abort so the UI does not spin forever. */
+const PARSE_REQUEST_TIMEOUT_MS = 8 * 60 * 1000;
+
 const ResumeUpload: React.FC<ResumeUploadProps> = ({ 
   userId, 
   tenantId, 
@@ -165,7 +168,7 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         setParsingStatus({
           status: 'parsing',
           progress: 30,
-          message: 'Sending to resume parser…',
+          message: 'Uploading and parsing resume (this can take a few minutes)…',
         });
 
         const token = await auth.currentUser?.getIdToken();
@@ -192,14 +195,31 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
           fileUrlLength: requestBody.fileUrl.length,
         });
 
-        const response = await fetch(PARSE_RESUME_HTTP_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(requestBody),
-        });
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), PARSE_REQUEST_TIMEOUT_MS);
+
+        let response: Response;
+        try {
+          response = await fetch(PARSE_RESUME_HTTP_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(requestBody),
+            signal: controller.signal,
+          });
+        } catch (fetchErr: unknown) {
+          const name = (fetchErr as Error)?.name;
+          if (name === 'AbortError') {
+            throw new Error(
+              'Resume parsing timed out. The file may be large or the service is busy — try again or use a smaller PDF.'
+            );
+          }
+          throw fetchErr;
+        } finally {
+          window.clearTimeout(timeoutId);
+        }
 
         logger.debug('Response received', {
           status: response.status,
@@ -254,11 +274,21 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
           name: err.name,
         });
 
+        let userMessage = err.message || 'Upload failed';
+        if (typeof err.message === 'string' && err.message.toLowerCase().includes('failed to fetch')) {
+          userMessage =
+            'Network error — check your connection, disable VPN/ad-blockers for this site, or confirm the resume parser is deployed.';
+        }
+        if (typeof err.message === 'string' && err.message.includes('CORS')) {
+          userMessage =
+            'Browser blocked the response (CORS). Ask your admin to allow this app origin for parseResumeHttp.';
+        }
+
         setParsingStatus({
           status: 'error',
           progress: 0,
-          message: err.message || 'Upload failed',
-          error: err.message,
+          message: userMessage,
+          error: userMessage,
         });
       }
     },
@@ -575,12 +605,11 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
             </IconButton>
           </Box>
           
-          {(parsingStatus.status === 'uploading' || parsingStatus.status === 'parsing') && (
-            <LinearProgress 
-              variant="determinate" 
-              value={parsingStatus.progress} 
-              sx={{ mb: 1 }}
-            />
+          {parsingStatus.status === 'uploading' && (
+            <LinearProgress variant="determinate" value={parsingStatus.progress} sx={{ mb: 1 }} />
+          )}
+          {parsingStatus.status === 'parsing' && (
+            <LinearProgress variant="indeterminate" sx={{ mb: 1 }} aria-label="Parsing resume" />
           )}
           
           {parsingStatus.status === 'error' && (

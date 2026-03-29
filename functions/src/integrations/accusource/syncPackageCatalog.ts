@@ -1,11 +1,11 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { accusourceClient } from './accusourceClient';
 import { hasAccusourceOutboundAuth } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
 import { ensureAccusourceAdmin } from './accusourceAdminGate';
 import { normalizeAccusourceCompanyDetailsResponse } from './catalogNormalize';
+import { accusourceLog } from './accusourceLogger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -85,7 +85,7 @@ export const syncAccusourcePackageCatalog = onCall({ cors: true }, async (reques
       { merge: true }
     );
 
-    logger.info('[accusource:catalog] sync ok', {
+    accusourceLog('info', 'catalog', 'Package catalog sync completed', {
       packages: normalized.packages.length,
       services: normalized.services.length,
       companies: normalized.companyCount,
@@ -93,6 +93,7 @@ export const syncAccusourcePackageCatalog = onCall({ cors: true }, async (reques
 
     return {
       ok: true,
+      providerEnvironment: cfg.environment,
       packageCount: normalized.packages.length,
       serviceCount: normalized.services.length,
       companyCount: normalized.companyCount,
@@ -100,7 +101,7 @@ export const syncAccusourcePackageCatalog = onCall({ cors: true }, async (reques
   } catch (e: unknown) {
     const raw = e instanceof Error ? e.message : String(e);
     const msg = appendAccusource401Hint(raw);
-    logger.error('[accusource:catalog] sync failed', { error: msg });
+    accusourceLog('error', 'catalog', 'Package catalog sync failed', { error: msg });
     await ref.set(
       {
         syncStatus: 'error',

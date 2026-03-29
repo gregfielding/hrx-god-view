@@ -16,6 +16,10 @@ const P_ACCUSOURCE_BASE_URL = defineString('ACCUSOURCE_BASE_URL', { default: '' 
 const P_ACCUSOURCE_WEBHOOK_SECRET = defineString('ACCUSOURCE_WEBHOOK_SECRET', { default: '' });
 const P_SOURCEDIRECT_WEBHOOK_SECRET = defineString('SOURCEDIRECT_WEBHOOK_SECRET', { default: '' });
 const P_ACCUSOURCE_ENABLED = defineString('ACCUSOURCE_ENABLED', { default: 'true' });
+/** When `ACCUSOURCE_ENVIRONMENT` is production and this is not `false`, only `hrx: true` users may submit orders; automation is blocked. */
+const P_ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY = defineString('ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY', {
+  default: 'true',
+});
 
 function trimStr(v: string | undefined): string {
   return (v ?? '').trim();
@@ -76,5 +80,17 @@ export function getAccusourceConfig(): AccusourceProviderConfig {
     webhookSecret,
     enabled,
   };
+}
+
+/**
+ * Production cutover / validation: restrict who can create SourceDirect profiles and block assignment automation orders.
+ * Set `ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY=false` after validation to allow tenant admins (L5+) to order in production.
+ */
+export function isAccusourceProductionValidationHrxOnly(): boolean {
+  const v =
+    trimStr(P_ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY.value()) ||
+    trimStr(process.env.ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY) ||
+    'true';
+  return v.toLowerCase() !== 'false' && v !== '0';
 }
 

@@ -17,6 +17,75 @@ import {
 import { db } from '../../firebase';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 
+/** Coerce Firestore / legacy values to string[] for multi-select job post fields (handles nested arrays from bad merges). */
+export const coerceStringArrayField = (value: unknown): string[] => {
+  if (value == null) return [];
+  if (Array.isArray(value)) {
+    if (value.length === 1 && Array.isArray(value[0])) {
+      return coerceStringArrayField(value[0]);
+    }
+    return value
+      .map((item) =>
+        typeof item === 'string' ? item : typeof item === 'number' ? String(item) : ''
+      )
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const t = value.trim();
+    return t ? [t] : [];
+  }
+  return [];
+};
+
+const JOB_POST_STRING_ARRAY_FIELD_KEYS = [
+  'skills',
+  'licensesCerts',
+  'experienceLevels',
+  'educationLevels',
+  'languages',
+  'physicalRequirements',
+  'uniformRequirements',
+  'requiredPpe',
+  'backgroundCheckPackages',
+  'drugScreeningPanels',
+  'additionalScreenings',
+  'shift',
+  'restrictedGroups',
+  'autoAddToUserGroups',
+  'requirements',
+] as const;
+
+/** Normalize raw Firestore document data into consistent shapes for the Jobs Board UI. */
+export const normalizeJobsBoardPostRecord = (id: string, data: Record<string, unknown>): JobsBoardPost => {
+  const out: Record<string, unknown> = { ...data, id };
+  for (const key of JOB_POST_STRING_ARRAY_FIELD_KEYS) {
+    out[key] = coerceStringArrayField(out[key]);
+  }
+  const cu = out.customUniformRequirements;
+  out.customUniformRequirements = typeof cu === 'string' ? cu : cu != null ? String(cu) : '';
+  return out as unknown as JobsBoardPost;
+};
+
+/** Fields that must not be sent back from the job post form (would overwrite server counters / metadata). */
+const READ_ONLY_JOB_POST_UPDATE_KEYS = new Set([
+  'id',
+  'jobPostId',
+  'tenantId',
+  'createdBy',
+  'createdAt',
+  'applicationCount',
+  'updatedAt',
+]);
+
+export const stripReadOnlyJobPostFields = <T extends Record<string, unknown>>(payload: T): Partial<T> => {
+  const out = { ...payload } as Record<string, unknown>;
+  READ_ONLY_JOB_POST_UPDATE_KEYS.forEach((k) => {
+    delete out[k];
+  });
+  return out as Partial<T>;
+};
+
 /** Remove undefined values from object (deep). Firestore rejects undefined at any level. */
 const removeUndefinedValues = (obj: any): any => {
   if (obj === undefined) return undefined;
@@ -299,6 +368,8 @@ export interface CreatePostData {
   showPhysicalRequirements?: boolean;
   uniformRequirements?: string[];
   showUniformRequirements?: boolean;
+  customUniformRequirements?: string;
+  showCustomUniformRequirements?: boolean;
   requiredPpe?: string[];
   showRequiredPpe?: boolean;
 }
@@ -803,14 +874,14 @@ export class JobsBoardService {
         ...(postData.workersNeeded !== undefined && { workersNeeded: postData.workersNeeded }),
         ...(postData.showWorkersNeeded !== undefined && { showWorkersNeeded: postData.showWorkersNeeded }),
         eVerifyRequired: postData.eVerifyRequired,
-        backgroundCheckPackages: postData.backgroundCheckPackages,
-        showBackgroundChecks: postData.showBackgroundChecks,
-        drugScreeningPanels: postData.drugScreeningPanels,
-        showDrugScreening: postData.showDrugScreening,
-        additionalScreenings: postData.additionalScreenings,
-        showAdditionalScreenings: postData.showAdditionalScreenings,
-        shift: postData.shift,
-        showShift: postData.showShift,
+        backgroundCheckPackages: coerceStringArrayField(postData.backgroundCheckPackages),
+        showBackgroundChecks: postData.showBackgroundChecks ?? false,
+        drugScreeningPanels: coerceStringArrayField(postData.drugScreeningPanels),
+        showDrugScreening: postData.showDrugScreening ?? false,
+        additionalScreenings: coerceStringArrayField(postData.additionalScreenings),
+        showAdditionalScreenings: postData.showAdditionalScreenings ?? false,
+        shift: coerceStringArrayField(postData.shift),
+        showShift: postData.showShift ?? false,
         ...(postData.startTime && { startTime: postData.startTime }),
         ...(postData.endTime && { endTime: postData.endTime }),
         showStartTime: postData.showStartTime,
@@ -818,7 +889,7 @@ export class JobsBoardService {
         
         // Display Settings
         visibility: postData.visibility,
-        restrictedGroups: postData.restrictedGroups,
+        restrictedGroups: coerceStringArrayField(postData.restrictedGroups),
         
         // Status
         status: postData.status || 'draft',
@@ -828,27 +899,34 @@ export class JobsBoardService {
         // Links
         ...(postData.jobOrderId && { jobOrderId: postData.jobOrderId }),
         ...(postData.positionJobTitle && { positionJobTitle: postData.positionJobTitle }),
-        skills: postData.skills || [],
-        ...(postData.showSkills !== undefined && { showSkills: postData.showSkills }),
-        ...(postData.licensesCerts && { licensesCerts: postData.licensesCerts }),
-        ...(postData.showLicensesCerts !== undefined && { showLicensesCerts: postData.showLicensesCerts }),
-        ...(postData.experienceLevels && { experienceLevels: postData.experienceLevels }),
-        ...(postData.showExperience !== undefined && { showExperience: postData.showExperience }),
-        ...(postData.educationLevels && { educationLevels: postData.educationLevels }),
-        ...(postData.showEducation !== undefined && { showEducation: postData.showEducation }),
-        ...(postData.languages && { languages: postData.languages }),
-        ...(postData.showLanguages !== undefined && { showLanguages: postData.showLanguages }),
-        ...(postData.physicalRequirements && { physicalRequirements: postData.physicalRequirements }),
-        ...(postData.showPhysicalRequirements !== undefined && { showPhysicalRequirements: postData.showPhysicalRequirements }),
-        ...(postData.uniformRequirements && { uniformRequirements: postData.uniformRequirements }),
-        ...(postData.showUniformRequirements !== undefined && { showUniformRequirements: postData.showUniformRequirements }),
-        ...(postData.requiredPpe && { requiredPpe: postData.requiredPpe }),
-        ...(postData.showRequiredPpe !== undefined && { showRequiredPpe: postData.showRequiredPpe }),
+        skills: coerceStringArrayField(postData.skills),
+        showSkills: postData.showSkills ?? false,
+        licensesCerts: coerceStringArrayField(postData.licensesCerts),
+        showLicensesCerts: postData.showLicensesCerts ?? false,
+        experienceLevels: coerceStringArrayField(postData.experienceLevels),
+        showExperience: postData.showExperience ?? false,
+        educationLevels: coerceStringArrayField(postData.educationLevels),
+        showEducation: postData.showEducation ?? false,
+        languages: coerceStringArrayField(postData.languages),
+        showLanguages: postData.showLanguages ?? false,
+        physicalRequirements: coerceStringArrayField(postData.physicalRequirements),
+        showPhysicalRequirements: postData.showPhysicalRequirements ?? false,
+        uniformRequirements: coerceStringArrayField(postData.uniformRequirements),
+        showUniformRequirements: postData.showUniformRequirements ?? false,
+        customUniformRequirements:
+          typeof postData.customUniformRequirements === 'string'
+            ? postData.customUniformRequirements
+            : postData.customUniformRequirements != null
+              ? String(postData.customUniformRequirements)
+              : '',
+        showCustomUniformRequirements: postData.showCustomUniformRequirements ?? false,
+        requiredPpe: coerceStringArrayField(postData.requiredPpe),
+        showRequiredPpe: postData.showRequiredPpe ?? false,
         ...(autoAddGroups.length ? { autoAddToUserGroups: autoAddGroups } : {}),
         autoAddToUserGroup: autoAddGroups.length === 1 ? autoAddGroups[0] : undefined,
         
         // Requirements & Additional Info
-        requirements: postData.requirements || [],
+        requirements: coerceStringArrayField(postData.requirements),
         ...(postData.benefits && { benefits: postData.benefits }),
         ...(postData.shiftTimes && { shiftTimes: postData.shiftTimes }),
         showShiftTimes: postData.showShiftTimes || false,
@@ -916,7 +994,7 @@ export class JobsBoardService {
       const postDoc = await getDoc(postRef);
       
       if (postDoc.exists()) {
-        return { id: postDoc.id, ...postDoc.data() } as JobsBoardPost;
+        return normalizeJobsBoardPostRecord(postDoc.id, (postDoc.data() || {}) as Record<string, unknown>);
       }
       return null;
     } catch (error) {
@@ -938,7 +1016,9 @@ export class JobsBoardService {
       }
       
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      return querySnapshot.docs.map((d) =>
+        normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+      );
     } catch (error) {
       console.error('Error getting jobs board posts:', error);
       throw error;
@@ -973,7 +1053,9 @@ export class JobsBoardService {
         }
       }
       
-      const allPosts = allPostsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      const allPosts = allPostsSnapshot.docs.map((d) =>
+        normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+      );
       
       // Debug: Log all posts to see their status and visibility
       console.log(`📊 Found ${allPosts.length} total job postings for tenant ${tenantId}`);
@@ -1027,7 +1109,9 @@ export class JobsBoardService {
         orderBy('createdAt', 'desc')
       );
       const querySnapshot = await getDocs(q);
-      let posts = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      let posts = querySnapshot.docs.map((d) =>
+        normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+      );
       if (positionJobTitle != null) {
         posts = posts.filter((p) => p.positionJobTitle === positionJobTitle);
       }
@@ -1165,7 +1249,9 @@ export class JobsBoardService {
       );
       
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      return querySnapshot.docs.map((d) =>
+        normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+      );
     } catch (error) {
       console.error('Error getting posts by visibility:', error);
       throw error;
@@ -1182,7 +1268,9 @@ export class JobsBoardService {
       );
       
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as JobsBoardPost));
+      return querySnapshot.docs.map((d) =>
+        normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+      );
     } catch (error) {
       console.error('Error getting posts by status:', error);
       throw error;
@@ -1200,19 +1288,17 @@ export class JobsBoardService {
           orderBy('createdAt', 'desc')
         );
         const querySnapshot = await getDocs(q);
-        return querySnapshot.docs.map(doc => {
-          const data = doc.data();
-          return Object.assign({ id: doc.id }, data || {}) as JobsBoardPost;
-        });
+        return querySnapshot.docs.map((d) =>
+          normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+        );
       } catch (error: any) {
         // If createdAt doesn't exist or there's an index issue, get all docs without ordering
         if (error.code === 'failed-precondition') {
           console.warn('createdAt field not found or index missing, getting all posts without ordering');
           const querySnapshot = await getDocs(collection(db, 'tenants', tenantId, 'job_postings'));
-          return querySnapshot.docs.map(doc => {
-            const data = doc.data();
-            return Object.assign({ id: doc.id }, data || {}) as JobsBoardPost;
-          });
+          return querySnapshot.docs.map((d) =>
+            normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+          );
         } else {
           throw error;
         }

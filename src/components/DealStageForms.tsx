@@ -928,7 +928,7 @@ const DealStageForms: React.FC<DealStageFormsProps> = ({
               <Autocomplete
                 multiple
                 freeSolo
-                options={['Full Time', 'Part Time', 'Temporary', '1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
+                options={['Full Time', 'Part Time', 'Temporary', 'On Call', '1st Shift', '2nd Shift', '3rd Shift', 'Night Shift', 'Weekend Shift', 'Flexible']}
                 value={data.shifts || []}
                 onChange={(_, newValue) => {
                   handleStageDataChange('discovery', 'shifts', newValue);

@@ -1,5 +1,6 @@
 import { getAccusourceBearerToken } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
+import { accusourceLog } from './accusourceLogger';
 
 export interface AccusourceRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -68,6 +69,11 @@ export class AccusourceClient {
       headers.authorization = `Bearer ${bearer}`;
     }
 
+    accusourceLog('info', 'http', `${method} ${normalizedPath}`, {
+      method,
+      path: normalizedPath,
+    });
+
     const response = await fetch(url, {
       method,
       headers,
@@ -76,12 +82,25 @@ export class AccusourceClient {
 
     if (!response.ok) {
       const text = await response.text();
+      accusourceLog('error', 'http', 'AccuSource HTTP error response', {
+        method,
+        path: normalizedPath,
+        status: response.status,
+        bodySnippet: text.slice(0, 500),
+      });
       throw new Error(`AccuSource request failed (${response.status}): ${text}`);
     }
 
     if (response.status === 204) {
+      accusourceLog('info', 'http', `${method} ${normalizedPath} → 204`, { method, path: normalizedPath });
       return undefined as T;
     }
+
+    accusourceLog('info', 'http', `${method} ${normalizedPath} → ${response.status}`, {
+      method,
+      path: normalizedPath,
+      status: response.status,
+    });
 
     return (await response.json()) as T;
   }

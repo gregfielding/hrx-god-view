@@ -4,6 +4,7 @@
  */
 import { defineString } from 'firebase-functions/params';
 import { getAccusourceConfig } from './config';
+import { accusourceLog } from './accusourceLogger';
 import type { AccusourceEnvironment } from './types';
 
 const P_CLIENT_ID = defineString('SOURCEDIRECT_CLIENT_ID', { default: '' });
@@ -96,6 +97,17 @@ export async function getAccusourceBearerToken(): Promise<string | undefined> {
 
   const text = await res.text();
   if (!res.ok) {
+    accusourceLog('error', 'oauth', 'SourceDirect OAuth token request failed', {
+      status: res.status,
+      tokenUrlHost: (() => {
+        try {
+          return new URL(tokenUrl).host;
+        } catch {
+          return 'invalid-token-url';
+        }
+      })(),
+      bodySnippet: text.slice(0, 300),
+    });
     throw new Error(
       `SourceDirect OAuth token request failed (${res.status}): ${text}. Check SOURCEDIRECT_CLIENT_ID/SECRET, ACCUSOURCE_ENVIRONMENT, and SOURCEDIRECT_TOKEN_URL if your tenant uses a non-default token endpoint.`
     );

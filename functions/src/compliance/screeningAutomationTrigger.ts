@@ -377,7 +377,8 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
     try {
       const result = await createBackgroundCheckInternal(
         { ...orderPayload, candidate: orderPayload.candidate },
-        AUTOMATION_ACTOR_UID
+        AUTOMATION_ACTOR_UID,
+        { type: 'automation' },
       );
 
       await db

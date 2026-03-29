@@ -32,10 +32,15 @@ import {
 } from '@mui/material';
 import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
-import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
+import {
+  JobsBoardService,
+  JobsBoardPost,
+  coerceStringArrayField,
+} from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, getDocs, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { db } from '../../firebase';
+import { geocodeAddressDetailed, getGeocodingErrorMessage } from '../../utils/geocodeAddress';
 import { useFavorites } from '../../hooks/useFavorites';
 import FavoriteButton from '../../components/FavoriteButton';
 import FavoritesFilter from '../../components/FavoritesFilter';
@@ -330,6 +335,7 @@ const JobsBoard: React.FC = () => {
     'Full Time',
     'Part Time',
     'Temporary',
+    'On Call',
     'First Shift',
     'Second Shift', 
     'Third Shift',
@@ -910,46 +916,100 @@ const JobsBoard: React.FC = () => {
             backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
             drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
             additionalScreenings: jobOrderData.additionalScreenings || [],
-            // Copy all requirements and qualifications
-            licensesCerts: jobOrderData.licensesCerts || [],
-            showLicensesCerts: (jobOrderData.licensesCerts || []).length > 0,
-            skills: jobOrderData.skillsRequired || [],
-            showSkills: (jobOrderData.skillsRequired || []).length > 0,
-            languages: jobOrderData.languagesRequired || [],
-            showLanguages: (jobOrderData.languagesRequired || []).length > 0,
-            experienceLevels: jobOrderData.experienceRequired ? (() => {
-              // Map experience value to full label
-              const expMap: Record<string, string> = {
-                'none': 'No Experience Required',
-                'entry': 'Entry-Level (0–1 year)',
-                '1-2': '1–2 Years',
-                '3-5': '3–5 Years (Mid-Level)',
-                '5-7': '5–7 Years (Advanced)',
-                '8-10': '8–10 Years (Senior-Level)',
-                '10+': '10+ Years (Expert / Executive)'
-              };
-              return [expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired];
-            })() : [],
-            showExperience: !!jobOrderData.experienceRequired,
-            educationLevels: jobOrderData.educationRequired ? (() => {
-              // Map education value to full label
-              const eduMap: Record<string, string> = {
-                'none': 'No Formal Education Required',
-                'highschool': 'High School Diploma or Equivalent',
-                'associate': 'Associate Degree',
-                'bachelor': 'Bachelor\'s Degree',
-                'master': 'Master\'s Degree',
-                'doctorate': 'Doctorate / PhD'
-              };
-              return [eduMap[jobOrderData.educationRequired] || jobOrderData.educationRequired];
-            })() : [],
-            showEducation: !!jobOrderData.educationRequired,
-            physicalRequirements: jobOrderData.physicalRequirements || [],
-            showPhysicalRequirements: (jobOrderData.physicalRequirements || []).length > 0,
-            uniformRequirements: jobOrderData.uniformRequirements ? [jobOrderData.uniformRequirements] : [],
-            showUniformRequirements: !!jobOrderData.uniformRequirements,
-            requiredPpe: jobOrderData.ppeRequirements ? [jobOrderData.ppeRequirements] : [],
-            showRequiredPpe: !!jobOrderData.ppeRequirements
+            // Copy requirements from job order; keep draft post values when the order has none
+            licensesCerts: (() => {
+              const fromJo = coerceStringArrayField(
+                jobOrderData.licensesCerts?.length
+                  ? jobOrderData.licensesCerts
+                  : [...(jobOrderData.requiredLicenses || []), ...(jobOrderData.requiredCertifications || [])]
+              );
+              return fromJo.length > 0 ? fromJo : prev.licensesCerts;
+            })(),
+            showLicensesCerts:
+              coerceStringArrayField(
+                jobOrderData.licensesCerts?.length
+                  ? jobOrderData.licensesCerts
+                  : [...(jobOrderData.requiredLicenses || []), ...(jobOrderData.requiredCertifications || [])]
+              ).length > 0
+                ? true
+                : prev.showLicensesCerts,
+            skills: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.skillsRequired);
+              return fromJo.length > 0 ? fromJo : prev.skills;
+            })(),
+            showSkills:
+              coerceStringArrayField(jobOrderData.skillsRequired).length > 0 ? true : prev.showSkills,
+            languages: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.languagesRequired);
+              return fromJo.length > 0 ? fromJo : prev.languages;
+            })(),
+            showLanguages:
+              coerceStringArrayField(jobOrderData.languagesRequired).length > 0 ? true : prev.showLanguages,
+            experienceLevels: jobOrderData.experienceRequired
+              ? (() => {
+                  const expMap: Record<string, string> = {
+                    none: 'No Experience Required',
+                    entry: 'Entry-Level (0–1 year)',
+                    '1-2': '1–2 Years',
+                    '3-5': '3–5 Years (Mid-Level)',
+                    '5-7': '5–7 Years (Advanced)',
+                    '8-10': '8–10 Years (Senior-Level)',
+                    '10+': '10+ Years (Expert / Executive)',
+                  };
+                  return [expMap[jobOrderData.experienceRequired] || jobOrderData.experienceRequired];
+                })()
+              : prev.experienceLevels,
+            showExperience: jobOrderData.experienceRequired
+              ? true
+              : prev.showExperience,
+            educationLevels: jobOrderData.educationRequired
+              ? (() => {
+                  const eduMap: Record<string, string> = {
+                    none: 'No Formal Education Required',
+                    highschool: 'High School Diploma or Equivalent',
+                    associate: 'Associate Degree',
+                    bachelor: "Bachelor's Degree",
+                    master: "Master's Degree",
+                    doctorate: 'Doctorate / PhD',
+                  };
+                  return [eduMap[jobOrderData.educationRequired] || jobOrderData.educationRequired];
+                })()
+              : prev.educationLevels,
+            showEducation: jobOrderData.educationRequired ? true : prev.showEducation,
+            physicalRequirements: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.physicalRequirements);
+              return fromJo.length > 0 ? fromJo : prev.physicalRequirements;
+            })(),
+            showPhysicalRequirements:
+              coerceStringArrayField(jobOrderData.physicalRequirements).length > 0
+                ? true
+                : prev.showPhysicalRequirements,
+            uniformRequirements: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.uniformRequirements);
+              return fromJo.length > 0 ? fromJo : prev.uniformRequirements;
+            })(),
+            showUniformRequirements:
+              coerceStringArrayField(jobOrderData.uniformRequirements).length > 0
+                ? true
+                : prev.showUniformRequirements,
+            customUniformRequirements:
+              jobOrderData.customUniformRequirements != null &&
+              String(jobOrderData.customUniformRequirements).trim() !== ''
+                ? String(jobOrderData.customUniformRequirements)
+                : prev.customUniformRequirements,
+            showCustomUniformRequirements:
+              jobOrderData.customUniformRequirements != null &&
+              String(jobOrderData.customUniformRequirements).trim() !== ''
+                ? true
+                : prev.showCustomUniformRequirements,
+            requiredPpe: (() => {
+              const fromJo = coerceStringArrayField(jobOrderData.ppeRequirements);
+              return fromJo.length > 0 ? fromJo : prev.requiredPpe;
+            })(),
+            showRequiredPpe:
+              coerceStringArrayField(jobOrderData.ppeRequirements).length > 0
+                ? true
+                : prev.showRequiredPpe,
           }));
           
           // Set company and location if available
@@ -1006,44 +1066,84 @@ const JobsBoard: React.FC = () => {
   };
 
   const onCityPlaceChanged = () => {
-    if (cityAutocomplete) {
-      const place = cityAutocomplete.getPlace();
-      if (place.geometry && place.geometry.location) {
-        // Extract city and state from address components
-        let city = '';
-        let state = '';
-        let zipCode = '';
-        
-        place.address_components?.forEach((component) => {
-          if (component.types.includes('locality')) {
-            city = component.long_name;
-          }
-          if (component.types.includes('administrative_area_level_1')) {
-            state = component.short_name;
-          }
-          if (component.types.includes('postal_code')) {
-            zipCode = component.long_name;
-          }
-        });
+    if (!cityAutocomplete) return;
+    const place = cityAutocomplete.getPlace();
+    if (!place.geometry?.location) return;
 
-        // Extract coordinates from Google Places API
-        const coordinates = {
-          lat: place.geometry.location.lat(),
-          lng: place.geometry.location.lng()
-        };
+    let city = '';
+    let state = '';
+    let zipCode = '';
 
-        setNewPost({
-          ...newPost,
-          worksiteName: place.formatted_address || `${city}, ${state}`,
-          street: '',
-          city,
-          state,
-          zipCode,
-          // Store coordinates for distance calculations
-          coordinates
-        });
+    place.address_components?.forEach((component) => {
+      if (component.types.includes('locality')) {
+        city = component.long_name;
       }
+      if (component.types.includes('administrative_area_level_1')) {
+        state = component.short_name;
+      }
+      if (component.types.includes('postal_code')) {
+        zipCode = component.long_name;
+      }
+    });
+
+    const ac = place.address_components || [];
+    const pick = (t: string) => ac.find((c) => c.types.includes(t))?.long_name || '';
+    if (!city) {
+      city =
+        pick('sublocality') ||
+        pick('sublocality_level_1') ||
+        pick('administrative_area_level_3') ||
+        pick('postal_town') ||
+        '';
     }
+    if (!city && place.name) {
+      city = place.name.replace(/,.*$/, '').trim();
+    }
+
+    const coordinates = {
+      lat: place.geometry.location.lat(),
+      lng: place.geometry.location.lng(),
+    };
+
+    setNewPost((prev) => ({
+      ...prev,
+      worksiteName: place.formatted_address || `${city}, ${state}`.trim(),
+      street: '',
+      city,
+      state,
+      zipCode,
+      coordinates,
+    }));
+  };
+
+  /** If the user typed an address but did not pick a suggestion, geocode on blur so city/state/coords persist. */
+  const onNewPostCityBlur = () => {
+    const raw = (cityInputRef.current?.value || '').trim();
+    if (!raw) return;
+    void (async () => {
+      try {
+        const d = await geocodeAddressDetailed(raw);
+        setNewPost((prev) => {
+          if (prev.city?.trim() && prev.state?.trim() && prev.coordinates) {
+            return prev;
+          }
+          const st = (d.stateCode || '').toUpperCase();
+          const cityName = (d.city || '').trim();
+          if (!cityName || !st) return prev;
+          return {
+            ...prev,
+            worksiteName: d.formattedAddress || raw,
+            street: d.street || '',
+            city: cityName,
+            state: st,
+            zipCode: (d.zip || '').trim(),
+            coordinates: { lat: d.lat, lng: d.lng },
+          };
+        });
+      } catch (e) {
+        console.warn('[JobsBoard] City blur geocode:', getGeocodingErrorMessage(e, { hasAutocomplete: true }));
+      }
+    })();
   };
 
   const handleCloseNewPostModal = () => {
@@ -1236,6 +1336,24 @@ const JobsBoard: React.FC = () => {
           showDrugScreening: newPost.showDrugScreening,
           additionalScreenings: newPost.additionalScreenings,
           showAdditionalScreenings: newPost.showAdditionalScreenings,
+          skills: newPost.skills,
+          showSkills: newPost.showSkills,
+          licensesCerts: newPost.licensesCerts,
+          showLicensesCerts: newPost.showLicensesCerts,
+          experienceLevels: newPost.experienceLevels,
+          showExperience: newPost.showExperience,
+          educationLevels: newPost.educationLevels,
+          showEducation: newPost.showEducation,
+          languages: newPost.languages,
+          showLanguages: newPost.showLanguages,
+          physicalRequirements: newPost.physicalRequirements,
+          showPhysicalRequirements: newPost.showPhysicalRequirements,
+          uniformRequirements: newPost.uniformRequirements,
+          showUniformRequirements: newPost.showUniformRequirements,
+          customUniformRequirements: newPost.customUniformRequirements,
+          showCustomUniformRequirements: newPost.showCustomUniformRequirements,
+          requiredPpe: newPost.requiredPpe,
+          showRequiredPpe: newPost.showRequiredPpe,
           shift: newPost.shift,
           showShift: newPost.showShift,
           startTime: newPost.startTime,
@@ -1244,8 +1362,8 @@ const JobsBoard: React.FC = () => {
           showEndTime: newPost.showEndTime,
           visibility: newPost.visibility,
           restrictedGroups: newPost.restrictedGroups,
+          status: newPost.status,
           jobOrderId: newPost.jobOrderId || undefined,
-          skills: newPost.skills,
           autoAddToUserGroups: newPost.autoAddToUserGroups,
           autoAddToUserGroup: newPost.autoAddToUserGroups.length === 1 ? newPost.autoAddToUserGroups[0] : undefined,
         },
@@ -2210,8 +2328,9 @@ const JobsBoard: React.FC = () => {
                   label="City, State"
                   placeholder="Search for a city..."
                   required
-                  helperText="Search and select a city - coordinates will be saved automatically"
+                  helperText="Pick a suggestion for best results, or type e.g. Orlando, FL and tab out — we geocode on blur."
                   inputRef={cityInputRef}
+                  onBlur={onNewPostCityBlur}
                 />
               </GoogleAutocomplete>
             )}

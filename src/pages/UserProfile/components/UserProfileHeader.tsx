@@ -313,6 +313,45 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     };
   }, [effectiveTenantId, user?.uid, viewerSecurityLevel]);
 
+  // Gmail connection for in-app compose (same logic as UserProfile index record header).
+  // Without this, gmailConnected stayed false and the email icon always opened mailto:.
+  useEffect(() => {
+    let mounted = true;
+    const checkGmail = async () => {
+      const level = Number.parseInt(String(viewerSecurityLevel || '0'), 10) || 0;
+      if (level < 5 || level > 7 || !user?.uid) {
+        if (mounted) setGmailConnected(false);
+        return;
+      }
+      try {
+        const getGmailStatus = httpsCallable(functions, 'getGmailStatusOptimized');
+        const result = await getGmailStatus({ userId: user.uid, force: true });
+        const data = result.data as {
+          connected?: boolean;
+          rateLimited?: boolean;
+          sampled?: boolean;
+        };
+        const connected =
+          !!data?.connected || !!data?.rateLimited || !!data?.sampled;
+        if (mounted) setGmailConnected(connected);
+      } catch {
+        try {
+          const viewerSnap = await getDoc(doc(db, 'users', user.uid));
+          const viewerData: any = viewerSnap.exists() ? viewerSnap.data() : null;
+          if (mounted) {
+            setGmailConnected(!!viewerData?.gmailTokens?.access_token);
+          }
+        } catch {
+          if (mounted) setGmailConnected(false);
+        }
+      }
+    };
+    checkGmail();
+    return () => {
+      mounted = false;
+    };
+  }, [user?.uid, viewerSecurityLevel]);
+
   // Load notes count
   useEffect(() => {
     const loadNotesCount = async () => {
@@ -942,11 +981,23 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 </>
               )}
               {email && (
-                <Tooltip title={`Email ${email}`}>
+                <Tooltip
+                  title={
+                    gmailConnected
+                      ? `Email ${email} (send from your Gmail)`
+                      : `Email ${email} (open mail app)`
+                  }
+                >
                   <IconButton
                     size="small"
-                    component="a"
-                    href={`mailto:${email}`}
+                    onClick={() => {
+                      if (gmailConnected) {
+                        setMessageDrawerChannel('email');
+                        setMessageDrawerOpen(true);
+                      } else {
+                        window.open(`mailto:${email}`, '_blank');
+                      }
+                    }}
                     sx={{ 
                       p: 1,
                       color: 'primary.main',
@@ -1509,7 +1560,13 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 </>
               )}
               {email && (
-                <Tooltip title={`Email ${email}`}>
+                <Tooltip
+                  title={
+                    gmailConnected
+                      ? `Email ${email} (send from your Gmail)`
+                      : `Email ${email} (open mail app)`
+                  }
+                >
                   <IconButton
                     size="small"
                     onClick={() => {

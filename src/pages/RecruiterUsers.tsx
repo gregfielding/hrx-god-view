@@ -51,6 +51,8 @@ import { db } from '../firebase';
 import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
+import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { normalizeScoreSummary, formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
 import type { ScoreSummary } from '../utils/scoreSummary';
@@ -100,6 +102,8 @@ interface RecruiterUser {
   /** Apply flow / profile — used by Documented (E-Verify) column */
   comfortableEVerify?: string;
   workerAttestations?: { eVerifyWillingness?: string };
+  /** Firestore `resume` map — used for inline resume link in Person column */
+  resume?: Record<string, unknown> | null;
 }
 
 interface TenantUserGroup {
@@ -175,6 +179,7 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     workEligibilityAttestation: userData.workEligibilityAttestation,
     comfortableEVerify: userData.comfortableEVerify,
     workerAttestations: userData.workerAttestations,
+    resume: userData.resume ?? null,
   };
 }
 
@@ -1508,10 +1513,29 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                         <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
                           {user.firstName} {user.lastName}
                         </Typography>
-                        {user.createdAt && (
-                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-                            {formatDate(user.createdAt)}
-                          </Typography>
+                        {(user.createdAt ||
+                          pickResumeFromUserDoc(user as unknown as Record<string, unknown>)) && (
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexWrap: 'nowrap',
+                              gap: '6px',
+                              mt: 0.25,
+                            }}
+                          >
+                            {user.createdAt && (
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                component="span"
+                                sx={{ lineHeight: 1.2 }}
+                              >
+                                {formatDate(user.createdAt)}
+                              </Typography>
+                            )}
+                            <UserTableResumeIcon user={user as unknown as Record<string, unknown>} />
+                          </Box>
                         )}
                       </Box>
                     </Box>

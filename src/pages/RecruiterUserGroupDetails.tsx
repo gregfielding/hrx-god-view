@@ -41,6 +41,8 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import { useFavorites } from '../hooks/useFavorites';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
+import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData, compareEVerifyComfort } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
@@ -73,6 +75,7 @@ interface RecruiterUser {
   workEligibilityAttestation?: { authorizedToWorkUS?: boolean };
   comfortableEVerify?: string;
   workerAttestations?: { eVerifyWillingness?: string };
+  resume?: Record<string, unknown> | null;
 }
 
 interface TenantUserGroup {
@@ -211,6 +214,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
             workEligibilityAttestation: user.workEligibilityAttestation,
             comfortableEVerify: user.comfortableEVerify,
             workerAttestations: user.workerAttestations,
+            resume: user.resume ?? null,
           } as RecruiterUser;
         });
 
@@ -747,13 +751,34 @@ const RecruiterUserGroupDetails: React.FC = () => {
                             >
                               {user.firstName?.[0]}
                             </Avatar>
-                            <Box>
+                            <Box sx={{ minWidth: 0 }}>
                               <Typography variant="body2" sx={{ fontWeight: 600 }}>
                                 {user.firstName} {user.lastName}
                               </Typography>
-                              <Typography variant="caption" color="text.secondary">
-                                #{user.id.slice(-6)}
-                              </Typography>
+                              {(user.createdAt ||
+                                pickResumeFromUserDoc(user as unknown as Record<string, unknown>)) && (
+                                <Box
+                                  sx={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    flexWrap: 'nowrap',
+                                    gap: '6px',
+                                    mt: 0.25,
+                                  }}
+                                >
+                                  {user.createdAt && (
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                      component="span"
+                                      sx={{ lineHeight: 1.2 }}
+                                    >
+                                      {formatDate(user.createdAt)}
+                                    </Typography>
+                                  )}
+                                  <UserTableResumeIcon user={user as unknown as Record<string, unknown>} />
+                                </Box>
+                              )}
                             </Box>
                           </Box>
                         </TableCell>

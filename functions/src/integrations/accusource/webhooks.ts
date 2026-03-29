@@ -1,8 +1,8 @@
 import { createHash } from 'crypto';
 import { onRequest } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { getAccusourceConfig } from './config';
+import { accusourceLog } from './accusourceLogger';
 import type { BackgroundCheckEventDocument, HrxBackgroundCheckStatus } from './types';
 
 if (!admin.apps.length) {
@@ -223,7 +223,7 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
   } catch (error: any) {
     const code = error?.code;
     if (code === 6 || code === 'already-exists') {
-      logger.info('[accusource:webhook] duplicate event skipped', { eventId, eventType, providerProfileId, clientId });
+      accusourceLog('info', 'webhook', 'duplicate event skipped', { eventId, eventType, providerProfileId, clientId });
       return { id: eventId, duplicate: true, matched: false };
     }
     throw error;
@@ -238,7 +238,12 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
 
-    logger.warn('[accusource:webhook] unmatched event', { eventId, eventType, providerProfileId, clientId });
+    accusourceLog('warn', 'webhook', 'unmatched event (no backgroundChecks doc)', {
+      eventId,
+      eventType,
+      providerProfileId,
+      clientId,
+    });
     return { id: eventId, duplicate: false, matched: false };
   }
 
@@ -278,7 +283,7 @@ async function processWebhookPayload(payloadInput: unknown): Promise<{ id: strin
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   }, { merge: true });
 
-  logger.info('[accusource:webhook] processed', {
+  accusourceLog('info', 'webhook', 'event matched and applied to backgroundChecks doc', {
     eventId,
     eventType,
     providerProfileId,
@@ -317,6 +322,7 @@ export const apiIntegrationsAccusourceWebhooks = onRequest(
 
     try {
       const payloads = Array.isArray(request.body) ? request.body : [request.body];
+      accusourceLog('info', 'webhook', 'HTTP webhook batch received', { payloadCount: payloads.length });
       const results: Array<{ id: string; duplicate: boolean; matched: boolean }> = [];
 
       for (const payload of payloads) {
@@ -332,7 +338,7 @@ export const apiIntegrationsAccusourceWebhooks = onRequest(
         matched: results.filter((r) => r.matched).length,
       });
     } catch (error: any) {
-      logger.error('[accusource:webhook] fatal error', { error: error?.message || String(error) });
+      accusourceLog('error', 'webhook', 'fatal error processing batch', { error: error?.message || String(error) });
       response.status(200).json({ ok: false });
     }
   },

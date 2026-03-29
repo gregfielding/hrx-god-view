@@ -2,11 +2,11 @@
  * Callable: fetch final or drug PDF from SourceDirect using server credentials (never expose API key to client).
  */
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { getAccusourceBearerToken, hasAccusourceOutboundAuth } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
 import { ensureAccusourceAdmin } from './accusourceAdminGate';
+import { accusourceLog } from './accusourceLogger';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -83,7 +83,11 @@ export const getAccusourceBackgroundCheckPdf = onCall(
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      logger.warn('[accusource:pdf] upstream error', { status: res.status, url, snippet: text.slice(0, 200) });
+      accusourceLog('warn', 'pdf', 'SourceDirect PDF fetch failed', {
+        status: res.status,
+        url,
+        snippet: text.slice(0, 200),
+      });
       throw new HttpsError('failed-precondition', `SourceDirect returned ${res.status}`);
     }
 

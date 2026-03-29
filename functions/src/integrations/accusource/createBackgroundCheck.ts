@@ -1,15 +1,19 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { accusourceClient } from './accusourceClient';
-import { getAccusourceConfig } from './config';
+import { getAccusourceConfig, isAccusourceProductionValidationHrxOnly } from './config';
+import { accusourceLog } from './accusourceLogger';
 import {
   buildPartialProfilePayload,
   parseProviderCreateResponse,
   type CreateBackgroundCheckInput,
 } from './mapper';
 import type { BackgroundCheckDocument } from './types';
-import { ensureAccusourceAdmin } from './accusourceAdminGate';
+import {
+  assertAccusourceProductionOrderPolicy,
+  ensureAccusourceAdmin,
+  type AccusourceOrderInvocation,
+} from './accusourceAdminGate';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -72,6 +76,7 @@ type CallablePayload = CreateBackgroundCheckInput & {
 export async function createBackgroundCheckInternal(
   input: CallablePayload,
   uid: string,
+  invocation: AccusourceOrderInvocation,
 ): Promise<{
   ok: true;
   backgroundCheckId: string;
@@ -85,6 +90,20 @@ export async function createBackgroundCheckInternal(
   if (!config.enabled) {
     throw new HttpsError('failed-precondition', 'AccuSource integration is disabled.');
   }
+
+  const productionValidationHrxOnlyActive =
+    config.environment === 'production' && isAccusourceProductionValidationHrxOnly();
+  const hrxClaim =
+    invocation.type === 'callable' ? invocation.auth.token?.hrx === true : undefined;
+
+  accusourceLog('info', 'create', 'createBackgroundCheckInternal: order attempt (pre-policy)', {
+    callerUid: uid,
+    invocationType: invocation.type,
+    hrxClaim,
+    productionValidationHrxOnlyActive,
+  });
+
+  assertAccusourceProductionOrderPolicy(invocation, uid);
 
   const docRef = input.backgroundCheckId
     ? db.collection('backgroundChecks').doc(String(input.backgroundCheckId))
@@ -137,6 +156,15 @@ export async function createBackgroundCheckInternal(
       processedAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
+    accusourceLog('info', 'create', 'createPartialProfile succeeded', {
+      callerUid: uid,
+      backgroundCheckId,
+      hrxStatus: nextStatus,
+      hasPortalLink: Boolean(parsed.applicantPortalLink),
+      hrxClaim,
+      productionValidationHrxOnlyActive,
+    });
+
     return {
       ok: true,
       backgroundCheckId,
@@ -148,7 +176,13 @@ export async function createBackgroundCheckInternal(
     };
   } catch (error: any) {
     const message = error?.message || 'Failed to create SourceDirect partial profile.';
-    logger.error('[accusource:create] failed', { backgroundCheckId, error: message });
+    accusourceLog('error', 'create', 'createPartialProfile failed', {
+      callerUid: uid,
+      backgroundCheckId,
+      error: message,
+      hrxClaim,
+      productionValidationHrxOnlyActive,
+    });
 
     await docRef.set({
       hrxStatus: 'error',
@@ -180,7 +214,10 @@ export const createAccusourceBackgroundCheck = onCall(async (request) => {
   await ensureAccusourceAdmin(request.auth.uid, tenantForGate);
 
   const input = raw;
-  return createBackgroundCheckInternal(input, request.auth.uid);
+  return createBackgroundCheckInternal(input, request.auth.uid, {
+    type: 'callable',
+    auth: request.auth,
+  });
 });
 
 /**
@@ -216,7 +253,10 @@ export const testCreateAccusourceBackgroundCheck = onCall(async (request) => {
     },
   };
 
-  const result = await createBackgroundCheckInternal(mockPayload, request.auth.uid);
+  const result = await createBackgroundCheckInternal(mockPayload, request.auth.uid, {
+    type: 'callable',
+    auth: request.auth,
+  });
 
   return {
     ok: true,

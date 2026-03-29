@@ -1014,9 +1014,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Scoping Stage Fields - from stageData.scoping
           replacingExistingAgency: stageData.scoping?.replacingExistingAgency || false,
           rolloverExistingStaff: stageData.scoping?.rolloverExistingStaff || false,
-          backgroundCheckPackages: stageData.scoping?.compliance?.backgroundCheckPackages || [],
-          drugScreeningPanels: stageData.scoping?.compliance?.drugScreeningPanels || [],
-          additionalScreenings: stageData.scoping?.compliance?.additionalScreenings || [],
+          backgroundCheckPackages: Array.isArray((data as any).backgroundCheckPackages)
+            ? (data as any).backgroundCheckPackages
+            : (stageData.scoping?.compliance?.backgroundCheckPackages || []),
+          drugScreeningPanels: Array.isArray((data as any).drugScreeningPanels)
+            ? (data as any).drugScreeningPanels
+            : (stageData.scoping?.compliance?.drugScreeningPanels || []),
+          additionalScreenings: Array.isArray((data as any).additionalScreenings)
+            ? (data as any).additionalScreenings
+            : (stageData.scoping?.compliance?.additionalScreenings || []),
           eVerifyRequired: stageData.scoping?.compliance?.eVerify || false,
           dressCode: stageData.scoping?.uniformRequirements || [],
           customUniformRequirements: (data as any).customUniformRequirements || stageData.scoping?.customUniformRequirements || '',
@@ -1031,13 +1037,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           // Compliance Fields - from stageData.scoping.compliance
           backgroundCheckRequired: stageData.scoping?.compliance?.backgroundCheck || false,
           drugScreenRequired: stageData.scoping?.compliance?.drugScreen || false,
-          licensesCerts: stageData.scoping?.compliance?.licensesCerts || [],
+          licensesCerts: Array.isArray((data as any).licensesCerts)
+            ? (data as any).licensesCerts
+            : (stageData.scoping?.compliance?.licensesCerts || []),
           experienceRequired: stageData.scoping?.compliance?.experience || '',
           educationRequired: stageData.scoping?.compliance?.education || '',
-          languagesRequired: stageData.scoping?.compliance?.languages || [],
-          skillsRequired: stageData.scoping?.compliance?.skills || [],
-          physicalRequirements: stageData.scoping?.compliance?.physicalRequirements || [],
-          ppeRequirements: stageData.scoping?.compliance?.ppe || [],
+          languagesRequired: Array.isArray((data as any).languagesRequired)
+            ? (data as any).languagesRequired
+            : (stageData.scoping?.compliance?.languages || []),
+          skillsRequired: Array.isArray((data as any).skillsRequired)
+            ? (data as any).skillsRequired
+            : (stageData.scoping?.compliance?.skills || []),
+          physicalRequirements: Array.isArray((data as any).physicalRequirements)
+            ? (data as any).physicalRequirements
+            : (stageData.scoping?.compliance?.physicalRequirements || []),
+          ppeRequirements: Array.isArray((data as any).ppeRequirements)
+            ? (data as any).ppeRequirements
+            : (stageData.scoping?.compliance?.ppe || []),
           ppeProvidedBy: stageData.scoping?.compliance?.ppeProvidedBy || 'company',
           requirementPackId: (data as any).requirementPackId || '',
           workersCompClassCode: (data as any).workersCompClassCode || '',
@@ -1749,7 +1765,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           ? (gigPositions[0]?.workersCompRate ? parseFloat(gigPositions[0].workersCompRate) : undefined)
           : (formData.workersCompRate ? parseFloat(formData.workersCompRate) : undefined),
         ppeProvidedBy: formData.ppeProvidedBy || 'company',
-        customUniformRequirements: formData.customUniformRequirements || undefined,
+        customUniformRequirements:
+          typeof formData.customUniformRequirements === 'string' && formData.customUniformRequirements.trim()
+            ? formData.customUniformRequirements.trim()
+            : formData.customUniformRequirements === ''
+              ? ''
+              : undefined,
+        showCustomUniformRequirements: formData.showCustomUniformRequirements,
         requirementPackId: formData.requirementPackId || undefined,
         screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
         screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
@@ -2473,7 +2495,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Autocomplete
                   multiple
                   fullWidth
-                  options={['Full Time', 'Part Time', 'Temporary', 'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift', 'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights', '8 Hour', '10 Hour', '12 Hour']}
+                  options={['Full Time', 'Part Time', 'Temporary', 'On Call', 'First Shift', 'Second Shift', 'Third Shift', 'Day Shift', 'Night Shift', 'Swing Shift', 'Weekends', 'Some Weekends', 'Some Nights', '8 Hour', '10 Hour', '12 Hour']}
                   value={Array.isArray((formData as any).shiftType) ? (formData as any).shiftType : ((formData as any).shiftType ? [(formData as any).shiftType] : [])}
                   onChange={(event, newValue) => {
                     handleInputChange('shiftType', newValue);
