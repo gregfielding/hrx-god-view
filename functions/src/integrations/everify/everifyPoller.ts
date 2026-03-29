@@ -6,7 +6,7 @@
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
-import { getCaseStatus } from './everifyClient';
+import { getCaseStatus } from './everifyRestClient';
 import { mapProviderStatusToHrx } from './everifyAdapter';
 import { whitelistEverifyRaw } from './everifyRedaction';
 import { handleTncTransition, resolveTncTaskAndAppendEvent, TNC_RESOLVED_STATUSES } from './everifyTncHandler';
@@ -51,8 +51,10 @@ function getIcaCredentials(): { username: string; password: string } | null {
 
 export const scheduledEverifyPoller = onSchedule(
   {
-    schedule: 'every 30 minutes',
-    region: 'us-central1',
+    // Proven in this repo: scheduledOrchestrator / mobileErrorMonitoring use `every 1 hours` + America/New_York.
+    // (Some deploys 400 with `every 30 minutes` or `*/30` + UTC — tune interval after deploy succeeds.)
+    schedule: 'every 1 hours',
+    timeZone: 'America/New_York',
     secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
   },
   async () => {

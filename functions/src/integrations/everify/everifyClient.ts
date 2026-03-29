@@ -1,320 +1,350 @@
 /**
- * E-Verify HTTP client: real Stage API + EAAT stub.
- * ICA v31: createDraftCase + submitCase use username/password auth.
- * HRX E-Verify Master Plan §3.1
+ * E-Verify SOAP transport (ICA v31 — templates MUST match your signed ICA).
+ * WSDL is not public without credentials; defaults are placeholders — set
+ * EVERIFY_SOAP_* env vars or envelope templates from the ICA.
  */
 
-import { EverifyCaseStatus } from './everifySchemas';
-import type { I9CaseFlat, CreateCaseDraftResponse, SubmitCaseResponse, CaseStatusResponse } from './everifySchemas';
-import { getEverifyBaseUrl, getEverifyAuthUrl, getEverifyTimeoutMs } from './everifyConfig';
-import { getEverifyFakeProvider, getEverifyEaatScenario } from './everifyConfig';
 import { logger } from 'firebase-functions/v2';
-import { httpJson } from './everifyHttp';
-import { getAccessToken as getIcaAccessToken, type EverifyCredentials } from './everifyAuth';
+import { XMLParser } from 'fast-xml-parser';
+import {
+  getEverifyBaseUrl,
+  getEverifyFakeProvider,
+  getEverifySoapCreateCaseSoapAction,
+  getEverifySoapLoginSoapAction,
+  getEverifySoapServiceNamespace,
+  getEverifySoapTimeoutMs,
+  getEverifySoapUrl,
+  getEverifySoapVersion,
+  getEverifyMaxRetries,
+} from './everifyConfig';
+import type {
+  EverifySoapCreateCaseResult,
+  EverifySoapCredentials,
+  EverifySoapEmployeeData,
+  EverifySoapSessionResult,
+} from './everifyTypes';
+import { EverifySoapError } from './everifyTypes';
 
-export interface EverifyCreateCaseRequest {
-  tenantId: string;
-  entityId: string;
-  userId: string;
-  everifyCompanyId: string;
-  startDate: string;
-  requestHash: string;
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
 }
 
-export interface EverifyCreateCaseResponse {
-  everifyCaseNumber?: string;
-  status: EverifyCaseStatus;
-  providerStatus: string;
-  raw?: Record<string, unknown>;
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  removeNSPrefix: true,
+  trimValues: true,
+});
 
-/** Fetch OAuth2 access token using client credentials */
-async function getAccessToken(clientId: string, clientSecret: string): Promise<string> {
-  if (cachedToken && cachedToken.expiresAt > Date.now() + 60_000) {
-    return cachedToken.token;
+function findStringByKeyPattern(obj: unknown, re: RegExp, depth = 0): string | undefined {
+  if (depth > 30 || obj === null || obj === undefined) return undefined;
+  if (typeof obj === 'object' && !Array.isArray(obj)) {
+    for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+      if (re.test(k) && typeof v === 'string' && v.length > 0) return v;
+      if (typeof v === 'object' && v !== null) {
+        const n = findStringByKeyPattern(v, re, depth + 1);
+        if (n) return n;
+      }
+    }
   }
-  const authUrl = getEverifyAuthUrl();
-  const body = new URLSearchParams({
-    grant_type: 'client_credentials',
-    client_id: clientId,
-    client_secret: clientSecret,
-  }).toString();
-  const res = await fetch(authUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-    signal: AbortSignal.timeout(getEverifyTimeoutMs()),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    logger.error('E-Verify auth failed', { status: res.status, body: text.substring(0, 200) });
-    throw new Error(`E-Verify auth failed: ${res.status}`);
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const n = findStringByKeyPattern(item, re, depth + 1);
+      if (n) return n;
+    }
   }
-  const json = (await res.json()) as { access_token?: string; expires_in?: number };
-  const token = json.access_token;
-  if (!token) throw new Error('No access_token in E-Verify auth response');
-  const expiresIn = (json.expires_in ?? 1799) * 1000;
-  cachedToken = { token, expiresAt: Date.now() + expiresIn };
-  return token;
+  return undefined;
 }
 
-/** EAAT stub: simulate scenarios for testing */
-function createCaseStubInternal(
-  _req: EverifyCreateCaseRequest,
-  scenario?: string
-): EverifyCreateCaseResponse {
-  const s = (scenario || '').toLowerCase();
-  if (s === 'employment_authorized')
-    return {
-      everifyCaseNumber: `EAAT-AUTH-${Date.now()}`,
-      status: 'employment_authorized',
-      providerStatus: 'employment_authorized (EAAT)',
-      raw: { _eaat: true, scenario: 'employment_authorized' },
-    };
-  if (s === 'tnc')
-    return {
-      everifyCaseNumber: `EAAT-TNC-${Date.now()}`,
-      status: 'tnc',
-      providerStatus: 'Tentative Nonconfirmation (EAAT)',
-      raw: { _eaat: true, scenario: 'tnc' },
-    };
-  if (s === 'error')
-    return {
-      everifyCaseNumber: undefined,
-      status: 'error',
-      providerStatus: 'error (EAAT simulation)',
-      raw: { _eaat: true, scenario: 'error' },
-    };
-  // default: submitted/pending
-  return {
-    everifyCaseNumber: `EAAT-${Date.now()}`,
-    status: 'submitted',
-    providerStatus: 'submitted (EAAT stub)',
-    raw: { _eaat: true, scenario: scenario || 'default' },
-  };
+function parseSoapFault(xml: string): { faultCode?: string; faultString?: string } | null {
+  const lower = xml.toLowerCase();
+  if (!lower.includes('<fault') && !lower.includes(':fault')) return null;
+  try {
+    const j = xmlParser.parse(xml) as Record<string, unknown>;
+    const body = (j.Envelope as Record<string, unknown> | undefined)?.Body ?? (j['soap:Envelope'] as Record<string, unknown> | undefined)?.Body;
+    const fault = (body as Record<string, unknown> | undefined)?.Fault ?? (body as Record<string, unknown> | undefined)?.fault;
+    if (fault && typeof fault === 'object') {
+      const f = fault as Record<string, unknown>;
+      return {
+        faultCode: typeof f.faultcode === 'string' ? f.faultcode : typeof f.Code === 'string' ? f.Code : undefined,
+        faultString: typeof f.faultstring === 'string' ? f.faultstring : typeof f.Reason === 'string' ? f.Reason : undefined,
+      };
+    }
+  } catch {
+    // regex fallback
+    const m = xml.match(/<faultstring[^>]*>([^<]*)</i) || xml.match(/<Reason[^>]*>([^<]*)</i);
+    if (m?.[1]) return { faultString: m[1].trim() };
+  }
+  return { faultString: 'SOAP Fault (unparsed)' };
 }
 
 /**
- * Create case via real Stage API or EAAT stub.
- * Writes everifyCaseNumber and normalized status to Firestore via everifyService.
+ * Optional full envelope override (set in Secret Manager / env). Placeholders: {{username}}, {{password}}, {{sessionToken}}, {{firstName}}, etc.
  */
-export async function createCaseClient(
-  req: EverifyCreateCaseRequest,
-  credentials: { clientId: string; clientSecret: string } | null
-): Promise<EverifyCreateCaseResponse> {
-  if (getEverifyFakeProvider()) {
-    const scenario = getEverifyEaatScenario();
-    logger.info('E-Verify fake provider (stub)', { scenario });
-    return createCaseStubInternal(req, scenario);
+function applyEnvelopeTemplate(template: string, vars: Record<string, string>): string {
+  let out = template;
+  for (const [k, v] of Object.entries(vars)) {
+    out = out.split(`{{${k}}}`).join(v);
   }
+  return out;
+}
 
-  if (!credentials?.clientId || !credentials?.clientSecret) {
-    logger.warn('E-Verify OAuth credentials missing, using fake provider');
-    return createCaseStubInternal(req);
-  }
-
-  const token = await getAccessToken(credentials.clientId, credentials.clientSecret);
-  const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
-  const createUrl = `${baseUrl}/cases`;
-
-  // ICA v31 Create Case payload – adjust fields per official ICA
-  const payload = {
-    companyId: req.everifyCompanyId,
-    startDate: req.startDate,
-    requestHash: req.requestHash,
-    metadata: {
-      tenantId: req.tenantId,
-      entityId: req.entityId,
-      userId: req.userId,
-    },
-  };
-
-  const res = await fetch(createUrl, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(getEverifyTimeoutMs()),
-  });
-
-  const text = await res.text();
-  let json: Record<string, unknown> = {};
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    // non-JSON response
-  }
-
-  if (!res.ok) {
-    logger.error('E-Verify Create Case failed', {
-      status: res.status,
-      body: text.substring(0, 500),
+function defaultLoginEnvelope(username: string, password: string): string {
+  const ns = getEverifySoapServiceNamespace();
+  const custom = process.env.EVERIFY_SOAP_LOGIN_ENVELOPE_TEMPLATE;
+  if (custom?.trim()) {
+    return applyEnvelopeTemplate(custom, {
+      username: escapeXml(username),
+      password: escapeXml(password),
+      ns: escapeXml(ns),
     });
-    throw new Error(
-      `E-Verify Create Case failed: ${res.status} ${(json as { message?: string }).message || text.substring(0, 100)}`
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ev="${escapeXml(ns)}">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ev:AuthenticateRequest>
+      <ev:Username>${escapeXml(username)}</ev:Username>
+      <ev:Password>${escapeXml(password)}</ev:Password>
+    </ev:AuthenticateRequest>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+function mapCitizenshipToIcaCode(status: string): string {
+  const map: Record<string, string> = {
+    US_CITIZEN: '1',
+    NONCITIZEN_NATIONAL: '2',
+    LAWFUL_PERMANENT_RESIDENT: '3',
+    ALIEN_AUTHORIZED_TO_WORK: '4',
+    OTHER: '5',
+  };
+  return map[status] ?? status;
+}
+
+function defaultCreateCaseEnvelope(sessionToken: string, emp: EverifySoapEmployeeData): string {
+  const ns = getEverifySoapServiceNamespace();
+  const custom = process.env.EVERIFY_SOAP_CREATE_CASE_ENVELOPE_TEMPLATE;
+  if (custom?.trim()) {
+    return applyEnvelopeTemplate(custom, {
+      sessionToken: escapeXml(sessionToken),
+      firstName: escapeXml(emp.firstName),
+      lastName: escapeXml(emp.lastName),
+      ssn: escapeXml(emp.ssn),
+      dateOfBirth: escapeXml(emp.dateOfBirth),
+      citizenshipStatusCode: escapeXml(mapCitizenshipToIcaCode(String(emp.citizenshipStatus))),
+      ns: escapeXml(ns),
+    });
+  }
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ev="${escapeXml(ns)}">
+  <soapenv:Header>
+    <ev:SessionToken>${escapeXml(sessionToken)}</ev:SessionToken>
+  </soapenv:Header>
+  <soapenv:Body>
+    <ev:CreateCaseRequest>
+      <ev:FirstName>${escapeXml(emp.firstName)}</ev:FirstName>
+      <ev:LastName>${escapeXml(emp.lastName)}</ev:LastName>
+      <ev:SSN>${escapeXml(emp.ssn)}</ev:SSN>
+      <ev:DateOfBirth>${escapeXml(emp.dateOfBirth)}</ev:DateOfBirth>
+      <ev:CitizenshipStatusCode>${escapeXml(mapCitizenshipToIcaCode(String(emp.citizenshipStatus)))}</ev:CitizenshipStatusCode>
+    </ev:CreateCaseRequest>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+}
+
+function extractSessionToken(xml: string): string | undefined {
+  try {
+    const parsed = xmlParser.parse(xml);
+    const t = findStringByKeyPattern(parsed, /session|token|sessionid|access/i);
+    if (t) return t;
+  } catch {
+    // fall through to regex
+  }
+  const m = xml.match(/<(?:[\w]+:)?(SessionToken|Token|session_token|AccessToken)[^>]*>([^<]+)</i);
+  return m?.[2]?.trim();
+}
+
+function extractCaseNumberAndStatus(xml: string): { caseNumber?: string; caseStatus?: string } {
+  try {
+    const parsed = xmlParser.parse(xml);
+    const num =
+      findStringByKeyPattern(parsed, /case[_]?number|casenumber|everifycasenumber|caseid/i) ||
+      undefined;
+    const status = findStringByKeyPattern(parsed, /case[_]?status|statuscode|casestatus/i) || undefined;
+    if (num || status) return { caseNumber: num, caseStatus: status };
+  } catch {
+    // regex fallback
+  }
+  const numM = xml.match(/<(?:[\w]+:)?(CaseNumber|case_number|Case_Id)[^>]*>([^<]+)</i);
+  const stM = xml.match(/<(?:[\w]+:)?(CaseStatus|case_status)[^>]*>([^<]+)</i);
+  return {
+    caseNumber: numM?.[2]?.trim(),
+    caseStatus: stM?.[2]?.trim(),
+  };
+}
+
+export interface SendSoapResult {
+  statusCode: number;
+  responseXml: string;
+}
+
+export async function sendSoapRequest(opts: {
+  url: string;
+  soapAction: string;
+  xmlBody: string;
+  timeoutMs?: number;
+}): Promise<SendSoapResult> {
+  const timeoutMs = opts.timeoutMs ?? getEverifySoapTimeoutMs();
+  const maxRetries = getEverifyMaxRetries();
+  const v = getEverifySoapVersion();
+  const headers: Record<string, string> = {
+    'Content-Type':
+      v === '1.2' ? 'application/soap+xml; charset=utf-8' : 'text/xml; charset=utf-8',
+  };
+  if (v === '1.1') {
+    headers.SOAPAction = `"${opts.soapAction}"`;
+  } else {
+    headers['Content-Type'] = `application/soap+xml; charset=utf-8; action="${opts.soapAction}"`;
+  }
+
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= maxRetries + 1; attempt++) {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(opts.url, {
+        method: 'POST',
+        headers,
+        body: opts.xmlBody,
+        signal: controller.signal,
+      });
+      clearTimeout(id);
+      const responseXml = await res.text();
+      const fault = parseSoapFault(responseXml);
+      if (fault?.faultString || fault?.faultCode) {
+        throw new EverifySoapError(fault.faultString || 'SOAP Fault', 'soap_fault', {
+          faultCode: fault.faultCode,
+          faultString: fault.faultString,
+          rawXml: responseXml.substring(0, 8000),
+        });
+      }
+      if (res.status === 401 || res.status === 403) {
+        throw new EverifySoapError(`E-Verify SOAP auth HTTP ${res.status}`, 'auth', {
+          statusCode: res.status,
+          rawXml: responseXml.substring(0, 4000),
+        });
+      }
+      if (!res.ok && res.status >= 400 && res.status < 500 && res.status !== 429) {
+        throw new EverifySoapError(`E-Verify SOAP HTTP ${res.status}`, 'http', {
+          statusCode: res.status,
+          rawXml: responseXml.substring(0, 4000),
+        });
+      }
+      if (!res.ok && res.status >= 500) {
+        lastErr = new EverifySoapError(`E-Verify SOAP HTTP ${res.status}`, 'http', {
+          statusCode: res.status,
+          rawXml: responseXml.substring(0, 2000),
+        });
+        await sleep(300 * attempt);
+        continue;
+      }
+      return { statusCode: res.status, responseXml };
+    } catch (e) {
+      clearTimeout(id);
+      if (e instanceof EverifySoapError) throw e;
+      const err = e as Error & { name?: string };
+      if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+        lastErr = new EverifySoapError('E-Verify SOAP request timeout', 'timeout');
+        await sleep(400 * attempt);
+        continue;
+      }
+      lastErr = e;
+      if (attempt <= maxRetries) {
+        await sleep(250 * attempt);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new EverifySoapError('E-Verify SOAP: max retries exceeded', 'unknown');
+}
+
+export async function authenticateSoapSession(
+  creds: EverifySoapCredentials
+): Promise<EverifySoapSessionResult> {
+  if (getEverifyFakeProvider()) {
+    const tok = `FAKE-SESSION-${Date.now()}`;
+    const xml = `<?xml version="1.0"?><Envelope><Body><Token>${tok}</Token></Body></Envelope>`;
+    return {
+      sessionToken: tok,
+      requestXml: defaultLoginEnvelope(creds.username, '***'),
+      responseXml: xml,
+    };
+  }
+  const url = getEverifySoapUrl();
+  const reqXml = defaultLoginEnvelope(creds.username, creds.password);
+  const { responseXml } = await sendSoapRequest({
+    url,
+    soapAction: getEverifySoapLoginSoapAction(),
+    xmlBody: reqXml,
+  });
+  const sessionToken = extractSessionToken(responseXml);
+  if (!sessionToken) {
+    logger.warn('E-Verify SOAP: could not parse session token; check ICA response shape');
+    throw new EverifySoapError(
+      'E-Verify SOAP: session token not found in auth response (adjust templates / parser)',
+      'parse',
+      { rawXml: responseXml.substring(0, 8000) }
     );
   }
+  return { sessionToken, requestXml: reqXml, responseXml };
+}
 
-  // Map provider response to our schema – adjust per ICA response shape
-  const caseNumber = (json.caseNumber ?? json.everifyCaseNumber ?? json.case_id) as string | undefined;
-  const providerStatus = (json.status ?? json.providerStatus ?? json.caseStatus ?? 'submitted') as string;
-  const raw = json as Record<string, unknown>;
-
+export async function createCaseSoap(
+  sessionToken: string,
+  employee: EverifySoapEmployeeData
+): Promise<EverifySoapCreateCaseResult> {
+  if (getEverifyFakeProvider()) {
+    const reqXml = defaultCreateCaseEnvelope(sessionToken, employee);
+    const num = `FAKE-CASE-${Date.now()}`;
+    const resXml = `<?xml version="1.0"?><Envelope><Body><CaseNumber>${num}</CaseNumber><CaseStatus>SUBMITTED</CaseStatus></Body></Envelope>`;
+    return { caseNumber: num, caseStatus: 'SUBMITTED', requestXml: reqXml, responseXml: resXml };
+  }
+  const url = getEverifySoapUrl();
+  const reqXml = defaultCreateCaseEnvelope(sessionToken, employee);
+  const { responseXml } = await sendSoapRequest({
+    url,
+    soapAction: getEverifySoapCreateCaseSoapAction(),
+    xmlBody: reqXml,
+  });
+  const { caseNumber, caseStatus } = extractCaseNumberAndStatus(responseXml);
+  if (!caseNumber) {
+    throw new EverifySoapError(
+      'E-Verify SOAP: case number not found in response (adjust ICA templates)',
+      'parse',
+      { rawXml: responseXml.substring(0, 8000) }
+    );
+  }
   return {
-    everifyCaseNumber: caseNumber,
-    status: normalizeProviderStatus(providerStatus),
-    providerStatus: String(providerStatus),
-    raw,
+    caseNumber,
+    caseStatus: caseStatus || 'UNKNOWN',
+    requestXml: reqXml,
+    responseXml,
   };
 }
 
-function normalizeProviderStatus(s: string): EverifyCaseStatus {
-  const lower = String(s || '').toLowerCase();
-  if (lower.includes('authorized') || lower.includes('employment authorized'))
-    return 'employment_authorized';
-  if (lower.includes('tnc') || lower.includes('tentative nonconfirmation')) return 'tnc';
-  if (lower.includes('dhs') && lower.includes('process')) return 'dhs_verification_in_process';
-  if (lower.includes('further action')) return 'further_action_required';
-  if (lower.includes('final') && lower.includes('nonconfirmation')) return 'final_nonconfirmation';
-  if (lower.includes('closed')) return 'closed';
-  if (lower.includes('error') || lower.includes('failed')) return 'error';
-  if (lower.includes('pending') || lower.includes('submitted')) return 'submitted';
-  return 'pending';
-}
-
-/** Stub for backward compatibility – use createCaseClient with credentials */
-export async function createCaseStub(req: EverifyCreateCaseRequest): Promise<EverifyCreateCaseResponse> {
-  return createCaseStubInternal(req);
-}
-
-// ─── ICA v31: create draft + submit (no Firestore) ─────────────────────────
-
-/**
- * ICA v31: Create draft case via POST /cases.
- * Uses Bearer token from everifyAuth.getAccessToken(creds).
- */
-export async function createDraftCase(
-  payload: I9CaseFlat,
-  creds: EverifyCredentials
-): Promise<CreateCaseDraftResponse> {
-  const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
-  const url = `${baseUrl}/cases`;
-  const token = await getIcaAccessToken(creds);
-
-  try {
-    const resp = await httpJson<CreateCaseDraftResponse & Record<string, unknown>>({
-      method: 'POST',
-      url,
-      headers: { Authorization: `Bearer ${token}` },
-      body: payload,
-      timeoutMs: 20000,
-      retries: 1,
-    });
-
-    const caseNumber = resp?.case_number ?? (resp as Record<string, unknown>).case_number;
-    if (!caseNumber || typeof caseNumber !== 'string') {
-      throw new Error('E-Verify create draft: missing case_number in response');
-    }
-
-    return {
-      case_number: String(caseNumber),
-      case_status: resp?.case_status,
-      case_status_display: resp?.case_status_display,
-    };
-  } catch (e: unknown) {
-    const err = e as Error & { status?: number; body?: { message?: string } };
-    const msg = err.body?.message ?? err.message;
-    throw new Error(`E-Verify create draft failed: ${err.status ?? ''} ${msg}`.trim());
-  }
-}
-
-/**
- * ICA v31: Submit draft case via POST /cases/{case_number}/submit.
- */
-export async function submitCase(
-  caseNumber: string,
-  creds: EverifyCredentials
-): Promise<SubmitCaseResponse> {
-  const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
-  const url = `${baseUrl}/cases/${encodeURIComponent(caseNumber)}/submit`;
-  const token = await getIcaAccessToken(creds);
-
-  try {
-    const resp = await httpJson<SubmitCaseResponse & Record<string, unknown>>({
-      method: 'POST',
-      url,
-      headers: { Authorization: `Bearer ${token}` },
-      timeoutMs: 20000,
-      retries: 1,
-    });
-
-    return {
-      case_number: resp?.case_number ?? caseNumber,
-      case_status: resp?.case_status,
-      case_status_display: resp?.case_status_display,
-      case_eligibility_statement: resp?.case_eligibility_statement,
-      ssa_referral_status: resp?.ssa_referral_status,
-      dhs_referral_status: resp?.dhs_referral_status,
-      dhs_referral_due_date: resp?.dhs_referral_due_date,
-    };
-  } catch (e: unknown) {
-    const err = e as Error & { status?: number; body?: { message?: string } };
-    const msg = err.body?.message ?? err.message;
-    throw new Error(`E-Verify submit failed: ${err.status ?? ''} ${msg}`.trim());
-  }
-}
-
-/**
- * ICA v31: Get case status/details via GET /cases/{case_number}.
- * Returns whitelisted fields only. When fake provider, returns stub status.
- */
-export async function getCaseStatus(
-  caseNumber: string,
-  creds: EverifyCredentials
-): Promise<CaseStatusResponse> {
-  if (getEverifyFakeProvider()) {
-    return {
-      case_number: caseNumber,
-      case_status: 'SUBMITTED',
-      case_status_display: 'Submitted (fake provider)',
-      case_eligibility_statement: undefined,
-    };
-  }
-
-  const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
-  const url = `${baseUrl}/cases/${encodeURIComponent(caseNumber)}`;
-  const token = await getIcaAccessToken(creds);
-
-  try {
-    const resp = await httpJson<CaseStatusResponse & Record<string, unknown>>({
-      method: 'GET',
-      url,
-      headers: { Authorization: `Bearer ${token}` },
-      timeoutMs: 15000,
-      retries: 1,
-    });
-
-    return {
-      case_number: resp?.case_number ?? caseNumber,
-      case_status: resp?.case_status,
-      case_status_display: resp?.case_status_display,
-      case_eligibility_statement: resp?.case_eligibility_statement,
-      ssa_referral_status: resp?.ssa_referral_status,
-      dhs_referral_status: resp?.dhs_referral_status,
-      dhs_referral_due_date: resp?.dhs_referral_due_date,
-      dhs_referral_created_at: resp?.dhs_referral_created_at,
-      dhs_referral_contact_by_date: resp?.dhs_referral_contact_by_date,
-      ev_star_referral_due_date: resp?.ev_star_referral_due_date,
-      ev_star_referral_created_at: resp?.ev_star_referral_created_at,
-      ev_star_referral_contact_by_date: resp?.ev_star_referral_contact_by_date,
-    };
-  } catch (e: unknown) {
-    const err = e as Error & { status?: number; body?: { message?: string } };
-    const msg = err.body?.message ?? err.message;
-    throw new Error(`E-Verify get case status failed: ${err.status ?? ''} ${msg}`.trim());
-  }
+/** Base URL for diagnostics (REST + SOAP share project host). */
+export function getEverifySoapDiagnosticsBaseUrl(): string {
+  return getEverifyBaseUrl();
 }

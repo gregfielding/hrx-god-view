@@ -2,7 +2,7 @@
  * Order Details defaults (Compliance & Requirements + Company Contacts).
  * Used on Account and Location Order Defaults tab. Data flows: National → Child → Job Order or Standalone → Location → Job Order.
  */
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   Card,
   CardContent,
@@ -17,7 +17,7 @@ import {
   Chip,
   Divider,
 } from '@mui/material';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import type { RecruiterAccount } from '../../types/recruiter/account';
@@ -25,6 +25,7 @@ import { experienceOptions, educationOptions } from '../../data/experienceOption
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../../data/jobRequirementPacks';
+import { AccusourcePackageSelector } from './AccusourcePackageSelector';
 
 const PHYSICAL_OPTIONS = [
   'Standing', 'Walking', 'Sitting', 'Lifting 25 lbs', 'Lifting 50 lbs', 'Lifting 75 lbs', 'Lifting 100+ lbs',
@@ -128,7 +129,24 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   const accountOrderDetails = (account as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
   const effective = mergeOrderDetails(locationOrderDetails, accountOrderDetails);
 
+  const mergedScreening = useMemo(() => {
+    const odLoc = (locationDefaults as any)?.orderDefaults as Record<string, unknown> | undefined;
+    const odAcc = (account as any)?.orderDefaults as Record<string, unknown> | undefined;
+    const locId = String(odLoc?.screeningPackageId ?? '').trim();
+    const accId = String(odAcc?.screeningPackageId ?? '').trim();
+    const locName = String(odLoc?.screeningPackageName ?? '').trim();
+    const accName = String(odAcc?.screeningPackageName ?? '').trim();
+    if (locationKey) {
+      const id = locId || accId;
+      const name = locId ? locName : accName;
+      return { id, name };
+    }
+    return { id: accId, name: accName };
+  }, [locationDefaults, account, locationKey]);
+
   const [form, setForm] = useState<OrderDetailsData>(effective);
+  const [screeningPackageId, setScreeningPackageId] = useState(mergedScreening.id);
+  const [screeningPackageName, setScreeningPackageName] = useState(mergedScreening.name);
   const formRef = useRef<OrderDetailsData>(form);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -140,18 +158,32 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
     setForm(mergeOrderDetails(locationOrderDetails, accountOrderDetails));
   }, [locationOrderDetails, accountOrderDetails]);
 
+  useEffect(() => {
+    setScreeningPackageId(mergedScreening.id);
+    setScreeningPackageName(mergedScreening.name);
+  }, [mergedScreening]);
+
   const update = useCallback((patch: Partial<OrderDetailsData>) => {
     setForm((prev) => ({ ...prev, ...patch }));
   }, []);
 
   const save = useCallback(async () => {
     const data = formRef.current;
+    const sid = screeningPackageId.trim();
+    const sname = screeningPackageName.trim();
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         'orderDefaults.orderDetails': data,
         updatedAt: serverTimestamp(),
         ...(locationKey ? { updatedBy: userId || null } : {}),
       };
+      if (sid) {
+        payload['orderDefaults.screeningPackageId'] = sid;
+        payload['orderDefaults.screeningPackageName'] = sname || '';
+      } else {
+        payload['orderDefaults.screeningPackageId'] = deleteField();
+        payload['orderDefaults.screeningPackageName'] = deleteField();
+      }
       if (locationKey) {
         const locationRef = doc(db, p.recruiterAccountLocationDefaults(tenantId, accountId, locationKey));
         await updateDoc(locationRef, payload);
@@ -163,7 +195,7 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
     } catch (err: any) {
       console.error('Save order details error:', err);
     }
-  }, [tenantId, accountId, userId, locationKey, onRefreshLocation]);
+  }, [tenantId, accountId, userId, locationKey, onRefreshLocation, screeningPackageId, screeningPackageName]);
 
   const scheduleSave = useCallback(() => {
     if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
@@ -208,6 +240,20 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
 
         <Typography variant="subtitle1" fontWeight={600} sx={{ mt: 2, mb: 1 }}>Compliance & Requirements</Typography>
         <Grid container spacing={2}>
+          <Grid item xs={12}>
+            <AccusourcePackageSelector
+              packageId={screeningPackageId}
+              packageName={screeningPackageName}
+              onChange={(next) => {
+                setScreeningPackageId(next.packageId);
+                setScreeningPackageName(next.packageName);
+                scheduleSave();
+              }}
+              showDiagnostics
+              emptyMenuLabel="None"
+              helperText="AccuSource package for order screening. Job orders can override; merges with location → account defaults."
+            />
+          </Grid>
           <Grid item xs={12}>
             <Autocomplete
               multiple

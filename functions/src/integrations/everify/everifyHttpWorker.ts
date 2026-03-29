@@ -8,7 +8,8 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { resolveEligibility } from './everifyEligibility';
 import { createAndSubmitCase } from './everifyService';
-import { EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD, EVERIFY_CLIENT_ID, EVERIFY_CLIENT_SECRET } from './everifySecrets';
+import { EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD } from './everifySecrets';
+import { OPEN_EVERIFY_CASE_STATUSES, requestHashCollisionBlocksCreate } from './everifyErrors';
 
 const db = admin.firestore();
 
@@ -23,30 +24,8 @@ function getIcaCredentials(): { username: string; password: string } | null {
   return null;
 }
 
-/** Legacy OAuth credentials (EAAT stub / rollback only) */
-function getLegacyCredentials(): { clientId: string; clientSecret: string } | null {
-  try {
-    const id = EVERIFY_CLIENT_ID.value();
-    const secret = EVERIFY_CLIENT_SECRET.value();
-    if (id && secret) return { clientId: id, clientSecret: secret };
-  } catch {
-    // secrets not configured
-  }
-  return null;
-}
-
-const OPEN_STATUSES = [
-  'draft',
-  'ready',
-  'submitted',
-  'pending',
-  'tnc',
-  'dhs_verification_in_process',
-  'further_action_required',
-];
-
 export const processEverifyCaseFromEmployment = onRequest(
-  { cors: false, invoker: 'private', secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD, EVERIFY_CLIENT_ID, EVERIFY_CLIENT_SECRET] },
+  { cors: false, invoker: 'private', secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD] },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.status(405).send('Method Not Allowed');
@@ -79,7 +58,7 @@ export const processEverifyCaseFromEmployment = onRequest(
       if (eligibility.userEmploymentId) {
         const openByEmployment = await casesRef
           .where('userEmploymentId', '==', eligibility.userEmploymentId)
-          .where('status', 'in', OPEN_STATUSES)
+          .where('status', 'in', [...OPEN_EVERIFY_CASE_STATUSES])
           .limit(1)
           .get();
         if (!openByEmployment.empty) {
@@ -94,9 +73,12 @@ export const processEverifyCaseFromEmployment = onRequest(
         .limit(1)
         .get();
       if (!dupHash.empty) {
-        logger.info(`E-Verify duplicate requestHash for employment ${userEmploymentId}`);
-        res.status(200).json({ ok: false, reason: 'Duplicate case' });
-        return;
+        const st = dupHash.docs[0].data()?.status;
+        if (requestHashCollisionBlocksCreate(st)) {
+          logger.info(`E-Verify duplicate requestHash for employment ${userEmploymentId}`);
+          res.status(200).json({ ok: false, reason: 'Duplicate case' });
+          return;
+        }
       }
 
       const result = await createAndSubmitCase({
@@ -111,7 +93,7 @@ export const processEverifyCaseFromEmployment = onRequest(
         everifyCompanyId: eligibility.everifyCompanyId,
         requestHash: eligibility.requestHash,
         icaCredentials: getIcaCredentials(),
-        legacyCredentials: getLegacyCredentials(),
+        legacyCredentials: null,
       });
 
       logger.info(`Created E-Verify case ${result.caseId} for employment ${userEmploymentId}`);

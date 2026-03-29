@@ -86,7 +86,6 @@ class UserProfileBatcher {
   queueUpdate(field: string, value: any) {
     const uid = auth.currentUser?.uid;
     if (!uid) {
-      console.warn('UserProfileBatcher: No user logged in, update queued but will not save');
       return;
     }
 
@@ -120,7 +119,7 @@ class UserProfileBatcher {
   async flush(force = false): Promise<void> {
     const uid = auth.currentUser?.uid;
     if (!uid) {
-      console.warn('UserProfileBatcher: No user logged in, cannot flush');
+      // Expected when listeners (beforeunload, visibility, click) run after sign-out.
       this.pendingUpdates.clear();
       return;
     }

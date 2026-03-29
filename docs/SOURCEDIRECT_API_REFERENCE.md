@@ -6,6 +6,8 @@ Source material: **SourceDirect API Integration Guide** (partner PDF) plus **Sou
 **Related in-repo docs**
 
 - [`ACCUSOURCE_FIRESTORE_VERIFICATION_CHECKLIST.md`](./ACCUSOURCE_FIRESTORE_VERIFICATION_CHECKLIST.md) — Firestore paths, callable/webhook tests, expected fields for our AccuSource flows.
+- [`ACCUSOURCE_PRODUCTION_READINESS.md`](./ACCUSOURCE_PRODUCTION_READINESS.md) — vendor contacts, sandbox UI link, pre-production questionnaire (draft answers), Postman handling.
+- [`postman/README.md`](./postman/README.md) — how to use AccuSource’s Postman sample **without** committing secrets.
 
 ---
 
@@ -38,7 +40,7 @@ When the PDF and the live docs disagree, **treat the live V2 docs as canonical**
 - **Tenancy:** Credentials are scoped at the **SourceDirect client** level. The guide recommends **one Client ID / Secret per downstream customer** where applicable, and a **settings UI** so each customer can configure their own credentials.
 - **Secrets:** Store only in server-side or managed secrets (e.g. Cloud Functions config / Secret Manager); never embed in the web app bundle.
 
-*Exact token endpoint and grant type live in SourceDirect API V2 docs — record them here once we wire the first call.*
+**Token endpoint (OAuth2 client_credentials):** `POST` to **`/oauth/access_token`** on the same host as the API (e.g. production `https://sdapi.accusourcedirect.com/oauth/access_token`). The path **`/oauth/token`** is not used on sdapi and returns 404.
 
 ---
 

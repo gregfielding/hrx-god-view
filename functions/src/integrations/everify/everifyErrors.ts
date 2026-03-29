@@ -19,3 +19,25 @@ export const EverifyErrorCode = {
 } as const;
 
 export type EverifyErrorCode = (typeof EverifyErrorCode)[keyof typeof EverifyErrorCode];
+
+/** In-flight statuses — duplicate-by-employment uses this same set. */
+export const OPEN_EVERIFY_CASE_STATUSES = [
+  'draft',
+  'ready',
+  'submitted',
+  'pending',
+  'tnc',
+  'dhs_verification_in_process',
+  'further_action_required',
+] as const;
+
+/**
+ * `requestHash` idempotency: block only if the existing row is still active or already succeeded.
+ * Rows in `error` / `closed` / `final_nonconfirmation` do not block — allows retry after a failed run.
+ */
+export function requestHashCollisionBlocksCreate(existingStatus: unknown): boolean {
+  const s = typeof existingStatus === 'string' ? existingStatus : '';
+  if (!s) return true;
+  if (s === 'employment_authorized') return true;
+  return (OPEN_EVERIFY_CASE_STATUSES as readonly string[]).includes(s);
+}

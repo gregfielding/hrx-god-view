@@ -1052,14 +1052,16 @@ const PublicJobsBoard: React.FC = () => {
     let filtered = jobs;
 
     if (searchTerm) {
+      const q = searchTerm.toLowerCase();
+      const lc = (v: string | null | undefined) => String(v ?? '').toLowerCase();
       filtered = filtered.filter(
         (job) =>
-          job.postTitle.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (job.jobTitle && job.jobTitle.toLowerCase().includes(searchTerm.toLowerCase())) ||
-          job.jobDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          job.worksiteName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          job.companyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          (job.skills && job.skills.some(skill => skill.toLowerCase().includes(searchTerm.toLowerCase())))
+          lc(job.postTitle).includes(q) ||
+          lc(job.jobTitle).includes(q) ||
+          lc(job.jobDescription).includes(q) ||
+          lc(job.worksiteName).includes(q) ||
+          lc(job.companyName).includes(q) ||
+          (job.skills?.some((skill) => lc(skill).includes(q)) ?? false)
       );
     }
 

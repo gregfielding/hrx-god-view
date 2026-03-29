@@ -159,6 +159,10 @@ export interface RecruiterAccount {
   /** Order defaults: staff instructions and attachments that pre-fill new job orders for this account */
   orderDefaults?: {
     staffInstructions?: Record<string, { text?: unknown; files?: Array<{ name?: string; label?: string; url?: string; uploadedAt?: string }> }>;
+    /** AccuSource provider package id from synced catalog (`integrations_accusource/catalog`). */
+    screeningPackageId?: string | null;
+    screeningPackageName?: string | null;
+    orderDetails?: Record<string, unknown>;
   };
   /** Billing/hiring defaults (E-Verify, etc.). Stored in Firestore as defaults; may be mirrored at top level for display. */
   defaults?: {

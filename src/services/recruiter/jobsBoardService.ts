@@ -101,8 +101,15 @@ export interface JobsBoardPost {
   postTitle: string; // Title of the posting (may differ from job title)
   jobType: 'gig' | 'career'; // Type of employment
   jobTitle: string; // Actual job title
-  jobDescription: string; // Full job description
-  
+  jobDescription: string; // Full job description (public posting body)
+  /** Standalone posting only: extra instructions for AI / internal context (not the public body). */
+  jobDescriptionPrompt?: string;
+  /** Standalone posting only: additional AI instructions (e.g. job-order-style notes). */
+  jobOrderPrompt?: string;
+  /** External job board listings (optional). */
+  craigslistUrl?: string;
+  indeedUrl?: string;
+
   // Company & Location
   companyId?: string;
   companyName: string;
@@ -208,7 +215,11 @@ export interface CreatePostData {
   jobType: 'gig' | 'career';
   jobTitle?: string;
   jobDescription: string;
-  
+  jobDescriptionPrompt?: string;
+  jobOrderPrompt?: string;
+  craigslistUrl?: string;
+  indeedUrl?: string;
+
   // Company & Location
   companyId?: string;
   companyName: string;
@@ -764,7 +775,16 @@ export class JobsBoardService {
         jobType: postData.jobType,
         jobTitle: postData.jobTitle,
         jobDescription: postData.jobDescription,
-        
+        ...(typeof postData.jobDescriptionPrompt === 'string' && postData.jobDescriptionPrompt.trim()
+          ? { jobDescriptionPrompt: postData.jobDescriptionPrompt.trim() }
+          : {}),
+        ...(typeof postData.craigslistUrl === 'string' && postData.craigslistUrl.trim()
+          ? { craigslistUrl: postData.craigslistUrl.trim() }
+          : {}),
+        ...(typeof postData.indeedUrl === 'string' && postData.indeedUrl.trim()
+          ? { indeedUrl: postData.indeedUrl.trim() }
+          : {}),
+
         // Company & Location
         ...(postData.companyId && { companyId: postData.companyId }),
         companyName: postData.companyName,

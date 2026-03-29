@@ -184,6 +184,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const lastActivitySentAtRef = useRef<number>(0);
   const isCreatingUserProfileRef = useRef<boolean>(false);
   const lastUserDataRef = useRef<any>(null);
+  /** Unsubscribes Firestore user doc listener + heartbeat listeners from the previous auth session. */
+  const authSessionCleanupRef = useRef<(() => void) | null>(null);
 
   const LOGIN_PING_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
@@ -472,10 +474,44 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   };
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      if (authSessionCleanupRef.current) {
+        try {
+          authSessionCleanupRef.current();
+        } catch {
+          // ignore
+        }
+        authSessionCleanupRef.current = null;
+      }
+
       setCurrentUser(user);
 
-      if (user) {
+      if (!user) {
+        hasReportedLoginRef.current = false;
+        setRole('Tenant');
+        setSecurityLevel('3');
+        setModules([]);
+        setAvatarUrl('');
+        setOrgType(null);
+        setTenantId(undefined);
+        setTenantIds([]);
+        setActiveTenant(null);
+        // Reset claims-based state
+        setIsHRX(false);
+        setClaimsRoles({});
+        setCurrentClaimsRole(undefined);
+        setCurrentClaimsSecurityLevel(undefined);
+        setCrmSalesEnabled(false);
+        setRecruiterEnabled(false);
+        setJobsBoardEnabled(false);
+        setLoading(false);
+        return;
+      }
+
+      void (async () => {
+        try {
+        const sessionUid = user.uid;
+
         // Report login once per session to update lastLoginAt and loginCount
         if (!hasReportedLoginRef.current) {
           const shouldReportLogin = shouldReportLoginPing(user.uid);
@@ -517,6 +553,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
         }
 
+        if (auth.currentUser?.uid !== sessionUid) {
+          return;
+        }
+
         const cleanupFns: Array<() => void> = [];
 
         // Start lightweight activity heartbeat (throttled)
@@ -538,7 +578,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             lastActivitySentAtRef.current = now;
             try {
               await updateUserActivity({
-                userId: user.uid,
+                userId: sessionUid,
                 activity: {
                   route: typeof window !== 'undefined' ? window.location.pathname : undefined,
                   visibility: typeof document !== 'undefined' ? document.visibilityState === 'visible' : true,
@@ -571,6 +611,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
         // Load claims from user token (primary source of truth)
         const claims = await loadClaimsFromUser(user);
+        if (auth.currentUser?.uid !== sessionUid) {
+          return;
+        }
         const claimsRolesMap = claims.roles || {};
         const claimsTenantIds = Object.keys(claimsRolesMap);
         const isHRXUser = !!claims.hrx;
@@ -579,9 +622,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setIsHRX(isHRXUser);
         setClaimsRoles(claimsRolesMap);
 
-        const userRef = doc(db, 'users', user.uid);
+        const userRef = doc(db, 'users', sessionUid);
 
-        const unsubscribeUser = onSnapshot(userRef, async (docSnap) => {
+        const unsubscribeUser = onSnapshot(
+          userRef,
+          async (docSnap) => {
           if (docSnap.exists()) {
             const userData = docSnap.data();
             const avatar = userData.avatar || userData.workerProfile?.photoUrl || '';
@@ -753,35 +798,43 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           }
 
           setLoading(false);
-        });
+        },
+        (err) => {
+          console.error('[Auth] users/{uid} snapshot error:', err);
+          setLoading(false);
+        },
+        );
 
-        return () => {
+        authSessionCleanupRef.current = () => {
+          try {
+            unsubscribeUser();
+          } catch {
+            // ignore
+          }
           cleanupFns.forEach((fn) => {
-            try { fn(); } catch {}
+            try {
+              fn();
+            } catch {
+              // ignore
+            }
           });
         };
-      } else {
-        setRole('Tenant');
-        setSecurityLevel('3');
-        setModules([]);
-        setAvatarUrl('');
-        setOrgType(null);
-        setTenantId(undefined);
-        setTenantIds([]);
-        setActiveTenant(null);
-        // Reset claims-based state
-        setIsHRX(false);
-        setClaimsRoles({});
-        setCurrentClaimsRole(undefined);
-        setCurrentClaimsSecurityLevel(undefined);
-        setCrmSalesEnabled(false);
-        setRecruiterEnabled(false);
-        setJobsBoardEnabled(false);
-        setLoading(false);
-      }
+        } catch (bootstrapErr) {
+          console.error('[Auth] session bootstrap failed:', bootstrapErr);
+          setLoading(false);
+        }
+      })();
     });
 
     return () => {
+      if (authSessionCleanupRef.current) {
+        try {
+          authSessionCleanupRef.current();
+        } catch {
+          // ignore
+        }
+        authSessionCleanupRef.current = null;
+      }
       unsubscribeAuth();
     };
   }, []);

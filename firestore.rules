@@ -308,14 +308,21 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
-      // User employments (E-Verify trigger source) - admin/HRX write; recruiters read; workers read own
+      // User employments (E-Verify trigger source) - recruiters+ can create/update (same as E-Verify callable); delete admin/HRX only
       match /user_employments/{employmentId} {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
           resource.data.userId == request.auth.uid
         );
-        allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+        allow create, update: if request.auth != null && (
+          isHRX() ||
+          isTenantAdmin(tenantId) ||
+          (request.auth.token.roles != null &&
+            tenantId in request.auth.token.roles &&
+            request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin'])
+        );
+        allow delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
       // Entity employments (Phase 1 onboarding / Employment tab) - recruiters (levels 5–7) read; workers read own; admin/HRX write
@@ -2055,6 +2062,13 @@ service cloud.firestore {
       }
     }
 
+    // --- AccuSource package catalog (GET /api/v2/company/details sync; Functions write only) ---
+    // Use request.auth directly — avoids any ordering/scope issues with isAuthenticated() above catch-all.
+    match /integrations_accusource/{docId} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
     // --- DEFAULT CATCH-ALL ---
     match /{document=**} {
       allow read, write: if false;
@@ -2079,13 +2093,17 @@ service cloud.firestore {
 
     function isAssignedToTenant(tenantId) {
       let u = getUser();
-      return isAuthenticated() && u != null && (
-        u.tenantIds != null && (
-          (u.tenantIds is list && u.tenantIds.hasAny([tenantId])) ||
-          (u.tenantIds is map && tenantId in u.tenantIds)
-        ) ||
-        u.tenantId == tenantId ||
-        u.activeTenantId == tenantId
+      // Prefer custom claims (same session as the app) in addition to Firestore profile.
+      return isAuthenticated() && (
+        (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+        (u != null && (
+          u.tenantIds != null && (
+            (u.tenantIds is list && u.tenantIds.hasAny([tenantId])) ||
+            (u.tenantIds is map && tenantId in u.tenantIds)
+          ) ||
+          u.tenantId == tenantId ||
+          u.activeTenantId == tenantId
+        ))
       );
     }
     
@@ -2168,21 +2186,42 @@ service cloud.firestore {
       return isHRX() || hasSecurityLevel(tenantId, 5);
     }
     
+    // Custom claims (setTenantRole / inviteUser): roles[tenantId].securityLevel and/or .role
+    function hasSecurityLevelFromClaims(tenantId, minLevel) {
+      return request.auth.token.roles != null &&
+        tenantId in request.auth.token.roles &&
+        (
+          request.auth.token.roles[tenantId].role == 'Admin' ||
+          request.auth.token.roles[tenantId].role == 'Manager' ||
+          (
+            request.auth.token.roles[tenantId].securityLevel != null &&
+            (
+              (request.auth.token.roles[tenantId].securityLevel is string
+                ? int(request.auth.token.roles[tenantId].securityLevel)
+                : request.auth.token.roles[tenantId].securityLevel) >= minLevel
+            )
+          )
+        );
+    }
+
     // Check if user has at least the specified security level for the tenant
     // NOTE: Firestore Rules do not support JS-style if statements; use expressions + ternaries.
+    // Guard all `user.*` access: if getUser() is null, dereferencing fails the rule (deny).
     function hasSecurityLevel(tenantId, minLevel) {
       let user = getUser();
-      let tenantLevel = (user.tenantIds != null &&
+      let tenantLevel = (user != null &&
+        user.tenantIds != null &&
         user.tenantIds is map &&
         tenantId in user.tenantIds &&
         user.tenantIds[tenantId].securityLevel != null)
           ? (user.tenantIds[tenantId].securityLevel is string ? int(user.tenantIds[tenantId].securityLevel) : user.tenantIds[tenantId].securityLevel)
           : null;
-      let rootLevel = (user.securityLevel != null)
+      let rootLevel = (user != null && user.securityLevel != null)
         ? (user.securityLevel is string ? int(user.securityLevel) : user.securityLevel)
         : null;
-        
+
       return isHRX() ||
+        hasSecurityLevelFromClaims(tenantId, minLevel) ||
         (tenantLevel != null && tenantLevel >= minLevel) ||
         (rootLevel != null && rootLevel >= minLevel);
     }

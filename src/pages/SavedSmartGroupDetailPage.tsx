@@ -62,7 +62,9 @@ import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import { formatOneDecimal } from '../utils/scoreSummary';
 import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
+import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../components/EVerifyComfortChip';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import FavoriteButton from '../components/FavoriteButton';
 import InterviewCell from '../components/InterviewCell';
@@ -105,6 +107,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     scoreSummary?: { aiScore?: number; interviewLastAt?: any; interviewLastScore10?: number };
     securityLevel?: string;
     skills?: string[];
+    comfortableEVerify?: string;
+    workerAttestations?: { eVerifyWillingness?: string };
   }>>([]);
   const [statusMenuAnchor, setStatusMenuAnchor] = useState<{ [userId: string]: HTMLElement | null }>({});
   const [loading, setLoading] = useState(true);
@@ -236,6 +240,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           scoreSummary?: any;
           securityLevel?: string;
           skills?: string[];
+          comfortableEVerify?: string;
+          workerAttestations?: { eVerifyWillingness?: string };
         }> = [];
         for (const uid of memberIds) {
           const userSnap = await getDoc(doc(db, 'users', uid));
@@ -256,6 +262,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
               scoreSummary: d?.scoreSummary,
               securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
               skills: Array.isArray(d?.skills) ? d.skills : [],
+              comfortableEVerify: d?.comfortableEVerify,
+              workerAttestations: d?.workerAttestations,
             });
           } else {
             users.push({ id: uid });
@@ -356,7 +364,21 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
       setGroup({ ...group, filters, memberIds: newMemberIds, memberStatusById });
       
       // Reload members data
-      const users: Array<{ id: string; firstName?: string; lastName?: string; email?: string; phone?: string; avatar?: string; city?: string; state?: string; scoreSummary?: any; securityLevel?: string; skills?: string[] }> = [];
+      const users: Array<{
+        id: string;
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+        avatar?: string;
+        city?: string;
+        state?: string;
+        scoreSummary?: any;
+        securityLevel?: string;
+        skills?: string[];
+        comfortableEVerify?: string;
+        workerAttestations?: { eVerifyWillingness?: string };
+      }> = [];
       for (const uid of newMemberIds) {
         const userSnap = await getDoc(doc(db, 'users', uid));
         if (userSnap.exists()) {
@@ -375,6 +397,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             scoreSummary: d?.scoreSummary,
             securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
             skills: Array.isArray(d?.skills) ? d.skills : [],
+            comfortableEVerify: d?.comfortableEVerify,
+            workerAttestations: d?.workerAttestations,
           });
         } else {
           users.push({ id: uid });
@@ -460,7 +484,21 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         updatedAt: serverTimestamp(),
       });
       setGroup((g) => (g ? { ...g, memberIds: newMemberIds, memberStatusById } : null));
-      const users: Array<{ id: string; firstName?: string; lastName?: string; email?: string; phone?: string; avatar?: string; city?: string; state?: string; scoreSummary?: any; securityLevel?: string; skills?: string[] }> = [];
+      const users: Array<{
+        id: string;
+        firstName?: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+        avatar?: string;
+        city?: string;
+        state?: string;
+        scoreSummary?: any;
+        securityLevel?: string;
+        skills?: string[];
+        comfortableEVerify?: string;
+        workerAttestations?: { eVerifyWillingness?: string };
+      }> = [];
       for (const uid of newMemberIds) {
         const userSnap = await getDoc(doc(db, 'users', uid));
         if (userSnap.exists()) {
@@ -479,6 +517,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             scoreSummary: d?.scoreSummary,
             securityLevel: String(tenantData?.securityLevel ?? d?.securityLevel ?? '0'),
             skills: Array.isArray(d?.skills) ? d.skills : [],
+            comfortableEVerify: d?.comfortableEVerify,
+            workerAttestations: d?.workerAttestations,
           });
         } else {
           users.push({ id: uid });
@@ -1190,6 +1230,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Person</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Contact</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Auth</TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Documented</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Work Status</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Score</TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>Interview</TableCell>
@@ -1200,7 +1241,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             <TableBody>
               {membersData.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
+                  <TableCell colSpan={11} sx={{ py: 4, textAlign: 'center', color: 'text.secondary' }}>
                     No members. Click &quot;Update results&quot; to re-run the saved search.
                   </TableCell>
                 </TableRow>
@@ -1281,6 +1322,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                       </TableCell>
                       <TableCell>
                         <WorkAuthorizedChip status={getWorkAuthorizedStatus(m)} />
+                      </TableCell>
+                      <TableCell>
+                        <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(m)} />
                       </TableCell>
                       <TableCell><Chip size="small" label={ws.label} color={ws.color} /></TableCell>
                       <TableCell>{renderAiScore(m)}</TableCell>

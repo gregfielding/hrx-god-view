@@ -7,10 +7,13 @@ import ResumeUpload from '../../../components/ResumeUpload';
 
 type Props = {
   uid: string;
+  /** Same resolution as other profile tabs — required for admin “parse on behalf of” server checks. */
+  tenantId?: string | null;
 };
 
-const ResumeTab: React.FC<Props> = ({ uid }) => {
-  const { tenantId } = useAuth();
+const ResumeTab: React.FC<Props> = ({ uid, tenantId: tenantIdProp }) => {
+  const { tenantId: authTenantId, activeTenant } = useAuth();
+  const effectiveTenantId = tenantIdProp || authTenantId || activeTenant?.id || undefined;
   const [hasResume, setHasResume] = useState(false);
   const [resumeFileName, setResumeFileName] = useState<string>('');
 
@@ -52,7 +55,7 @@ const ResumeTab: React.FC<Props> = ({ uid }) => {
       <Paper sx={{ p: 3 }}>
         <ResumeUpload
           userId={uid}
-          tenantId={tenantId || undefined}
+          tenantId={effectiveTenantId}
           onResumeParsed={handleResumeParsed}
         />
       </Paper>

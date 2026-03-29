@@ -65,7 +65,11 @@ type CallablePayload = CreateBackgroundCheckInput & {
   backgroundCheckId?: string;
 };
 
-async function createBackgroundCheckInternal(
+/**
+ * Shared by callable and assignment-confirmed automation.
+ * Callers that bypass the admin gate must validate trust (e.g. Firestore triggers only).
+ */
+export async function createBackgroundCheckInternal(
   input: CallablePayload,
   uid: string,
 ): Promise<{
@@ -171,9 +175,11 @@ export const createAccusourceBackgroundCheck = onCall(async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
-  await ensureAccusourceAdmin(request.auth.uid);
+  const raw = (request.data || {}) as CallablePayload;
+  const tenantForGate = String(raw.tenantId || '').trim() || undefined;
+  await ensureAccusourceAdmin(request.auth.uid, tenantForGate);
 
-  const input = (request.data || {}) as CallablePayload;
+  const input = raw;
   return createBackgroundCheckInternal(input, request.auth.uid);
 });
 
@@ -185,7 +191,8 @@ export const testCreateAccusourceBackgroundCheck = onCall(async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError('unauthenticated', 'Authentication required.');
   }
-  await ensureAccusourceAdmin(request.auth.uid);
+  const tenantForGate = String((request.data as { tenantId?: string })?.tenantId || '').trim() || undefined;
+  await ensureAccusourceAdmin(request.auth.uid, tenantForGate);
 
   const now = Date.now();
   const mockPayload: CallablePayload = {

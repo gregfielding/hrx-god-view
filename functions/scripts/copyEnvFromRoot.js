@@ -33,10 +33,47 @@ const PARAM_KEYS = [
   'TWILIO_MESSAGING_PHONE_NUMBER',
   'TWILIO_A2P_CAMPAIGN',
   'TWILIO_VERIFY_SERVICE_SID',
-  'EVERIFY_WS_USERNAME',
-  'EVERIFY_WS_PASSWORD',
-  'EVERIFY_CLIENT_ID',
-  'EVERIFY_CLIENT_SECRET',
+  // E-Verify (everifyGate, everifyConfig — functions/src/integrations/everify/)
+  'EVERIFY_ENABLED',
+  'EVERIFY_ENV',
+  'EVERIFY_BASE_URL',
+  'EVERIFY_AUTH_URL',
+  'EVERIFY_I9_FIXTURE_JSON',
+  'EVERIFY_STAGE_I9_FIXTURE_JSON',
+  'EVERIFY_TIMEOUT_MS',
+  'EVERIFY_MAX_RETRIES',
+  'EVERIFY_FAKE_PROVIDER',
+  'EVERIFY_EAAT_STUB',
+  'EVERIFY_EAAT_SCENARIO',
+  'EVERIFY_FAKE_SCENARIO',
+  'EVERIFY_WORKER_URL',
+  'EVERIFY_QUEUE',
+  'EVERIFY_SOAP_URL',
+  'EVERIFY_SOAP_PATH',
+  'EVERIFY_SOAP_SERVICE_NS',
+  'EVERIFY_SOAP_LOGIN_SOAPACTION',
+  'EVERIFY_SOAP_CREATE_CASE_SOAPACTION',
+  'EVERIFY_SOAP_VERSION',
+  'EVERIFY_SOAP_TIMEOUT_MS',
+  // EVERIFY_WS_USERNAME / EVERIFY_WS_PASSWORD are defineSecret-only — do NOT put them in functions/.env:
+  // Firebase merges functions/.env as plain env vars; Cloud Run 400s if the same names are also secret mounts.
+  // Set with: firebase functions:secrets:set EVERIFY_WS_USERNAME --data-file=-  (and PASSWORD); keep values in root .env for your records only, or use secrets:set exclusively.
+  // AccuSource / SourceDirect (see functions/src/integrations/accusource/config.ts)
+  'ACCUSOURCE_ENABLED',
+  'ACCUSOURCE_ENVIRONMENT',
+  'ACCUSOURCE_ENV',
+  'ACCUSOURCE_BASE_URL',
+  'ACCUSOURCE_API_KEY',
+  'SOURCEDIRECT_API_KEY',
+  'SOURCEDIRECT_CLIENT_ID',
+  'ACCUSOURCE_CLIENT_ID',
+  'SOURCEDIRECT_CLIENT_SECRET',
+  'ACCUSOURCE_CLIENT_SECRET',
+  'SOURCEDIRECT_TOKEN_URL',
+  'ACCUSOURCE_TOKEN_URL',
+  'ACCUSOURCE_WEBHOOK_SECRET',
+  'SOURCEDIRECT_WEBHOOK_SECRET',
+  'ACCUSOURCE_CREATE_PROFILE_PATH',
 ];
 
 function parseEnv(content) {
@@ -79,10 +116,14 @@ if (fs.existsSync(FIREBASE_JSON)) {
   } catch (_) {}
 }
 
-// Fallback: preserve existing functions/.env so we never wipe keys you set once (e.g. from a past deploy prompt)
+// Fallback: preserve existing functions/.env so we never wipe keys you set once (e.g. from a past deploy prompt).
+// If root .env sets KEY= (empty), do not restore a stale value from functions/.env (e.g. rotating away sandbox tokens).
 if (fs.existsSync(OUT_ENV)) {
   const existing = parseEnv(fs.readFileSync(OUT_ENV, 'utf8'));
   for (const key of PARAM_KEYS) {
+    const explicitlyCleared =
+      Object.prototype.hasOwnProperty.call(rootVars, key) && rootVars[key] === '';
+    if (explicitlyCleared) continue;
     if (!envVars[key] && existing[key]) envVars[key] = existing[key];
   }
 }

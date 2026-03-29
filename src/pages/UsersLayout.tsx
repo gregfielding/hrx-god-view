@@ -86,7 +86,7 @@ const UsersLayout: React.FC = () => {
           value={usersSearch}
           onChange={setUsersSearch}
           onSearch={setUsersSearch}
-          placeholder="Search users..."
+          placeholder="Search by name, email, or phone..."
         />
         <FavoritesFilter
           favoriteType="users"

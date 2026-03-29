@@ -15,8 +15,15 @@ export {
   everifyMarkContested,
   everifyMarkReferralInitiated,
   everifyCloseCaseManual,
+  everifySoapCreateCase,
 } from './everifyCallables';
 export { onUserEmploymentUpdatedEverify, onEverifyCaseUpdatedSyncOnboarding } from './everifyTriggers';
 export { processEverifyCaseFromEmployment } from './everifyHttpWorker';
 export { scheduledEverifyPoller } from './everifyPoller';
 export type { EverifyCase, EverifyCaseEvent, EverifyCaseStatus } from './everifySchemas';
+export { createEverifyCase } from './everifyCases';
+export type {
+  CreateEverifyCaseParams,
+  CreateEverifyCaseResult,
+  EverifySoapEmployeeData,
+} from './everifyTypes';

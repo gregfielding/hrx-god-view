@@ -56,7 +56,12 @@ import { normalizeScoreSummary, formatOneDecimal, getRelativeAiScore } from '../
 import type { ScoreSummary } from '../utils/scoreSummary';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
+import {
+  getEVerifyComfortStatusFromUserData,
+  compareEVerifyComfort,
+} from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../components/EVerifyComfortChip';
 
 type SecurityLevel =
   | '0'
@@ -92,6 +97,9 @@ interface RecruiterUser {
   skills: string[];
   workEligibility?: boolean;
   workEligibilityAttestation?: { authorizedToWorkUS?: boolean };
+  /** Apply flow / profile — used by Documented (E-Verify) column */
+  comfortableEVerify?: string;
+  workerAttestations?: { eVerifyWillingness?: string };
 }
 
 interface TenantUserGroup {
@@ -132,11 +140,16 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     ...(tenantData?.scoreSummary || {}),
   });
 
+  const resolvedEmail =
+    [userData.email, userData.contactEmail, userData.primaryEmail, userData.profileEmail].find(
+      (v: unknown) => typeof v === 'string' && String(v).trim().length > 0
+    ) || '';
+
   return {
     id: userDoc.id,
     firstName: userData.firstName || '',
     lastName: userData.lastName || '',
-    email: userData.email || '',
+    email: String(resolvedEmail).trim(),
     phone: userData.phone || '',
     avatar: userData.avatar || tenantData.avatar,
     securityLevel: String(securityLevel),
@@ -160,7 +173,41 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     state: userData.state || userData.address?.state || (userData.addressInfo && (userData.addressInfo as any).state) || '',
     workEligibility: userData.workEligibility,
     workEligibilityAttestation: userData.workEligibilityAttestation,
+    comfortableEVerify: userData.comfortableEVerify,
+    workerAttestations: userData.workerAttestations,
   };
+}
+
+/** Name, email (full + local-part + ignore spaces), phone, skills */
+function userMatchesSearchTerm(user: RecruiterUser, rawSearch: string): boolean {
+  const q = rawSearch.trim().toLowerCase();
+  if (!q) return true;
+
+  const fullName = `${user.firstName} ${user.lastName}`.trim().toLowerCase();
+  if (fullName.includes(q)) return true;
+
+  const email = (user.email || '').trim();
+  const emailLower = email.toLowerCase();
+  if (emailLower) {
+    if (emailLower.includes(q)) return true;
+    const compactEmail = emailLower.replace(/\s/g, '');
+    const compactQ = q.replace(/\s/g, '');
+    if (compactEmail.includes(compactQ)) return true;
+    const at = emailLower.indexOf('@');
+    if (at > 0) {
+      const local = emailLower.slice(0, at);
+      if (local.includes(q)) return true;
+    }
+  }
+
+  if (user.phone?.toLowerCase().includes(q)) return true;
+  const digits = (s: string) => s.replace(/\D/g, '');
+  const qDigits = digits(q);
+  if (qDigits.length >= 3 && user.phone && digits(user.phone).includes(qDigits)) return true;
+
+  if (user.skills?.some((skill) => skill.toLowerCase().includes(q))) return true;
+
+  return false;
 }
 
 export interface RecruiterUsersProps {
@@ -240,7 +287,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [groupFilter, setGroupFilter] = useState<string>(cacheState.groupFilter || 'all');
   const [skillFilter, setSkillFilter] = useState<string>(cacheState.skillFilter || 'all');
   const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'interview' | 'accountCreated' | 'auth'>((cacheState.sortBy as any) || 'accountCreated');
+  const [sortBy, setSortBy] = useState<
+    'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'interview' | 'accountCreated' | 'auth' | 'documented'
+  >((cacheState.sortBy as any) || 'accountCreated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
@@ -329,7 +378,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     };
   }, [showFavoritesOnly, favorites, tenantId, users]);
 
-  const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin' | 'auth') => {
+  const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin' | 'auth' | 'documented') => {
     if (sortBy === key) {
       const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
       setSortDirection(newDirection);
@@ -779,17 +828,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           return false;
         }
 
-        if (!searchTerm) {
-          return true;
-        }
-
-        const search = searchTerm.toLowerCase();
-        return (
-          `${user.firstName} ${user.lastName}`.toLowerCase().includes(search) ||
-          user.email.toLowerCase().includes(search) ||
-          user.phone?.toLowerCase().includes(search) ||
-          user.skills?.some((skill) => skill.toLowerCase().includes(search))
-        );
+        return userMatchesSearchTerm(user, searchTerm);
       })
       .sort((a, b) => {
         switch (sortBy) {
@@ -827,6 +866,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             const aStatus = getWorkAuthorizedStatus(a);
             const bStatus = getWorkAuthorizedStatus(b);
             const cmp = compareWorkAuthorized(aStatus, bStatus);
+            return sortDirection === 'asc' ? cmp : -cmp;
+          }
+          case 'documented': {
+            const aEv = getEVerifyComfortStatusFromUserData(a);
+            const bEv = getEVerifyComfortStatusFromUserData(b);
+            const cmp = compareEVerifyComfort(aEv, bEv);
             return sortDirection === 'asc' ? cmp : -cmp;
           }
           default:
@@ -955,7 +1000,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   value={searchTerm}
                   onChange={handleSearchChange}
                   onSearch={handleSearchChange}
-                  placeholder="Search users..."
+                  placeholder="Search by name, email, or phone..."
                 />
                 <FavoritesFilter
                   favoriteType="users"
@@ -1172,6 +1217,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
                 <MenuItem value="lastLogin">Last Login</MenuItem>
                 <MenuItem value="auth">Auth</MenuItem>
+                <MenuItem value="documented">Documented</MenuItem>
                 <MenuItem value="aiScore">AI Score</MenuItem>
                 <MenuItem value="name">Name (A-Z)</MenuItem>
               </Select>
@@ -1371,6 +1417,15 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   <TableSortLabel
+                    active={sortBy === 'documented'}
+                    direction={sortBy === 'documented' ? sortDirection : 'desc'}
+                    onClick={() => handleSort('documented')}
+                  >
+                    Documented
+                  </TableSortLabel>
+                </TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                  <TableSortLabel
                     active={sortBy === 'aiScore'}
                     direction={sortBy === 'aiScore' ? sortDirection : 'desc'}
                     onClick={() => handleSort('aiScore')}
@@ -1502,6 +1557,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   </TableCell>
                   <TableCell>
                     <WorkAuthorizedChip status={getWorkAuthorizedStatus(user)} />
+                  </TableCell>
+                  <TableCell>
+                    <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(user)} />
                   </TableCell>
                   <TableCell>{renderAiScore(user)}</TableCell>
                   <TableCell>

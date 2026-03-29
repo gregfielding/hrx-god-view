@@ -1,7 +1,6 @@
 import { ReportHandler } from 'web-vitals';
 
-import { logEvent } from 'firebase/analytics';
-import { analytics } from './firebase';
+import { analytics, safeLogEvent } from './firebase';
 
 const reportWebVitals = (onPerfEntry?: ReportHandler) => {
   if (onPerfEntry && onPerfEntry instanceof Function) {
@@ -9,48 +8,38 @@ const reportWebVitals = (onPerfEntry?: ReportHandler) => {
       getCLS((metric) => {
         onPerfEntry(metric);
         // Send to Firebase Analytics
-        if (analytics) {
-          logEvent(analytics, 'web_vitals', {
-            metric_name: 'CLS',
-            value: metric.value,
-          });
-        }
+        safeLogEvent(analytics, 'web_vitals', {
+          metric_name: 'CLS',
+          value: metric.value,
+        });
       });
       getFID((metric) => {
         onPerfEntry(metric);
-        if (analytics) {
-          logEvent(analytics, 'web_vitals', {
-            metric_name: 'FID',
-            value: metric.value,
-          });
-        }
+        safeLogEvent(analytics, 'web_vitals', {
+          metric_name: 'FID',
+          value: metric.value,
+        });
       });
       getFCP((metric) => {
         onPerfEntry(metric);
-        if (analytics) {
-          logEvent(analytics, 'web_vitals', {
-            metric_name: 'FCP',
-            value: metric.value,
-          });
-        }
+        safeLogEvent(analytics, 'web_vitals', {
+          metric_name: 'FCP',
+          value: metric.value,
+        });
       });
       getLCP((metric) => {
         onPerfEntry(metric);
-        if (analytics) {
-          logEvent(analytics, 'web_vitals', {
-            metric_name: 'LCP',
-            value: metric.value,
-          });
-        }
+        safeLogEvent(analytics, 'web_vitals', {
+          metric_name: 'LCP',
+          value: metric.value,
+        });
       });
       getTTFB((metric) => {
         onPerfEntry(metric);
-        if (analytics) {
-          logEvent(analytics, 'web_vitals', {
-            metric_name: 'TTFB',
-            value: metric.value,
-          });
-        }
+        safeLogEvent(analytics, 'web_vitals', {
+          metric_name: 'TTFB',
+          value: metric.value,
+        });
       });
     });
   }

@@ -4,8 +4,8 @@
  * ICA v31 Refactor Pack §4.2
  */
 
-import { httpJson } from './everifyHttp';
-import { getEverifyBaseUrl } from './everifyConfig';
+import { httpJson, summarizeHttpErrorBody } from './everifyHttp';
+import { assertEverifyEnvUrlConsistency, getEverifyBaseUrl } from './everifyConfig';
 import { logger } from 'firebase-functions/v2';
 
 export interface EverifyCredentials {
@@ -43,6 +43,7 @@ export async function getAccessToken(creds: EverifyCredentials): Promise<string>
 }
 
 async function login(creds: EverifyCredentials): Promise<string> {
+  assertEverifyEnvUrlConsistency();
   const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
   const url = `${baseUrl}/authentication/login`;
   const body = { username: creds.username, password: creds.password };
@@ -66,10 +67,27 @@ async function login(creds: EverifyCredentials): Promise<string> {
     logger.info('E-Verify auth: login succeeded');
     return resp.access_token;
   } catch (e: unknown) {
+    const detail = summarizeHttpErrorBody(e);
+    const status = (e as Error & { status?: number }).status;
+    let host = '';
+    try {
+      host = new URL(url).host;
+    } catch {
+      host = baseUrl;
+    }
     logger.warn('E-Verify auth: login failed', {
-      message: e instanceof Error ? e.message : String(e),
+      status: status ?? null,
+      host,
+      detail: detail.slice(0, 500),
     });
-    throw e;
+    if (status === 401) {
+      throw new Error(
+        `E-Verify Web Services login rejected (401) at ${host}. ` +
+          `Use the username/password from E-Verify Program Administrator for this same environment (stage vs production). ` +
+          `Confirm EVERIFY_BASE_URL matches your USCIS go-live / sandbox URL. Detail: ${detail}`
+      );
+    }
+    throw new Error(`E-Verify Web Services login failed: ${detail}`);
   }
 }
 

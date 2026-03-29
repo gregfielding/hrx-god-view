@@ -1,3 +1,4 @@
+import * as crypto from 'crypto';
 import * as functions from 'firebase-functions';
 import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
@@ -440,35 +441,48 @@ async function archivePreviousResumes(userId: string, newUploadId: string): Prom
 }
 
 /**
- * Generate a signed URL for resume download
+ * Firebase Storage read URL using firebaseStorageDownloadTokens — avoids GCS V4 signed URLs,
+ * which call IAM signBlob and fail unless the runtime SA has iam.serviceAccounts.signBlob.
+ * Same pattern as gmailIntegration (makeDownloadUrl + token metadata).
+ */
+async function getOrCreateFirebaseDownloadReadUrl(storagePath: string): Promise<string> {
+  const bucket = getStorage().bucket(getStorageBucketName());
+  const bucketName = bucket.name;
+  const file = bucket.file(storagePath);
+  const [exists] = await file.exists();
+  if (!exists) {
+    throw new Error(`File does not exist at path: ${storagePath}`);
+  }
+  const [meta] = await file.getMetadata();
+  const existing = (meta.metadata || {}) as Record<string, string>;
+  const tokensRaw = String(existing.firebaseStorageDownloadTokens || '');
+  let token = tokensRaw.split(',')[0]?.trim();
+  if (!token) {
+    token = crypto.randomUUID();
+    await file.setMetadata({
+      metadata: {
+        ...existing,
+        firebaseStorageDownloadTokens: token,
+      },
+    });
+  }
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Generate a stable download URL for resume files (no IAM signBlob).
  */
 async function generateResumeDownloadUrl(storagePath: string): Promise<string> {
   try {
     console.log('generateResumeDownloadUrl called with storagePath:', storagePath);
-    const bucket = getStorage().bucket(getStorageBucketName());
-    const file = bucket.file(storagePath);
-    
-    // Check if file exists first
-    const [exists] = await file.exists();
-    console.log('File exists check:', exists);
-    
-    if (!exists) {
-      throw new Error(`File does not exist at path: ${storagePath}`);
-    }
-    
-    // Generate a signed URL that expires in 1 year
-    const [signedUrl] = await file.getSignedUrl({
-      action: 'read',
-      expires: Date.now() + 365 * 24 * 60 * 60 * 1000, // 1 year
-    });
-    
-    console.log('Generated signed URL successfully');
-    return signedUrl;
+    const url = await getOrCreateFirebaseDownloadReadUrl(storagePath);
+    console.log('Generated Firebase download URL successfully');
+    return url;
   } catch (error) {
-    console.error('Failed to generate signed URL:', {
+    console.error('Failed to generate resume download URL:', {
       error,
       storagePath,
-      message: error instanceof Error ? error.message : 'Unknown error'
+      message: error instanceof Error ? error.message : 'Unknown error',
     });
     throw error;
   }
@@ -631,8 +645,8 @@ async function parseResumeCore(fileUrl: string, fileName: string, fileSize: numb
     await file.makePublic();
     console.log('File uploaded to Storage successfully and made public');
     
-    // Generate the public URL
-    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodeURIComponent(storagePath)}?alt=media`;
+    const bucketName = getStorageBucketName();
+    const publicUrl = `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media`;
     console.log('Generated public URL:', publicUrl);
     
     // Store the storage path and public URL
@@ -927,7 +941,11 @@ export const parseResumeHttp = onRequest({
   maxInstances: 5
 }, async (req, res) => {
   const requestOrigin = (req.headers.origin as string) || '';
-  const allowedOrigins = new Set(['http://localhost:3000', 'https://hrxone.com']);
+  const allowedOrigins = new Set([
+    'http://localhost:3000',
+    'https://hrxone.com',
+    'https://www.hrxone.com',
+  ]);
   const corsOrigin = allowedOrigins.has(requestOrigin) ? requestOrigin : 'http://localhost:3000';
 
   // Handle preflight requests
@@ -1873,10 +1891,10 @@ export const getUserResumeUploads = functions.https.onCall(async (request, conte
 });
 
 /**
- * Get signed URL for resume file viewing/downloading
+ * Get download URL for resume file viewing/downloading (Firebase token URL; no IAM signBlob).
  */
 export const getResumeSignedUrl = functions.https.onCall(async (request, context) => {
-  const { userId, uploadId, action = 'read' } = request.data;
+  const { userId, uploadId } = request.data;
   
   if (!request.auth) {
     throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
@@ -1896,16 +1914,7 @@ export const getResumeSignedUrl = functions.https.onCall(async (request, context
       throw new functions.https.HttpsError('not-found', 'Storage path not found');
     }
     
-    // Generate signed URL
-    const bucket = getStorage().bucket(getStorageBucketName());
-    const file = bucket.file(uploadData.storagePath);
-    
-    const [signedUrl] = await file.getSignedUrl({
-      version: 'v4',
-      action: action === 'download' ? 'read' : 'read',
-      expires: Date.now() + 15 * 60 * 1000, // 15 minutes
-      responseDisposition: action === 'download' ? 'attachment' : 'inline'
-    });
+    const signedUrl = await getOrCreateFirebaseDownloadReadUrl(uploadData.storagePath);
     
     return { 
       signedUrl,

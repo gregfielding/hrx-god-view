@@ -4,7 +4,7 @@
  */
 
 import { EverifyCaseStatus } from './everifySchemas';
-import type { EverifyCreateCaseRequest } from './everifyClient';
+import type { EverifyCreateCaseRequest } from './everifyRestClient';
 
 export function mapProviderStatusToHrx(providerStatus: string): EverifyCaseStatus {
   const lower = String(providerStatus || '').toLowerCase();

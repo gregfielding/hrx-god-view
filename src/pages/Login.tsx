@@ -140,6 +140,7 @@ const Login = () => {
             label={copy.email}
             type="email"
             name="email"
+            autoComplete="email"
             fullWidth
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -148,6 +149,8 @@ const Login = () => {
           <TextField
             label={copy.password}
             type="password"
+            name="password"
+            autoComplete="current-password"
             fullWidth
             value={password}
             onChange={(e) => setPassword(e.target.value)}

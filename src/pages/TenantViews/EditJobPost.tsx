@@ -18,7 +18,16 @@ import {
   TableRow,
   TableSortLabel,
 } from '@mui/material';
-import { ArrowBack, NavigateNext, Email as EmailIcon, Phone as PhoneIcon, Star as StarIcon, Groups as GroupIcon, Insights as InsightsIcon } from '@mui/icons-material';
+import {
+  ArrowBack,
+  NavigateNext,
+  Email as EmailIcon,
+  Phone as PhoneIcon,
+  Star as StarIcon,
+  Groups as GroupIcon,
+  Insights as InsightsIcon,
+  ContentCopy as ContentCopyIcon,
+} from '@mui/icons-material';
 import { useAuth } from '../../contexts/AuthContext';
 import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
@@ -33,10 +42,16 @@ import { toChipLabel } from '../../utils/chipLabel';
 import PageHeader from '../../components/PageHeader';
 import StandardTablePagination from '../../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
+import { hasJobBoardSyndicationUrl } from '../../utils/jobBoardSyndicationUrls';
+import JobBoardSyndicationIconRow from '../../components/JobBoardSyndicationIconRow';
 import { normalizeScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
+import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
+import { getEVerifyComfortStatusFromUserData } from '../../utils/eVerifyComfortDisplay';
+import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../../components/EVerifyComfortChip';
 
 const EditJobPost: React.FC = () => {
-  const { tenantId } = useAuth();
+  const { tenantId, activeTenant } = useAuth();
   const { postId } = useParams<{ postId: string }>();
   const navigate = useNavigate();
   const location = useLocation();
@@ -61,6 +76,31 @@ const EditJobPost: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(20);
   const [applicantsSortBy, setApplicantsSortBy] = useState<'interview' | null>(null);
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [publicUrlCopyHint, setPublicUrlCopyHint] = useState<'idle' | 'copied' | 'error'>('idle');
+
+  const jobsBoardUrlSlug = useMemo(() => {
+    const s = activeTenant?.slug;
+    return typeof s === 'string' && s.trim() ? s.trim() : 'c1';
+  }, [activeTenant?.slug]);
+
+  const publicJobPostingUrl = useMemo(() => {
+    if (!postId) return '';
+    const origin =
+      typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com';
+    return `${origin}/${jobsBoardUrlSlug}/jobs-board/${postId}`;
+  }, [postId, jobsBoardUrlSlug]);
+
+  const handleCopyPublicJobPostingUrl = async () => {
+    if (!publicJobPostingUrl) return;
+    try {
+      await navigator.clipboard.writeText(publicJobPostingUrl);
+      setPublicUrlCopyHint('copied');
+      window.setTimeout(() => setPublicUrlCopyHint('idle'), 2000);
+    } catch {
+      setPublicUrlCopyHint('error');
+      window.setTimeout(() => setPublicUrlCopyHint('idle'), 2500);
+    }
+  };
 
   useEffect(() => {
     if (postId && tenantId) {
@@ -307,6 +347,9 @@ const EditJobPost: React.FC = () => {
             scoreSummary: normalizeScoreSummary(user.scoreSummary),
             userGroupIds: user.userGroupIds || [],
             skills: normalizedSkills,
+            workEligibilityAttestation: user.workEligibilityAttestation,
+            comfortableEVerify: user.comfortableEVerify,
+            workerAttestations: user.workerAttestations,
           };
         });
 
@@ -322,10 +365,9 @@ const EditJobPost: React.FC = () => {
     try {
       setSaving(true);
       setError(null);
-      
+
       await jobsBoardService.updatePost(tenantId, postId, updatedPost);
-      
-      // Navigate back to jobs board
+
       if (isFromRecruiter) {
         navigate('/jobs/jobs-board');
       } else {
@@ -334,9 +376,25 @@ const EditJobPost: React.FC = () => {
     } catch (err: any) {
       console.error('Error updating job post:', err);
       setError(err.message || 'Failed to update job post');
-      throw err; // Re-throw to let the form handle the error
+      throw err;
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Recruiter jobs-board edit: save without leaving; refetch for header accuracy (form ignores same-id `initialData` resync while autoSave). */
+  const handlePersistPost = async (updatedPost: Partial<JobsBoardPost>) => {
+    if (!tenantId || !postId) return;
+
+    try {
+      setError(null);
+      await jobsBoardService.updatePost(tenantId, postId, updatedPost);
+      const postData = await jobsBoardService.getPost(tenantId, postId);
+      setPost(postData);
+    } catch (err: any) {
+      console.error('Error updating job post:', err);
+      setError(err.message || 'Failed to update job post');
+      throw err;
     }
   };
 
@@ -508,6 +566,39 @@ const EditJobPost: React.FC = () => {
     );
   }
 
+  const copyPublicUrlPillSx = {
+    textTransform: 'none' as const,
+    borderRadius: '999px',
+    fontSize: '14px',
+    fontWeight: 400,
+    color: 'rgba(0, 0, 0, 0.7)',
+    bgcolor: 'rgba(0, 0, 0, 0.04)',
+    px: 1.5,
+    py: 0.75,
+    minWidth: 'auto',
+    whiteSpace: 'nowrap' as const,
+    '&:hover': {
+      bgcolor: 'rgba(0, 0, 0, 0.08)',
+    },
+  };
+
+  const copyPublicUrlButton = (
+    <Button
+      type="button"
+      onClick={handleCopyPublicJobPostingUrl}
+      disabled={!publicJobPostingUrl}
+      variant="text"
+      startIcon={<ContentCopyIcon sx={{ fontSize: 18 }} />}
+      sx={copyPublicUrlPillSx}
+    >
+      {publicUrlCopyHint === 'copied'
+        ? 'Copied!'
+        : publicUrlCopyHint === 'error'
+          ? 'Copy failed'
+          : 'Copy public link'}
+    </Button>
+  );
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
       {isFromRecruiter ? (
@@ -540,6 +631,14 @@ const EditJobPost: React.FC = () => {
                 <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
                   Status: {(post.status || 'draft').toUpperCase()} • Type: {post.jobType === 'career' ? 'Career' : 'Gig'}
                 </Typography>
+                {!post.jobOrderId &&
+                  hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl) && (
+                    <JobBoardSyndicationIconRow
+                      indeedUrl={post.indeedUrl}
+                      craigslistUrl={post.craigslistUrl}
+                      sx={{ mt: 0.5 }}
+                    />
+                  )}
                 <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)', mt: 0.75 }}>
                   {post.companyName || '—'} • {post.worksiteName || '—'}
                 </Typography>
@@ -547,7 +646,7 @@ const EditJobPost: React.FC = () => {
             </Box>
           }
           filters={
-            <Box sx={{ display: 'flex', gap: 0.5 }}>
+            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', flexWrap: 'wrap' }}>
               {[
                 { label: 'Post Details', index: 0 },
                 { label: `Applicants (${applicantUsers.length})`, index: 1 },
@@ -578,6 +677,7 @@ const EditJobPost: React.FC = () => {
                   </Button>
                 );
               })}
+              {copyPublicUrlButton}
             </Box>
           }
           rightActions={
@@ -645,7 +745,7 @@ const EditJobPost: React.FC = () => {
         )}
         {!isFromRecruiter && (
           <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', flexWrap: 'wrap' }}>
               <Button
                 onClick={() => setActiveTab(0)}
                 variant={activeTab === 0 ? 'contained' : 'text'}
@@ -660,6 +760,7 @@ const EditJobPost: React.FC = () => {
               >
                 Applicants ({applicantUsers.length})
               </Button>
+              {copyPublicUrlButton}
             </Box>
           </Box>
         )}
@@ -667,10 +768,11 @@ const EditJobPost: React.FC = () => {
         {activeTab === 0 && (
           <JobPostForm
             initialData={post}
-            onSave={handleSave}
-            onCancel={handleCancel}
-            loading={saving}
+            onSave={isFromRecruiter ? handlePersistPost : handleSave}
+            onCancel={isFromRecruiter ? undefined : handleCancel}
+            loading={isFromRecruiter ? false : saving}
             mode="edit"
+            autoSave={isFromRecruiter}
           />
         )}
 
@@ -727,6 +829,12 @@ const EditJobPost: React.FC = () => {
                           </TableCell>
                           <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                             Role
+                          </TableCell>
+                          <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                            Auth
+                          </TableCell>
+                          <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                            Documented
                           </TableCell>
                           <TableCell sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.75rem' }}>
                             Profile Score
@@ -819,6 +927,12 @@ const EditJobPost: React.FC = () => {
                                 label={getSecurityLevelLabel(user.securityLevel)}
                                 color={getSecurityLevelColor(user.securityLevel)}
                               />
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <WorkAuthorizedChip status={getWorkAuthorizedStatus(user)} />
+                            </TableCell>
+                            <TableCell onClick={(event) => event.stopPropagation()}>
+                              <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(user)} />
                             </TableCell>
                             <TableCell>{renderAiScore(user)}</TableCell>
                             <TableCell>

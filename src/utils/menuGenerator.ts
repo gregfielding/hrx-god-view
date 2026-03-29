@@ -253,6 +253,12 @@ export async function generateMenuItems(
         icon: 'bar_chart',
         accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
       }]),
+      ...([{
+        text: 'Screenings queue',
+        to: '/screenings-queue',
+        icon: 'fact_check',
+        accessRoles: ['tenant_5', 'tenant_6', 'tenant_7'],
+      }]),
       // Global Invoicing (sidebar): security level 7 only – all accounts, reporting, create invoices
       ...([{
         text: 'Invoicing',

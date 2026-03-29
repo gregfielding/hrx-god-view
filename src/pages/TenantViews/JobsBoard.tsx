@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate, useLocation, useOutletContext, useSearchParams } from 'react-router-dom';
 import {
   Box,
@@ -30,7 +30,7 @@ import {
   TableRow,
   TableSortLabel,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon } from '@mui/icons-material';
+import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import { JobsBoardService, JobsBoardPost } from '../../services/recruiter/jobsBoardService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -48,6 +48,37 @@ import credentialsSeed from '../../data/credentialsSeed.json';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
+import { generateJobDescriptionWithAi } from '../../utils/jobDescriptionAiGenerate';
+
+/** Firestore Timestamp, {seconds}, Date, or ISO string → ms for sorting/display */
+function toMillisFromUnknown(value: unknown): number {
+  if (value == null || value === '') return 0;
+  const v = value as { toDate?: () => Date; seconds?: number; nanoseconds?: number };
+  if (typeof v.toDate === 'function') {
+    const d = v.toDate();
+    return d instanceof Date && !isNaN(d.getTime()) ? d.getTime() : 0;
+  }
+  if (typeof v === 'object' && v !== null && typeof v.seconds === 'number') {
+    return v.seconds * 1000 + (typeof v.nanoseconds === 'number' ? v.nanoseconds / 1e6 : 0);
+  }
+  if (value instanceof Date) return isNaN(value.getTime()) ? 0 : value.getTime();
+  if (typeof value === 'number' && !isNaN(value)) return value;
+  const d = new Date(value as string);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function formatCreatedAtCell(...candidates: unknown[]): string {
+  let ms = 0;
+  for (const c of candidates) {
+    ms = toMillisFromUnknown(c);
+    if (ms) break;
+  }
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString(undefined, {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
+}
 
 const JobsBoard: React.FC = () => {
   const { tenantId, user } = useAuth();
@@ -104,13 +135,19 @@ const JobsBoard: React.FC = () => {
   const { favorites, isFavorite, toggleFavorite } = useFavorites('jobPosts');
   const [useCompanyLocation, setUseCompanyLocation] = useState(true);
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
-  const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
+  const cityInputRef = useRef<HTMLInputElement | null>(null);
 
   const outletCtx = useOutletContext<RecruiterOutletContext | null>();
   const headerSearch = outletCtx?.search ?? '';
   const headerShowFavoritesOnly = outletCtx?.showFavoritesOnly ?? false;
   const effectiveSearch = isFromRecruiter ? headerSearch : searchTerm;
   const effectiveShowFavoritesOnly = isFromRecruiter ? headerShowFavoritesOnly : showFavoritesOnly;
+
+  const [debouncedSearch, setDebouncedSearch] = useState(effectiveSearch);
+  useEffect(() => {
+    const id = window.setTimeout(() => setDebouncedSearch(effectiveSearch), 300);
+    return () => clearTimeout(id);
+  }, [effectiveSearch]);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [page, setPage] = useState(0);
@@ -134,6 +171,7 @@ const JobsBoard: React.FC = () => {
     jobType: 'gig' | 'career' | '';
     jobTitle: string;
     jobDescription: string;
+    jobDescriptionPrompt: string;
     companyId: string;
     companyName: string;
     worksiteId: string;
@@ -180,9 +218,12 @@ const JobsBoard: React.FC = () => {
     showStartTime: boolean;
     showEndTime: boolean;
     restrictedGroups: string[];
+    craigslistUrl: string;
+    indeedUrl: string;
   } | null>(null);
 
   const jobsBoardService = JobsBoardService.getInstance();
+  const [generatingDescription, setGeneratingDescription] = useState(false);
 
   // Sorting functionality
   const handleSort = (field: string) => {
@@ -224,19 +265,25 @@ const JobsBoard: React.FC = () => {
     return [...filteredJobs].sort((a, b) => {
       let aValue: any = a[sortField as keyof JobsBoardPost];
       let bValue: any = b[sortField as keyof JobsBoardPost];
-      
+
+      if (sortField === 'createdAt') {
+        const am = toMillisFromUnknown(a.createdAt ?? a.postedAt) || toMillisFromUnknown(a.updatedAt);
+        const bm = toMillisFromUnknown(b.createdAt ?? b.postedAt) || toMillisFromUnknown(b.updatedAt);
+        return sortDirection === 'asc' ? am - bm : bm - am;
+      }
+
       if (aValue === undefined) aValue = '';
       if (bValue === undefined) bValue = '';
-      
-      if (sortField === 'createdAt' || sortField === 'startDate' || sortField === 'endDate') {
-        aValue = new Date(aValue);
-        bValue = new Date(bValue);
-        return sortDirection === 'asc' ? aValue - bValue : bValue - aValue;
+
+      if (sortField === 'startDate' || sortField === 'endDate') {
+        const am = toMillisFromUnknown(aValue);
+        const bm = toMillisFromUnknown(bValue);
+        return sortDirection === 'asc' ? am - bm : bm - am;
       }
-      
+
       aValue = (aValue || '').toString().toLowerCase();
       bValue = (bValue || '').toString().toLowerCase();
-      
+
       if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
       if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
       return 0;
@@ -301,6 +348,9 @@ const JobsBoard: React.FC = () => {
     jobType: '' as 'gig' | 'career' | '',
     jobTitle: '',
     jobDescription: '',
+    jobDescriptionPrompt: '',
+    craigslistUrl: '',
+    indeedUrl: '',
     companyId: '',
     companyName: '',
     worksiteId: '',
@@ -533,15 +583,29 @@ const JobsBoard: React.FC = () => {
   useEffect(() => {
     let filtered = posts;
 
-    // Search filter
-    if (effectiveSearch) {
-      filtered = filtered.filter(post =>
-        post.postTitle.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-        post.jobTitle.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-        post.jobDescription.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-        post.worksiteName.toLowerCase().includes(effectiveSearch.toLowerCase()) ||
-        post.companyName.toLowerCase().includes(effectiveSearch.toLowerCase())
-      );
+    const q = debouncedSearch.trim().toLowerCase();
+    if (q) {
+      filtered = filtered.filter((post) => {
+        const companyLabel =
+          (post.companyName && post.companyName.trim() !== ''
+            ? post.companyName
+            : post.companyId && companyNamesCache[post.companyId]
+              ? companyNamesCache[post.companyId]
+              : '') || '';
+        const haystack = [
+          post.postTitle,
+          post.jobTitle,
+          post.jobDescription,
+          post.worksiteName,
+          post.companyName,
+          companyLabel,
+          post.jobPostId,
+        ]
+          .map((p) => (p == null ? '' : String(p)))
+          .join(' ')
+          .toLowerCase();
+        return haystack.includes(q);
+      });
     }
 
     // Location filter
@@ -560,11 +624,11 @@ const JobsBoard: React.FC = () => {
     }
 
     setFilteredJobs(filtered);
-  }, [posts, locationFilter, companyFilter, companyNamesCache, favorites, effectiveSearch, effectiveShowFavoritesOnly]);
+  }, [posts, locationFilter, companyFilter, companyNamesCache, favorites, debouncedSearch, effectiveShowFavoritesOnly]);
 
   useEffect(() => {
     setPage(0);
-  }, [effectiveSearch, locationFilter, companyFilter, effectiveShowFavoritesOnly, sortField, sortDirection]);
+  }, [debouncedSearch, locationFilter, companyFilter, effectiveShowFavoritesOnly, sortField, sortDirection]);
 
   useEffect(() => {
     if (!isFromRecruiter) return;
@@ -735,6 +799,9 @@ const JobsBoard: React.FC = () => {
         jobType: newPost.jobType,
         jobTitle: newPost.jobTitle,
         jobDescription: newPost.jobDescription,
+        jobDescriptionPrompt: newPost.jobDescriptionPrompt,
+        craigslistUrl: newPost.craigslistUrl,
+        indeedUrl: newPost.indeedUrl,
         companyId: newPost.companyId,
         companyName: newPost.companyName,
         worksiteId: newPost.worksiteId,
@@ -801,7 +868,10 @@ const JobsBoard: React.FC = () => {
             postTitle: prev.postTitle || jobOrderData.jobOrderName || '',
             jobType: jobOrderData.jobType || 'career', // Copy job type from job order
             jobTitle: prev.jobTitle || jobOrderData.jobTitle || '',
-            jobDescription: prev.jobDescription || jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
+            jobDescription: prev.jobDescription,
+            jobDescriptionPrompt: prev.jobDescriptionPrompt || '',
+            craigslistUrl: '',
+            indeedUrl: '',
             companyId: jobOrderData.companyId || '',
             companyName: jobOrderData.companyName || '',
             worksiteId: jobOrderData.worksiteId || '',
@@ -961,6 +1031,9 @@ const JobsBoard: React.FC = () => {
       jobType: 'gig',
       jobTitle: '',
       jobDescription: '',
+      jobDescriptionPrompt: '',
+      craigslistUrl: '',
+      indeedUrl: '',
       companyId: '',
       companyName: '',
       worksiteId: '',
@@ -1028,6 +1101,28 @@ const JobsBoard: React.FC = () => {
   };
 
   // Check if form is valid for submission
+  const handleGenerateJobDescription = async () => {
+    if (!tenantId) return;
+    setGeneratingDescription(true);
+    setSubmitError(null);
+    try {
+      const text = await generateJobDescriptionWithAi({
+        tenantId,
+        formData: newPost as Record<string, any>,
+        jobOrderData: undefined,
+      });
+      if (text) {
+        setNewPost((prev) => ({ ...prev, jobDescription: text }));
+      } else {
+        setSubmitError('Failed to generate job description');
+      }
+    } catch (e: any) {
+      setSubmitError(e?.message || 'Failed to generate job description');
+    } finally {
+      setGeneratingDescription(false);
+    }
+  };
+
   const isFormValid = () => {
     // Required fields
     if (!newPost.postTitle.trim()) return false;
@@ -1088,6 +1183,11 @@ const JobsBoard: React.FC = () => {
           jobType: newPost.jobType,
           jobTitle: newPost.jobTitle.trim(),
           jobDescription: newPost.jobDescription.trim(),
+          ...(newPost.jobDescriptionPrompt.trim()
+            ? { jobDescriptionPrompt: newPost.jobDescriptionPrompt.trim() }
+            : {}),
+          ...(newPost.craigslistUrl.trim() ? { craigslistUrl: newPost.craigslistUrl.trim() } : {}),
+          ...(newPost.indeedUrl.trim() ? { indeedUrl: newPost.indeedUrl.trim() } : {}),
           companyId: newPost.companyId || undefined,
           companyName: newPost.companyName.trim(),
           worksiteId: newPost.worksiteId || undefined,
@@ -1535,7 +1635,7 @@ const JobsBoard: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {post.createdAt ? formatDateForDisplay(post.createdAt) : '-'}
+                      {formatCreatedAtCell(post.createdAt, post.postedAt, post.updatedAt)}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -1715,6 +1815,9 @@ const JobsBoard: React.FC = () => {
                           jobType: originalFormValues.jobType,
                           jobTitle: originalFormValues.jobTitle,
                           jobDescription: originalFormValues.jobDescription,
+                          jobDescriptionPrompt: originalFormValues.jobDescriptionPrompt,
+                          craigslistUrl: originalFormValues.craigslistUrl,
+                          indeedUrl: originalFormValues.indeedUrl,
                           companyId: originalFormValues.companyId,
                           companyName: originalFormValues.companyName,
                           worksiteId: originalFormValues.worksiteId,
@@ -1784,14 +1887,13 @@ const JobsBoard: React.FC = () => {
             </Box>
 
             <TextField
-              label="Job Description"
-              value={newPost.jobDescription}
-              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
+              label="Job Description Prompt"
+              value={newPost.jobDescriptionPrompt}
+              onChange={(e) => setNewPost({ ...newPost, jobDescriptionPrompt: e.target.value })}
               fullWidth
-              required
               multiline
-              rows={4}
-              helperText="Provide a detailed description of the role, responsibilities, and requirements"
+              minRows={3}
+              helperText="Extra instructions for AI: used when there is no job order, or combined with the job order description when one is connected."
             />
 
             <Box sx={{ mt: 2 }}>
@@ -2084,7 +2186,7 @@ const JobsBoard: React.FC = () => {
                   placeholder="Search for a city..."
                   required
                   helperText="Search and select a city - coordinates will be saved automatically"
-                  inputRef={(ref) => setCityInputRef(ref)}
+                  inputRef={cityInputRef}
                 />
               </GoogleAutocomplete>
             )}
@@ -2880,6 +2982,62 @@ const JobsBoard: React.FC = () => {
               )}
               loading={loadingUserGroups}
               noOptionsText={loadingUserGroups ? 'Loading...' : 'No user groups available'}
+            />
+
+            {!(newPost.jobOrderId && String(newPost.jobOrderId).trim()) && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                <TextField
+                  label="Craigslist URL"
+                  value={newPost.craigslistUrl}
+                  onChange={(e) => setNewPost({ ...newPost, craigslistUrl: e.target.value })}
+                  fullWidth
+                  placeholder="https://…"
+                  helperText="Optional. Shown in headers when this post is not linked to a job order."
+                />
+                <TextField
+                  label="Indeed URL"
+                  value={newPost.indeedUrl}
+                  onChange={(e) => setNewPost({ ...newPost, indeedUrl: e.target.value })}
+                  fullWidth
+                  placeholder="https://…"
+                  helperText="Optional. Shown in headers when this post is not linked to a job order."
+                />
+              </Box>
+            )}
+
+            <Box sx={{ mb: 1, mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
+              <Button
+                variant="outlined"
+                startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+                onClick={handleGenerateJobDescription}
+                disabled={generatingDescription || submitting}
+                size="small"
+              >
+                {generatingDescription ? 'Generating...' : 'Generate Job Description'}
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<ContentCopyIcon />}
+                onClick={() => {
+                  const text = newPost.jobDescription?.trim();
+                  if (text) navigator.clipboard.writeText(text);
+                }}
+                disabled={!newPost.jobDescription?.trim()}
+                size="small"
+              >
+                Copy to clipboard
+              </Button>
+            </Box>
+
+            <TextField
+              label="Job Description"
+              value={newPost.jobDescription}
+              onChange={(e) => setNewPost({ ...newPost, jobDescription: e.target.value })}
+              fullWidth
+              required
+              multiline
+              minRows={6}
+              helperText="Public posting text. With a connected job order, client notes come from the order for AI; use Generate to draft."
             />
           </Stack>
         </DialogContent>

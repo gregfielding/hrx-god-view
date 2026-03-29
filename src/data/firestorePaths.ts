@@ -144,6 +144,12 @@ export const p = {
   workerSignal: (tid: string, id: string) => `tenants/${tid}/worker_signals/${id}`,
 
   /**
+   * AccuSource (tenant-global): synced SourceDirect package/service catalog. Single doc id `catalog`.
+   */
+  integrationsAccusource: () => 'integrations_accusource',
+  integrationsAccusourceCatalogDocId: () => 'catalog',
+
+  /**
    * Everee payroll integration (HRX Everee Master Plan)
    */
   evereeWorkers: (tid: string) => `tenants/${tid}/everee_workers`,

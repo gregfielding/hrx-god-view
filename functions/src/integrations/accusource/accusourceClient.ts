@@ -1,3 +1,4 @@
+import { getAccusourceBearerToken } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
 
 export interface AccusourceRequestOptions {
@@ -47,12 +48,10 @@ export interface AccusourcePartialProfileResponse {
  */
 export class AccusourceClient {
   private readonly baseUrl: string;
-  private readonly apiKey?: string;
 
   constructor() {
     const cfg = getAccusourceConfig();
     this.baseUrl = cfg.baseUrl.replace(/\/+$/, '');
-    this.apiKey = cfg.apiKey;
   }
 
   async request<T = unknown>(path: string, options: AccusourceRequestOptions = {}): Promise<T> {
@@ -60,12 +59,13 @@ export class AccusourceClient {
     const normalizedPath = path.startsWith('/') ? path : `/${path}`;
     const url = `${this.baseUrl}${normalizedPath}`;
 
-    const headers: Record<string, string> = {
-      'content-type': 'application/json',
-      ...options.headers,
-    };
-    if (this.apiKey) {
-      headers.authorization = `Bearer ${this.apiKey}`;
+    const headers: Record<string, string> = { ...options.headers };
+    if (method !== 'GET') {
+      headers['content-type'] = headers['content-type'] || 'application/json';
+    }
+    const bearer = await getAccusourceBearerToken();
+    if (bearer) {
+      headers.authorization = `Bearer ${bearer}`;
     }
 
     const response = await fetch(url, {
@@ -92,6 +92,17 @@ export class AccusourceClient {
       method: 'POST',
       body: payload,
     });
+  }
+
+  /**
+   * Company catalog: packages + services (SourceDirect API V2).
+   * @param isActive 1 = active only, 0 = inactive only, 'all' = both
+   */
+  async getCompanyDetails(isActive: number | 'all' = 1): Promise<unknown> {
+    const pathBase = process.env.ACCUSOURCE_COMPANY_DETAILS_PATH || '/api/v2/company/details';
+    const param = isActive === 'all' ? 'all' : String(isActive);
+    const sep = pathBase.includes('?') ? '&' : '?';
+    return this.request(`${pathBase}${sep}isActive=${encodeURIComponent(param)}`, { method: 'GET' });
   }
 }
 

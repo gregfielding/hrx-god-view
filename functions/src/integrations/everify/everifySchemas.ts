@@ -103,12 +103,25 @@ export interface EverifyCaseEvent {
   data?: Record<string, unknown>;
 }
 
+/** Employee block sent from admin UI; merged server-side (never persisted). Confirm codes against your ICA. */
+export const EverifyI9EmployeePayload = z
+  .object({
+    first_name: z.string().min(1).max(120).trim(),
+    last_name: z.string().min(1).max(120).trim(),
+    date_of_birth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    ssn: z.string().min(9).max(32).trim(),
+    citizenship_status_code: z.string().min(1).max(8).trim(),
+  })
+  .strict();
+
 /** Callable input for everifyCreateCase */
 export const EverifyCreateCaseInput = z.object({
   tenantId: z.string().min(1),
   entityId: z.string().optional(),
   userEmploymentId: z.string().optional(),
   assignmentId: z.string().optional(),
+  /** Required for real per-worker cases when env fixture is incomplete or must be overridden. */
+  i9Employee: EverifyI9EmployeePayload.optional(),
 });
 export type EverifyCreateCaseInput = z.infer<typeof EverifyCreateCaseInput>;
 

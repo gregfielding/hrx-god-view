@@ -189,6 +189,7 @@ export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShif
 export { onJobOrderShiftCancelledCascadeAssignments } from './shiftAssignmentCascades';
 export { onApplicationWithdrawnOrDeletedCascadeAssignments } from './shiftAssignmentCascades';
 export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
+export { onAssignmentConfirmedScreeningAutomation } from './compliance/screeningAutomationTrigger';
 export {
   onAssignmentWriteRecomputeShiftFill,
   onAssignmentUpdateRecomputeShiftFill,
@@ -220,6 +221,7 @@ export {
   everifyMarkContested,
   everifyMarkReferralInitiated,
   everifyCloseCaseManual,
+  everifySoapCreateCase,
   onUserEmploymentUpdatedEverify,
   onEverifyCaseUpdatedSyncOnboarding,
   processEverifyCaseFromEmployment,
@@ -239,6 +241,7 @@ export {
   createAccusourceBackgroundCheck,
   testCreateAccusourceBackgroundCheck,
   getAccusourceBackgroundCheckPdf,
+  syncAccusourcePackageCatalog,
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
 export { workerSupportAssistant } from './workerSupportAssistant';

@@ -47,6 +47,7 @@ import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequirementPacks';
 import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
+import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
 import { useEntity } from '../hooks/useEntity';
 import { normalizeStateCode } from '../utils/unemploymentRates';
 import {
@@ -309,6 +310,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     requirementPackId: '',
     workersCompClassCode: '',
     workersCompRate: '',
+    screeningPackageId: '',
+    screeningPackageName: '',
     
     // Customer Rules
     attendancePolicy: '',
@@ -926,6 +929,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           requirementPackId: (data as any).requirementPackId || '',
           workersCompClassCode: (data as any).workersCompClassCode || '',
           workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
+          screeningPackageId: String((data as any).screeningPackageId ?? '').trim(),
+          screeningPackageName: String((data as any).screeningPackageName ?? '').trim(),
           
           // Customer Rules - from stageData.scoping.customerRules
           attendancePolicy: stageData.scoping?.customerRules?.attendance || '',
@@ -1274,6 +1279,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         safetyContactId: dataToUse.safetyContactId || '',
         invoiceContactId: dataToUse.invoiceContactId || '',
         customUniformRequirements: dataToUse.customUniformRequirements || undefined,
+        screeningPackageId: String((dataToUse as any).screeningPackageId ?? '').trim() || null,
+        screeningPackageName: String((dataToUse as any).screeningPackageName ?? '').trim() || null,
         stageData: stageDataUpdate,
         updatedAt: new Date(),
         updatedBy: user.uid,
@@ -1609,6 +1616,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         ppeProvidedBy: formData.ppeProvidedBy || 'company',
         customUniformRequirements: formData.customUniformRequirements || undefined,
         requirementPackId: formData.requirementPackId || undefined,
+        screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
+        screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
         
         // Background Check and Drug Screening
         backgroundCheckPackages: formData.backgroundCheckPackages || [],
@@ -2344,6 +2353,22 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             </Grid>
 
             <Grid container spacing={2} sx={{ mb: 3 }}>
+                <Grid item xs={12}>
+                  <AccusourcePackageSelector
+                    packageId={formData.screeningPackageId}
+                    packageName={formData.screeningPackageName}
+                    onChange={(next) => {
+                      const merged = { ...formData, screeningPackageId: next.packageId, screeningPackageName: next.packageName };
+                      setFormData(merged);
+                      if (isEditing && jobOrderId) {
+                        void saveFieldToFirestore('screeningPackageId', next.packageId, merged);
+                      }
+                    }}
+                    showDiagnostics
+                    emptyMenuLabel="None"
+                    helperText="Overrides account and location order defaults for AccuSource screening (merge order: job → location → account)."
+                  />
+                </Grid>
                 <Grid item xs={12}>
                   <Autocomplete
                     multiple

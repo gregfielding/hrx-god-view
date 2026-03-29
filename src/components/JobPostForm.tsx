@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import type { TextFieldProps } from '@mui/material';
 import {
   Box,
   Grid,
@@ -30,16 +31,85 @@ import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOption
 import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
-import { getFunctions, httpsCallable } from 'firebase/functions';
+import { generateJobDescriptionWithAi } from '../utils/jobDescriptionAiGenerate';
+
+/** Single-line display for city / state / ZIP (edit form + Google Places input). */
+function formatCityStateZipInput(city: string, state: string, zipCode: string): string {
+  const c = (city || '').trim();
+  const s = (state || '').trim();
+  const z = (zipCode || '').trim();
+  if (!c && !s) return '';
+  const core = [c, s].filter(Boolean).join(', ');
+  return z ? `${core} ${z}`.trim() : core;
+}
+
+/**
+ * Parse manual "City, ST" or "City, ST 12345" input into structured fields.
+ */
+function parseCityStateZipInput(raw: string): { city: string; state: string; zipCode: string } {
+  const value = raw.trim();
+  if (!value) return { city: '', state: '', zipCode: '' };
+  const idx = value.indexOf(',');
+  if (idx === -1) {
+    return { city: value, state: '', zipCode: '' };
+  }
+  const city = value.slice(0, idx).trim();
+  const after = value.slice(idx + 1).trim().replace(/\s+/g, ' ');
+  if (!after) return { city, state: '', zipCode: '' };
+  const stateZip = after.match(/^([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?$/);
+  if (stateZip) {
+    return {
+      city,
+      state: stateZip[1].toUpperCase(),
+      zipCode: stateZip[2] || '',
+    };
+  }
+  if (after.length === 2) {
+    return { city, state: after.toUpperCase(), zipCode: '' };
+  }
+  return { city, state: '', zipCode: '' };
+}
+
+function zipFromWorksiteAddress(wa: Record<string, unknown> | undefined): string {
+  if (!wa || typeof wa !== 'object') return '';
+  const z =
+    (wa.zipCode as string) ||
+    (wa.zipcode as string) ||
+    (wa.zip as string) ||
+    '';
+  return typeof z === 'string' ? z : '';
+}
+
+/** e.g. "Philadelphia, PA, USA" or "Dallas, TX 75201" from public display strings */
+function parseCityStateZipFromWorksiteName(name: string): {
+  city: string;
+  state: string;
+  zipCode: string;
+} {
+  const s = (name || '').trim();
+  if (!s) return { city: '', state: '', zipCode: '' };
+  const noCountry = s.replace(/,?\s*USA\s*$/i, '').trim();
+  const m = noCountry.match(/^([^,]+),\s*([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?\s*$/);
+  if (m) {
+    return {
+      city: m[1].trim(),
+      state: m[2].toUpperCase(),
+      zipCode: m[3] || '',
+    };
+  }
+  return { city: '', state: '', zipCode: '' };
+}
 
 export interface JobPostFormProps {
   initialData?: Partial<JobsBoardPost>;
   onSave: (data: Partial<JobsBoardPost>) => Promise<void>;
-  onCancel: () => void;
+  onCancel?: () => void;
   loading?: boolean;
   mode?: 'create' | 'edit';
   hideJobOrderConnection?: boolean; // Hide the "Connect with Job Order" section when used from Job Order detail page
   jobOrderData?: any; // Full job order data for AI generation
+  /** When true (edit mode only), persist on TextField blur and on other control change; hides footer buttons. */
+  autoSave?: boolean;
 }
 
 const JobPostForm: React.FC<JobPostFormProps> = ({
@@ -49,7 +119,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   loading = false,
   mode = 'create',
   hideJobOrderConnection = false,
-  jobOrderData
+  jobOrderData,
+  autoSave = false,
 }) => {
   const { tenantId, user } = useAuth();
   const [error, setError] = useState<string | null>(null);
@@ -74,6 +145,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     jobType: 'gig' as 'gig' | 'career',
     jobTitle: '',
     jobDescription: '',
+    jobDescriptionPrompt: '',
+    craigslistUrl: '',
+    indeedUrl: '',
     companyId: '',
     companyName: '',
     worksiteId: '',
@@ -131,6 +205,70 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     ...initialData
   });
 
+  /** Syndication URLs: standalone board posts, or any post edited from job order Jobs Board tab. */
+  const showSyndicationUrlFields =
+    hideJobOrderConnection || !(formData.jobOrderId && String(formData.jobOrderId).trim());
+
+  const formDataRef = useRef(formData);
+  formDataRef.current = formData;
+  const persistChainRef = useRef(Promise.resolve());
+  /** When auto-saving edits, parent may refresh `post` after each save; skip re-applying initialData if same document. */
+  const lastSyncedAutoSavePostIdRef = useRef<string | null>(null);
+  const cityInputRef = useRef<HTMLInputElement | null>(null);
+
+  const buildPayloadFromFormData = useCallback((fd: typeof formData): Partial<JobsBoardPost> => {
+    return {
+      ...fd,
+      startDate: fd.startDate ? new Date(fd.startDate) : undefined,
+      endDate: fd.endDate ? new Date(fd.endDate) : undefined,
+      expDate: fd.expDate ? new Date(fd.expDate) : undefined,
+      worksiteAddress: {
+        street: fd.street,
+        city: fd.city,
+        state: fd.state,
+        zipCode: fd.zipCode,
+        coordinates: fd.coordinates || undefined,
+      },
+      payRate: fd.payRate ? parseFloat(fd.payRate.toString()) : undefined,
+      autoAddToUserGroups: fd.autoAddToUserGroups,
+      autoAddToUserGroup: fd.autoAddToUserGroups.length === 1 ? fd.autoAddToUserGroups[0] : undefined,
+    };
+  }, []);
+
+  const schedulePersist = useCallback(() => {
+    if (!autoSave || mode !== 'edit') return;
+    persistChainRef.current = persistChainRef.current
+      .then(async () => {
+        setError(null);
+        await onSave(buildPayloadFromFormData(formDataRef.current));
+      })
+      .catch((err: any) => {
+        console.error('Auto-save failed:', err);
+        setError(err?.message || 'Failed to save');
+      });
+  }, [autoSave, mode, onSave, buildPayloadFromFormData]);
+
+  const maybeTickPersist = useCallback(
+    (delay = 0) => {
+      if (!autoSave || mode !== 'edit') return;
+      setTimeout(() => schedulePersist(), delay);
+    },
+    [autoSave, mode, schedulePersist]
+  );
+
+  function AutoSaveTextField(props: TextFieldProps) {
+    const { onBlur, ...rest } = props;
+    return (
+      <TextField
+        {...rest}
+        onBlur={(e) => {
+          onBlur?.(e);
+          if (autoSave && mode === 'edit') schedulePersist();
+        }}
+      />
+    );
+  }
+
   // Company and location data
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; nickname?: string; address: any }>>([]);
@@ -148,7 +286,6 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
   // City autocomplete
   const [cityAutocomplete, setCityAutocomplete] = useState<google.maps.places.Autocomplete | null>(null);
-  const [cityInputRef, setCityInputRef] = useState<HTMLInputElement | null>(null);
   const [geocoding, setGeocoding] = useState(false);
   const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
 
@@ -203,8 +340,15 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   }, []);
 
   useEffect(() => {
-    if (initialData) {
-      console.log('🔍 JobPostForm - Processing initialData:', {
+    if (!initialData) return;
+
+    const docId =
+      typeof (initialData as JobsBoardPost).id === 'string' ? (initialData as JobsBoardPost).id : null;
+    if (autoSave && mode === 'edit' && docId && lastSyncedAutoSavePostIdRef.current === docId) {
+      return;
+    }
+
+    console.log('🔍 JobPostForm - Processing initialData:', {
         skills: initialData.skills,
         uniformRequirements: initialData.uniformRequirements,
         showSkills: initialData.showSkills,
@@ -212,26 +356,40 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       });
       // Extract worksiteAddress fields to top-level form fields
       const worksiteAddress = initialData.worksiteAddress || {} as any;
+      const parsedFromName = parseCityStateZipFromWorksiteName(
+        typeof initialData.worksiteName === 'string' ? initialData.worksiteName : ''
+      );
+      const resolvedZip =
+        zipFromWorksiteAddress(worksiteAddress) || parsedFromName.zipCode || '';
+
+      const cid = (initialData.companyId || '').toString().trim();
+      const wid = (initialData.worksiteId || '').toString().trim();
+      // Persisted posts: company + CRM worksite → company location mode; otherwise city/state mode
+      setUseCompanyLocation(!!(cid && wid));
       
       // Format dates properly for form inputs
+      const { jobOrderPrompt: legacyJobOrderPrompt, ...initialForForm } = initialData as JobsBoardPost & {
+        jobOrderPrompt?: string;
+      };
+
       setFormData(prev => ({ 
         ...prev, 
-        ...initialData,
+        ...initialForForm,
         startDate: formatDateForInput(initialData.startDate),
         endDate: formatDateForInput(initialData.endDate),
         expDate: formatDateForInput(initialData.expDate),
         payRate: initialData.payRate ? initialData.payRate.toString() : '',
         // Extract worksiteAddress fields to top-level form fields
         street: worksiteAddress.street || prev.street || '',
-        city: worksiteAddress.city || prev.city || '',
-        state: worksiteAddress.state || prev.state || '',
-        zipCode: worksiteAddress.zipCode || prev.zipCode || '',
+        city: worksiteAddress.city || parsedFromName.city || prev.city || '',
+        state: worksiteAddress.state || parsedFromName.state || prev.state || '',
+        zipCode: resolvedZip || prev.zipCode || '',
         coordinates: worksiteAddress.coordinates || prev.coordinates,
         worksiteAddress: {
           street: worksiteAddress.street || '',
-          city: worksiteAddress.city || '',
-          state: worksiteAddress.state || '',
-          zipCode: worksiteAddress.zipCode || '',
+          city: worksiteAddress.city || parsedFromName.city || '',
+          state: worksiteAddress.state || parsedFromName.state || '',
+          zipCode: resolvedZip || '',
         },
         autoAddToUserGroups: normalizeGroupIds(initialData.autoAddToUserGroups ?? initialData.autoAddToUserGroup),
         // Ensure skills and other arrays are properly set
@@ -260,6 +418,34 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           })(),
         customUniformRequirements: initialData.customUniformRequirements !== undefined ? initialData.customUniformRequirements : (prev.customUniformRequirements || ''),
         showCustomUniformRequirements: initialData.showCustomUniformRequirements !== undefined ? initialData.showCustomUniformRequirements : (!!initialData.customUniformRequirements),
+        jobDescription: (() => {
+          const id: any = initialData;
+          const jd = id?.jobDescription;
+          const legacy = id?.description;
+          if (typeof jd === 'string' && jd.trim()) return jd;
+          if (typeof legacy === 'string' && legacy.trim()) return legacy;
+          if (typeof prev.jobDescription === 'string' && prev.jobDescription.trim()) return prev.jobDescription;
+          return typeof jd === 'string' ? jd : typeof legacy === 'string' ? legacy : prev.jobDescription || '';
+        })(),
+        jobDescriptionPrompt: (() => {
+          const fromDoc =
+            typeof (initialData as any).jobDescriptionPrompt === 'string'
+              ? String((initialData as any).jobDescriptionPrompt).trim()
+              : '';
+          const legacy =
+            typeof legacyJobOrderPrompt === 'string' ? legacyJobOrderPrompt.trim() : '';
+          if (fromDoc) return fromDoc;
+          if (legacy) return legacy;
+          return prev.jobDescriptionPrompt || '';
+        })(),
+        craigslistUrl:
+          typeof (initialData as any).craigslistUrl === 'string'
+            ? (initialData as any).craigslistUrl
+            : prev.craigslistUrl || '',
+        indeedUrl:
+          typeof (initialData as any).indeedUrl === 'string'
+            ? (initialData as any).indeedUrl
+            : prev.indeedUrl || '',
       }));
       // Set company/location if initial data has them
       if (initialData.companyId) {
@@ -313,8 +499,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         // If we have worksiteId but no companyId, just set it (shouldn't happen normally)
         setSelectedLocationId(initialData.worksiteId);
       }
+
+    if (autoSave && mode === 'edit' && docId) {
+      lastSyncedAutoSavePostIdRef.current = docId;
     }
-  }, [initialData, tenantId]);
+  }, [initialData, tenantId, autoSave, mode]);
 
   // Separate useEffect for loading companies, job orders, and user groups (only on mount)
   useEffect(() => {
@@ -452,6 +641,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       });
       await loadLocationsForCompany(companyId);
     }
+    maybeTickPersist(150);
   };
 
   const handleLocationChange = (locationId: string) => {
@@ -470,6 +660,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         coordinates: selectedLocation.address.coordinates
       });
     }
+    maybeTickPersist(0);
   };
 
   const onCityAutocompleteLoad = (autocomplete: google.maps.places.Autocomplete) => {
@@ -512,19 +703,21 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           // Store coordinates for distance calculations
           coordinates
         }));
+        maybeTickPersist(0);
       }
     }
   };
 
   // Geocode city and state to get coordinates
-  const geocodeCityState = async (city: string, state: string) => {
+  const geocodeCityState = async (city: string, state: string, zipCode?: string) => {
     if (!city?.trim() || !state?.trim()) {
       return;
     }
 
     try {
       setGeocoding(true);
-      const address = `${city}, ${state}`;
+      const z = (zipCode || '').trim();
+      const address = z ? `${city}, ${state} ${z}` : `${city}, ${state}`;
       const coordinates = await geocodeAddress(address);
       setFormData(prev => ({
         ...prev,
@@ -535,6 +728,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       console.warn('Failed to geocode city/state:', error);
       // Continue without coordinates - not critical
     } finally {
+      maybeTickPersist(0);
       setGeocoding(false);
     }
   };
@@ -544,14 +738,15 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     if (!useCompanyLocation && formData.city?.trim() && formData.state?.trim() && !formData.coordinates) {
       // Debounce geocoding
       const timeoutId = setTimeout(() => {
-        geocodeCityState(formData.city, formData.state);
+        geocodeCityState(formData.city, formData.state, formData.zipCode);
       }, 1000);
       return () => clearTimeout(timeoutId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.city, formData.state, useCompanyLocation, formData.coordinates]);
+  }, [formData.city, formData.state, formData.zipCode, useCompanyLocation, formData.coordinates]);
 
   const handleJobOrderChange = async (jobOrderId: string) => {
+    try {
     if (jobOrderId) {
       setOriginalFormValues({ ...formData });
       
@@ -576,7 +771,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             postTitle: formData.postTitle || jobOrderData.jobOrderName || '',
             jobType: jobOrderData.jobType || 'career', // Copy job type from job order
             jobTitle: formData.jobTitle || (isGigJob && firstPosition ? firstPosition.jobTitle : jobOrderData.jobTitle) || '',
-            jobDescription: formData.jobDescription || jobOrderData.jobOrderDescription || jobOrderData.jobDescription || '',
+            jobDescription: formData.jobDescription,
+            jobDescriptionPrompt: formData.jobDescriptionPrompt || '',
+            craigslistUrl: '',
+            indeedUrl: '',
             companyId: jobOrderData.companyId || '',
             companyName: jobOrderData.companyName || '',
             worksiteId: jobOrderData.worksiteId || '',
@@ -694,6 +892,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     } else {
       setFormData({ ...formData, jobOrderId: '' });
     }
+    } finally {
+      if (autoSave && mode === 'edit') {
+        maybeTickPersist(500);
+      }
+    }
   };
 
   const isFormValid = () => {
@@ -711,74 +914,22 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   };
 
   const handleGenerateDescription = async () => {
+    if (!tenantId) {
+      setError('Missing tenant');
+      return;
+    }
     setGeneratingDescription(true);
     setError(null);
-    
+
     try {
-      // Prepare job order data for AI generation
-      // Use jobOrderData prop if available, otherwise extract from formData and initialData
-      const scoping = jobOrderData?.deal?.stageData?.scoping || {};
-      const compliance = scoping.compliance || {};
-      
-      const dataForAI = {
-        jobTitle: formData.jobTitle || jobOrderData?.jobTitle,
-        jobOrderName: formData.postTitle || jobOrderData?.jobOrderName,
-        jobDescriptionFromClient: jobOrderData?.jobDescriptionFromClient || '',
-        payRate: formData.payRate || jobOrderData?.payRate,
-        // Never send company/worksite names - only zip code
-        zipCode: formData.zipCode || jobOrderData?.worksiteAddress?.zipCode,
-        city: formData.city || jobOrderData?.worksiteAddress?.city,
-        state: formData.state || jobOrderData?.worksiteAddress?.state,
-        skills: formData.skills && formData.skills.length > 0 ? formData.skills : (scoping.skills || []),
-        uniformRequirements: formData.uniformRequirements && formData.uniformRequirements.length > 0 ? formData.uniformRequirements : (scoping.uniformRequirements || []),
-        customUniformRequirements: formData.customUniformRequirements || scoping.customUniformRequirements || jobOrderData?.customUniformRequirements || '',
-        experienceRequired: scoping.experience || compliance.experience || jobOrderData?.experienceRequired || '',
-        educationRequired: scoping.education || jobOrderData?.educationRequired || '',
-        languages: formData.languages && formData.languages.length > 0 ? formData.languages : (scoping.languages || []),
-        physicalRequirements: formData.physicalRequirements && formData.physicalRequirements.length > 0 ? formData.physicalRequirements : (scoping.physicalRequirements || []),
-        ppeRequirements: formData.requiredPpe && formData.requiredPpe.length > 0 ? formData.requiredPpe : (scoping.ppe || []),
-        backgroundCheckPackages: formData.backgroundCheckPackages && formData.backgroundCheckPackages.length > 0 ? formData.backgroundCheckPackages : (compliance.backgroundCheckPackages || []),
-        drugScreeningPanels: formData.drugScreeningPanels && formData.drugScreeningPanels.length > 0 ? formData.drugScreeningPanels : (compliance.drugScreeningPanels || []),
-        additionalScreenings: formData.additionalScreenings && formData.additionalScreenings.length > 0 ? formData.additionalScreenings : (compliance.additionalScreenings || []),
-        licensesCerts: formData.licensesCerts && formData.licensesCerts.length > 0 ? formData.licensesCerts : (scoping.licensesCerts || []),
-        eVerifyRequired: formData.eVerifyRequired || compliance.eVerify || jobOrderData?.eVerifyRequired || false,
-        shiftType: formData.shift && formData.shift.length > 0 ? formData.shift : (jobOrderData?.shiftType || []),
-        startDate: formData.startDate || '',
-        endDate: formData.endDate || '',
-        workersNeeded: formData.workersNeeded || jobOrderData?.workersNeeded || 1
-      };
-
-      // Pass toggle states so AI knows what to include/exclude
-      const toggleStates = {
-        showPayRate: formData.showPayRate,
-        showWorkersNeeded: formData.showWorkersNeeded,
-        showStart: formData.showStart,
-        showEnd: formData.showEnd,
-        showSkills: formData.showSkills,
-        showUniformRequirements: formData.showUniformRequirements,
-        showPhysicalRequirements: formData.showPhysicalRequirements,
-        showRequiredPpe: formData.showRequiredPpe,
-        showLicensesCerts: formData.showLicensesCerts,
-        showBackgroundChecks: formData.showBackgroundChecks,
-        showDrugScreening: formData.showDrugScreening,
-        showAdditionalScreenings: formData.showAdditionalScreenings,
-        showLanguages: formData.showLanguages,
-        showShift: formData.showShift,
-        showExperience: formData.showExperience,
-        showEducation: formData.showEducation
-      };
-
-      const functions = getFunctions(undefined, 'us-central1');
-      const generateFn = httpsCallable(functions, 'generateJobDescription');
-      
-      const result = await generateFn({ jobOrderData: dataForAI, toggleStates });
-      const response = result.data as any;
-      
-      if (response?.jobDescription || response?.description) {
-        setFormData({
-          ...formData,
-          jobDescription: response.jobDescription || response.description
-        });
+      const text = await generateJobDescriptionWithAi({
+        tenantId,
+        formData,
+        jobOrderData: jobOrderData ?? undefined,
+      });
+      if (text) {
+        setFormData((prev) => ({ ...prev, jobDescription: text }));
+        maybeTickPersist(0);
       } else {
         setError('Failed to generate job description');
       }
@@ -844,7 +995,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <AutoSaveTextField
                 label="Post Title"
                 value={formData.postTitle}
                 onChange={(e) => setFormData({ ...formData, postTitle: e.target.value })}
@@ -859,7 +1010,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Select
                   value={formData.jobType}
                   label="Job Type"
-                  onChange={(e) => setFormData({ ...formData, jobType: e.target.value as 'gig' | 'career' })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, jobType: e.target.value as 'gig' | 'career' });
+                    maybeTickPersist();
+                  }}
                 >
                   <MenuItem value="gig">Gig</MenuItem>
                   <MenuItem value="career">Career</MenuItem>
@@ -879,12 +1033,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.jobTitle}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, jobTitle: newValue || '' });
+                  maybeTickPersist();
                 }}
                 onInputChange={(event, newInputValue) => {
                   setFormData({ ...formData, jobTitle: newInputValue });
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Job Title (Optional)"
                     helperText="Search or enter a job title - leave blank for generic multi-role postings"
@@ -898,7 +1053,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Select
                   value={formData.status}
                   label="Status"
-                  onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, status: e.target.value as any });
+                    maybeTickPersist();
+                  }}
                 >
                   <MenuItem value="draft">Draft</MenuItem>
                   <MenuItem value="active">Active</MenuItem>
@@ -915,7 +1073,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <AutoSaveTextField
                 label="Expiration Date"
                 type="date"
                 value={formData.expDate || ''}
@@ -928,7 +1086,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             {formData.jobType !== 'gig' && (
               <Grid item xs={12} sm={6}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <TextField
+                  <AutoSaveTextField
                     label="Workers Needed"
                     type="number"
                     value={formData.workersNeeded}
@@ -943,7 +1101,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     </Typography>
                     <Switch
                       checked={formData.showWorkersNeeded}
-                      onChange={(e) => setFormData({ ...formData, showWorkersNeeded: e.target.checked })}
+                      onChange={(e) => {
+                      setFormData({ ...formData, showWorkersNeeded: e.target.checked });
+                      maybeTickPersist();
+                    }}
                     />
                   </Box>
                 </Box>
@@ -1000,6 +1161,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     setSelectedLocationId('');
                     setLocations([]);
                     setOriginalFormValues(null);
+                    maybeTickPersist(0);
                   }}
                   disabled={!formData.jobOrderId}
                   startIcon={<CloseIcon />}
@@ -1012,42 +1174,20 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           </Box>
         )}
 
-        <Box sx={{ mb: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-          <Button
-            variant="outlined"
-            startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
-            onClick={handleGenerateDescription}
-            disabled={generatingDescription}
-            size="small"
-          >
-            {generatingDescription ? 'Generating...' : 'Generate Job Description'}
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<ContentCopyIcon />}
-            onClick={handleCopyDescription}
-            disabled={!formData.jobDescription?.trim()}
-            size="small"
-          >
-            Copy to clipboard
-          </Button>
-        </Box>
-
-        <TextField
-          label="Job Description"
-          value={formData.jobDescription}
-          onChange={(e) => setFormData({ ...formData, jobDescription: e.target.value })}
+        <AutoSaveTextField
+          label="Job Description Prompt"
+          value={formData.jobDescriptionPrompt}
+          onChange={(e) => setFormData({ ...formData, jobDescriptionPrompt: e.target.value })}
           fullWidth
-          required
           multiline
-          rows={4}
-          helperText="Provide a detailed description of the role, responsibilities, and requirements"
+          minRows={3}
+          helperText="Extra instructions for AI: used when there is no job order, or combined with the job order description when one is connected."
         />
 
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <TextField
+              <AutoSaveTextField
                 label="Pay Rate ($/hr)"
                 type="number"
                 value={formData.payRate}
@@ -1061,7 +1201,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Pay Rate</Typography>
                 <Switch
                   checked={formData.showPayRate}
-                  onChange={(e) => setFormData({ ...formData, showPayRate: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showPayRate: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1071,7 +1214,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={4}>
-              <TextField
+              <AutoSaveTextField
                 label="Start Date"
                 type="date"
                 value={formData.startDate}
@@ -1085,12 +1228,15 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Start</Typography>
                 <Switch
                   checked={formData.showStart || false}
-                  onChange={(e) => setFormData({ ...formData, showStart: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showStart: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
             <Grid item xs={12} sm={4}>
-              <TextField
+              <AutoSaveTextField
                 label="End Date"
                 type="date"
                 value={formData.endDate}
@@ -1104,7 +1250,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show End</Typography>
                 <Switch
                   checked={formData.showEnd || false}
-                  onChange={(e) => setFormData({ ...formData, showEnd: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showEnd: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1123,9 +1272,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   value={formData.shift}
                   onChange={(event, newValue) => {
                     setFormData({ ...formData, shift: newValue });
+                    maybeTickPersist();
                   }}
                   renderInput={(params) => (
-                    <TextField
+                    <AutoSaveTextField
                       {...params}
                       label="Shift Details"
                       helperText="Select shift requirements for this position"
@@ -1148,7 +1298,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   <Typography variant="body1">Show Shift Details on Post</Typography>
                   <Switch
                     checked={formData.showShift}
-                    onChange={(e) => setFormData({ ...formData, showShift: e.target.checked })}
+                    onChange={(e) => {
+                    setFormData({ ...formData, showShift: e.target.checked });
+                    maybeTickPersist();
+                  }}
                   />
                 </Box>
               </Grid>
@@ -1161,7 +1314,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           <Box sx={{ mt: 2 }}>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} sm={3}>
-                <TextField
+                <AutoSaveTextField
                   label="Start Time"
                   type="time"
                   value={formData.startTime}
@@ -1176,12 +1329,15 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   <Typography variant="body1">Show Start Time</Typography>
                   <Switch
                     checked={formData.showStartTime}
-                    onChange={(e) => setFormData({ ...formData, showStartTime: e.target.checked })}
+                    onChange={(e) => {
+                    setFormData({ ...formData, showStartTime: e.target.checked });
+                    maybeTickPersist();
+                  }}
                   />
                 </Box>
               </Grid>
               <Grid item xs={12} sm={3}>
-                <TextField
+                <AutoSaveTextField
                   label="End Time"
                   type="time"
                   value={formData.endTime}
@@ -1196,7 +1352,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   <Typography variant="body1">Show End Time</Typography>
                   <Switch
                     checked={formData.showEndTime}
-                    onChange={(e) => setFormData({ ...formData, showEndTime: e.target.checked })}
+                    onChange={(e) => {
+                    setFormData({ ...formData, showEndTime: e.target.checked });
+                    maybeTickPersist();
+                  }}
                   />
                 </Box>
               </Grid>
@@ -1209,13 +1368,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           <Switch
             checked={useCompanyLocation}
             onChange={(e) => {
-              setUseCompanyLocation(e.target.checked);
-              if (!e.target.checked) {
+              const on = e.target.checked;
+              setUseCompanyLocation(on);
+              if (!on) {
                 setSelectedCompanyId('');
                 setSelectedLocationId('');
                 setLocations([]);
-                setFormData({
-                  ...formData,
+                setFormData((prev) => ({
+                  ...prev,
                   companyId: '',
                   companyName: '',
                   worksiteId: '',
@@ -1223,9 +1383,11 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   street: '',
                   city: '',
                   state: '',
-                  zipCode: ''
-                });
+                  zipCode: '',
+                  coordinates: undefined,
+                }));
               }
+              maybeTickPersist(0);
             }}
             disabled={hideJobOrderConnection}
           />
@@ -1259,12 +1421,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                           state: '',
                           zipCode: ''
                         });
+                        maybeTickPersist(0);
                       }
                     }}
                     loading={loadingCompanies}
                     disabled={hideJobOrderConnection || loadingCompanies}
                     renderInput={(params) => (
-                      <TextField
+                      <AutoSaveTextField
                         {...params}
                         label="Company"
                         InputProps={{
@@ -1349,12 +1512,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                             state: '',
                             zipCode: ''
                           });
+                          maybeTickPersist(0);
                         }
                       }}
                       loading={loadingCompanies}
                       disabled={hideJobOrderConnection || loadingCompanies}
                       renderInput={(params) => (
-                        <TextField
+                        <AutoSaveTextField
                           {...params}
                           label="Company"
                           helperText="Select a company, or leave empty to use city/state"
@@ -1386,38 +1550,50 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     componentRestrictions: { country: 'us' }
                   }}
                 >
-                  <TextField
+                  <AutoSaveTextField
                     fullWidth
                     label="City, State"
                     required
-                    placeholder="Search for a city..."
-                    helperText="Search and select a city - coordinates will be saved automatically"
-                    inputRef={(ref) => {
-                      setCityInputRef(ref);
+                    value={formatCityStateZipInput(formData.city, formData.state, formData.zipCode)}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      const parsed = parseCityStateZipInput(raw);
+                      const hasLoc = !!(parsed.city?.trim() && parsed.state?.trim());
+                      setFormData((prev) => ({
+                        ...prev,
+                        ...parsed,
+                        coordinates: undefined,
+                        worksiteName: hasLoc
+                          ? formatCityStateZipInput(parsed.city, parsed.state, parsed.zipCode)
+                          : '',
+                      }));
                     }}
+                    placeholder="Search for a city or type City, ST (ZIP optional)..."
+                    helperText="Search and select a city, or type e.g. Philadelphia, PA 19107 — coordinates save automatically"
+                    inputRef={cityInputRef}
                   />
                 </GoogleAutocomplete>
               ) : (
-                <TextField
+                <AutoSaveTextField
                   fullWidth
                   label="City, State"
-                  value={formData.city && formData.state ? `${formData.city}, ${formData.state}` : ''}
+                  value={formatCityStateZipInput(formData.city, formData.state, formData.zipCode)}
                   onChange={(e) => {
-                    // Allow manual entry while Google Maps loads
-                    const value = e.target.value;
-                    const parts = value.split(',').map(s => s.trim());
-                    if (parts.length >= 2) {
-                      setFormData({
-                        ...formData,
-                        city: parts[0],
-                        state: parts[1].toUpperCase().substring(0, 2),
-                        coordinates: undefined
-                      });
-                    }
+                    const raw = e.target.value;
+                    const parsed = parseCityStateZipInput(raw);
+                    const hasLoc = !!(parsed.city?.trim() && parsed.state?.trim());
+                    setFormData((prev) => ({
+                      ...prev,
+                      ...parsed,
+                      coordinates: undefined,
+                      worksiteName: hasLoc
+                        ? formatCityStateZipInput(parsed.city, parsed.state, parsed.zipCode)
+                        : '',
+                    }));
                   }}
                   required
-                  placeholder="Search for a city..."
-                  helperText="Loading Google Maps... (you can type manually)"
+                  placeholder="City, ST or City, ST ZIP (Google Maps loading...)"
+                  helperText="Loading Google Maps... (you can type manually: City, ST or City, ST 12345)"
                 />
               )}
               {formData.city && formData.state && (
@@ -1437,7 +1613,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() => geocodeCityState(formData.city, formData.state)}
+                        onClick={() => geocodeCityState(formData.city, formData.state, formData.zipCode)}
                         sx={{ ml: 'auto' }}
                       >
                         Refresh
@@ -1451,7 +1627,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                       <Button
                         size="small"
                         variant="outlined"
-                        onClick={() => geocodeCityState(formData.city, formData.state)}
+                        onClick={() => geocodeCityState(formData.city, formData.state, formData.zipCode)}
                         sx={{ ml: 'auto' }}
                       >
                         Get Coordinates
@@ -1480,6 +1656,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                       restrictedGroups: visibility === 'restricted' ? formData.restrictedGroups : [],
                       autoAddToUserGroups: visibility === 'restricted' ? [] : formData.autoAddToUserGroups,
                     });
+                    maybeTickPersist();
                   }}
                 >
                   <MenuItem value="public">Public - Visible to everyone</MenuItem>
@@ -1494,7 +1671,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Select
                   value={formData.restrictedGroups}
                   label="User Groups"
-                  onChange={(e) => setFormData({ ...formData, restrictedGroups: e.target.value as string[] })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, restrictedGroups: e.target.value as string[] });
+                    maybeTickPersist();
+                  }}
                   disabled={formData.visibility !== 'restricted' || loadingUserGroups}
                   multiple
                 >
@@ -1526,7 +1706,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">E-Verify Required</Typography>
                 <Switch
                   checked={formData.eVerifyRequired}
-                  onChange={(e) => setFormData({ ...formData, eVerifyRequired: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, eVerifyRequired: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1544,9 +1727,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.backgroundCheckPackages}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, backgroundCheckPackages: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Background Check Packages"
                     helperText="Select required background check packages"
@@ -1569,7 +1753,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Background Requirements</Typography>
                 <Switch
                   checked={formData.showBackgroundChecks}
-                  onChange={(e) => setFormData({ ...formData, showBackgroundChecks: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showBackgroundChecks: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1587,9 +1774,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.drugScreeningPanels}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, drugScreeningPanels: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Drug Screening Panels"
                     helperText="Select required drug screening panels"
@@ -1612,7 +1800,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Drug Screening Requirements</Typography>
                 <Switch
                   checked={formData.showDrugScreening}
-                  onChange={(e) => setFormData({ ...formData, showDrugScreening: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showDrugScreening: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1630,9 +1821,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.additionalScreenings}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, additionalScreenings: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Additional Screenings"
                     helperText="Select required additional screening types"
@@ -1655,7 +1847,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Additional Screenings on Post</Typography>
                 <Switch
                   checked={formData.showAdditionalScreenings}
-                  onChange={(e) => setFormData({ ...formData, showAdditionalScreenings: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showAdditionalScreenings: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1673,9 +1868,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.skills}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, skills: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Required Skills"
                     helperText="Select skills required for this position"
@@ -1698,7 +1894,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Skills on Post</Typography>
                 <Switch
                   checked={formData.showSkills}
-                  onChange={(e) => setFormData({ ...formData, showSkills: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showSkills: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1719,9 +1918,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.licensesCerts}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, licensesCerts: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Licenses & Certifications"
                     helperText="Select required licenses and certifications"
@@ -1744,7 +1944,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Licenses & Certifications on Post</Typography>
                 <Switch
                   checked={formData.showLicensesCerts}
-                  onChange={(e) => setFormData({ ...formData, showLicensesCerts: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showLicensesCerts: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1762,9 +1965,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.experienceLevels}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, experienceLevels: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Experience Levels"
                     helperText="Select required experience levels"
@@ -1787,7 +1991,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Experience on Post</Typography>
                 <Switch
                   checked={formData.showExperience}
-                  onChange={(e) => setFormData({ ...formData, showExperience: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showExperience: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1805,9 +2012,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.educationLevels}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, educationLevels: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Education Levels"
                     helperText="Select required education levels"
@@ -1830,7 +2038,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Education on Post</Typography>
                 <Switch
                   checked={formData.showEducation}
-                  onChange={(e) => setFormData({ ...formData, showEducation: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showEducation: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1848,9 +2059,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.languages}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, languages: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Language Requirements"
                     helperText="Select required languages for this position"
@@ -1873,7 +2085,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Languages on Post</Typography>
                 <Switch
                   checked={formData.showLanguages}
-                  onChange={(e) => setFormData({ ...formData, showLanguages: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showLanguages: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1899,9 +2114,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.physicalRequirements}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, physicalRequirements: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Physical Requirements"
                     helperText="Select physical requirements for this position"
@@ -1924,7 +2140,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Physical Requirements on Post</Typography>
                 <Switch
                   checked={formData.showPhysicalRequirements}
-                  onChange={(e) => setFormData({ ...formData, showPhysicalRequirements: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showPhysicalRequirements: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1956,9 +2175,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.uniformRequirements}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, uniformRequirements: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Uniform Requirements"
                     helperText="Select dress code and uniform requirements"
@@ -1981,7 +2201,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Uniform Requirements on Post</Typography>
                 <Switch
                   checked={formData.showUniformRequirements}
-                  onChange={(e) => setFormData({ ...formData, showUniformRequirements: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showUniformRequirements: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -1992,7 +2215,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} sm={6}>
-              <TextField
+              <AutoSaveTextField
                 fullWidth
                 label="Custom Uniform Requirements"
                 multiline
@@ -2008,7 +2231,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Custom Uniform Requirements on Post</Typography>
                 <Switch
                   checked={formData.showCustomUniformRequirements}
-                  onChange={(e) => setFormData({ ...formData, showCustomUniformRequirements: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showCustomUniformRequirements: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -2041,9 +2267,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 value={formData.requiredPpe}
                 onChange={(event, newValue) => {
                   setFormData({ ...formData, requiredPpe: newValue });
+                  maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <TextField
+                  <AutoSaveTextField
                     {...params}
                     label="Required PPE"
                     helperText="Select required personal protective equipment"
@@ -2066,7 +2293,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 <Typography variant="body1">Show Required PPE on Post</Typography>
                 <Switch
                   checked={formData.showRequiredPpe}
-                  onChange={(e) => setFormData({ ...formData, showRequiredPpe: e.target.checked })}
+                  onChange={(e) => {
+                  setFormData({ ...formData, showRequiredPpe: e.target.checked });
+                  maybeTickPersist();
+                }}
                 />
               </Box>
             </Grid>
@@ -2078,9 +2308,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           options={userGroups}
           getOptionLabel={(option) => option.name || 'Unnamed Group'}
           value={userGroups.filter((group) => formData.autoAddToUserGroups.includes(group.id))}
-          onChange={(_, newValue) =>
-            setFormData({ ...formData, autoAddToUserGroups: newValue.map((group) => group.id) })
-          }
+          onChange={(_, newValue) => {
+            setFormData({ ...formData, autoAddToUserGroups: newValue.map((group) => group.id) });
+            maybeTickPersist();
+          }}
           disabled={formData.visibility === 'restricted' || loadingUserGroups}
           renderTags={(value, getTagProps) =>
             value.map((option, index) => (
@@ -2093,7 +2324,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             ))
           }
           renderInput={(params) => (
-            <TextField
+            <AutoSaveTextField
               {...params}
               label="Auto-Add to User Groups"
               placeholder="Search user groups..."
@@ -2108,26 +2339,81 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           noOptionsText={loadingUserGroups ? 'Loading...' : 'No user groups available'}
         />
 
-        {/* Action Buttons */}
-        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 3 }}>
+        {showSyndicationUrlFields && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <AutoSaveTextField
+              label="Craigslist URL"
+              value={formData.craigslistUrl}
+              onChange={(e) => setFormData({ ...formData, craigslistUrl: e.target.value })}
+              fullWidth
+              placeholder="https://…"
+              helperText="Optional. Header icon opens this link in a new tab when set."
+            />
+            <AutoSaveTextField
+              label="Indeed URL"
+              value={formData.indeedUrl}
+              onChange={(e) => setFormData({ ...formData, indeedUrl: e.target.value })}
+              fullWidth
+              placeholder="https://…"
+              helperText="Optional. Header icon opens this link in a new tab when set."
+            />
+          </Box>
+        )}
+
+        <Box sx={{ mb: 1, mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Button
             variant="outlined"
-            onClick={onCancel}
-            disabled={loading}
+            startIcon={generatingDescription ? <CircularProgress size={16} /> : <AutoAwesomeIcon />}
+            onClick={handleGenerateDescription}
+            disabled={generatingDescription}
+            size="small"
           >
-            Cancel
+            {generatingDescription ? 'Generating...' : 'Generate Job Description'}
           </Button>
           <Button
-            variant="contained"
-            onClick={handleSubmit}
-            disabled={loading || !isFormValid()}
+            variant="outlined"
+            startIcon={<ContentCopyIcon />}
+            onClick={handleCopyDescription}
+            disabled={!formData.jobDescription?.trim()}
+            size="small"
           >
-            {loading 
-              ? (formData.status === 'draft' ? 'Saving...' : 'Creating...') 
-              : (formData.status === 'draft' ? 'Save Draft' : mode === 'edit' ? 'Update Post' : 'Create Post')
-            }
+            Copy to clipboard
           </Button>
         </Box>
+
+        <AutoSaveTextField
+          label="Job Description"
+          value={formData.jobDescription}
+          onChange={(e) => setFormData({ ...formData, jobDescription: e.target.value })}
+          fullWidth
+          required
+          multiline
+          minRows={6}
+          helperText="Public job posting text. Use Generate to draft from the job order (or from your prompts when no order is connected)."
+        />
+
+        {!(autoSave && mode === 'edit') && (
+          <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 2, mt: 3 }}>
+            <Button variant="outlined" onClick={onCancel} disabled={loading || !onCancel}>
+              Cancel
+            </Button>
+            <Button
+              variant="contained"
+              onClick={handleSubmit}
+              disabled={loading || !isFormValid()}
+            >
+              {loading
+                ? formData.status === 'draft'
+                  ? 'Saving...'
+                  : 'Creating...'
+                : formData.status === 'draft'
+                  ? 'Save Draft'
+                  : mode === 'edit'
+                    ? 'Update Post'
+                    : 'Create Post'}
+            </Button>
+          </Box>
+        )}
       </Stack>
       <Snackbar
         open={copySnackbarOpen}

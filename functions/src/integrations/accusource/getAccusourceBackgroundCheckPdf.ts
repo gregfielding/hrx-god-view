@@ -4,6 +4,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
+import { getAccusourceBearerToken, hasAccusourceOutboundAuth } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
 import { ensureAccusourceAdmin } from './accusourceAdminGate';
 
@@ -40,8 +41,11 @@ export const getAccusourceBackgroundCheckPdf = onCall(
     if (!cfg.enabled) {
       throw new HttpsError('failed-precondition', 'AccuSource integration is disabled.');
     }
-    if (!cfg.apiKey) {
-      throw new HttpsError('failed-precondition', 'AccuSource API key is not configured.');
+    if (!hasAccusourceOutboundAuth()) {
+      throw new HttpsError(
+        'failed-precondition',
+        'AccuSource auth is not configured: set SOURCEDIRECT_CLIENT_ID + SOURCEDIRECT_CLIENT_SECRET (OAuth) or ACCUSOURCE_API_KEY / SOURCEDIRECT_API_KEY (static Bearer).',
+      );
     }
 
     const data = (request.data || {}) as GetAccusourceBackgroundCheckPdfInput;
@@ -63,11 +67,16 @@ export const getAccusourceBackgroundCheckPdf = onCall(
       throw new HttpsError('failed-precondition', 'No provider profile ID on this check yet.');
     }
 
+    const bearer = await getAccusourceBearerToken();
+    if (!bearer) {
+      throw new HttpsError('failed-precondition', 'AccuSource Bearer token could not be resolved.');
+    }
+
     const url = buildReportUrl(cfg.baseUrl, pid, kind);
     const res = await fetch(url, {
       method: 'GET',
       headers: {
-        authorization: `Bearer ${cfg.apiKey}`,
+        authorization: `Bearer ${bearer}`,
         accept: 'application/pdf',
       },
     });

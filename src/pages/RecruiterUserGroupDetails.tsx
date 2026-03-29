@@ -42,7 +42,9 @@ import { useFavorites } from '../hooks/useFavorites';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
+import { getEVerifyComfortStatusFromUserData, compareEVerifyComfort } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../components/EVerifyComfortChip';
 
 type SecurityLevel =
   | '0'
@@ -69,6 +71,8 @@ interface RecruiterUser {
   skills: string[];
   workEligibility?: boolean;
   workEligibilityAttestation?: { authorizedToWorkUS?: boolean };
+  comfortableEVerify?: string;
+  workerAttestations?: { eVerifyWillingness?: string };
 }
 
 interface TenantUserGroup {
@@ -91,7 +95,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [skillFilter, setSkillFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'auth'>('recentlyUpdated');
+  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'auth' | 'documented'>(
+    'recentlyUpdated',
+  );
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
   const [page, setPage] = useState(0);
@@ -203,6 +209,8 @@ const RecruiterUserGroupDetails: React.FC = () => {
             skills: normalizedSkills,
             workEligibility: user.workEligibility,
             workEligibilityAttestation: user.workEligibilityAttestation,
+            comfortableEVerify: user.comfortableEVerify,
+            workerAttestations: user.workerAttestations,
           } as RecruiterUser;
         });
 
@@ -328,6 +336,12 @@ const RecruiterUserGroupDetails: React.FC = () => {
             const aStatus = getWorkAuthorizedStatus(a);
             const bStatus = getWorkAuthorizedStatus(b);
             return compareWorkAuthorized(aStatus, bStatus);
+          }
+          case 'documented': {
+            return compareEVerifyComfort(
+              getEVerifyComfortStatusFromUserData(a),
+              getEVerifyComfortStatusFromUserData(b),
+            );
           }
           default:
             return 0;
@@ -620,6 +634,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                     <MenuItem value="aiScore">AI Score</MenuItem>
                     <MenuItem value="name">Name (A-Z)</MenuItem>
                     <MenuItem value="auth">Work Authorized</MenuItem>
+                    <MenuItem value="documented">Documented</MenuItem>
                   </Select>
                 </FormControl>
               </Box>
@@ -668,6 +683,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
                       Auth
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                      Documented
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                       Role
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
@@ -687,7 +705,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                 <TableBody>
                   {paginatedMembers.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={9} sx={{ textAlign: 'center', py: 4 }}>
+                      <TableCell colSpan={10} sx={{ textAlign: 'center', py: 4 }}>
                         <Typography variant="body2" color="text.secondary">
                           {members.length === 0 ? 'No members in this group.' : 'No members match your filters.'}
                         </Typography>
@@ -759,6 +777,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
                         </TableCell>
                         <TableCell>
                           <WorkAuthorizedChip status={getWorkAuthorizedStatus(user)} />
+                        </TableCell>
+                        <TableCell>
+                          <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(user)} />
                         </TableCell>
                         <TableCell>
                           <Chip

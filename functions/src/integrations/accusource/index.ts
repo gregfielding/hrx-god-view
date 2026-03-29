@@ -6,6 +6,7 @@ export {
   testCreateAccusourceBackgroundCheck,
 } from './createBackgroundCheck';
 export { getAccusourceBackgroundCheckPdf } from './getAccusourceBackgroundCheckPdf';
+export { syncAccusourcePackageCatalog, ACCUSOURCE_CATALOG_DOC_PATH } from './syncPackageCatalog';
 export type {
   AccusourceEnvironment,
   AccusourceProviderConfig,

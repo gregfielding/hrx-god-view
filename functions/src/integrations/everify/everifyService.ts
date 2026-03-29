@@ -5,13 +5,13 @@
  */
 
 import * as admin from 'firebase-admin';
-import { createCaseClient } from './everifyClient';
-import { createDraftCase, submitCase } from './everifyClient';
+import { createCaseClient } from './everifyRestClient';
+import { createDraftCase, submitCase } from './everifyRestClient';
 import { buildCreateCaseRequest } from './everifyAdapter';
 import { mapProviderStatusToHrx } from './everifyAdapter';
 import { whitelistEverifyRaw } from './everifyRedaction';
 import { redactSensitiveFields } from './everifyRedaction';
-import { resolveI9PayloadFromFixture } from './everifyI9Provider';
+import { resolveI9PayloadForCreateCase } from './everifyI9Provider';
 import { getEverifyFakeProvider } from './everifyConfig';
 import { getEverifyEnv } from './everifyConfig';
 import type { EverifyCase, EverifyCaseEvent, EverifyCaseStatus, I9CaseFlat } from './everifySchemas';
@@ -107,6 +107,8 @@ export async function createAndSubmitCase(params: {
   caseCreator?: { name: string; email: string; phone10: string; phoneExt?: string };
   icaCredentials?: EverifyCredentials | null;
   legacyCredentials?: EverifyOAuthCredentials | null;
+  /** Admin UI / callable: employee identity for USCIS (overrides env fixture + profile hints). */
+  i9Employee?: Partial<I9CaseFlat> | null;
 }): Promise<{ caseId: string; everifyCaseNumber?: string; status: EverifyCaseStatus }> {
   const env = getEverifyEnv();
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -187,7 +189,11 @@ export async function createAndSubmitCase(params: {
   };
   const ext = params.caseCreator?.phoneExt;
   if (ext != null && ext !== '') overrides.case_creator_phone_number_extension = ext;
-  const payload = resolveI9PayloadFromFixture(overrides);
+  const payload = await resolveI9PayloadForCreateCase({
+    userId: params.userId,
+    employeeFromClient: params.i9Employee,
+    serviceOverrides: overrides,
+  });
 
   let draftCaseNumber: string;
   let submitted: SubmitCaseResponse;

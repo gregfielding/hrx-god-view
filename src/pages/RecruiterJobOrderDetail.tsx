@@ -125,6 +125,12 @@ import LogActivityDialog from '../components/LogActivityDialog';
 import AddJobOrderNoteDialog from '../components/recruiter/AddJobOrderNoteDialog';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
 import { computeComplianceSummary } from '../utils/complianceSummary';
+import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
+import JobBoardSyndicationIconRow from '../components/JobBoardSyndicationIconRow';
+import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
+import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
+import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../components/EVerifyComfortChip';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -198,6 +204,9 @@ interface Applicant {
   city?: string;
   state?: string;
   workEligibility?: boolean;
+  workEligibilityAttestation?: { authorizedToWorkUS?: boolean } | null;
+  comfortableEVerify?: string;
+  workerAttestations?: { eVerifyWillingness?: string } | null;
   phoneVerified?: boolean;
   appliedAt?: any;
   applicationStatus?: string;
@@ -343,6 +352,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             city: userData.city || userData.addressInfo?.city || '',
             state: userData.state || userData.addressInfo?.state || '',
             workEligibility: userData.workEligibility || false,
+            workEligibilityAttestation: userData.workEligibilityAttestation,
+            comfortableEVerify: userData.comfortableEVerify,
+            workerAttestations: userData.workerAttestations,
             phoneVerified: userData.phoneVerified || false,
             appliedAt: app.appliedAt,
             applicationStatus: app.status || 'submitted',
@@ -1165,6 +1177,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           city: userData.city || userData.addressInfo?.city || '',
           state: userData.state || userData.addressInfo?.state || '',
           workEligibility: userData.workEligibility || false,
+          workEligibilityAttestation: userData.workEligibilityAttestation,
+          comfortableEVerify: userData.comfortableEVerify,
+          workerAttestations: userData.workerAttestations,
           phoneVerified: userData.phoneVerified || false,
           appliedAt: savedApplicationData.appliedAt,
           applicationStatus: 'submitted',
@@ -1371,6 +1386,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 <TableCell sx={{ width: 60 }}></TableCell>
                 <TableCell>Applicant</TableCell>
                 <TableCell>Contact</TableCell>
+                <TableCell>Auth</TableCell>
+                <TableCell>Documented</TableCell>
                 <TableCell>Location</TableCell>
                 <TableCell>Applied</TableCell>
                 {isGigJob && shifts.length > 0 ? (
@@ -1410,7 +1427,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             <TableBody>
               {displayedApplicants.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={20} sx={{ py: 4, textAlign: 'center' }}>
+                  <TableCell colSpan={24} sx={{ py: 4, textAlign: 'center' }}>
                     <Alert severity="info" sx={{ justifyContent: 'center' }}>
                       {applicants.length === 0
                         ? 'No applications received yet for this job order.'
@@ -1482,6 +1499,12 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     <Typography variant="caption" color="text.secondary">
                       {applicant.phone}
                     </Typography>
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <WorkAuthorizedChip status={getWorkAuthorizedStatus(applicant)} />
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(applicant)} />
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2">
@@ -2396,7 +2419,7 @@ const JobOrderJobsBoardTab: React.FC<{
       postTitle: jobOrder.jobOrderName || '',
       jobType: jobOrder.jobType || 'career',
       jobTitle: isGigJob && positionForPrefill ? positionForPrefill.jobTitle : jobOrder.jobTitle || '',
-      jobDescription: jobOrder.jobOrderDescription || jobOrder.jobDescription || '',
+      jobDescription: '',
       companyId: jobOrder.companyId || '',
       companyName: jobOrder.companyName || '',
       worksiteId: jobOrder.worksiteId || '',
@@ -2730,6 +2753,21 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);
+
+  const connectedPostSyndicationUrls = useMemo(() => {
+    let indeedUrl: string | undefined;
+    let craigslistUrl: string | undefined;
+    for (const p of connectedJobPosts) {
+      if (!indeedUrl && typeof p.indeedUrl === 'string' && p.indeedUrl.trim()) {
+        indeedUrl = p.indeedUrl.trim();
+      }
+      if (!craigslistUrl && typeof p.craigslistUrl === 'string' && p.craigslistUrl.trim()) {
+        craigslistUrl = p.craigslistUrl.trim();
+      }
+      if (indeedUrl && craigslistUrl) break;
+    }
+    return { indeedUrl, craigslistUrl };
+  }, [connectedJobPosts]);
   const [manageContactsOpen, setManageContactsOpen] = useState(false);
   const [showManageSalespeopleDialog, setShowManageSalespeopleDialog] = useState(false);
   const [manageRecruitersOpen, setManageRecruitersOpen] = useState(false);
@@ -3740,6 +3778,17 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     </Box>
                 )}
               </Box>
+
+              {hasJobBoardSyndicationUrl(
+                connectedPostSyndicationUrls.indeedUrl,
+                connectedPostSyndicationUrls.craigslistUrl
+              ) && (
+                <JobBoardSyndicationIconRow
+                  indeedUrl={connectedPostSyndicationUrls.indeedUrl}
+                  craigslistUrl={connectedPostSyndicationUrls.craigslistUrl}
+                  sx={{ mt: 0.25 }}
+                />
+              )}
 
               {/* Line 3: Blue link row */}
               <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', mt: 0.25, flexWrap: 'wrap' }}>

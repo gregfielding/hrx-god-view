@@ -42,6 +42,7 @@ import { db } from '../../firebase';
 
 import PersonalInfoStep from './steps/PersonalInfoStep';
 import AddressStep from './steps/AddressStep';
+import EVerifyComfortStep from './steps/EVerifyComfortStep';
 import WorkEligibilityStep from './steps/WorkEligibilityStep';
 import ProfilePictureStep from './steps/ProfilePictureStep';
 import ResumeStep from './steps/ResumeStep';
@@ -136,6 +137,7 @@ const deepStripUndefined = (value: any): any => {
 const stepKeys = [
   'apply.stepPersonalInfo',
   'apply.stepAddress',
+  'apply.stepEVerifyComfort',
   'apply.stepWorkEligibility',
   'apply.stepProfilePicture',
   'apply.stepResume',
@@ -320,18 +322,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     location: string;
   } | null>(null);
 
-  // Step indices to show - skip empty steps (Preferences for Gig jobs; Work Eligibility for C1 Events LLC / contractors)
+  // Step indices: 2 = E-Verify comfort (generic /c1/apply only; job applies use requirements step when eVerifyRequired).
   const visibleStepIndices = useMemo(() => {
-    const all = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
-    if (!posting) return all;
-    let indices = all;
-    // Skip Work Eligibility (2) when hiring entity is C1 Events LLC (independent contractors)
+    const all = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    let indices = jobId ? all.filter((i) => i !== 2) : [...all];
+
     if (hiringEntityName && /C1 Events LLC/i.test(hiringEntityName)) {
-      indices = indices.filter((i) => i !== 2);
+      indices = indices.filter((i) => i !== 3);
     }
-    // Skip Preferences (10) for Gig jobs - step is empty (no shift preferences for gigs)
-    if (posting.jobType === 'gig') {
-      indices = indices.filter((i) => i !== 10);
+    if (posting?.jobType === 'gig') {
+      indices = indices.filter((i) => i !== 11);
     }
 
     const isAuthenticated = Boolean(auth.currentUser?.uid || uid);
@@ -342,6 +342,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const profilePicture = formData?.profilePicture || {};
     const resume = formData?.resume || {};
     const requirementsForm = (formData?.requirements || {}) as Record<string, any>;
+
+    const hasValue = (v: unknown) => String(v || '').trim().length > 0;
 
     const personalComplete = Boolean(
       String(personal.firstName || profile.firstName || '').trim() &&
@@ -370,25 +372,29 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     );
     if (isAuthenticated && addressComplete) indices = indices.filter((i) => i !== 1);
 
+    if (!jobId && isAuthenticated && hasValue(requirementsForm.eVerifyComfort)) {
+      indices = indices.filter((i) => i !== 2);
+    }
+
     const workAuthComplete =
       /C1 Events LLC/i.test(String(hiringEntityName || '')) ||
       Boolean(eligibility.workAuthorized ?? profile.workEligibility);
-    if (isAuthenticated && workAuthComplete) indices = indices.filter((i) => i !== 2);
+    if (isAuthenticated && workAuthComplete) indices = indices.filter((i) => i !== 3);
 
     const hasProfilePhoto = Boolean(
       profilePicture.profilePicture || profile.workerProfile?.photoUrl || profile.avatar
     );
-    if (hasProfilePhoto) indices = indices.filter((i) => i !== 3);
+    if (hasProfilePhoto) indices = indices.filter((i) => i !== 4);
 
     const hasResume = hasResumeData(resume) || hasResumeData(profile.resume) || Boolean(profile.resumeUrl);
-    if (hasResume) indices = indices.filter((i) => i !== 4);
+    if (hasResume) indices = indices.filter((i) => i !== 5);
 
     const requiredSkills = toStringList(
-      posting.skills ||
-        posting.skillsRequired ||
-        posting.requiredSkills ||
-        posting.requirements?.skills ||
-        posting.scoping?.skills
+      posting?.skills ||
+        posting?.skillsRequired ||
+        posting?.requiredSkills ||
+        posting?.requirements?.skills ||
+        posting?.scoping?.skills
     );
     const userSkills = toStringList(qualifications.skills || profile.skills);
     const missingRequiredSkills = requiredSkills.filter(
@@ -396,13 +402,13 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     );
     const skillsComplete =
       requiredSkills.length > 0 ? missingRequiredSkills.length === 0 : userSkills.length > 0;
-    if (skillsComplete) indices = indices.filter((i) => i !== 5);
+    if (skillsComplete) indices = indices.filter((i) => i !== 6);
 
     const requiredEducation = toStringList(
-      posting.educationLevels ||
-        posting.educationRequired ||
-        posting.requirements?.education ||
-        posting.jobOrder?.educationRequired
+      posting?.educationLevels ||
+        posting?.educationRequired ||
+        posting?.requirements?.education ||
+        posting?.jobOrder?.educationRequired
     );
     const userEducation = toStringList(qualifications.education || profile.education);
     const educationComplete =
@@ -410,12 +416,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       requiredEducation.every((requiredEdu) =>
         userEducation.some((userEdu) => valuesLooselyMatch(userEdu, requiredEdu))
       );
-    if (educationComplete) indices = indices.filter((i) => i !== 6);
+    if (educationComplete) indices = indices.filter((i) => i !== 7);
 
     const requiredCertifications = toStringList(
-      posting.licensesCerts ||
-        posting.requiredCertifications ||
-        posting.requirements?.certifications
+      posting?.licensesCerts ||
+        posting?.requiredCertifications ||
+        posting?.requirements?.certifications
     );
     const userCertifications = toStringList(qualifications.certifications || profile.certifications);
     const certificationsComplete =
@@ -423,15 +429,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       requiredCertifications.every((requiredCert) =>
         userCertifications.some((userCert) => valuesLooselyMatch(userCert, requiredCert))
       );
-    if (certificationsComplete) indices = indices.filter((i) => i !== 7);
+    if (certificationsComplete) indices = indices.filter((i) => i !== 8);
 
     const requiresExperience = Boolean(
-      posting.yearsOfExperience ||
-        posting.experienceYears ||
-        (Array.isArray(posting.experienceLevels) && posting.experienceLevels.length > 0) ||
-        (Array.isArray(posting.requiredExperienceLevels) && posting.requiredExperienceLevels.length > 0) ||
-        posting.experienceRequired ||
-        posting.jobOrder?.experienceRequired
+      posting?.yearsOfExperience ||
+        posting?.experienceYears ||
+        (Array.isArray(posting?.experienceLevels) && (posting?.experienceLevels?.length ?? 0) > 0) ||
+        (Array.isArray(posting?.requiredExperienceLevels) &&
+          (posting?.requiredExperienceLevels?.length ?? 0) > 0) ||
+        posting?.experienceRequired ||
+        posting?.jobOrder?.experienceRequired
     );
     const hasWorkHistory = toStringList(
       qualifications.workExperience ||
@@ -439,22 +446,20 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         profile.workExperience ||
         profile.workHistory
     ).length > 0;
-    if (!requiresExperience || hasWorkHistory) indices = indices.filter((i) => i !== 8);
+    if (!requiresExperience || hasWorkHistory) indices = indices.filter((i) => i !== 9);
 
-    // Optional profile-strength steps are hidden on re-apply unless needed for required gating.
-    indices = indices.filter((i) => i !== 9 && i !== 10);
+    indices = indices.filter((i) => i !== 10 && i !== 11);
 
-    const hasValue = (v: unknown) => String(v || '').trim().length > 0;
-    const needsDrug = Boolean(posting.showDrugScreening || posting.drugScreeningRequired);
-    const needsBackground = Boolean(posting.showBackgroundChecks || posting.backgroundCheckRequired);
-    const needsEVerify = Boolean(posting.eVerifyRequired);
-    const additionalScreenings = Array.isArray(posting.additionalScreenings) ? posting.additionalScreenings : [];
-    const showAdditional = Boolean(posting.showAdditionalScreenings) && additionalScreenings.length > 0;
-    const requiredLanguages = toStringList(posting.languages || (requirements as any).languages);
-    const requiredPhysical = toStringList(posting.physicalRequirements || requirements.physical);
-    const requiredUniform = toStringList(posting.uniformRequirements);
-    const requiredPpe = toStringList(posting.requiredPpe || posting.ppeRequirements || requirements.ppe);
-    const customUniformText = String(posting.customUniformRequirements || '').trim();
+    const needsDrug = Boolean(posting?.showDrugScreening || posting?.drugScreeningRequired);
+    const needsBackground = Boolean(posting?.showBackgroundChecks || posting?.backgroundCheckRequired);
+    const needsEVerifyOnPosting = Boolean(posting?.eVerifyRequired);
+    const additionalScreenings = Array.isArray(posting?.additionalScreenings) ? posting.additionalScreenings : [];
+    const showAdditional = Boolean(posting?.showAdditionalScreenings) && additionalScreenings.length > 0;
+    const requiredLanguages = toStringList(posting?.languages || (requirements as any).languages);
+    const requiredPhysical = toStringList(posting?.physicalRequirements || requirements.physical);
+    const requiredUniform = toStringList(posting?.uniformRequirements);
+    const requiredPpe = toStringList(posting?.requiredPpe || posting?.ppeRequirements || requirements.ppe);
+    const customUniformText = String(posting?.customUniformRequirements || '').trim();
     const missingAdditional = showAdditional
       ? additionalScreenings.some((name) => !hasValue(requirementsForm?.additionalScreenings?.[name]))
       : false;
@@ -466,32 +471,31 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         (!hasValue(requirementsForm.backgroundScreeningComfort) ||
           (requirementsForm.backgroundScreeningComfort === 'Maybe' &&
             !hasValue(requirementsForm.backgroundExplanation)))) ||
-      (needsEVerify && !hasValue(requirementsForm.eVerifyComfort)) ||
+      (needsEVerifyOnPosting && !hasValue(requirementsForm.eVerifyComfort)) ||
       missingAdditional ||
-      ((posting.showLanguages || requiredLanguages.length > 0) && !hasValue(requirementsForm.languagesComfort)) ||
-      ((posting.showPhysicalRequirements || requiredPhysical.length > 0) &&
+      ((posting?.showLanguages || requiredLanguages.length > 0) && !hasValue(requirementsForm.languagesComfort)) ||
+      ((posting?.showPhysicalRequirements || requiredPhysical.length > 0) &&
         !hasValue(requirementsForm.physicalRequirementsComfort)) ||
-      ((posting.showUniformRequirements || requiredUniform.length > 0) &&
+      ((posting?.showUniformRequirements || requiredUniform.length > 0) &&
         !hasValue(requirementsForm.uniformRequirementsComfort)) ||
-      ((posting.showCustomUniformRequirements || customUniformText.length > 0) &&
+      ((posting?.showCustomUniformRequirements || customUniformText.length > 0) &&
         !hasValue(requirementsForm.customUniformRequirementsComfort)) ||
-      ((posting.showRequiredPpe || requiredPpe.length > 0) && !hasValue(requirementsForm.requiredPpeComfort)) ||
+      ((posting?.showRequiredPpe || requiredPpe.length > 0) && !hasValue(requirementsForm.requiredPpeComfort)) ||
       !hasValue(requirementsForm.transportMethod);
-    if (!needsRequirementsStep) indices = indices.filter((i) => i !== 11);
+    if (!needsRequirementsStep) indices = indices.filter((i) => i !== 12);
 
     if (indices.length === 0) {
-      // Always keep at least one final step so worker can submit.
-      indices = [11];
+      indices = [12];
     }
     return indices;
-  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid]);
+  }, [posting, hiringEntityName, userProfile, formData, uid, requirements, auth.currentUser?.uid, jobId]);
 
   const actualStep = visibleStepIndices[Math.min(activeStep, visibleStepIndices.length - 1)] ?? 0;
   const isLastVisibleStep = activeStep === visibleStepIndices.length - 1;
 
-  // Grouped progress: Personal (0-2), Skills (3-5), Experience (6-9), Verification (10), Final (11)
+  // Grouped progress: Personal (0-3), Skills (4-6), Experience (7-10), Verification (11), Final (12)
   const progressGroupIndex = (step: number) =>
-    step <= 2 ? 0 : step <= 5 ? 1 : step <= 9 ? 2 : step === 10 ? 3 : 4;
+    step <= 3 ? 0 : step <= 6 ? 1 : step <= 10 ? 2 : step === 11 ? 3 : 4;
   const progressGroupLabels = [
     t('apply.progressPersonal'),
     t('apply.progressSkills'),
@@ -672,6 +676,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 payRate: jo.payRate,
                 startDate: jo.startDate,
                 endDate: jo.endDate,
+                eVerifyRequired: !!(jo.eVerifyRequired ?? jo.everifyRequired),
               };
             }
           } catch {}
@@ -764,9 +769,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     return true; // C1 Events or other entities
   }, [jobId, hiringEntityName]);
 
-  // Load shift summary for final step card (when on step 11 and have posting)
+  // Load shift summary for final step card (when on requirements step and have posting)
   useEffect(() => {
-    if (!posting || actualStep !== 11) {
+    if (!posting || actualStep !== 12) {
       setShiftSummaryData(null);
       return;
     }
@@ -1097,14 +1102,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       : [];
 
     // 2) Drug screening
-    const needsDrug = !!posting?.showDrugScreening;
+    const needsDrug = !!(posting?.showDrugScreening || posting?.drugScreeningRequired);
     const drugAnswered =
       typeof req.drugScreeningComfort === 'string' && req.drugScreeningComfort.length > 0;
     const drugNeedsExplanation =
       req.drugScreeningComfort === 'Maybe' && !(req.drugExplanation || '').trim();
 
     // 3) Background screening
-    const needsBackground = !!posting?.showBackgroundChecks;
+    const needsBackground = !!(posting?.showBackgroundChecks || posting?.backgroundCheckRequired);
     const backgroundAnswered =
       typeof req.backgroundScreeningComfort === 'string' &&
       req.backgroundScreeningComfort.length > 0;
@@ -1141,7 +1146,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     setActiveStep((prev) => {
       const newStep = Math.min(prev + 1, visibleStepIndices.length - 1);
       const leavingActualStep = visibleStepIndices[prev];
-      if (leavingActualStep === 7) {
+      if (leavingActualStep === 8) {
         setHasMissingRequiredCerts(false);
       }
       try {
@@ -1279,6 +1284,18 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // Save-and-continue: persist current step into user profile where applicable
     setSaving(true);
     try {
+      if (actualStep === 2) {
+        const ev = String(
+          formDataRef.current?.requirements?.eVerifyComfort ||
+            formData?.requirements?.eVerifyComfort ||
+            '',
+        ).trim();
+        if (!ev) {
+          alert(t('apply.eVerifyComfortRequired'));
+          setSaving(false);
+          return;
+        }
+      }
       // Create account after Personal Info step if not authenticated
       if (actualStep === 0 && !auth.currentUser) {
         const email = String(formData?.personal?.email || '').trim();
@@ -1630,6 +1647,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             await setDoc(userRef, update, { merge: true });
           }
         } else if (actualStep === 2) {
+          // Generic apply: E-Verify comfort (persisted live via EVerifyComfortStep; sync to user on Next)
+          const r = formData.requirements || {};
+          const ev = String(r.eVerifyComfort || '').trim();
+          if (ev) {
+            await setDoc(
+              userRef,
+              buildCanonicalWorkerProfileWritePatch({ comfortableEVerify: ev, updatedAt: serverTimestamp() }),
+              { merge: true },
+            );
+          }
+        } else if (actualStep === 3) {
           // Work Eligibility → save attestation (not a document) + legacy workEligibility
           // Prefer ref so Skip EEO + Next in one tick sees cleared optional fields
           const e =
@@ -1650,7 +1678,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (e.veteranStatus !== undefined) update.veteranStatus = String(e.veteranStatus || '');
           if (e.disabilityStatus !== undefined) update.disabilityStatus = String(e.disabilityStatus || '');
           await setDoc(userRef, update, { merge: true });
-        } else if (actualStep === 3) {
+        } else if (actualStep === 4) {
           // Profile Picture → save profile picture URL
           const p = formData.profilePicture || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1658,7 +1686,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
-        } else if (actualStep === 5) {
+        } else if (actualStep === 6) {
           // Skills → save skills, certifications, languages to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1668,7 +1696,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
-        } else if (actualStep === 6) {
+        } else if (actualStep === 7) {
           // Education → save education to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1676,7 +1704,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
-        } else if (actualStep === 7) {
+        } else if (actualStep === 8) {
           // Licenses and Certifications → save certifications to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1684,7 +1712,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
-        } else if (actualStep === 8) {
+        } else if (actualStep === 9) {
           // Work Experience → save work experience to profile
           const q = formData.qualifications || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1696,7 +1724,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           if (Object.keys(update).length > 1) {
             await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
           }
-        } else if (actualStep === 9) {
+        } else if (actualStep === 10) {
           // Bio → save professional bio to profile
           const b = formData.bio || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1704,7 +1732,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update.professionalBio = b.professionalBio.trim();
           }
           if (Object.keys(update).length > 1) await setDoc(userRef, update, { merge: true });
-        } else if (actualStep === 10) {
+        } else if (actualStep === 11) {
           // Preferences → persist to user profile under a nested preferences object
           const p = formData.preferences || {};
           const update: any = { updatedAt: serverTimestamp() };
@@ -1718,7 +1746,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             update['preferences.shiftPreferences'] = update.preferences.shiftPreferences;
           }
           await setDoc(userRef, buildCanonicalWorkerProfileWritePatch(update), { merge: true });
-        } else if (actualStep === 11) {
+        } else if (actualStep === 12) {
           // Requirements → save screening responses and availability to user profile
           const r = formData.requirements || {};
           const p = formData.preferences || {};
@@ -1784,7 +1812,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
 
   /** Clear optional EEO fields and advance (same as Next) so users can skip that block in one tap. */
   const handleSkipOptionalEeo = async () => {
-    if (actualStep !== 2) return;
+    if (actualStep !== 3) return;
     const el = formData.eligibility || {};
     if (el.workAuthorized !== true) {
       alert(t('apply.confirmWorkAuthBeforeSkipEeo'));
@@ -2681,20 +2709,32 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         );
       case 2:
         return (
+          <EVerifyComfortStep
+            variant="generic"
+            value={String((formData.requirements || {}).eVerifyComfort || '')}
+            onChange={(comfort) =>
+              persist({
+                requirements: { ...(formData.requirements || {}), eVerifyComfort: comfort },
+              })
+            }
+          />
+        );
+      case 3:
+        return (
           <WorkEligibilityStep
             value={formData.eligibility || {}}
             onChange={(v) => persist({ eligibility: v })}
             onSkipOptionalEeo={eeoSkippable ? handleSkipOptionalEeo : undefined}
           />
         );
-      case 3:
+      case 4:
         return (
           <ProfilePictureStep
             value={formData.profilePicture || {}}
             onChange={(v) => persist({ profilePicture: v })}
           />
         );
-      case 4:
+      case 5:
         return (
           <Box>
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
@@ -2707,7 +2747,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           />
           </Box>
         );
-      case 5:
+      case 6:
         return (
           <SkillsStep
             value={formData.qualifications || {}}
@@ -2718,7 +2758,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             jobPosting={posting}
           />
         );
-      case 6:
+      case 7:
         return (
           <Box>
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
@@ -2735,7 +2775,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           />
           </Box>
         );
-      case 7:
+      case 8:
         return (
           <Box>
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
@@ -2753,7 +2793,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           />
           </Box>
         );
-      case 8:
+      case 9:
         return (
           <Box>
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
@@ -2770,7 +2810,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           />
           </Box>
         );
-      case 9:
+      case 10:
         return (
           <BioStep
             value={formData.bio || {}}
@@ -2778,7 +2818,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             jobPosting={posting}
           />
         );
-      case 10:
+      case 11:
         return (
           <Box>
             <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 1 }}>
@@ -2791,7 +2831,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           />
           </Box>
         );
-      case 11:
+      case 12:
         return (
           <Box>
             {shiftSummaryData && (shiftSummaryData.dateLabel || shiftSummaryData.pay || shiftSummaryData.location) && (
@@ -3183,7 +3223,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 onClick={isLastVisibleStep ? handleSubmit : handleNext}
                 disabled={
                   (isLastVisibleStep &&
-                    actualStep === 11 &&
+                    actualStep === 12 &&
                     (missing.drug ||
                       missing.background ||
                       missing.everify ||
@@ -3193,15 +3233,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                       (!auth.currentUser &&
                         (password.length < 6 || password !== confirmPassword)))) ||
                   (actualStep === 1 && !addressValid) ||
-                  (actualStep === 2 && formData?.eligibility?.workAuthorized !== true) ||
+                  (actualStep === 2 &&
+                    !String(formData?.requirements?.eVerifyComfort || '').trim()) ||
+                  (actualStep === 3 && formData?.eligibility?.workAuthorized !== true) ||
                   saving
                 }
               >
                 {isLastVisibleStep
                   ? t('apply.submitApplication')
-                  : actualStep === 3 || actualStep === 4
+                  : actualStep === 4 || actualStep === 5
                   ? t('apply.skip')
-                  : actualStep === 7 && hasMissingRequiredCerts
+                  : actualStep === 8 && hasMissingRequiredCerts
                   ? t('apply.skipForNow')
                   : t('apply.next')}
               </Button>
@@ -3239,15 +3281,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             aria-label={
               isLastVisibleStep
                 ? t('apply.submitApplication')
-                : actualStep === 4
+                : actualStep === 4 || actualStep === 5
                 ? t('apply.skip')
-                : actualStep === 7 && hasMissingRequiredCerts
+                : actualStep === 8 && hasMissingRequiredCerts
                 ? t('apply.skipForNow')
                 : t('apply.next')
             }
             disabled={
               (isLastVisibleStep &&
-                actualStep === 11 &&
+                actualStep === 12 &&
                 (missing.drug ||
                   missing.background ||
                   missing.everify ||
@@ -3257,9 +3299,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           >
             {isLastVisibleStep
               ? t('apply.submitApplication')
-              : actualStep === 4
+              : actualStep === 4 || actualStep === 5
               ? t('apply.skip')
-              : actualStep === 7 && hasMissingRequiredCerts
+              : actualStep === 8 && hasMissingRequiredCerts
               ? t('apply.skipForNow')
               : t('apply.next')}
           </Button>

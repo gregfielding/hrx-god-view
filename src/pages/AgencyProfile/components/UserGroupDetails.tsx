@@ -68,7 +68,12 @@ import { formatOneDecimal } from '../../../utils/scoreSummary';
 import { normalizeScoreSummary } from '../../../utils/scoreSummary';
 import { calculateProfileScore } from '../../../utils/applicantScoring';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../../../utils/workAuthorizedDisplay';
+import {
+  getEVerifyComfortStatusFromUserData,
+  compareEVerifyComfort,
+} from '../../../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../../../components/EVerifyComfortChip';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -95,7 +100,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
-  const [membersSortBy, setMembersSortBy] = useState<'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin' | 'auth'>('name');
+  const [membersSortBy, setMembersSortBy] = useState<
+    'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin' | 'auth' | 'documented'
+  >('name');
   const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
   const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const { isFavorite: isUserFavorite, toggleFavorite: toggleUserFavorite } = useFavorites('users');
@@ -499,6 +506,13 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         const aStatus = getWorkAuthorizedStatus(a);
         const bStatus = getWorkAuthorizedStatus(b);
         cmp = compareWorkAuthorized(aStatus, bStatus);
+        break;
+      }
+      case 'documented': {
+        cmp = compareEVerifyComfort(
+          getEVerifyComfortStatusFromUserData(a),
+          getEVerifyComfortStatusFromUserData(b),
+        );
         break;
       }
       default:
@@ -1165,6 +1179,15 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       <TableSortLabel
+                        active={membersSortBy === 'documented'}
+                        direction={membersSortBy === 'documented' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('documented')}
+                      >
+                        Documented
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                      <TableSortLabel
                         active={membersSortBy === 'workStatus'}
                         direction={membersSortBy === 'workStatus' ? membersSortDirection : 'desc'}
                         onClick={() => handleMembersSort('workStatus')}
@@ -1223,7 +1246,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={12} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={13} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -1317,6 +1340,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
 
                           <TableCell>
                             <WorkAuthorizedChip status={getWorkAuthorizedStatus(u)} />
+                          </TableCell>
+
+                          <TableCell>
+                            <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(u)} />
                           </TableCell>
 
                           <TableCell>

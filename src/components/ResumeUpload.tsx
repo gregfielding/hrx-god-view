@@ -52,6 +52,56 @@ interface PendingPreview {
   isImage: boolean;
 }
 
+/** Mobile Safari often omits `File.type`; infer from extension so validation and upload still run. */
+function inferMimeFromFileName(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
+  const map: Record<string, string> = {
+    pdf: 'application/pdf',
+    docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    doc: 'application/msword',
+    txt: 'text/plain',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    heic: 'image/heic',
+    heif: 'image/heif',
+  };
+  return map[ext] ?? '';
+}
+
+function effectiveMime(file: File): string {
+  return file.type || inferMimeFromFileName(file.name);
+}
+
+/**
+ * Build a data URL for the parser without FileReader.readAsDataURL.
+ * Some browsers/profiles never fire FileReader.onload, which left the UI stuck on "Reading file…"
+ * with no network request to parseResumeHttp.
+ */
+async function fileToDataUrl(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  if (bytes.length === 0) {
+    throw new Error('File is empty.');
+  }
+  const mime = effectiveMime(file) || 'application/octet-stream';
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const slice = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    binary += String.fromCharCode.apply(null, Array.from(slice));
+  }
+  const b64 = btoa(binary);
+  return `data:${mime};base64,${b64}`;
+}
+
+/** Same pattern as inbox / reply drawers; emulator uses REACT_APP_FUNCTIONS_URL. */
+const FUNCTIONS_HTTP_BASE = (
+  process.env.REACT_APP_FUNCTIONS_URL || 'https://us-central1-hrx1-d3beb.cloudfunctions.net'
+).replace(/\/$/, '');
+const PARSE_RESUME_HTTP_URL = `${FUNCTIONS_HTTP_BASE}/parseResumeHttp`;
+
 const ResumeUpload: React.FC<ResumeUploadProps> = ({ 
   userId, 
   tenantId, 
@@ -88,61 +138,196 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
     pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
   }, [pendingPreviews]);
 
-  const processSelectedFiles = useCallback((selected: File[]) => {
-    const files = selected.filter(Boolean);
-    if (files.length === 0) return;
+  const handleFileUpload = useCallback(
+    async (file: File) => {
+      try {
+        logger.debug('Starting file upload', {
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type,
+          userId,
+          tenantId,
+        });
 
-    const allowedTypes = [
-      'application/pdf',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/msword',
-      'text/plain',
-      'image/jpeg',
-      'image/png',
-      'image/webp',
-      'image/heic',
-      'image/heif',
-    ];
+        setParsingStatus({
+          status: 'uploading',
+          progress: 0,
+          message: 'Reading file…',
+        });
 
-    const invalid = files.find((file) => !allowedTypes.includes(file.type));
-    if (invalid) {
+        const fileUrl = await fileToDataUrl(file);
+
+        logger.debug('File converted to base64', {
+          dataUrlLength: fileUrl.length,
+          fileUrlPrefix: `${fileUrl.substring(0, Math.min(100, fileUrl.length))}...`,
+        });
+
+        setParsingStatus({
+          status: 'parsing',
+          progress: 30,
+          message: 'Sending to resume parser…',
+        });
+
+        const token = await auth.currentUser?.getIdToken();
+        if (!token) {
+          logger.error('No auth token available');
+          throw new Error('User not authenticated');
+        }
+
+        logger.debug('Auth token obtained, making request to parseResumeHttp', { url: PARSE_RESUME_HTTP_URL });
+
+        const requestBody = {
+          fileUrl,
+          fileName: file.name,
+          fileSize: file.size,
+          userId,
+          tenantId,
+        };
+
+        logger.debug('Request payload', {
+          fileName: requestBody.fileName,
+          fileSize: requestBody.fileSize,
+          userId: requestBody.userId,
+          tenantId: requestBody.tenantId,
+          fileUrlLength: requestBody.fileUrl.length,
+        });
+
+        const response = await fetch(PARSE_RESUME_HTTP_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        logger.debug('Response received', {
+          status: response.status,
+          statusText: response.statusText,
+          ok: response.ok,
+          headers: Object.fromEntries(response.headers.entries()),
+        });
+
+        if (!response.ok) {
+          let errorData: { error?: string };
+          try {
+            errorData = await response.json();
+            logger.error('Error response data:', errorData);
+          } catch (parseError) {
+            logger.error('Could not parse error response:', parseError);
+            const textError = await response.text();
+            logger.error('Raw error response:', textError);
+            errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
+          }
+          throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        logger.debug('Response data received', {
+          success: data.success,
+          hasParsedData: !!data.parsedData,
+          error: data.error,
+        });
+
+        if (data.success) {
+          setParsingStatus({
+            status: 'completed',
+            progress: 100,
+            message: 'Resume parsed successfully!',
+            parsedData: data.parsedData,
+          });
+
+          logger.debug('Resume parsing completed successfully');
+
+          if (onResumeParsed) {
+            onResumeParsed(data.parsedData);
+          }
+        } else {
+          logger.error('Parsing failed:', data.error);
+          throw new Error(data.error || 'Failed to parse resume');
+        }
+      } catch (error: unknown) {
+        const err = error as { message?: string; stack?: string; name?: string };
+        logger.error('Resume upload / parse failed:', {
+          message: err.message,
+          stack: err.stack,
+          name: err.name,
+        });
+
+        setParsingStatus({
+          status: 'error',
+          progress: 0,
+          message: err.message || 'Upload failed',
+          error: err.message,
+        });
+      }
+    },
+    [auth, onResumeParsed, tenantId, userId]
+  );
+
+  const processSelectedFiles = useCallback(
+    (selected: File[]) => {
+      const files = selected.filter(Boolean);
+      if (files.length === 0) return;
+
+      const allowedTypes = [
+        'application/pdf',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword',
+        'text/plain',
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/heic',
+        'image/heif',
+      ];
+
+      const invalid = files.find((file) => !allowedTypes.includes(effectiveMime(file)));
+      if (invalid) {
+        setParsingStatus({
+          status: 'error',
+          progress: 0,
+          message: 'Invalid file type. Please upload PDF, Word, text, or image files only.',
+          error: 'Invalid file type',
+        });
+        return;
+      }
+
+      const oversized = files.find((file) => file.size > 10 * 1024 * 1024);
+      if (oversized) {
+        setParsingStatus({
+          status: 'error',
+          progress: 0,
+          message: 'File too large. Please upload files smaller than 10MB each.',
+          error: 'File too large',
+        });
+        return;
+      }
+
+      pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
+
+      if (files.length === 1) {
+        setPendingFiles([]);
+        setPendingPreviews([]);
+        void handleFileUpload(files[0]);
+        return;
+      }
+
+      const previews = files.map((file) => ({
+        name: file.name,
+        url: URL.createObjectURL(file),
+        isImage: effectiveMime(file).startsWith('image/'),
+      }));
+      setPendingFiles(files);
+      setPendingPreviews(previews);
       setParsingStatus({
-        status: 'error',
+        status: 'idle',
         progress: 0,
-        message: 'Invalid file type. Please upload PDF, Word, text, or image files only.',
-        error: 'Invalid file type',
+        message: `${files.length} files selected. Preview and tap "Upload selected" to start parsing.`,
       });
-      return;
-    }
-
-    const oversized = files.find((file) => file.size > 10 * 1024 * 1024);
-    if (oversized) {
-      setParsingStatus({
-        status: 'error',
-        progress: 0,
-        message: 'File too large. Please upload files smaller than 10MB each.',
-        error: 'File too large',
-      });
-      return;
-    }
-
-    pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
-    const previews = files.map((file) => ({
-      name: file.name,
-      url: URL.createObjectURL(file),
-      isImage: file.type.startsWith('image/'),
-    }));
-    setPendingFiles(files);
-    setPendingPreviews(previews);
-    setParsingStatus({
-      status: 'idle',
-      progress: 0,
-      message:
-        files.length > 1
-          ? `${files.length} files selected. Preview and tap "Upload selected" to continue.`
-          : 'File selected. Tap "Upload selected" to continue.',
-    });
-  }, [pendingPreviews]);
+    },
+    [handleFileUpload, pendingPreviews]
+  );
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
     processSelectedFiles(acceptedFiles);
@@ -177,152 +362,6 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
     setPendingFiles([]);
     pendingPreviews.forEach((p) => URL.revokeObjectURL(p.url));
     setPendingPreviews([]);
-  };
-
-  const handleFileUpload = async (file: File) => {
-    try {
-      logger.debug('Starting file upload', {
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type,
-        userId,
-        tenantId
-      });
-
-      setParsingStatus({
-        status: 'uploading',
-        progress: 0,
-        message: 'Uploading resume...'
-      });
-
-      // Convert file to base64 for upload
-      const reader = new FileReader();
-      reader.onload = async () => {
-        const base64Data = reader.result as string;
-        const fileUrl = `data:${file.type};base64,${base64Data.split(',')[1]}`;
-
-        logger.debug('File converted to base64', {
-          base64Length: base64Data.length,
-          fileUrlPrefix: fileUrl.substring(0, 100) + '...'
-        });
-
-        setParsingStatus({
-          status: 'parsing',
-          progress: 30,
-          message: 'Parsing resume with AI...'
-        });
-
-        try {
-          // Use HTTP endpoint for localhost CORS support
-          const token = await auth.currentUser?.getIdToken();
-          if (!token) {
-            logger.error('No auth token available');
-            throw new Error('User not authenticated');
-          }
-
-          logger.debug('Auth token obtained, making request to parseResumeHttp');
-
-          const requestBody = {
-            fileUrl,
-            fileName: file.name,
-            fileSize: file.size,
-            userId,
-            tenantId
-          };
-
-          logger.debug('Request payload', {
-            fileName: requestBody.fileName,
-            fileSize: requestBody.fileSize,
-            userId: requestBody.userId,
-            tenantId: requestBody.tenantId,
-            fileUrlLength: requestBody.fileUrl.length
-          });
-
-          const response = await fetch('https://us-central1-hrx1-d3beb.cloudfunctions.net/parseResumeHttp', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
-            body: JSON.stringify(requestBody)
-          });
-
-          logger.debug('Response received', {
-            status: response.status,
-            statusText: response.statusText,
-            ok: response.ok,
-            headers: Object.fromEntries(response.headers.entries())
-          });
-
-          if (!response.ok) {
-            let errorData;
-            try {
-              errorData = await response.json();
-              logger.error('Error response data:', errorData);
-            } catch (parseError) {
-              logger.error('Could not parse error response:', parseError);
-              const textError = await response.text();
-              logger.error('Raw error response:', textError);
-              errorData = { error: `HTTP ${response.status}: ${response.statusText}` };
-            }
-            throw new Error(errorData.error || `HTTP ${response.status}: ${response.statusText}`);
-          }
-
-          const data = await response.json();
-          logger.debug('Response data received', {
-            success: data.success,
-            hasParsedData: !!data.parsedData,
-            error: data.error
-          });
-          
-          if (data.success) {
-            setParsingStatus({
-              status: 'completed',
-              progress: 100,
-              message: 'Resume parsed successfully!',
-              parsedData: data.parsedData
-            });
-            
-            logger.debug('Resume parsing completed successfully');
-            
-            if (onResumeParsed) {
-              onResumeParsed(data.parsedData);
-            }
-          } else {
-            logger.error('Parsing failed:', data.error);
-            throw new Error(data.error || 'Failed to parse resume');
-          }
-        } catch (error: any) {
-          logger.error('Error during parsing:', {
-            message: error.message,
-            stack: error.stack,
-            name: error.name
-          });
-
-          setParsingStatus({
-            status: 'error',
-            progress: 0,
-            message: error.message || 'Failed to parse resume',
-            error: error.message
-          });
-        }
-      };
-
-      reader.readAsDataURL(file);
-    } catch (error: any) {
-      logger.error('Error during file upload:', {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
-      });
-
-      setParsingStatus({
-        status: 'error',
-        progress: 0,
-        message: error.message || 'Upload failed',
-        error: error.message
-      });
-    }
   };
 
   const resetUpload = () => {

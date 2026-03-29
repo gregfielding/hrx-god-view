@@ -10,9 +10,7 @@ export function usePushNotifications(uid: string | undefined): void {
   useEffect(() => {
     if (!uid) return;
 
-    registerPushToken(uid).catch((err) => {
-      console.warn('[usePushNotifications] registerPushToken failed:', err);
-    });
+    void registerPushToken(uid);
 
     const unsub = listenForegroundNotifications((payload) => {
       console.log('[FCM foreground]', payload);

@@ -4,7 +4,7 @@ import type { Firestore } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getStorage } from 'firebase/storage';
 import { getFunctions } from 'firebase/functions';
-import { getAnalytics } from 'firebase/analytics';
+import { getAnalytics, logEvent as firebaseLogEvent, type Analytics } from 'firebase/analytics';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyBQA9bc25_7ncjvY75nAtIUv47C3w5jl6c',
@@ -59,18 +59,48 @@ export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const functions = getFunctions(app, 'us-central1');
 
+/**
+ * Analytics uses IndexedDB; full disk / strict privacy mode → QuotaExceededError and CRA dev overlay.
+ * Local dev: off unless REACT_APP_ENABLE_FIREBASE_ANALYTICS=true (see .env).
+ */
+function shouldInitializeAnalytics(): boolean {
+  if (typeof window === 'undefined') return false;
+  if (process.env.NODE_ENV === 'development') {
+    return process.env.REACT_APP_ENABLE_FIREBASE_ANALYTICS === 'true';
+  }
+  return true;
+}
+
 // Initialize Analytics (only in browser environment)
 export const analytics = (() => {
-  if (typeof window !== 'undefined') {
-    try {
-      return getAnalytics(app);
-    } catch (error) {
-      console.warn('Firebase Analytics initialization failed:', error);
-      return null;
+  if (!shouldInitializeAnalytics()) {
+    return null;
+  }
+  try {
+    return getAnalytics(app);
+  } catch (error) {
+    console.warn('Firebase Analytics initialization failed:', error);
+    return null;
+  }
+})();
+
+/** Best-effort Analytics events — IndexedDB quota (private mode, full disk) can throw QuotaExceededError. */
+export function safeLogEvent(
+  analyticsInstance: Analytics | null,
+  eventName: string,
+  eventParams?: Record<string, unknown>
+): void {
+  if (!analyticsInstance) return;
+  try {
+    firebaseLogEvent(analyticsInstance, eventName, eventParams as never);
+  } catch (e: unknown) {
+    const name = e instanceof Error ? e.name : '';
+    if (name === 'QuotaExceededError') return;
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('Firebase Analytics logEvent failed:', e);
     }
   }
-  return null;
-})();
+}
 
 // Firestore client logging (opt‑in).
 // Enable by appending ?firestoreDebug=1 to the URL or setting

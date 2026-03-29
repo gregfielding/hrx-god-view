@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip, CircularProgress } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
@@ -10,7 +10,7 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InsightsIcon from '@mui/icons-material/Insights';
-import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
 import { httpsCallable } from 'firebase/functions';
@@ -37,7 +37,8 @@ import { toChipLabel } from '../../utils/chipLabel';
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
 import UserGroupsTab from './components/UserGroupsTab';
-import SkillsTab, { CombinedBackgroundAndVaccinationTab } from './components/SkillsTab';
+import SkillsTab from './components/SkillsTab';
+import BackgroundsComplianceTab from './components/BackgroundsComplianceTab';
 import SkillsOnlyTab from './components/SkillsOnlyTab';
 import WorkEligibilityTab from './components/WorkEligibilityTab';
 import QualificationsTab from './components/QualificationsTab';
@@ -63,7 +64,9 @@ import LogActivityDialog from '../../components/LogActivityDialog';
 import { logUserActivity } from '../../utils/activityLogger';
 import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
 import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
+import { getEVerifyComfortStatusFromUserData, type EVerifyComfortStatus } from '../../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
+import EVerifyComfortChip from '../../components/EVerifyComfortChip';
 import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
 import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 
@@ -76,6 +79,7 @@ const UserProfilePage = () => {
   const [searchParams] = useSearchParams();
   const shouldAutoOpenHomeAddress = searchParams.get('editHomeAddress') === '1';
   const navigate = useNavigate();
+  const location = useLocation();
   const { isFavorite, toggleFavorite } = useFavorites('users');
 
   // Initialize profile batcher and flush on navigation
@@ -87,15 +91,6 @@ const UserProfilePage = () => {
       flushProfileUpdates(true);
     };
   }, []);
-  
-  // Debug logging
-  console.log('UserProfile Debug:', {
-    currentUserUid: user?.uid,
-    targetUserUid: uid,
-    securityLevel,
-    role,
-    isOwnProfile: user?.uid === uid
-  });
   
   const [tabValue, setTabValue] = useState<string>('Overview');
   const [firstName, setFirstName] = useState('');
@@ -129,6 +124,7 @@ const UserProfilePage = () => {
   const [reviewsCount, setReviewsCount] = useState<number>(0);
   const [createdAt, setCreatedAt] = useState<any>(null);
   const [workAuthorizedStatus, setWorkAuthorizedStatus] = useState<'yes' | 'no' | 'skipped'>('skipped');
+  const [eVerifyComfortStatus, setEVerifyComfortStatus] = useState<EVerifyComfortStatus>('skipped');
   const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
   const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
@@ -159,7 +155,9 @@ const UserProfilePage = () => {
   const [recordHeaderAvatarBusy, setRecordHeaderAvatarBusy] = useState(false);
   const recordHeaderFileInputRef = useRef<HTMLInputElement>(null);
   const [profileUpdateReminderLastSentAt, setProfileUpdateReminderLastSentAt] = useState<Date | null>(null);
+  const [profileUpdateReminderSendError, setProfileUpdateReminderSendError] = useState<string | null>(null);
   const [sendingProfileUpdateReminder, setSendingProfileUpdateReminder] = useState(false);
+  const [messageHistoryRefreshKey, setMessageHistoryRefreshKey] = useState(0);
 
   const canEditRecordAvatar = !!uid && (user?.uid === uid || (typeof securityLevel === 'string' && parseInt(securityLevel, 10) >= 4));
   const handleRecordHeaderAvatarClick = useCallback(() => {
@@ -209,14 +207,25 @@ const UserProfilePage = () => {
   const handleSendProfileUpdateReminder = async () => {
     if (!uid || !effectiveTenantIdForMessaging) return;
     setSendingProfileUpdateReminder(true);
+    setProfileUpdateReminderSendError(null);
     try {
       const fn = httpsCallable(functions, 'sendProfileUpdateReminder');
       const result = await fn({ uid, tenantId: effectiveTenantIdForMessaging });
       const data = (result as any)?.data || {};
       setProfileUpdateReminderLastSentAt(data?.sentAt ? new Date(data.sentAt) : new Date());
       setActivityLogRefreshKey((k) => k + 1);
-    } catch (error) {
+      setMessageHistoryRefreshKey((k) => k + 1);
+    } catch (error: any) {
       console.error('Failed to send profile update reminder:', error);
+      const raw =
+        error?.message ||
+        error?.details?.message ||
+        (typeof error === 'string' ? error : '');
+      const cleaned = String(raw)
+        .replace(/^Firebase:\s*/i, '')
+        .replace(/\s*\(functions\/[^)]+\)\s*$/i, '')
+        .trim();
+      setProfileUpdateReminderSendError(cleaned || 'Failed to send profile update reminder');
     } finally {
       setSendingProfileUpdateReminder(false);
     }
@@ -296,107 +305,23 @@ const UserProfilePage = () => {
 
   // Check if user has access to this profile
   const canAccessProfile = () => {
-    console.log('Access check:', {
-      currentUserUid: user?.uid,
-      targetUserUid: uid,
-      securityLevel,
-      isOwnProfile: user?.uid === uid
-    });
-    
     // HRX users and admins can access any profile (security levels 5 and above)
     if (parseInt(securityLevel) >= 5) {
-      console.log('✅ Access granted: HRX/Admin user');
       return true;
     }
     
     // Users can always access their own profile
     if (user?.uid === uid) {
-      console.log('✅ Access granted: Own profile');
       return true;
     }
     
     // Managers can access profiles within their tenant (security level 4)
     if (parseInt(securityLevel) >= 4) {
-      console.log('✅ Access granted: Manager user');
       return true;
     }
     
     // Workers can only access their own profile
-    console.log('❌ Access denied: Insufficient permissions');
     return false;
-  };
-
-  // Define which tabs are available based on user role (returns ordered labels)
-  const getAvailableTabs = () => {
-    const isOwnProfile = user?.uid === uid;
-    const viewerSecurityLevel = parseInt(securityLevel);
-    const isAdminViewer = viewerSecurityLevel >= 5;
-    const isManager = securityLevel === '6';
-    const isAdmin = securityLevel === '7';
-    
-    // Check if we're on the /c1/ route (worker view) or /users/ route (admin view)
-    const pathname = window.location.pathname;
-    const isWorkerRoute = pathname.includes('/c1/users/');
-    const isWorkforceRoute = pathname.includes('/workforce/users/');
-    
-    // Check if target user is internal team member (security levels 5-7)
-    const targetUserLevel = parseInt(targetUserSecurityLevel || '0');
-    const isInternalTeamMember = targetUserLevel >= 5 && targetUserLevel <= 7;
-    
-    // For internal team members (5-7) viewed from Workforce route, only show Overview and System Access
-    const isWorkforceInternalTeamView = isWorkforceRoute && isInternalTeamMember;
-    
-    // Determine if the current viewer can see admin-specific content (securityLevel 5-7)
-    const canViewAdminContent = viewerSecurityLevel >= 5;
-    
-    // Debug logging to understand what's happening
-    console.log('Tab availability check:', {
-      securityLevel,
-      viewerSecurityLevel,
-      isAdminViewer,
-      isWorkerRoute,
-      isWorkforceRoute,
-      isOwnProfile,
-      targetUserSecurityLevel,
-      targetUserLevel,
-      isInternalTeamMember,
-      isWorkforceInternalTeamView
-    });
-
-    // Check if onboarding is in progress
-    const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
-    
-    const tabs = [
-      { label: 'Overview', available: true, count: undefined },
-      { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount }, // Hidden for 0-4
-      { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView }, // Hidden for 0-4
-      { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Resume Upload', available: !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
-      { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
-      { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
-      { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Employment', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Compliance', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
-      { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount }, // Hidden for 0-4
-      { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
-      { label: 'Activity Log', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined }, // Hidden for 0-4
-      { label: 'Reports & Insights', available: false, count: undefined },
-      { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
-    ];
-
-    let availableTabs = tabs.filter(t => t.available);
-    // When onboarding is in progress, force the Onboarding tab to the far-left (first position).
-    if (onboardingInProgress) {
-      const idx = availableTabs.findIndex((t) => t.label === 'Onboarding');
-      if (idx > 0) {
-        const [onboardingTab] = availableTabs.splice(idx, 1);
-        availableTabs = [onboardingTab, ...availableTabs];
-      }
-    }
-    console.log('Available tabs:', availableTabs.map(t => t.label));
-    return availableTabs;
   };
 
   useEffect(() => {
@@ -629,6 +554,7 @@ const UserProfilePage = () => {
               workEligibilityAttestation: data.workEligibilityAttestation,
             })
           );
+          setEVerifyComfortStatus(getEVerifyComfortStatusFromUserData(data));
         }
       }
     };
@@ -651,6 +577,7 @@ const UserProfilePage = () => {
 
         const data = docSnap.data() as any;
         setScoreSummary(normalizeScoreSummary(data.scoreSummary));
+        setEVerifyComfortStatus(getEVerifyComfortStatusFromUserData(data));
 
         // Fetch E-Verify orders
         const eVerifyOrdersArray = Array.isArray(data.eVerifyOrders) ? data.eVerifyOrders : [];
@@ -891,9 +818,68 @@ const UserProfilePage = () => {
     fetchCounts();
   }, [uid, securityLevel, tabValue]);
 
+  // Tab list — memoized so child updates (e.g. resume upload) do not recreate arrays every render and retrigger tab sync effects.
+  const availableTabs = useMemo(() => {
+    const viewerSecurityLevel = parseInt(securityLevel);
+    const isAdminViewer = viewerSecurityLevel >= 5;
+
+    const isWorkerRoute = location.pathname.includes('/c1/users/');
+    const isWorkforceRoute = location.pathname.includes('/workforce/users/');
+
+    const targetUserLevel = parseInt(targetUserSecurityLevel || '0');
+    const isInternalTeamMember = targetUserLevel >= 5 && targetUserLevel <= 7;
+
+    const isWorkforceInternalTeamView = isWorkforceRoute && isInternalTeamMember;
+
+    const canViewAdminContent = viewerSecurityLevel >= 5;
+
+    const onboardingInProgress = isOnboardingInProgress(employeeOnboardStatus as any, contractorOnboardStatus as any);
+
+    const tabs = [
+      { label: 'Overview', available: true, count: undefined },
+      { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount },
+      { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView },
+      { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Resume Upload', available: !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
+      { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
+      { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
+      { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Employment', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Compliance', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
+      { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Activity Log', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Reports & Insights', available: false, count: undefined },
+      { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
+    ];
+
+    let filtered = tabs.filter((t) => t.available);
+    if (onboardingInProgress) {
+      const idx = filtered.findIndex((t) => t.label === 'Onboarding');
+      if (idx > 0) {
+        const [onboardingTab] = filtered.splice(idx, 1);
+        filtered = [onboardingTab, ...filtered];
+      }
+    }
+    return filtered;
+  }, [
+    location.pathname,
+    securityLevel,
+    targetUserSecurityLevel,
+    employeeOnboardStatus,
+    contractorOnboardStatus,
+    interviewsCount,
+    activeApplicationsCount,
+    assignmentsCount,
+    userGroupsCount,
+    notesCount,
+  ]);
+
+  const availableTabLabels = useMemo(() => availableTabs.map((t) => t.label), [availableTabs]);
+
   // Handle tab query parameter - must be before early returns
-  const availableTabs = getAvailableTabs();
-  const availableTabLabels = availableTabs.map(t => t.label);
   
   // Validate current tab is still available, reset if needed - MUST be before early returns (hook rules)
   useEffect(() => {
@@ -921,9 +907,7 @@ const UserProfilePage = () => {
 
   // Handler for tab change from header components (e.g., document icons)
   const handleHeaderTabChange = (tabLabel: string) => {
-    const tabs = getAvailableTabs();
-    const tabLabels = tabs.map(t => t.label);
-    if (tabLabels.includes(tabLabel)) {
+    if (availableTabLabels.includes(tabLabel)) {
       setTabValue(tabLabel);
       // Update URL if needed
       const pathname = window.location.pathname;
@@ -980,7 +964,7 @@ const UserProfilePage = () => {
   const currentLabel = tabValue;
 
   // Create breadcrumb path based on current route
-  const pathname = window.location.pathname;
+  const pathname = location.pathname;
   // Check if this is a recruiter route - more robust check
   const isRecruiterRoute = pathname.includes('/users/') || 
                           (pathname.includes('/users') && pathname.split('/').length > 3);
@@ -1754,34 +1738,7 @@ const UserProfilePage = () => {
                       </IconButton>
                     </Tooltip>
                   )}
-                    {canSendProfileUpdateReminder && (
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={handleSendProfileUpdateReminder}
-                        disabled={sendingProfileUpdateReminder}
-                        sx={{
-                          textTransform: 'none',
-                          borderRadius: '999px',
-                          fontWeight: 500,
-                          minWidth: 'auto',
-                          px: 1.25,
-                          py: 0.25,
-                          ml: 0.5,
-                          height: 28,
-                          fontSize: '0.7rem',
-                          lineHeight: 1,
-                        }}
-                      >
-                        {sendingProfileUpdateReminder ? 'Sending...' : 'Profile Update Reminder'}
-                      </Button>
-                    )}
                     </Stack>
-                    {profileUpdateReminderLastSentAt && (
-                      <Typography variant="caption" color="text.secondary">
-                        Reminder Sent: {profileUpdateReminderLastSentAt.toLocaleString()}
-                      </Typography>
-                    )}
                     </Box>
                     {/* Line 3: Metadata subtitle */}
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
@@ -1853,6 +1810,15 @@ const UserProfilePage = () => {
                         Authorized to Work:{' '}
                       </Typography>
                       <WorkAuthorizedChip status={workAuthorizedStatus} size="small" />
+                      <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
+                      <Typography
+                        component="span"
+                        variant="body2"
+                        sx={{ fontSize: '14px', fontWeight: 400, color: 'rgba(0, 0, 0, 0.55)' }}
+                      >
+                        Agree to E-Verify:{' '}
+                      </Typography>
+                      <EVerifyComfortChip status={eVerifyComfortStatus} size="small" />
                       {!city && !state && !createdAt && jobTitle && (
                         <Typography
                           component="span"
@@ -2242,7 +2208,12 @@ const UserProfilePage = () => {
               case 'Qualifications':
                 return <QualificationsTab uid={uid} />;
               case 'Resume Upload':
-                return <ResumeTab uid={uid} />;
+                return (
+                  <ResumeTab
+                    uid={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || undefined}
+                  />
+                );
               case 'Applications':
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
@@ -2256,13 +2227,31 @@ const UserProfilePage = () => {
               case 'Compliance':
                 return <ComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
               case 'Backgrounds':
-                return <CombinedBackgroundAndVaccinationTab uid={uid} />;
+                return (
+                  <BackgroundsComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />
+                );
               case 'Reports & Insights':
                 return <ReportsAndInsightsTab uid={uid} />;
               case 'Notes':
                 return <NotesTab uid={uid} user={user} />;
               case 'Messages':
-                return <MessagesTab uid={uid} tenantId={tenantId || undefined} />;
+                return (
+                  <MessagesTab
+                    uid={uid}
+                    tenantId={tenantId || undefined}
+                    messageHistoryRefreshTrigger={messageHistoryRefreshKey}
+                    profileUpdateReminder={
+                      canSendProfileUpdateReminder
+                        ? {
+                            sending: sendingProfileUpdateReminder,
+                            lastSentAt: profileUpdateReminderLastSentAt,
+                            error: profileUpdateReminderSendError,
+                            onSend: handleSendProfileUpdateReminder,
+                          }
+                        : undefined
+                    }
+                  />
+                );
               case 'Activity Log':
                 return <ActivityLogTab uid={uid} user={user} refreshTrigger={activityLogRefreshKey} />;
               case 'Settings':

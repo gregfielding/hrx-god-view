@@ -7,6 +7,7 @@ import './setupConsoleFilters';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import { ThemeModeProvider } from './theme/theme';
+import { RootErrorBoundary } from './components/RootErrorBoundary';
 
 // FCM Web Push — avoid SW caching issues on localhost dev.
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
@@ -72,7 +73,12 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
     const isTerminateNoise = args.some((a) => argContains(a, needles)) ||
       argContains(args?.map?.(String)?.join(' '), needles);
 
-    if (isTerminateNoise) return;
+    const joined = args.map((a) => (typeof a === 'string' ? a : String(a?.message ?? a))).join(' ');
+    const isAnalyticsQuota =
+      joined.includes('QuotaExceededError') ||
+      (joined.includes('@firebase/analytics') && joined.includes('QuotaExceeded'));
+
+    if (isTerminateNoise || isAnalyticsQuota) return;
     originalError.apply(console, args as unknown as any);
   };
 
@@ -126,17 +132,30 @@ if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
 
   window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
     try {
-      const reason = event.reason;
+      const reason = event.reason as { name?: string; message?: string; stack?: string } | undefined;
+      if (reason && typeof reason === 'object' && reason.name === 'QuotaExceededError') {
+        event.preventDefault();
+        try {
+          (event as any).stopImmediatePropagation?.();
+        } catch {}
+        return;
+      }
       let text = '';
       if (typeof reason === 'string') text = reason;
       else if (reason?.message) text = String(reason.message);
       else if (reason?.stack) text = String(reason.stack);
       else {
-        try { text = JSON.stringify(reason); } catch { text = String(reason); }
+        try {
+          text = JSON.stringify(reason);
+        } catch {
+          text = String(reason);
+        }
       }
-      if (shouldSuppress(String(text))) {
+      if (shouldSuppress(String(text)) || String(text).includes('QuotaExceeded')) {
         event.preventDefault();
-        try { (event as any).stopImmediatePropagation?.(); } catch {}
+        try {
+          (event as any).stopImmediatePropagation?.();
+        } catch {}
       }
     } catch {}
   }, true);
@@ -149,11 +168,13 @@ const root = ReactDOM.createRoot(document.getElementById('root') as HTMLElement)
 // assertion crashes (ca9/b815) in the watch stream. Keep dev stable by
 // disabling StrictMode locally.
 const appTree = (
-  <HelmetProvider>
-    <ThemeModeProvider>
-      <App />
-    </ThemeModeProvider>
-  </HelmetProvider>
+  <RootErrorBoundary>
+    <HelmetProvider>
+      <ThemeModeProvider>
+        <App />
+      </ThemeModeProvider>
+    </HelmetProvider>
+  </RootErrorBoundary>
 );
 
 const isDev = typeof process !== 'undefined' && process.env?.NODE_ENV === 'development';

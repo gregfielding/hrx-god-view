@@ -108,6 +108,10 @@ export interface JobOrder {
 
   /** Job Score: requirement pack id for eligibility + fit (e.g. warehouse_w2, general_labor_1099, nursing_w2) */
   requirementPackId?: string;
+
+  /** AccuSource screening package (provider id + display name from synced catalog). Merges with account/location orderDefaults in mergeScreeningPackageFromLayers. */
+  screeningPackageId?: string;
+  screeningPackageName?: string;
   
   // 🆕 Deal Conversion Fields - Discovery Stage
   currentStaffCount?: number;

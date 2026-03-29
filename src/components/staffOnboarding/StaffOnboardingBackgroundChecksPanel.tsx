@@ -252,7 +252,18 @@ const StaffOnboardingBackgroundChecksPanel: React.FC<StaffOnboardingBackgroundCh
     <Box>
       {error ? (
         <Alert severity="error" sx={{ mb: 2 }}>
-          {error}
+          <Typography variant="body2" component="span" display="block" gutterBottom>
+            {error}
+          </Typography>
+          {String(error).includes('Missing or insufficient permissions') ? (
+            <Typography variant="caption" color="text.secondary" component="div">
+              Firestore rules require your <strong>user document</strong> (<code>users/&lt;your uid&gt;</code>) to show
+              assignment to this tenant and security level ≥ 5 for that tenant (or HRX). The app route may use
+              claims/session while rules only read the Firestore profile—ask an admin to align tenant assignment and{' '}
+              <code>tenantIds.&lt;tenantId&gt;.securityLevel</code> (or root <code>securityLevel</code>) with access
+              you expect.
+            </Typography>
+          ) : null}
         </Alert>
       ) : null}
 

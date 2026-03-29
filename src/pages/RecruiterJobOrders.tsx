@@ -43,18 +43,32 @@ import {
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
 import { usePageCache } from '../hooks/usePageCache';
-import { collection, query, where, orderBy, limit, getDocs, doc, getDoc } from 'firebase/firestore';
+import {
+  collection,
+  query,
+  where,
+  orderBy,
+  limit,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+  serverTimestamp,
+} from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { JobOrder } from '../types/Phase1Types';
+import type { JobOrderStatus } from '../types/recruiter/jobOrder';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 
-interface JobOrderWithDetails extends JobOrder {
+/** Firestore job orders use recruiter statuses (lowercase); Phase1 JobOrder used title-case. */
+interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
+  status: JobOrderStatus | string;
   companyName?: string;
   locationName?: string;
   worksiteCity?: string;
@@ -81,6 +95,29 @@ const CACHE_DEFAULTS = {
   page: 0,
   rowsPerPage: 20,
 };
+
+const JOB_ORDER_STATUS_OPTIONS: { value: JobOrderStatus; label: string }[] = [
+  { value: 'draft', label: 'Draft' },
+  { value: 'open', label: 'Open' },
+  { value: 'on_hold', label: 'On hold' },
+  { value: 'cancelled', label: 'Cancelled' },
+  { value: 'filled', label: 'Filled' },
+  { value: 'completed', label: 'Completed' },
+];
+
+/** Normalize legacy values (e.g. on-hold) to canonical JobOrderStatus */
+function toCanonicalJobOrderStatus(s: string): JobOrderStatus {
+  const raw = (s || '').toLowerCase().trim();
+  if (raw === 'on-hold' || raw === 'on hold' || raw === 'onhold') return 'on_hold';
+  const underscored = raw.replace(/-/g, '_');
+  const allowed: JobOrderStatus[] = ['draft', 'open', 'on_hold', 'cancelled', 'filled', 'completed'];
+  if (allowed.includes(underscored as JobOrderStatus)) return underscored as JobOrderStatus;
+  return 'open';
+}
+
+function formatJobOrderStatusLabel(s: string): string {
+  return toCanonicalJobOrderStatus(s).replace(/_/g, ' ');
+}
 
 const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({ 
   search: searchProp = '', 
@@ -115,6 +152,8 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedJobOrder, setSelectedJobOrder] = useState<JobOrderWithDetails | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [statusMenuAnchor, setStatusMenuAnchor] = useState<Record<string, HTMLElement | null>>({});
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const firstLoadRef = useRef(true);
   const prevFiltersRef = useRef<{ search: string; statusFilter: string; companyFilter: string; showFavoritesOnly: boolean } | null>(null);
 
@@ -467,6 +506,31 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     setSelectedJobOrder(null);
   };
 
+  const closeStatusMenu = (jobOrderId: string) => {
+    setStatusMenuAnchor((prev) => ({ ...prev, [jobOrderId]: null }));
+  };
+
+  const handleJobOrderStatusChange = async (jobOrderId: string, newStatus: JobOrderStatus) => {
+    closeStatusMenu(jobOrderId);
+    if (!tenantId) return;
+    setStatusUpdatingId(jobOrderId);
+    setLoadError(null);
+    try {
+      await updateDoc(doc(db, p.jobOrder(tenantId, jobOrderId)), {
+        status: newStatus,
+        updatedAt: serverTimestamp(),
+      });
+      setJobOrders((prev) =>
+        prev.map((jo) => (jo.id === jobOrderId ? { ...jo, status: newStatus } : jo))
+      );
+    } catch (err) {
+      console.error('Failed to update job order status:', err);
+      setLoadError(err instanceof Error ? err.message : 'Failed to update status');
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
   const handleViewJobOrder = () => {
     if (selectedJobOrder) {
       navigate(`/jobs/job-orders/${selectedJobOrder.id}`);
@@ -492,6 +556,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
     const normalizedStatus = status?.toLowerCase();
     switch (normalizedStatus) {
       case 'open': return 'success';
+      case 'on_hold':
       case 'on-hold': 
       case 'on hold': 
       case 'onhold': return 'warning';
@@ -875,12 +940,42 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                         </Typography>
                       </Box>
                     </TableCell>
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <Chip
-                        label={jobOrder.status}
+                        label={formatJobOrderStatusLabel(jobOrder.status)}
                         color={getStatusColor(jobOrder.status) as any}
                         size="small"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusMenuAnchor((prev) => ({
+                            ...prev,
+                            [jobOrder.id]: e.currentTarget,
+                          }));
+                        }}
+                        sx={{ cursor: statusUpdatingId === jobOrder.id ? 'wait' : 'pointer' }}
+                        disabled={statusUpdatingId === jobOrder.id}
                       />
+                      <Menu
+                        anchorEl={statusMenuAnchor[jobOrder.id] ?? null}
+                        open={Boolean(statusMenuAnchor[jobOrder.id])}
+                        onClose={() => closeStatusMenu(jobOrder.id)}
+                        anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+                        transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+                        slotProps={{ paper: { sx: { minWidth: 160 } } }}
+                      >
+                        {JOB_ORDER_STATUS_OPTIONS.map((opt) => (
+                          <MenuItem
+                            key={opt.value}
+                            selected={toCanonicalJobOrderStatus(jobOrder.status) === opt.value}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handleJobOrderStatusChange(jobOrder.id, opt.value);
+                            }}
+                          >
+                            {opt.label}
+                          </MenuItem>
+                        ))}
+                      </Menu>
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2">

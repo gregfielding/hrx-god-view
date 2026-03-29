@@ -4,6 +4,9 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
+    "predeploy": [
+      "node scripts/hostingPredeploy.js"
+    ],
     "public": "build",
     "ignore": [
       "firebase.json",
@@ -29,6 +32,15 @@
       }
     ],
     "headers": [
+      {
+        "source": "/index.html",
+        "headers": [
+          {
+            "key": "Cache-Control",
+            "value": "no-cache, no-store, must-revalidate, max-age=0"
+          }
+        ]
+      },
       {
         "source": "/apple-app-site-association",
         "headers": [

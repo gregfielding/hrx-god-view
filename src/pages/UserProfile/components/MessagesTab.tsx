@@ -78,9 +78,19 @@ interface SmsThread {
   unreadCountForRecruiter?: number;
 }
 
+export interface ProfileUpdateReminderControls {
+  sending: boolean;
+  lastSentAt: Date | null;
+  error: string | null;
+  onSend: () => void;
+}
+
 interface MessagesTabProps {
   uid: string;
   tenantId?: string;
+  /** Bumps when outbound messages should be re-fetched (e.g. after profile reminder SMS). */
+  messageHistoryRefreshTrigger?: number;
+  profileUpdateReminder?: ProfileUpdateReminderControls;
 }
 
 interface EmailThread {
@@ -97,7 +107,12 @@ interface EmailThread {
   labels?: string[];
 }
 
-const MessagesTab: React.FC<MessagesTabProps> = ({ uid, tenantId }) => {
+const MessagesTab: React.FC<MessagesTabProps> = ({
+  uid,
+  tenantId,
+  messageHistoryRefreshTrigger = 0,
+  profileUpdateReminder,
+}) => {
   const { user, activeTenant } = useAuth();
   const [activeTab, setActiveTab] = useState<'email' | 'sms' | 'push' | 'threads' | 'emailThreads'>('email');
   const [allMessageLogs, setAllMessageLogs] = useState<MessageLog[]>([]);
@@ -130,7 +145,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ uid, tenantId }) => {
     } else {
       loadMessageHistory();
     }
-  }, [uid, effectiveTenantId, activeTab]);
+  }, [uid, effectiveTenantId, activeTab, messageHistoryRefreshTrigger]);
   
   // Reset pagination when tab changes
   useEffect(() => {
@@ -394,17 +409,54 @@ const MessagesTab: React.FC<MessagesTabProps> = ({ uid, tenantId }) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
   };
+
+  const profileReminderSection =
+    profileUpdateReminder != null ? (
+      <Stack spacing={0.25} sx={{ mb: 2 }}>
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={profileUpdateReminder.onSend}
+          disabled={profileUpdateReminder.sending}
+          sx={{
+            textTransform: 'none',
+            alignSelf: 'flex-start',
+            borderRadius: '999px',
+            fontWeight: 500,
+            minWidth: 'auto',
+            px: 1.5,
+            py: 0.5,
+            fontSize: '0.8125rem',
+          }}
+        >
+          {profileUpdateReminder.sending ? 'Sending...' : 'Profile Update Reminder'}
+        </Button>
+        {profileUpdateReminder.error ? (
+          <Typography sx={{ fontSize: '0.65rem', lineHeight: 1.35, color: 'error.main', maxWidth: 560 }}>
+            {profileUpdateReminder.error}
+          </Typography>
+        ) : profileUpdateReminder.lastSentAt ? (
+          <Typography sx={{ fontSize: '0.65rem', lineHeight: 1.35, color: 'text.secondary' }}>
+            Sent {profileUpdateReminder.lastSentAt.toLocaleString()}
+          </Typography>
+        ) : null}
+      </Stack>
+    ) : null;
   
   if (loading && allMessageLogs.length === 0 && smsThreads.length === 0) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
-        <CircularProgress />
+      <Box sx={{ px: 3, py: 4 }}>
+        {profileReminderSection}
+        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+          <CircularProgress />
+        </Box>
       </Box>
     );
   }
 
   return (
     <Box sx={{ px: 3, py: 4 }}>
+      {profileReminderSection}
       <Typography variant="h6" fontWeight={700} gutterBottom>
         Messages
       </Typography>

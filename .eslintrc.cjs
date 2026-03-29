@@ -32,12 +32,28 @@ module.exports = {
     'import/no-named-as-default': 'off',
     'import/no-named-as-default-member': 'off',
     'unused-imports/no-unused-imports': 'warn',
-    '@typescript-eslint/no-explicit-any': 'warn',
+    // Avoid duplicate warnings with @typescript-eslint/no-unused-vars for imports.
+    '@typescript-eslint/no-unused-vars': 'off',
+    'unused-imports/no-unused-vars': [
+      'warn',
+      {
+        vars: 'all',
+        varsIgnorePattern: '^_',
+        args: 'after-used',
+        argsIgnorePattern: '^_',
+        ignoreRestSiblings: true,
+      },
+    ],
+    // Legacy codebase: thousands of intentional `any` bridges; re-enable as "warn" when cleaning a folder.
+    '@typescript-eslint/no-explicit-any': 'off',
+    // Style-only; very noisy in this repo and does not affect runtime.
+    'import/order': 'off',
+    'import/no-duplicates': 'off',
+    '@typescript-eslint/no-non-null-assertion': 'off',
     '@typescript-eslint/no-empty-function': 'off',
     'react/react-in-jsx-scope': 'off',
     'react/no-unescaped-entities': 'off',
     'react/jsx-key': 'warn',
-    'import/order': ['warn', { 'newlines-between': 'always' }],
     'react/no-danger': 'warn',
     'react/forbid-component-props': ['warn', { forbid: [{ propName: 'style', message: 'Use theme tokens and sx prop or styled components' }] }],
     'no-empty': ['warn', { allowEmptyCatch: true }]
