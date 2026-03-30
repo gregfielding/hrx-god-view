@@ -122,10 +122,13 @@ function defaultLoginEnvelope(username: string, password: string): string {
 function mapCitizenshipToIcaCode(status: string): string {
   const map: Record<string, string> = {
     US_CITIZEN: '1',
+    /** REST v31 enum (U.S. noncitizen national) */
+    NONCITIZEN: '2',
     NONCITIZEN_NATIONAL: '2',
     LAWFUL_PERMANENT_RESIDENT: '3',
     ALIEN_AUTHORIZED_TO_WORK: '4',
     OTHER: '5',
+    NONCITIZEN_AUTHORIZED_TO_WORK: '5',
   };
   return map[status] ?? status;
 }

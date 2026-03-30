@@ -17,6 +17,16 @@ import {
 import { db } from '../../firebase';
 import { JobOrder } from '../../types/recruiter/jobOrder';
 
+/** Lowercase trim for comparing job order workflow status (open, cancelled, on_hold, …). */
+export function normalizeJobOrderStatusValue(status: unknown): string {
+  return String(status ?? '').trim().toLowerCase();
+}
+
+/** Only an Open job order may keep linked board postings live on the public jobs board. */
+export function isJobOrderBoardLiveStatus(status: unknown): boolean {
+  return normalizeJobOrderStatusValue(status) === 'open';
+}
+
 /** Coerce Firestore / legacy values to string[] for multi-select job post fields (handles nested arrays from bad merges). */
 export const coerceStringArrayField = (value: unknown): string[] => {
   if (value == null) return [];
@@ -1077,9 +1087,40 @@ export class JobsBoardService {
       
       console.log(`✅ Filtered to ${filteredPosts.length} active public/restricted posts`);
       
+      // Drop active posts whose parent job order is not Open (fixes stale posting docs)
+      const jobOrderIdSet = new Set<string>();
+      for (const post of filteredPosts) {
+        const raw = (post as JobsBoardPost).jobOrderId;
+        const jid = typeof raw === 'string' ? raw.trim() : '';
+        if (jid) jobOrderIdSet.add(jid);
+      }
+      const jobOrderIds = Array.from(jobOrderIdSet);
+      const jobOrderOpenById = new Map<string, boolean>();
+      if (jobOrderIds.length > 0) {
+        await Promise.all(
+          jobOrderIds.map(async (jid) => {
+            try {
+              const joRef = doc(db, 'tenants', tenantId, 'job_orders', jid);
+              const joSnap = await getDoc(joRef);
+              if (!joSnap.exists()) {
+                jobOrderOpenById.set(jid, false);
+                return;
+              }
+              jobOrderOpenById.set(jid, isJobOrderBoardLiveStatus((joSnap.data() as Record<string, unknown>)?.status));
+            } catch {
+              jobOrderOpenById.set(jid, false);
+            }
+          })
+        );
+      }
+      const filteredByJobOrderStatus = filteredPosts.filter((post) => {
+        if (!post.jobOrderId) return true;
+        return jobOrderOpenById.get(post.jobOrderId) === true;
+      });
+
       // Filter by group restrictions if user groups are provided
       if (userGroups && userGroups.length > 0) {
-        const groupFiltered = filteredPosts.filter(post => {
+        const groupFiltered = filteredByJobOrderStatus.filter(post => {
           if (post.visibility === 'public') return true;
           if (post.visibility === 'restricted' && post.restrictedGroups) {
             return post.restrictedGroups.some(groupId => userGroups.includes(groupId));
@@ -1091,7 +1132,7 @@ export class JobsBoardService {
       }
       
       // If no user groups provided, only return public posts
-      const publicOnly = filteredPosts.filter(post => post.visibility === 'public');
+      const publicOnly = filteredByJobOrderStatus.filter(post => post.visibility === 'public');
       console.log(`✅ Public only (no user groups): ${publicOnly.length} posts`);
       return publicOnly;
     } catch (error) {
@@ -1120,6 +1161,98 @@ export class JobsBoardService {
       console.error('Error getting posts by job order:', error);
       throw error;
     }
+  }
+
+  /**
+   * Keep jobs board posting `status` aligned with job order workflow:
+   * - Any status other than Open → pause linked postings that are still `active` (idempotent).
+   * - Transition to Open → set all linked postings to `active` (legacy behavior when reopening an order).
+   */
+  async syncLinkedJobPostingsToJobOrderStatus(
+    tenantId: string,
+    jobOrderId: string,
+    newJobOrderStatus: unknown,
+    previousJobOrderStatus?: unknown
+  ): Promise<void> {
+    const newN = normalizeJobOrderStatusValue(newJobOrderStatus);
+    const prevN = normalizeJobOrderStatusValue(previousJobOrderStatus);
+
+    const posts = await this.getPostsByJobOrder(tenantId, jobOrderId);
+    if (posts.length === 0) return;
+
+    if (newN !== 'open') {
+      for (const post of posts) {
+        if (post.status === 'active') {
+          await this.updatePostStatus(tenantId, post.id, 'paused');
+        }
+      }
+      return;
+    }
+
+    if (prevN !== 'open') {
+      for (const post of posts) {
+        await this.updatePostStatus(tenantId, post.id, 'active');
+      }
+    }
+  }
+
+  /**
+   * Admin repair: pause every `active` job posting that references a job order whose status is not Open
+   * (including missing job order docs). Standalone posts without `jobOrderId` are left unchanged.
+   */
+  async repairPauseActivePostsLinkedToNonOpenJobOrders(tenantId: string): Promise<{
+    activePostsScanned: number;
+    activePostsWithJobOrder: number;
+    paused: number;
+    errors: string[];
+  }> {
+    const activeQuery = query(
+      collection(db, 'tenants', tenantId, 'job_postings'),
+      where('status', '==', 'active')
+    );
+    const snapshot = await getDocs(activeQuery);
+    const posts = snapshot.docs.map((d) =>
+      normalizeJobsBoardPostRecord(d.id, (d.data() || {}) as Record<string, unknown>)
+    );
+
+    const withOrder = posts.filter((p) => Boolean(p.jobOrderId && String(p.jobOrderId).trim()));
+    const uniqueOrderIds = [...new Set(withOrder.map((p) => p.jobOrderId as string))];
+
+    const statusByOrderId = new Map<string, unknown>();
+    await Promise.all(
+      uniqueOrderIds.map(async (jobOrderId) => {
+        try {
+          const joRef = doc(db, 'tenants', tenantId, 'job_orders', jobOrderId);
+          const joSnap = await getDoc(joRef);
+          statusByOrderId.set(jobOrderId, joSnap.exists() ? (joSnap.data() as Record<string, unknown>)?.status : null);
+        } catch {
+          statusByOrderId.set(jobOrderId, null);
+        }
+      })
+    );
+
+    const errors: string[] = [];
+    let paused = 0;
+
+    for (const post of withOrder) {
+      const jid = String(post.jobOrderId).trim();
+      const raw = statusByOrderId.get(jid);
+      if (isJobOrderBoardLiveStatus(raw)) continue;
+
+      try {
+        await this.updatePostStatus(tenantId, post.id, 'paused');
+        paused += 1;
+      } catch (e: any) {
+        errors.push(`${post.id}: ${e?.message || String(e)}`);
+      }
+    }
+
+    return {
+      activePostsScanned: posts.length,
+      activePostsWithJobOrder: withOrder.length,
+      paused,
+      errors,
+    };
   }
 
   /**

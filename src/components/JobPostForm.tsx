@@ -39,6 +39,7 @@ import { collection, getDocs, query, orderBy as firestoreOrderBy, where, doc, ge
 import { db } from '../firebase';
 import { geocodeAddress } from '../utils/geocodeAddress';
 import { formatCityStateZipInput, parseCityStateZipFromWorksiteName } from '../utils/cityStateZipInput';
+import { normalizeStateCode } from '../utils/unemploymentRates';
 import { generateJobDescriptionWithAi } from '../utils/jobDescriptionAiGenerate';
 import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../utils/dedupeUserGroupsForUi';
 
@@ -52,6 +53,37 @@ function zipFromWorksiteAddress(wa: Record<string, unknown> | undefined): string
   return typeof z === 'string' ? z : '';
 }
 
+/** Flatten nested worksiteAddress + worksiteName so city/state fields work on first paint (edit load). */
+function getFlatWorksiteFromInitialJobPost(initialData?: Partial<JobsBoardPost>) {
+  if (!initialData) {
+    return {
+      street: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      coordinates: undefined as { lat: number; lng: number } | undefined,
+    };
+  }
+  const worksiteAddress = (initialData.worksiteAddress || {}) as Record<string, unknown>;
+  const parsedFromName = parseCityStateZipFromWorksiteName(
+    typeof initialData.worksiteName === 'string' ? initialData.worksiteName : ''
+  );
+  const resolvedZip = zipFromWorksiteAddress(worksiteAddress) || parsedFromName.zipCode || '';
+  const rawCity = (worksiteAddress.city as string) || parsedFromName.city || '';
+  const rawState = (worksiteAddress.state as string) || parsedFromName.state || '';
+  const resolvedCity = (rawCity || '').trim();
+  const resolvedState =
+    normalizeStateCode(rawState) ||
+    (String(rawState).trim().length === 2 ? String(rawState).trim().toUpperCase() : '');
+  return {
+    street: typeof worksiteAddress.street === 'string' ? worksiteAddress.street : '',
+    city: resolvedCity,
+    state: resolvedState,
+    zipCode: resolvedZip,
+    coordinates: worksiteAddress.coordinates as { lat: number; lng: number } | undefined,
+  };
+}
+
 export interface JobPostFormProps {
   initialData?: Partial<JobsBoardPost>;
   onSave: (data: Partial<JobsBoardPost>) => Promise<void>;
@@ -62,6 +94,8 @@ export interface JobPostFormProps {
   jobOrderData?: any; // Full job order data for AI generation
   /** When true (edit mode only), persist on TextField blur and on other control change; hides footer buttons. */
   autoSave?: boolean;
+  /** Recruiter edit page: merge into header `post` for live syndication icons + location lines while editing. */
+  onHeaderPreviewChange?: (patch: Partial<JobsBoardPost>) => void;
 }
 
 const JobPostForm: React.FC<JobPostFormProps> = ({
@@ -73,6 +107,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   hideJobOrderConnection = false,
   jobOrderData,
   autoSave = false,
+  onHeaderPreviewChange,
 }) => {
   const { tenantId, user } = useAuth();
   const [error, setError] = useState<string | null>(null);
@@ -91,75 +126,90 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     return [];
   };
 
-  // Form data - using the same structure as JobsBoard
-  const [formData, setFormData] = useState({
-    postTitle: '',
-    jobType: 'gig' as 'gig' | 'career',
-    jobTitle: '',
-    jobDescription: '',
-    jobDescriptionPrompt: '',
-    craigslistUrl: '',
-    indeedUrl: '',
-    companyId: '',
-    companyName: '',
-    worksiteId: '',
-    worksiteName: '',
-    street: '',
-    city: '',
-    state: '',
-    zipCode: '',
-    startDate: '',
-    endDate: '',
-    expDate: '',
-    showStart: false,
-    showEnd: false,
-    payRate: '',
-    showPayRate: true,
-    workersNeeded: 1,
-    showWorkersNeeded: false,
-    eVerifyRequired: false,
-    backgroundCheckPackages: [],
-    showBackgroundChecks: false,
-    drugScreeningPanels: [],
-    showDrugScreening: false,
-    additionalScreenings: [],
-    showAdditionalScreenings: false,
-    visibility: 'public' as 'public' | 'private' | 'restricted',
-    restrictedGroups: [] as string[],
-    status: 'draft' as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired',
-    jobOrderId: '',
-    skills: [] as string[],
-    showSkills: false,
-    licensesCerts: [] as string[],
-    showLicensesCerts: false,
-    experienceLevels: [] as string[],
-    showExperience: false,
-    educationLevels: [] as string[],
-    showEducation: false,
-    languages: [] as string[],
-    showLanguages: false,
-    physicalRequirements: [] as string[],
-    showPhysicalRequirements: false,
-    uniformRequirements: [] as string[],
-    showUniformRequirements: false,
-    customUniformRequirements: '',
-    showCustomUniformRequirements: false,
-    requiredPpe: [] as string[],
-    showRequiredPpe: false,
-    shift: [] as string[],
-    showShift: false,
-    startTime: '',
-    endTime: '',
-    showStartTime: false,
-    showEndTime: false,
-    autoAddToUserGroups: [] as string[],
-    coordinates: undefined as { lat: number; lng: number } | undefined,
-    ...initialData
+  // Form data — flatten worksiteAddress onto city/state/zip on first paint so edit load does not show empty location
+  const [formData, setFormData] = useState(() => {
+    const flat = getFlatWorksiteFromInitialJobPost(initialData);
+    return {
+      postTitle: '',
+      jobType: 'gig' as 'gig' | 'career',
+      jobTitle: '',
+      jobDescription: '',
+      jobDescriptionPrompt: '',
+      companyId: '',
+      companyName: '',
+      worksiteId: '',
+      worksiteName: '',
+      street: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      startDate: '',
+      endDate: '',
+      expDate: '',
+      showStart: false,
+      showEnd: false,
+      payRate: '',
+      showPayRate: true,
+      workersNeeded: 1,
+      showWorkersNeeded: false,
+      eVerifyRequired: false,
+      backgroundCheckPackages: [] as string[],
+      showBackgroundChecks: false,
+      drugScreeningPanels: [] as string[],
+      showDrugScreening: false,
+      additionalScreenings: [] as string[],
+      showAdditionalScreenings: false,
+      visibility: 'public' as 'public' | 'private' | 'restricted',
+      restrictedGroups: [] as string[],
+      status: 'draft' as 'draft' | 'active' | 'paused' | 'cancelled' | 'expired',
+      jobOrderId: '',
+      skills: [] as string[],
+      showSkills: false,
+      licensesCerts: [] as string[],
+      showLicensesCerts: false,
+      experienceLevels: [] as string[],
+      showExperience: false,
+      educationLevels: [] as string[],
+      showEducation: false,
+      languages: [] as string[],
+      showLanguages: false,
+      physicalRequirements: [] as string[],
+      showPhysicalRequirements: false,
+      uniformRequirements: [] as string[],
+      showUniformRequirements: false,
+      customUniformRequirements: '',
+      showCustomUniformRequirements: false,
+      requiredPpe: [] as string[],
+      showRequiredPpe: false,
+      shift: [] as string[],
+      showShift: false,
+      startTime: '',
+      endTime: '',
+      showStartTime: false,
+      showEndTime: false,
+      autoAddToUserGroups: [] as string[],
+      coordinates: undefined as { lat: number; lng: number } | undefined,
+      ...(initialData || {}),
+      ...flat,
+      craigslistUrl: typeof initialData?.craigslistUrl === 'string' ? initialData.craigslistUrl : '',
+      indeedUrl: typeof initialData?.indeedUrl === 'string' ? initialData.indeedUrl : '',
+    };
   });
 
   /** Syndication URLs: standalone board posts, or any post edited from job order Jobs Board tab. */
   const showSyndicationUrlFields =
     hideJobOrderConnection || !(formData.jobOrderId && String(formData.jobOrderId).trim());
+
+  /** Job description + AI prompt: local strings while typing; commit to formData on blur (avoids heavy re-renders each keystroke). */
+  const jobDescriptionFocusRef = useRef(false);
+  const jobDescriptionPromptFocusRef = useRef(false);
+  const [jobDescriptionLocal, setJobDescriptionLocal] = useState(() =>
+    typeof initialData?.jobDescription === 'string' ? initialData.jobDescription : ''
+  );
+  const [jobDescriptionPromptLocal, setJobDescriptionPromptLocal] = useState(() => {
+    const p = (initialData as { jobDescriptionPrompt?: string } | undefined)?.jobDescriptionPrompt;
+    return typeof p === 'string' ? p : '';
+  });
 
   const formDataRef = useRef(formData);
   formDataRef.current = formData;
@@ -224,11 +274,23 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           ...(patch.street !== undefined ? { street: patch.street } : {}),
         }));
       });
+      const street =
+        patch.street !== undefined ? patch.street : formDataRef.current.street;
+      onHeaderPreviewChange?.({
+        worksiteName: patch.worksiteName,
+        worksiteAddress: {
+          street: street || '',
+          city: patch.city,
+          state: patch.state,
+          zipCode: patch.zipCode,
+          coordinates: patch.coordinates ?? formDataRef.current.coordinates,
+        },
+      });
       if (autoSave && mode === 'edit') {
         window.setTimeout(() => schedulePersist(), 0);
       }
     },
-    [autoSave, mode, schedulePersist]
+    [autoSave, mode, onHeaderPreviewChange, schedulePersist]
   );
 
   function AutoSaveTextField(props: TextFieldProps) {
@@ -250,11 +312,20 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   // Company and location data
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
   const [locations, setLocations] = useState<Array<{ id: string; name: string; nickname?: string; address: any }>>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('');
-  const [selectedLocationId, setSelectedLocationId] = useState<string>('');
+  const [selectedCompanyId, setSelectedCompanyId] = useState(() =>
+    (initialData?.companyId ?? '').toString().trim()
+  );
+  const [selectedLocationId, setSelectedLocationId] = useState(() =>
+    (initialData?.worksiteId ?? '').toString().trim()
+  );
   const [loadingCompanies, setLoadingCompanies] = useState(false);
   const [loadingLocations, setLoadingLocations] = useState(false);
-  const [useCompanyLocation, setUseCompanyLocation] = useState(true);
+  const [useCompanyLocation, setUseCompanyLocation] = useState(() => {
+    const p = initialData as JobsBoardPost | undefined;
+    const cid = (p?.companyId ?? '').toString().trim();
+    const wid = (p?.worksiteId ?? '').toString().trim();
+    return !!(cid && wid);
+  });
 
   // Job orders and user groups
   const [jobOrders, setJobOrders] = useState<Array<{ id: string; jobOrderName: string; status: string }>>([]);
@@ -277,6 +348,37 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     [autoAddGroupsAutocompleteValue]
   );
 
+  /** Keep saved worksiteId visible while CRM locations are loading or if the doc was removed from the subcollection. */
+  const locationsForWorksiteSelect = useMemo(() => {
+    if (!selectedLocationId) return locations;
+    if (locations.some((l) => l.id === selectedLocationId)) return locations;
+    const label = (formData.worksiteName || '').trim() || 'Saved worksite';
+    return [
+      ...locations,
+      {
+        id: selectedLocationId,
+        name: label,
+        nickname: formData.worksiteName || label,
+        address: {
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          zipCode: formData.zipCode,
+          coordinates: formData.coordinates,
+        },
+      },
+    ];
+  }, [
+    locations,
+    selectedLocationId,
+    formData.worksiteName,
+    formData.street,
+    formData.city,
+    formData.state,
+    formData.zipCode,
+    formData.coordinates,
+  ]);
+
   /** Collapse duplicate Firestore user group docs in stored `autoAddToUserGroups` to one id per display name. */
   useEffect(() => {
     if (userGroups.length === 0) return;
@@ -293,6 +395,18 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     mode,
     maybeTickPersist,
   ]);
+
+  useEffect(() => {
+    if (!jobDescriptionFocusRef.current) {
+      setJobDescriptionLocal(formData.jobDescription || '');
+    }
+  }, [formData.jobDescription]);
+
+  useEffect(() => {
+    if (!jobDescriptionPromptFocusRef.current) {
+      setJobDescriptionPromptLocal(formData.jobDescriptionPrompt || '');
+    }
+  }, [formData.jobDescriptionPrompt]);
 
   const [geocoding, setGeocoding] = useState(false);
   const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
@@ -369,6 +483,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       );
       const resolvedZip =
         zipFromWorksiteAddress(worksiteAddress) || parsedFromName.zipCode || '';
+      const rawCity =
+        (worksiteAddress.city as string) || parsedFromName.city || '';
+      const rawState =
+        (worksiteAddress.state as string) || parsedFromName.state || '';
+      const resolvedCity = (rawCity || '').trim();
+      const resolvedState =
+        normalizeStateCode(rawState) ||
+        (String(rawState).trim().length === 2 ? String(rawState).trim().toUpperCase() : '');
 
       const cid = (initialData.companyId || '').toString().trim();
       const wid = (initialData.worksiteId || '').toString().trim();
@@ -389,14 +511,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         payRate: initialData.payRate ? initialData.payRate.toString() : '',
         // Extract worksiteAddress fields to top-level form fields
         street: worksiteAddress.street || prev.street || '',
-        city: worksiteAddress.city || parsedFromName.city || prev.city || '',
-        state: worksiteAddress.state || parsedFromName.state || prev.state || '',
+        city: resolvedCity || prev.city || '',
+        state: resolvedState || prev.state || '',
         zipCode: resolvedZip || prev.zipCode || '',
         coordinates: worksiteAddress.coordinates || prev.coordinates,
         worksiteAddress: {
           street: worksiteAddress.street || '',
-          city: worksiteAddress.city || parsedFromName.city || '',
-          state: worksiteAddress.state || parsedFromName.state || '',
+          city: resolvedCity,
+          state: resolvedState,
           zipCode: resolvedZip || '',
         },
         autoAddToUserGroups: normalizeGroupIds(initialData.autoAddToUserGroups ?? initialData.autoAddToUserGroup),
@@ -728,6 +850,17 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         // Store coordinates for distance calculations
         coordinates: selectedLocation.address.coordinates
       });
+      onHeaderPreviewChange?.({
+        worksiteId: locationId,
+        worksiteName: selectedLocation.nickname || selectedLocation.name,
+        worksiteAddress: {
+          street: selectedLocation.address.street || '',
+          city: selectedLocation.address.city || '',
+          state: selectedLocation.address.state || '',
+          zipCode: selectedLocation.address.zipCode || '',
+          coordinates: selectedLocation.address.coordinates,
+        },
+      });
     }
     maybeTickPersist(0);
   };
@@ -932,7 +1065,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const isFormValid = () => {
     if (!formData.postTitle?.trim()) return false;
     if (!formData.jobType) return false;
-    if (!formData.jobDescription?.trim()) return false;
+    const desc = jobDescriptionFocusRef.current ? jobDescriptionLocal : formData.jobDescription;
+    if (!desc?.trim()) return false;
     
     // Location: valid if we have city+state (e.g. from job order worksiteAddress) OR company worksite selected
     // For Gig jobs and event worksites, worksite may not be in company locations subcollection, so city+state is sufficient
@@ -952,13 +1086,21 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     setError(null);
 
     try {
+      const fd = {
+        ...formData,
+        jobDescription: jobDescriptionFocusRef.current ? jobDescriptionLocal : formData.jobDescription,
+        jobDescriptionPrompt: jobDescriptionPromptFocusRef.current
+          ? jobDescriptionPromptLocal
+          : formData.jobDescriptionPrompt,
+      };
       const text = await generateJobDescriptionWithAi({
         tenantId,
-        formData,
+        formData: fd,
         jobOrderData: jobOrderData ?? undefined,
       });
       if (text) {
         setFormData((prev) => ({ ...prev, jobDescription: text }));
+        setJobDescriptionLocal(text);
         maybeTickPersist(0);
       } else {
         setError('Failed to generate job description');
@@ -972,7 +1114,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   };
 
   const handleCopyDescription = () => {
-    const text = formData.jobDescription?.trim();
+    const text = (jobDescriptionFocusRef.current ? jobDescriptionLocal : formData.jobDescription)?.trim();
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
       setCopySnackbarOpen(true);
@@ -988,9 +1130,17 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     }
 
     try {
+      const jobDescriptionSaved = jobDescriptionFocusRef.current
+        ? jobDescriptionLocal
+        : formData.jobDescription;
+      const jobDescriptionPromptSaved = jobDescriptionPromptFocusRef.current
+        ? jobDescriptionPromptLocal
+        : formData.jobDescriptionPrompt;
       // Convert string dates to Date objects and string payRate to number
       const dataToSave = stripReadOnlyJobPostFields({
         ...formData,
+        jobDescription: jobDescriptionSaved,
+        jobDescriptionPrompt: jobDescriptionPromptSaved,
         startDate: formData.startDate ? new Date(formData.startDate) : undefined,
         endDate: formData.endDate ? new Date(formData.endDate) : undefined,
         expDate: formData.expDate ? new Date(formData.expDate) : undefined,
@@ -1204,14 +1354,28 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           </Box>
         )}
 
-        <AutoSaveTextField
+        <TextField
           label="Job Description Prompt"
-          value={formData.jobDescriptionPrompt}
-          onChange={(e) => setFormData({ ...formData, jobDescriptionPrompt: e.target.value })}
+          value={jobDescriptionPromptLocal}
+          onChange={(e) => setJobDescriptionPromptLocal(e.target.value)}
+          onFocus={() => {
+            jobDescriptionPromptFocusRef.current = true;
+          }}
+          onBlur={(e) => {
+            const v = e.target.value;
+            jobDescriptionPromptFocusRef.current = false;
+            flushSync(() => {
+              setJobDescriptionPromptLocal(v);
+              setFormData((prev) => ({ ...prev, jobDescriptionPrompt: v }));
+            });
+            if (autoSave && mode === 'edit') {
+              window.setTimeout(() => schedulePersist(), 0);
+            }
+          }}
           fullWidth
           multiline
           minRows={3}
-          helperText="Extra instructions for AI: used when there is no job order, or combined with the job order description when one is connected."
+          helperText="Extra instructions for AI: used when there is no job order, or combined with the job order description when one is connected. Edits save when you leave this field."
         />
 
         <Box sx={{ mt: 2 }}>
@@ -1409,12 +1573,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   companyId: '',
                   companyName: '',
                   worksiteId: '',
-                  worksiteName: '',
-                  street: '',
-                  city: '',
-                  state: '',
-                  zipCode: '',
-                  coordinates: undefined,
+                  worksiteName:
+                    formatCityStateZipInput(prev.city, prev.state, prev.zipCode) || prev.worksiteName || '',
+                  // Keep street / city / state / zip / coordinates so the City field still matches the header
                 }));
               }
               maybeTickPersist(0);
@@ -1484,10 +1645,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     >
                       {loadingLocations ? (
                         <MenuItem value="">Loading locations...</MenuItem>
-                      ) : locations.length === 0 ? (
+                      ) : locationsForWorksiteSelect.length === 0 ? (
                         <MenuItem value="">No locations available</MenuItem>
                       ) : (
-                        locations.map((location) => (
+                        locationsForWorksiteSelect.map((location) => (
                           <MenuItem key={location.id} value={location.id}>
                             {location.nickname || location.name}
                           </MenuItem>
@@ -2336,7 +2497,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             <AutoSaveTextField
               label="Craigslist URL"
               value={formData.craigslistUrl}
-              onChange={(e) => setFormData({ ...formData, craigslistUrl: e.target.value })}
+              onChange={(e) => {
+                const craigslistUrl = e.target.value;
+                flushSync(() => {
+                  setFormData((prev) => ({ ...prev, craigslistUrl }));
+                });
+                const fd = formDataRef.current;
+                onHeaderPreviewChange?.({ craigslistUrl: fd.craigslistUrl, indeedUrl: fd.indeedUrl });
+              }}
               fullWidth
               placeholder="https://…"
               helperText="Optional. Header icon opens this link in a new tab when set."
@@ -2344,7 +2512,14 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             <AutoSaveTextField
               label="Indeed URL"
               value={formData.indeedUrl}
-              onChange={(e) => setFormData({ ...formData, indeedUrl: e.target.value })}
+              onChange={(e) => {
+                const indeedUrl = e.target.value;
+                flushSync(() => {
+                  setFormData((prev) => ({ ...prev, indeedUrl }));
+                });
+                const fd = formDataRef.current;
+                onHeaderPreviewChange?.({ craigslistUrl: fd.craigslistUrl, indeedUrl: fd.indeedUrl });
+              }}
               fullWidth
               placeholder="https://…"
               helperText="Optional. Header icon opens this link in a new tab when set."
@@ -2366,22 +2541,38 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             variant="outlined"
             startIcon={<ContentCopyIcon />}
             onClick={handleCopyDescription}
-            disabled={!formData.jobDescription?.trim()}
+            disabled={
+              !(jobDescriptionFocusRef.current ? jobDescriptionLocal : formData.jobDescription)?.trim()
+            }
             size="small"
           >
             Copy to clipboard
           </Button>
         </Box>
 
-        <AutoSaveTextField
+        <TextField
           label="Job Description"
-          value={formData.jobDescription}
-          onChange={(e) => setFormData({ ...formData, jobDescription: e.target.value })}
+          value={jobDescriptionLocal}
+          onChange={(e) => setJobDescriptionLocal(e.target.value)}
+          onFocus={() => {
+            jobDescriptionFocusRef.current = true;
+          }}
+          onBlur={(e) => {
+            const v = e.target.value;
+            jobDescriptionFocusRef.current = false;
+            flushSync(() => {
+              setJobDescriptionLocal(v);
+              setFormData((prev) => ({ ...prev, jobDescription: v }));
+            });
+            if (autoSave && mode === 'edit') {
+              window.setTimeout(() => schedulePersist(), 0);
+            }
+          }}
           fullWidth
           required
           multiline
           minRows={6}
-          helperText="Public job posting text. Use Generate to draft from the job order (or from your prompts when no order is connected)."
+          helperText="Public job posting text. Use Generate to draft from the job order (or from your prompts when no order is connected). Edits save when you leave this field."
         />
 
         {!(autoSave && mode === 'edit') && (

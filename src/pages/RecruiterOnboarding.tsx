@@ -31,6 +31,7 @@ import { useSearchParams } from "react-router-dom";
 import { db, functions } from "../firebase";
 import { p } from "../data/firestorePaths";
 import { useAuth } from "../contexts/AuthContext";
+import { countPipelineProgressForEntity } from "../utils/onboardingPipelineProgress";
 
 type StepStatus = "not_started" | "in_progress" | "complete" | "blocked";
 type StepApplicability = "required" | "not_required" | "pending";
@@ -132,16 +133,14 @@ const WORKFLOW_STATUS_COLOR: Record<string, "default" | "warning" | "success" | 
   canceled: "default",
 };
 
-const CRITICAL_STEP_IDS = new Set(["i9", "onboarding_forms", "e_verify", "background_check", "drug_screen"]);
-
-/** Onboarding workspace phases (entity-driven). E-Verify phase only shown when step applicability !== not_required. */
+/** Onboarding workspace phases. E-Verify is C1 Select–only; phase is omitted for workforce/events pipelines. */
 const PHASE_PAYROLL_LEGAL: string[] = ["i9", "onboarding_forms", "everee"];
 const PHASE_E_VERIFY: string[] = ["e_verify"];
 const PHASE_BACKGROUNDS: string[] = ["background_check", "drug_screen"];
 
 const PHASES: { id: string; title: string; stepIds: string[] }[] = [
   { id: "payroll_legal", title: "Payroll & Legal", stepIds: PHASE_PAYROLL_LEGAL },
-  { id: "e_verify", title: "E-Verify", stepIds: PHASE_E_VERIFY },
+  { id: "e_verify", title: "Work authorization — E-Verify (C1 Select)", stepIds: PHASE_E_VERIFY },
   { id: "backgrounds", title: "Backgrounds & Screening", stepIds: PHASE_BACKGROUNDS },
 ];
 
@@ -450,8 +449,9 @@ const RecruiterOnboarding: React.FC = () => {
             {activeRows.map((row) => {
               const employment = employmentByPipelineId[row.id];
               const steps = row.steps || [];
-              const completeCount = steps.filter((s) => s.status === "complete").length;
-              const progressLabel = `${completeCount} / ${steps.length} steps`;
+              const { complete: progComplete, total: progTotal } = countPipelineProgressForEntity(steps, row.entityKey);
+              const progressLabel =
+                progTotal > 0 ? `${progComplete} / ${progTotal} applicable steps` : `${steps.filter((s) => s.status === "complete").length} / ${steps.length} steps`;
               return (
                 <Card key={row.id} variant="outlined">
                   <CardContent>
@@ -483,6 +483,8 @@ const RecruiterOnboarding: React.FC = () => {
                       </Stack>
                       <Divider />
                       {PHASES.map((phase) => {
+                        const entityKeyLower = String(row.entityKey || "").toLowerCase();
+                        if (phase.id === "e_verify" && entityKeyLower !== "select") return null;
                         const stepIdsInPhase = phase.stepIds;
                         const stepsInPhase = steps.filter((s) => stepIdsInPhase.includes(s.id));
                         const eVerifyStep = stepsInPhase.find((s) => s.id === "e_verify");

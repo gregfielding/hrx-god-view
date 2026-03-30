@@ -51,7 +51,7 @@ import UserAssignmentsTab from './components/UserAssignmentsTab';
 import SystemAccessTab from './components/SystemAccessTab';
 import EmailSignatureTab from './components/EmailSignatureTab';
 import OnboardingTab from './components/OnboardingTab';
-import EmploymentTab from './components/EmploymentTab';
+import EmploymentV2Tab from './components/employment-v2/EmploymentV2Tab';
 import ComplianceTab from './components/ComplianceTab';
 import UserApplicationsTab from './components/UserApplicationsTab';
 import MessagesTab from './components/MessagesTab';
@@ -1828,7 +1828,7 @@ const UserProfilePage = () => {
                         variant="body2"
                         sx={{ fontSize: '14px', fontWeight: 400, color: 'rgba(0, 0, 0, 0.55)' }}
                       >
-                        Agree to E-Verify:{' '}
+                        E-Verify consent (Select roles):{' '}
                       </Typography>
                       <EVerifyComfortChip status={eVerifyComfortStatus} size="small" />
                       {!city && !state && !createdAt && jobTitle && (
@@ -2235,7 +2235,9 @@ const UserProfilePage = () => {
               case 'Onboarding':
                 return <OnboardingTab uid={uid} tenantId={tenantId || ''} />;
               case 'Employment':
-                return <EmploymentTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
+                return (
+                  <EmploymentV2Tab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />
+                );
               case 'Compliance':
                 return <ComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
               case 'Backgrounds':

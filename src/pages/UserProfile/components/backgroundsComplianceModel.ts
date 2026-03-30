@@ -1,6 +1,6 @@
 /**
- * Normalized compliance UI model for BackgroundsComplianceTab (E-Verify + AccuSource).
- * Keeps summary chips, table rows, and action-needed flags aligned with one mapping.
+ * Normalized compliance UI model for BackgroundsComplianceTab (C1 Select E-Verify + AccuSource).
+ * E-Verify rows in the tab are filtered to Select-linked cases in the tab component; screening rows are unchanged.
  */
 
 import { Timestamp } from 'firebase/firestore';

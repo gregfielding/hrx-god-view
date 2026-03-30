@@ -16,6 +16,7 @@ import { getEverifyFakeProvider, getEverifyEaatScenario } from './everifyConfig'
 import { logger } from 'firebase-functions/v2';
 import { httpJson, summarizeHttpErrorBody } from './everifyHttp';
 import { getAccessToken as getIcaAccessToken, type EverifyCredentials } from './everifyAuth';
+import { applyRestDraftPayloadNormalization } from './everifyI9Provider';
 
 export interface EverifyCreateCaseRequest {
   tenantId: string;
@@ -207,6 +208,8 @@ export async function createDraftCase(
   creds: EverifyCredentials
 ): Promise<CreateCaseDraftResponse> {
   assertEverifyEnvUrlConsistency();
+  const body = payload as Record<string, unknown>;
+  applyRestDraftPayloadNormalization(body);
   const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
   const url = `${baseUrl}/cases`;
   const token = await getIcaAccessToken(creds);
@@ -216,7 +219,7 @@ export async function createDraftCase(
       method: 'POST',
       url,
       headers: { Authorization: `Bearer ${token}` },
-      body: payload,
+      body,
       timeoutMs: 20000,
       retries: 1,
     });

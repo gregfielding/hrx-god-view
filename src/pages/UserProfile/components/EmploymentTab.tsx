@@ -39,6 +39,7 @@ import { getWorkerReadiness, getReadinessStatusLabel, type ReadinessStatus } fro
 import type { WorkerComplianceItem } from '../../../types/compliance';
 import { hasExpiredCompliance, hasExpiringSoonCompliance } from '../../../utils/complianceExpiration';
 import { getEmploymentStatusLabel } from '../../../utils/employmentStatusLabel';
+import { countPipelineProgressForEntity } from '../../../utils/onboardingPipelineProgress';
 
 export interface EntityEmploymentRecord {
   id: string;
@@ -184,9 +185,7 @@ const EmploymentTab: React.FC<EmploymentTabProps> = ({ uid, tenantId }) => {
             const snap = await getDoc(pipelineRef);
             const data = snap.data();
             const steps = Array.isArray(data?.steps) ? data.steps : [];
-            const total = steps.length;
-            const complete = steps.filter((s: { status?: string }) => s.status === 'complete').length;
-            counts[rec.onboardingPipelineId] = { complete, total };
+            counts[rec.onboardingPipelineId] = countPipelineProgressForEntity(steps, rec.entityKey);
           } catch {
             counts[rec.onboardingPipelineId] = { complete: 0, total: 0 };
           }
@@ -392,12 +391,22 @@ const EmploymentTab: React.FC<EmploymentTabProps> = ({ uid, tenantId }) => {
                 ) : null;
               })()}
               <Stack direction="row" spacing={1} flexWrap="wrap">
-                {rec.everifyRequired && (
-                  <Chip label="E-Verify required" size="small" variant="outlined" />
+                {String(rec.entityKey || '').toLowerCase() === 'select' && rec.everifyRequired && (
+                  <Chip label="Select — E-Verify required" size="small" variant="outlined" />
                 )}
-                {rec.everifyStatus && (
+                {String(rec.entityKey || '').toLowerCase() === 'select' && rec.everifyStatus && (
                   <Typography variant="caption" color="text.secondary">
-                    E-Verify: {rec.everifyStatus}
+                    Select — E-Verify: {rec.everifyStatus}
+                  </Typography>
+                )}
+                {String(rec.entityKey || '').toLowerCase() === 'workforce' && (
+                  <Typography variant="caption" color="text.secondary">
+                    Workforce — I-9 / work authorization is managed under Backgrounds (no E-Verify).
+                  </Typography>
+                )}
+                {String(rec.entityKey || '').toLowerCase() === 'events' && (
+                  <Typography variant="caption" color="text.secondary">
+                    Events — contractor track; no USCIS E-Verify in this employment relationship.
                   </Typography>
                 )}
               </Stack>

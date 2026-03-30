@@ -313,7 +313,7 @@ const WorkerDocuments: React.FC = () => {
                     ))}
                     {credentials.eVerifyOrders.map((o) => (
                       <Typography key={o.id} variant="body2">
-                        E-Verify — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
+                        C1 Select — E-Verify — {o.status ?? '—'} {o.result ? `(${o.result})` : ''}
                       </Typography>
                     ))}
                   </Stack>

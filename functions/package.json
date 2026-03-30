@@ -23,7 +23,9 @@
     "check:maintenance": "npx ts-node src/checkTestMaintenance.ts",
     "backfill:scoring-distribution": "npm run build && node lib/scripts/backfillScoringDistribution.js",
     "debug:accusource:bgc": "npx ts-node src/scripts/debugAccusourceBackgroundCheck.ts",
-    "run:accusource:create-test": "npx ts-node src/scripts/runAccusourceCreateTest.ts"
+    "run:accusource:create-test": "npx ts-node src/scripts/runAccusourceCreateTest.ts",
+    "backfill:everify:entity-id": "npx ts-node src/scripts/backfillEverifyCaseEntityId.ts",
+    "backfill:everify:public-mirror": "npx ts-node src/scripts/alignEverifyCasesPublicMirror.ts"
   },
   "engines": {
     "node": "20"

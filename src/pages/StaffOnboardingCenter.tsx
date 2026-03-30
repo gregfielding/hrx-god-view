@@ -26,7 +26,10 @@ const StaffOnboardingCenter: React.FC = () => {
 
   return (
     <Box sx={{ maxWidth: 1200, mx: 'auto', px: 2, py: 2 }}>
-      <PageHeader title="Onboarding" subtitle="Tax, payroll, E-Verify, and background screening operations." />
+      <PageHeader
+        title="Onboarding"
+        subtitle="Tax, payroll, and background screening. E-Verify (C1 Select work authorization) will appear in the E-Verify tab when implemented."
+      />
       <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} aria-label="Onboarding sections">
           <Tab label="Tax and Payroll" id="staff-onboarding-tab-0" />
@@ -41,7 +44,8 @@ const StaffOnboardingCenter: React.FC = () => {
       </TabPanel>
       <TabPanel value={tab} index={1}>
         <Typography variant="body2" color="text.secondary">
-          This section will host E-Verify operations when scoped.
+          Tenant queue for <strong>C1 Select</strong> E-Verify cases will live here (not a cross-entity track). Not wired yet — use the user profile
+          Backgrounds tab for Select work authorization today.
         </Typography>
       </TabPanel>
       <TabPanel value={tab} index={2}>

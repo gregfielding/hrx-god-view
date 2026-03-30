@@ -65,6 +65,9 @@ import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import { hasJobBoardSyndicationUrl } from '../utils/jobBoardSyndicationUrls';
+import JobBoardSyndicationIconRow from '../components/JobBoardSyndicationIconRow';
+import { JobsBoardService } from '../services/recruiter/jobsBoardService';
 
 /** Firestore job orders use recruiter statuses (lowercase); Phase1 JobOrder used title-case. */
 interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
@@ -522,6 +525,7 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
   const handleJobOrderStatusChange = async (jobOrderId: string, newStatus: JobOrderStatus) => {
     closeStatusMenu(jobOrderId);
     if (!tenantId) return;
+    const previousStatus = jobOrders.find((jo) => jo.id === jobOrderId)?.status;
     setStatusUpdatingId(jobOrderId);
     setLoadError(null);
     try {
@@ -532,6 +536,16 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
       setJobOrders((prev) =>
         prev.map((jo) => (jo.id === jobOrderId ? { ...jo, status: newStatus } : jo))
       );
+      try {
+        await JobsBoardService.getInstance().syncLinkedJobPostingsToJobOrderStatus(
+          tenantId,
+          jobOrderId,
+          newStatus,
+          previousStatus,
+        );
+      } catch (syncErr) {
+        console.error('Failed to sync jobs board postings for job order status:', syncErr);
+      }
     } catch (err) {
       console.error('Failed to update job order status:', err);
       setLoadError(err instanceof Error ? err.message : 'Failed to update status');
@@ -919,10 +933,44 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                             craigslistUrl: (jobOrder as any)?.craigslistUrl,
                           });
 
+                          const indeedFromPosts = (jobPosts as any[])
+                            .map((p) => (typeof p?.indeedUrl === 'string' ? p.indeedUrl.trim() : ''))
+                            .find(Boolean);
+                          const craigslistFromPosts = (jobPosts as any[])
+                            .map((p) => (typeof p?.craigslistUrl === 'string' ? p.craigslistUrl.trim() : ''))
+                            .find(Boolean);
+                          const indeedUrl =
+                            indeedFromPosts || (typeof (jobOrder as any)?.indeedUrl === 'string' ? (jobOrder as any).indeedUrl.trim() : '') || undefined;
+                          const craigslistUrl =
+                            craigslistFromPosts ||
+                            (typeof (jobOrder as any)?.craigslistUrl === 'string'
+                              ? (jobOrder as any).craigslistUrl.trim()
+                              : '') ||
+                            undefined;
+                          const showSyndication = hasJobBoardSyndicationUrl(indeedUrl, craigslistUrl);
+
                           return (
-                            <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
-                              Order Setup: {progress.completed}/{progress.total}
-                            </Typography>
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: 0.75,
+                                lineHeight: 1.2,
+                              }}
+                            >
+                              <Typography variant="caption" color="text.secondary" component="span">
+                                Order Setup: {progress.completed}/{progress.total}
+                              </Typography>
+                              {showSyndication ? (
+                                <JobBoardSyndicationIconRow
+                                  indeedUrl={indeedUrl}
+                                  craigslistUrl={craigslistUrl}
+                                  inline
+                                  sx={{ mt: 0 }}
+                                />
+                              ) : null}
+                            </Box>
                           );
                         })()}
                       </Box>

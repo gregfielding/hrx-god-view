@@ -61,6 +61,29 @@ export function buildWorkerJobPostUrl(jobPostId?: string): string {
   return buildWorkerFindWorkUrl();
 }
 
+/** Deep link back into the apply wizard (job posting, C1 general, or C1 user-group signup). */
+export function buildApplyWizardResumeUrl(snapshot: {
+  path?: string;
+  tenantSlug?: string | null;
+  tenantId?: string | null;
+  jobId?: string | null;
+  signupGroupId?: string | null;
+}): string {
+  const base = getWorkerWebBaseUrl();
+  const path = String(snapshot.path || '').trim();
+  const slug = String(snapshot.tenantSlug || snapshot.tenantId || '').trim();
+  const jobId = String(snapshot.jobId || '').trim();
+  const groupId = String(snapshot.signupGroupId || '').trim();
+
+  if (path === 'job' && slug && jobId) {
+    return `${base}/apply/${encodeURIComponent(slug)}/${encodeURIComponent(jobId)}`;
+  }
+  if (path === 'c1_group' && groupId) {
+    return `${base}/c1/apply/group/${encodeURIComponent(groupId)}`;
+  }
+  return `${base}/c1/apply`;
+}
+
 export function buildWorkerAssignmentResponseUrl(params: {
   jobPostId?: string;
   assignmentId?: string;

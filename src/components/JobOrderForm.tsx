@@ -1200,10 +1200,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     // Use the passed form data or fall back to current state
     const dataToUse = currentFormData || formData;
     
-    // Store previous status before update (for status change detection)
-    const previousStatus = formData.status;
-
-
     try {
       // Resolve company and location names (and parent account) for lookup fields
       const cid = dataToUse.companyId || (field === 'companyId' ? value : '');
@@ -1420,35 +1416,25 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       
       
       const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+      let statusBeforeWrite: string | undefined;
+      if (field === 'status') {
+        const priorSnap = await getDoc(jobOrderRef);
+        if (priorSnap.exists()) {
+          statusBeforeWrite = (priorSnap.data() as { status?: string })?.status;
+        }
+      }
       await updateDoc(jobOrderRef, cleanJobOrderData);
-      
-      // If status changed, update connected job posts
+
       if (field === 'status') {
         try {
-          const jobsBoardService = JobsBoardService.getInstance();
-          const connectedPosts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
-          
-          if (connectedPosts.length > 0) {
-            const newStatus = value;
-            
-            // If status changed from 'open' to something else, pause all connected posts
-            if (previousStatus === 'open' && newStatus !== 'open') {
-              console.log(`🔄 Job order status changed from 'open' to '${newStatus}' - pausing ${connectedPosts.length} connected job post(s)`);
-              for (const post of connectedPosts) {
-                await jobsBoardService.updatePostStatus(tenantId, post.id, 'paused');
-              }
-            }
-            // If status changed back to 'open', resume all connected posts (set to 'active')
-            else if (previousStatus !== 'open' && newStatus === 'open') {
-              console.log(`🔄 Job order status changed to 'open' - resuming ${connectedPosts.length} connected job post(s)`);
-              for (const post of connectedPosts) {
-                await jobsBoardService.updatePostStatus(tenantId, post.id, 'active');
-              }
-            }
-          }
+          await JobsBoardService.getInstance().syncLinkedJobPostingsToJobOrderStatus(
+            tenantId,
+            jobOrderId,
+            value,
+            statusBeforeWrite,
+          );
         } catch (error) {
           console.error('Error updating connected job posts status:', error);
-          // Don't fail the job order save if this fails
         }
       }
       
@@ -1809,46 +1795,31 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       };
 
       if (isEditing && jobOrderId) {
-        // Store previous status before update (for status change detection)
-        const previousStatus = jobOrder?.status || formData.status;
         const newStatus = formData.status;
-        
+
         // Update existing job order
         const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
-        
+        const priorSnap = await getDoc(jobOrderRef);
+        const previousStatus = priorSnap.exists()
+          ? (priorSnap.data() as { status?: string })?.status
+          : undefined;
+
         // Remove undefined values before saving
         const cleanJobOrderData = removeUndefinedValues(jobOrderData);
-        
+
         await updateDoc(jobOrderRef, cleanJobOrderData);
-        
-        // If status changed, update connected job posts
-        if (previousStatus !== newStatus) {
-          try {
-            const jobsBoardService = JobsBoardService.getInstance();
-            const connectedPosts = await jobsBoardService.getPostsByJobOrder(tenantId, jobOrderId);
-            
-            if (connectedPosts.length > 0) {
-              // If status changed from 'open' to something else, pause all connected posts
-              if (previousStatus === 'open' && newStatus !== 'open') {
-                console.log(`🔄 Job order status changed from 'open' to '${newStatus}' - pausing ${connectedPosts.length} connected job post(s)`);
-                for (const post of connectedPosts) {
-                  await jobsBoardService.updatePostStatus(tenantId, post.id, 'paused');
-                }
-              }
-              // If status changed back to 'open', resume all connected posts (set to 'active')
-              else if (previousStatus !== 'open' && newStatus === 'open') {
-                console.log(`🔄 Job order status changed to 'open' - resuming ${connectedPosts.length} connected job post(s)`);
-                for (const post of connectedPosts) {
-                  await jobsBoardService.updatePostStatus(tenantId, post.id, 'active');
-                }
-              }
-            }
-          } catch (error) {
-            console.error('Error updating connected job posts status:', error);
-            // Don't fail the job order save if this fails
-          }
+
+        try {
+          await JobsBoardService.getInstance().syncLinkedJobPostingsToJobOrderStatus(
+            tenantId,
+            jobOrderId,
+            newStatus,
+            previousStatus,
+          );
+        } catch (error) {
+          console.error('Error updating connected job posts status:', error);
         }
-        
+
         setSuccess('Job order updated successfully!');
         console.log('✅ Job order updated successfully');
         ensureCityInSmartGroups(tenantId, worksiteCity, worksiteState).catch(() => {});

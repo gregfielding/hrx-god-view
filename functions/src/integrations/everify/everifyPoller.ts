@@ -10,7 +10,7 @@ import { getCaseStatus } from './everifyRestClient';
 import { mapProviderStatusToHrx } from './everifyAdapter';
 import { whitelistEverifyRaw } from './everifyRedaction';
 import { handleTncTransition, resolveTncTaskAndAppendEvent, TNC_RESOLVED_STATUSES } from './everifyTncHandler';
-import { upsertEverifyCasePublicMirror } from './everifyService';
+import { everifyCasePublicLinkageFromPrivate, upsertEverifyCasePublicMirror } from './everifyService';
 import { EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD } from './everifySecrets';
 import type { EverifyCaseStatus } from './everifySchemas';
 
@@ -175,8 +175,14 @@ export const scheduledEverifyPoller = onSchedule(
         }
 
         await doc.ref.update(updatePayload);
-        if (updatePayload.public && data.userId) {
-          await upsertEverifyCasePublicMirror(tenantId, doc.id, data.userId as string, updatePayload.public as import('./everifyService').EverifyCasePublicPayload);
+        if (updatePayload.public) {
+          await upsertEverifyCasePublicMirror(
+            tenantId,
+            doc.id,
+            (data.userId as string) ?? null,
+            updatePayload.public as import('./everifyService').EverifyCasePublicPayload,
+            everifyCasePublicLinkageFromPrivate(data as Record<string, unknown>)
+          );
         }
         totalUpdated++;
       }

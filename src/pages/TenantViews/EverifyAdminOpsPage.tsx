@@ -1,6 +1,6 @@
 /**
- * E-Verify Admin Ops: list/filter cases, retry, exception actions.
- * Admin/HRX only.
+ * E-Verify Admin Ops: list/filter cases, retry, exception actions (C1 Select work authorization).
+ * Admin/HRX only. Product scope: E-Verify is a Select hiring track; other entities do not use this flow in UX.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -266,9 +266,14 @@ const EverifyAdminOpsPage: React.FC<{ tenantId: string }> = ({ tenantId }) => {
           You have E-Verify cases requiring action (TNC or referral). Resolve in the table below or in Tasks.
         </Alert>
       )}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <VerifiedUserIcon color="primary" sx={{ fontSize: 28 }} />
-        <Typography variant="h6">E-Verify Admin Ops</Typography>
+        <Box>
+          <Typography variant="h6">E-Verify Admin Ops (C1 Select)</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Tenant-wide case list. In product UX, E-Verify is part of C1 Select work authorization only.
+          </Typography>
+        </Box>
         <FormControl size="small" sx={{ minWidth: 180 }}>
           <InputLabel>Status filter</InputLabel>
           <Select

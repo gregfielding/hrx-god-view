@@ -208,6 +208,10 @@ export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 export { deleteUserCompletely } from './deleteUserCompletely';
 export { sendProfileUpdateReminder } from './sendProfileUpdateReminder';
+export {
+  onUserCreatedScheduleApplyWizardReminder,
+  processApplyWizardReminders,
+} from './applyWizardReminder';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
 export {
   everifyCreateCase,

@@ -584,12 +584,14 @@ const transportOptions: Array<{
   const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    // Functional update avoids stale `form` — without this, phone (and other fields) can "snap back" while typing.
+    setForm((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleSelectChange = (e: any) => {
     const { name, value } = e.target;
-    setForm({ ...form, [name]: value });
+    setForm((prev) => ({ ...prev, [name]: value }));
     // Persist Employment Details fields immediately
     const employmentFields = new Set([
       'jobTitle',
@@ -632,23 +634,19 @@ const transportOptions: Array<{
 
 
   const handleLanguagesChange = (event: any, newValue: string[]) => {
-    setForm({ ...form, languages: newValue });
+    setForm((prev) => ({ ...prev, languages: newValue }));
     persistProfileField('languages', newValue);
   };
 
   const handleEmergencyContactChange = (field: keyof EmergencyContact, value: string) => {
-    const updatedEmergencyContact = {
-      ...form.emergencyContact,
-      [field]: value
-    } as EmergencyContact;
-    
-    setForm({
-      ...form,
-      emergencyContact: updatedEmergencyContact
+    setForm((prev) => {
+      const updatedEmergencyContact = {
+        ...prev.emergencyContact,
+        [field]: value,
+      } as EmergencyContact;
+      void persistProfileField('emergencyContact', updatedEmergencyContact);
+      return { ...prev, emergencyContact: updatedEmergencyContact };
     });
-    
-    // Persist the emergency contact data immediately
-    persistProfileField('emergencyContact', updatedEmergencyContact);
   };
 
   // Persist a single Employment Details field to Firestore immediately
@@ -754,42 +752,61 @@ const transportOptions: Array<{
 
   // Generic alias for non-employment fields
   const persistProfileField = async (field: string, value: any) => {
-    // Special handling for phone field changes
+    // Phone: compare by digits (not display string) and always persist formatted display + E.164 when valid.
+    // Previous logic only wrote when `currentPhone !== newPhone`, so same digits with different formatting
+    // or missing `phoneE164` could fail to save; stale `handleChange` closures also made the field "not stick".
     if (field === 'phone') {
       try {
         const userRef = doc(db, 'users', uid);
-        
-        // Get current user data to check if phone is changing
         const userDoc = await getDoc(userRef);
-        const currentData = userDoc.data();
-        
-        if (currentData) {
-          const currentPhone = currentData.phone || '';
-          const newPhone = value || '';
-          
-          // If phone number is changing, reset verification status
-          if (currentPhone !== newPhone && newPhone !== '') {
-            // Convert to E.164 format for consistency
-            const cleaned = newPhone.replace(/\D/g, '');
-            const phoneE164 = cleaned.length === 10 ? `+1${cleaned}` : newPhone;
-            
-            await updateDoc(userRef, {
-              phone: newPhone, // Display format: (925) 448-0579
-              phoneE164: phoneE164, // E.164 format: +19254480579
-              phoneVerified: false, // Reset verification when phone changes
-              workEligibility: false, // Reset work eligibility when phone changes
-              updatedAt: new Date()
-            });
-            
-            console.log('Phone number changed, verification status reset');
-            return;
-          }
+        const currentData = userDoc.data() || {};
+
+        const last10 = (raw: string) => {
+          const d = String(raw || '').replace(/\D/g, '');
+          if (d.length >= 11 && d.startsWith('1')) return d.slice(-10);
+          if (d.length >= 10) return d.slice(-10);
+          return d;
+        };
+
+        const trimmed = String(value ?? '').trim();
+        if (!trimmed) {
+          await updateDoc(userRef, {
+            phone: '',
+            phoneE164: null,
+            phoneVerified: false,
+            workEligibility: false,
+            updatedAt: new Date(),
+          });
+          setPhoneVerified(false);
+          return;
         }
+
+        const display = formatPhoneNumber(trimmed);
+        const core10 = last10(display);
+        const prev10 =
+          last10(String(currentData.phone || '')) || last10(String(currentData.phoneE164 || '').replace(/^\+/, ''));
+
+        const updates: Record<string, unknown> = {
+          phone: display || trimmed,
+          updatedAt: new Date(),
+        };
+        if (core10.length === 10) {
+          updates.phoneE164 = `+1${core10}`;
+        }
+        const digitsChanged = core10.length === 10 && core10 !== prev10;
+        if (digitsChanged) {
+          updates.phoneVerified = false;
+          updates.workEligibility = false;
+        }
+        await updateDoc(userRef, updates);
+        if (digitsChanged) setPhoneVerified(false);
+        return;
       } catch (error) {
         console.error('Error handling phone change:', error);
+        return;
       }
     }
-    
+
     await persistEmploymentField(field, value);
   };
 

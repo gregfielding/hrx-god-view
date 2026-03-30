@@ -50,7 +50,7 @@ Set in Firebase / Secret Manager (ICA v31 username/password):
 
 Set `EVERIFY_I9_FIXTURE_JSON` (preferred) or `EVERIFY_STAGE_I9_FIXTURE_JSON` (legacy alias) in root `.env` → `functions/.env` via `copy-env`, or GCP env — valid **single-line** `i9_case_flat` JSON. Required fields:
 
-- `first_name`, `last_name`, `date_of_birth`, `ssn` (**must be `###-##-####`**, not 9 digits; stage rejects `123-45-6789` and `111-11-1111`), `citizenship_status_code`
+- `first_name`, `last_name`, `date_of_birth`, `ssn` (**must be `###-##-####`**, not 9 digits; stage rejects `123-45-6789` and `111-11-1111`), `citizenship_status_code` (REST enum: `US_CITIZEN`, `NONCITIZEN`, `LAWFUL_PERMANENT_RESIDENT`, `ALIEN_AUTHORIZED_TO_WORK`, `NONCITIZEN_AUTHORIZED_TO_WORK`; legacy `"1"`–`"5"` is normalized server-side)
 - `date_of_hire`, `case_creator_email_address`, `case_creator_name`, `case_creator_phone_number`
 
 Example (redacted):
@@ -61,7 +61,7 @@ Example (redacted):
   "last_name": "User",
   "date_of_birth": "1990-01-15",
   "ssn": "890-12-3456",
-  "citizenship_status_code": "1",
+  "citizenship_status_code": "US_CITIZEN",
   "date_of_hire": "2025-01-01",
   "case_creator_email_address": "admin@example.com",
   "case_creator_name": "Admin",

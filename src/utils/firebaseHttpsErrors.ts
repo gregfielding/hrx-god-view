@@ -1,4 +1,26 @@
 /**
+ * Zod `flatten()` and similar shapes from `HttpsError(..., { details: ... })`.
+ */
+function formatValidationDetails(details: unknown): string {
+  if (!details || typeof details !== 'object') return '';
+  const d = details as Record<string, unknown>;
+  const inner =
+    d.details && typeof d.details === 'object' && d.details !== null
+      ? (d.details as Record<string, unknown>)
+      : d;
+  const fe = inner.fieldErrors as Record<string, string[] | undefined> | undefined;
+  const fr = inner.formErrors as string[] | undefined;
+  const parts: string[] = [];
+  if (fe && typeof fe === 'object') {
+    for (const [k, arr] of Object.entries(fe)) {
+      if (Array.isArray(arr) && arr.length) parts.push(`${k}: ${arr.join('; ')}`);
+    }
+  }
+  if (Array.isArray(fr) && fr.length) parts.push(...fr.filter(Boolean));
+  return parts.join(' · ');
+}
+
+/**
  * Human-readable message from Firebase Callable / HTTPS errors (browser SDK).
  */
 export function formatFirebaseHttpsError(e: unknown): string {
@@ -25,6 +47,14 @@ export function formatFirebaseHttpsError(e: unknown): string {
       return existingCaseId
         ? `An E-Verify case already exists for this employment (case ${existingCaseId}). Use Refresh on the compliance panel to see it, or resolve the existing case before starting another.`
         : 'An E-Verify case already exists for this employment. Use Refresh on the compliance panel, or resolve the existing case before starting another.';
+    }
+    const validationFromDetails = formatValidationDetails(o.details);
+    if (validationFromDetails.trim()) {
+      return `Invalid input — ${validationFromDetails}`;
+    }
+    const validationFromCustom = formatValidationDetails(o.customData);
+    if (validationFromCustom.trim()) {
+      return `Invalid input — ${validationFromCustom}`;
     }
     const nested =
       o.details && typeof o.details === 'object' && o.details !== null && 'message' in o.details

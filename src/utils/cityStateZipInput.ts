@@ -1,3 +1,5 @@
+import { normalizeStateCode } from './unemploymentRates';
+
 /** Single-line display for city / state / ZIP (forms + Places). */
 export function formatCityStateZipInput(city: string, state: string, zipCode: string): string {
   const c = (city || '').trim();
@@ -51,7 +53,7 @@ export function parseCityStateZipInput(raw: string): { city: string; state: stri
   return { city, state: '', zipCode: '' };
 }
 
-/** e.g. "Philadelphia, PA, USA" or "Dallas, TX 75201" from display strings */
+/** e.g. "Philadelphia, PA, USA", "Dallas, Texas 75201", or full state names */
 export function parseCityStateZipFromWorksiteName(name: string): {
   city: string;
   state: string;
@@ -59,14 +61,26 @@ export function parseCityStateZipFromWorksiteName(name: string): {
 } {
   const s = (name || '').trim();
   if (!s) return { city: '', state: '', zipCode: '' };
-  const noCountry = s.replace(/,?\s*USA\s*$/i, '').trim();
-  const m = noCountry.match(/^([^,]+),\s*([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?\s*$/);
-  if (m) {
+  const noCountry = s
+    .replace(/,?\s*United States\s*$/i, '')
+    .replace(/,?\s*USA\s*$/i, '')
+    .trim();
+  const mShort = noCountry.match(/^([^,]+),\s*([A-Za-z]{2})(?:\s+(\d{5}(?:-\d{4})?))?\s*$/);
+  if (mShort) {
     return {
-      city: m[1].trim(),
-      state: m[2].toUpperCase(),
-      zipCode: m[3] || '',
+      city: mShort[1].trim(),
+      state: mShort[2].toUpperCase(),
+      zipCode: mShort[3] || '',
     };
+  }
+  const mLong = noCountry.match(/^([^,]+),\s*([^,]+?)(?:\s+(\d{5}(?:-\d{4})?))?\s*$/);
+  if (mLong) {
+    const city = mLong[1].trim();
+    const st = normalizeStateCode(mLong[2].trim());
+    const zipCode = mLong[3] || '';
+    if (city && st) {
+      return { city, state: st, zipCode };
+    }
   }
   return { city: '', state: '', zipCode: '' };
 }

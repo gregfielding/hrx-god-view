@@ -103,6 +103,20 @@ export interface EverifyCaseEvent {
   data?: Record<string, unknown>;
 }
 
+/** Optional trimmed string; empty / null from clients become undefined (avoids Zod regex failures on ""). */
+const optTrim = (max: number) =>
+  z.preprocess((v) => {
+    if (v === '' || v === null || v === undefined) return undefined;
+    if (typeof v !== 'string') return v;
+    const s = v.trim();
+    return s === '' ? undefined : s;
+  }, z.string().max(max).optional());
+
+const optionalYmd = z.preprocess((v) => {
+  if (v === '' || v === null || v === undefined) return undefined;
+  return v;
+}, z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional());
+
 /** Employee block sent from admin UI; merged server-side (never persisted). Confirm codes against your ICA. */
 export const EverifyI9EmployeePayload = z
   .object({
@@ -110,7 +124,35 @@ export const EverifyI9EmployeePayload = z
     last_name: z.string().min(1).max(120).trim(),
     date_of_birth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     ssn: z.string().min(9).max(32).trim(),
-    citizenship_status_code: z.string().min(1).max(8).trim(),
+    /** REST v31 expects enum strings (e.g. US_CITIZEN); legacy single-digit ICA codes are normalized server-side. */
+    citizenship_status_code: z.string().min(1).max(64).trim(),
+    /** List A — required by USCIS unless List B+C are provided (see merged-payload validation). */
+    document_a_type_code: optTrim(64),
+    document_b_type_code: optTrim(64),
+    document_c_type_code: optTrim(64),
+    document_sub_type_code: optTrim(64),
+    /** ICA: often List B document number; confirm naming for List C in your ICA. */
+    document_bc_number: optTrim(80),
+    /** HRX extension if ICA uses a separate List C number attribute (confirm against ICA). */
+    document_c_number: optTrim(80),
+    expiration_date: optionalYmd,
+    no_expiration_date: z.preprocess((v) => {
+      if (v === '' || v === null || v === undefined) return undefined;
+      if (typeof v === 'boolean') return v;
+      if (v === 'true') return true;
+      if (v === 'false') return false;
+      return v;
+    }, z.boolean().optional()),
+    us_passport_number: optTrim(64),
+    foreign_passport_number: optTrim(64),
+    visa_number: optTrim(64),
+    us_state_code: optTrim(8),
+    country_code: optTrim(8),
+    i551_number: optTrim(64),
+    i766_number: optTrim(64),
+    i94_number: optTrim(64),
+    alien_number: optTrim(32),
+    sevis_number: optTrim(32),
   })
   .strict();
 

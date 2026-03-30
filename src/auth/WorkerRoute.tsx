@@ -1,14 +1,16 @@
 import React from 'react';
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { Box, Typography, CircularProgress } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
+import { isStaffAllowedPublicJobBoardPath } from '../utils/publicJobBoardPaths';
 
 /**
- * Guard for /c1/workers/* routes. Allows access only for workers (security 0–4).
- * Redirects others to /dashboard. Does not modify ProtectedRoute or admin logic.
+ * Guard for /c1/* worker shell routes. Workers (0–4) always pass. Staff (5+) are redirected
+ * to /dashboard except on public job board URLs (see isStaffAllowedPublicJobBoardPath).
  */
 const WorkerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, securityLevel, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -24,7 +26,7 @@ const WorkerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }
 
   const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;
-  if (level >= 5) {
+  if (level >= 5 && !isStaffAllowedPublicJobBoardPath(location.pathname)) {
     return <Navigate to="/dashboard" replace />;
   }
 

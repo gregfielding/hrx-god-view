@@ -34,7 +34,7 @@ function everifyCasesPublicRef(tenantId: string) {
   return db.collection('tenants').doc(tenantId).collection('everify_cases_public');
 }
 
-/** Worker-safe public mirror: only tenantId, userId, caseId, public, updatedAt. */
+/** Worker-safe public mirror: tenantId, userId, caseId, linkage fields, public, updatedAt. */
 export interface EverifyCasePublicPayload {
   status?: EverifyCaseStatus | string;
   statusDisplay?: string;
@@ -42,15 +42,36 @@ export interface EverifyCasePublicPayload {
   deadlines?: { tncResponseDueAt?: unknown; referralDueAt?: unknown };
 }
 
+/** Denormalized from private everify_cases for filtering (Employment V2, worker-safe reads). */
+export interface EverifyCasePublicLinkage {
+  entityId: string | null;
+  assignmentId: string | null;
+  userEmploymentId: string | null;
+}
+
+export function everifyCasePublicLinkageFromPrivate(
+  data: Record<string, unknown> | undefined | null
+): EverifyCasePublicLinkage {
+  const d = data || {};
+  const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  return {
+    entityId: s(d.entityId),
+    assignmentId: s(d.assignmentId),
+    userEmploymentId: s(d.userEmploymentId),
+  };
+}
+
 /**
  * Upsert the public mirror doc so workers can read case status without access to everify_cases.
  * Call whenever public data changes (create or poller update).
+ * Always pass `linkage` from the private case so entity-scoped UIs can filter reliably.
  */
 export async function upsertEverifyCasePublicMirror(
   tenantId: string,
   caseId: string,
   userId: string | null,
-  publicPayload: EverifyCasePublicPayload
+  publicPayload: EverifyCasePublicPayload,
+  linkage: EverifyCasePublicLinkage
 ): Promise<void> {
   const ref = everifyCasesPublicRef(tenantId).doc(caseId);
   const now = admin.firestore.FieldValue.serverTimestamp();
@@ -59,6 +80,9 @@ export async function upsertEverifyCasePublicMirror(
       tenantId,
       userId: userId ?? null,
       caseId,
+      entityId: linkage.entityId ?? null,
+      assignmentId: linkage.assignmentId ?? null,
+      userEmploymentId: linkage.userEmploymentId ?? null,
       public: publicPayload,
       updatedAt: now,
     },
@@ -155,10 +179,20 @@ export async function createAndSubmitCase(params: {
       updatedAt: now,
     };
     const docRef = await everifyCasesRef(params.tenantId).add(caseData);
-    await upsertEverifyCasePublicMirror(params.tenantId, docRef.id, params.userId, {
-      status: resp.status,
-      statusDisplay: resp.providerStatus,
-    });
+    await upsertEverifyCasePublicMirror(
+      params.tenantId,
+      docRef.id,
+      params.userId,
+      {
+        status: resp.status,
+        statusDisplay: resp.providerStatus,
+      },
+      {
+        entityId: params.entityId,
+        assignmentId: params.assignmentId,
+        userEmploymentId: params.userEmploymentId,
+      }
+    );
     await appendEvent(params.tenantId, docRef.id, {
       tenantId: params.tenantId,
       entityId: params.entityId,
@@ -225,10 +259,20 @@ export async function createAndSubmitCase(params: {
       createdAt: now,
       updatedAt: now,
     });
-    await upsertEverifyCasePublicMirror(params.tenantId, docRef.id, params.userId, {
-      status: 'error',
-      statusDisplay: 'create/submit failed',
-    });
+    await upsertEverifyCasePublicMirror(
+      params.tenantId,
+      docRef.id,
+      params.userId,
+      {
+        status: 'error',
+        statusDisplay: 'create/submit failed',
+      },
+      {
+        entityId: params.entityId,
+        assignmentId: params.assignmentId,
+        userEmploymentId: params.userEmploymentId,
+      }
+    );
     await appendEvent(params.tenantId, docRef.id, {
       tenantId: params.tenantId,
       entityId: params.entityId,
@@ -281,7 +325,11 @@ export async function createAndSubmitCase(params: {
 
   const docRef = await everifyCasesRef(params.tenantId).add(caseData);
 
-  await upsertEverifyCasePublicMirror(params.tenantId, docRef.id, params.userId, caseData.public);
+  await upsertEverifyCasePublicMirror(params.tenantId, docRef.id, params.userId, caseData.public, {
+    entityId: params.entityId,
+    assignmentId: params.assignmentId,
+    userEmploymentId: params.userEmploymentId,
+  });
 
   await appendEvent(params.tenantId, docRef.id, {
     tenantId: params.tenantId,
@@ -371,7 +419,11 @@ export async function createCase(params: {
 
   const docRef = await everifyCasesRef(params.tenantId).add(caseData);
 
-  await upsertEverifyCasePublicMirror(params.tenantId, docRef.id, params.userId, caseData.public);
+  await upsertEverifyCasePublicMirror(params.tenantId, docRef.id, params.userId, caseData.public, {
+    entityId: params.entityId,
+    assignmentId: params.assignmentId,
+    userEmploymentId: params.userEmploymentId,
+  });
 
   await appendEvent(params.tenantId, docRef.id, {
     tenantId: params.tenantId,

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { TextField, type TextFieldProps } from '@mui/material';
 import {
   formatCityStateZipInput,
@@ -99,13 +99,15 @@ const JobPostWorksiteCityPlacesField: React.FC<JobPostWorksiteCityPlacesFieldPro
   const [inputEl, setInputEl] = React.useState<HTMLInputElement | null>(null);
   const onCommitRef = useRef(onCommit);
   onCommitRef.current = onCommit;
+  const committedLineRef = useRef(committedLine);
+  committedLineRef.current = committedLine;
   const setInputRef = useCallback((el: HTMLInputElement | null) => {
     inputRef.current = el;
     setInputEl(el);
   }, []);
 
-  // Sync Firestore / parent value → DOM when user is not typing in this field
-  useEffect(() => {
+  // Sync Firestore / parent value → DOM when user is not typing (layout phase avoids empty flash on edit load)
+  useLayoutEffect(() => {
     const el = inputRef.current;
     if (!el) return;
     if (document.activeElement === el) return;
@@ -123,6 +125,13 @@ const JobPostWorksiteCityPlacesField: React.FC<JobPostWorksiteCityPlacesFieldPro
       fields: ['address_components', 'formatted_address', 'geometry', 'name'],
     });
 
+    const raf = requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el && document.activeElement !== el) {
+        el.value = committedLineRef.current;
+      }
+    });
+
     const listener = ac.addListener('place_changed', () => {
       const place = ac.getPlace();
       const patch = placeToCommit(place);
@@ -135,6 +144,7 @@ const JobPostWorksiteCityPlacesField: React.FC<JobPostWorksiteCityPlacesFieldPro
     });
 
     return () => {
+      cancelAnimationFrame(raf);
       listener.remove();
       google.maps.event.clearInstanceListeners(ac);
     };

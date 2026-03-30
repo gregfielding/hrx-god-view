@@ -1110,7 +1110,11 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   ? '#f44336' 
                   : '#4caf50';
               }
-              allPills.push({ label: 'E-Verify', color: eVerifyColor, key: `everify-${newestEVerifyOrder.id}` });
+              allPills.push({
+                label: 'Select · E-Verify',
+                color: eVerifyColor,
+                key: `everify-${newestEVerifyOrder.id}`,
+              });
             }
 
             // Add Background Check pills (one per order)
@@ -1689,7 +1693,11 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   ? '#f44336' 
                   : '#4caf50';
               }
-              allPills.push({ label: 'E-Verify', color: eVerifyColor, key: `everify-${newestEVerifyOrder.id}` });
+              allPills.push({
+                label: 'Select · E-Verify',
+                color: eVerifyColor,
+                key: `everify-${newestEVerifyOrder.id}`,
+              });
             }
 
             // Add Background Check pills (one per order)

@@ -991,6 +991,14 @@
         { "fieldPath": "candidateId", "order": "ASCENDING" },
         { "fieldPath": "tenantId", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "applyWizardReminderPending", "order": "ASCENDING" },
+        { "fieldPath": "applyWizardReminderDueAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

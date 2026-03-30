@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Box,
@@ -94,6 +94,11 @@ const EditJobPost: React.FC = () => {
       typeof window !== 'undefined' && window.location.origin ? window.location.origin : 'https://hrxone.com';
     return `${origin}/${jobsBoardUrlSlug}/jobs-board/${postId}`;
   }, [postId, jobsBoardUrlSlug]);
+
+  /** Merge form edits into header `post` (syndication icons + location lines update while typing). */
+  const handleHeaderPreviewPatch = useCallback((patch: Partial<JobsBoardPost>) => {
+    setPost((p) => (p ? { ...p, ...patch } : p));
+  }, []);
 
   const handleCopyPublicJobPostingUrl = async () => {
     if (!publicJobPostingUrl) return;
@@ -660,14 +665,13 @@ const EditJobPost: React.FC = () => {
                     Type: {post.jobType === 'career' ? 'Career' : 'Gig'}
                   </Typography>
                 </Box>
-                {!post.jobOrderId &&
-                  hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl) && (
-                    <JobBoardSyndicationIconRow
-                      indeedUrl={post.indeedUrl}
-                      craigslistUrl={post.craigslistUrl}
-                      sx={{ mt: 0.5 }}
-                    />
-                  )}
+                {hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl) && (
+                  <JobBoardSyndicationIconRow
+                    indeedUrl={post.indeedUrl}
+                    craigslistUrl={post.craigslistUrl}
+                    sx={{ mt: 0.5 }}
+                  />
+                )}
                 <Box sx={{ mt: 0.75, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                   <Typography sx={{ fontSize: '0.875rem', color: 'rgba(0,0,0,0.55)' }}>
                     {post.companyName || '—'} • {post.worksiteName || '—'}
@@ -830,6 +834,7 @@ const EditJobPost: React.FC = () => {
             loading={isFromRecruiter ? false : saving}
             mode="edit"
             autoSave={isFromRecruiter}
+            onHeaderPreviewChange={isFromRecruiter ? handleHeaderPreviewPatch : undefined}
           />
         )}
 

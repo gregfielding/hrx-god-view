@@ -14,7 +14,7 @@ import {
   requestHashCollisionBlocksCreate,
 } from './everifyErrors';
 import { resolveEligibility } from './everifyEligibility';
-import { createAndSubmitCase, upsertEverifyCasePublicMirror } from './everifyService';
+import { createAndSubmitCase, everifyCasePublicLinkageFromPrivate, upsertEverifyCasePublicMirror } from './everifyService';
 import { getAccessToken } from './everifyAuth';
 import { createDraftCase, submitCase } from './everifyRestClient';
 import { resolveI9PayloadFromFixture } from './everifyI9Provider';
@@ -51,12 +51,20 @@ export const everifyCreateCase = onCall(
     enforceAppCheck: false,
     cors: CALLABLE_BROWSER_CORS,
     secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+    memory: '512MiB',
   },
   async (request) => {
     const auth = request.auth;
     if (!auth) {
       throw new HttpsError('unauthenticated', 'Must be authenticated');
     }
+
+    const raw = request.data as { tenantId?: unknown; userEmploymentId?: unknown };
+    logger.info('[everifyCreateCase] invoked', {
+      uid: auth.uid,
+      tenantId: typeof raw.tenantId === 'string' ? raw.tenantId : undefined,
+      userEmploymentId: typeof raw.userEmploymentId === 'string' ? raw.userEmploymentId : undefined,
+    });
 
     const parsed = EverifyCreateCaseInput.safeParse(request.data);
     if (!parsed.success) {
@@ -269,7 +277,12 @@ export const everifyPingAuth = onCall(
 
 /** Dry run: create draft + submit with fixture payload. No Firestore writes. HRX/Admin only. */
 export const everifyDryRunCreateAndSubmit = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD] },
+  {
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
+    secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+    memory: '512MiB',
+  },
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
@@ -506,7 +519,13 @@ export const everifyCloseCaseManual = onCall(
       everifyCaseActions: actions,
       public: newPublic,
     });
-    await upsertEverifyCasePublicMirror(tenantId, caseId, (data.userId as string) ?? null, newPublic);
+    await upsertEverifyCasePublicMirror(
+      tenantId,
+      caseId,
+      (data.userId as string) ?? null,
+      newPublic,
+      everifyCasePublicLinkageFromPrivate(data as Record<string, unknown>)
+    );
     await caseRef.collection('events').add({
       tenantId,
       entityId: data.entityId ?? null,
@@ -527,7 +546,12 @@ export const everifyCloseCaseManual = onCall(
  * HRX or global Admin only — not for end-user UI yet.
  */
 export const everifySoapCreateCase = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD] },
+  {
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
+    secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+    memory: '512MiB',
+  },
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');

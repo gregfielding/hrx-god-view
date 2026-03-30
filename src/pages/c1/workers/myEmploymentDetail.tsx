@@ -31,6 +31,7 @@ import { getPayrollStatusLabel } from '../../../types/payroll';
 import { getComplianceTypeLabel, getComplianceStatusDisplayLabel } from '../../../types/compliance';
 import { getExpirationState, hasExpiredCompliance, hasExpiringSoonCompliance } from '../../../utils/complianceExpiration';
 import { getWorkerReadiness, type ReadinessStatus } from '../../../utils/workerReadiness';
+import { countPipelineProgressForEntity } from '../../../utils/onboardingPipelineProgress';
 import type { WorkerComplianceItem } from '../../../types/compliance';
 
 interface EmploymentRecord {
@@ -56,8 +57,8 @@ interface PipelineStep {
   applicability?: string;
 }
 
-const PAYROLL_LEGAL_STEPS = ['i9', 'onboarding_forms', 'everee'];
-const EVERIFY_STEPS = ['e_verify'];
+/** Forms + payroll provider steps (excludes I-9 / E-Verify — those live under Work authorization for Select/Workforce). */
+const FORMS_PAYROLL_STEPS = ['onboarding_forms', 'everee'];
 const BACKGROUND_STEPS = ['background_check', 'drug_screen'];
 
 function categorySummary(steps: PipelineStep[], stepIds: string[]): 'complete' | 'in_progress' | 'not_started' | 'not_required' {
@@ -213,13 +214,21 @@ const MyEmploymentDetailPage: React.FC = () => {
   const hiredAt = employment.hiredAt?.toDate?.();
   const isOnboarding = employment.status === 'onboarding';
 
-  const payrollSummary = categorySummary(pipelineSteps, PAYROLL_LEGAL_STEPS);
-  const everifySummary = categorySummary(pipelineSteps, EVERIFY_STEPS);
+  const entityKeyLower = String(employment.entityKey || '').toLowerCase();
+  const isSelectEntity = entityKeyLower === 'select';
+  const isWorkforceEntity = entityKeyLower === 'workforce';
+  const showWorkAuthorizationSection = isSelectEntity || isWorkforceEntity;
+
+  const formsPayrollSummary = categorySummary(pipelineSteps, FORMS_PAYROLL_STEPS);
+  const i9Summary = categorySummary(pipelineSteps, ['i9']);
+  const everifySummary = categorySummary(pipelineSteps, ['e_verify']);
   const backgroundSummary = categorySummary(pipelineSteps, BACKGROUND_STEPS);
 
   const pipelineId = employment.onboardingPipelineId ?? '';
-  const completeCount = pipelineSteps.filter((s) => s.status === 'complete').length;
-  const totalCount = pipelineSteps.length;
+  const { complete: completeCount, total: totalCount } = countPipelineProgressForEntity(
+    pipelineSteps,
+    employment.entityKey
+  );
   const readiness = getWorkerReadiness({
     employments: [{ id: employment.id, status: employment.status, entityKey: employment.entityKey, onboardingPipelineId: pipelineId || undefined }],
     complianceItems,
@@ -304,16 +313,39 @@ const MyEmploymentDetailPage: React.FC = () => {
                 Onboarding progress
               </Typography>
               <Stack spacing={1.5}>
+                {showWorkAuthorizationSection && (
+                  <>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Work authorization
+                    </Typography>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ pl: 0.5 }}>
+                      <Typography variant="body2">I-9</Typography>
+                      <Chip label={CATEGORY_LABEL[i9Summary]} size="small" variant="outlined" color={i9Summary === 'complete' ? 'success' : 'default'} />
+                    </Stack>
+                    {isSelectEntity && (
+                      <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ pl: 0.5 }}>
+                        <Typography variant="body2">E-Verify</Typography>
+                        <Chip
+                          label={CATEGORY_LABEL[everifySummary]}
+                          size="small"
+                          variant="outlined"
+                          color={everifySummary === 'complete' ? 'success' : 'default'}
+                        />
+                      </Stack>
+                    )}
+                  </>
+                )}
                 <Stack direction="row" alignItems="center" justifyContent="space-between">
-                  <Typography variant="body2">Payroll & legal</Typography>
-                  <Chip label={CATEGORY_LABEL[payrollSummary]} size="small" variant="outlined" color={payrollSummary === 'complete' ? 'success' : 'default'} />
+                  <Typography variant="body2">Forms & payroll</Typography>
+                  <Chip
+                    label={CATEGORY_LABEL[formsPayrollSummary]}
+                    size="small"
+                    variant="outlined"
+                    color={formsPayrollSummary === 'complete' ? 'success' : 'default'}
+                  />
                 </Stack>
                 <Stack direction="row" alignItems="center" justifyContent="space-between">
-                  <Typography variant="body2">E-Verify</Typography>
-                  <Chip label={CATEGORY_LABEL[everifySummary]} size="small" variant="outlined" color={everifySummary === 'complete' ? 'success' : 'default'} />
-                </Stack>
-                <Stack direction="row" alignItems="center" justifyContent="space-between">
-                  <Typography variant="body2">Background checks</Typography>
+                  <Typography variant="body2">Screenings</Typography>
                   <Chip label={CATEGORY_LABEL[backgroundSummary]} size="small" variant="outlined" color={backgroundSummary === 'complete' ? 'success' : 'default'} />
                 </Stack>
               </Stack>
@@ -398,7 +430,7 @@ const MyEmploymentDetailPage: React.FC = () => {
               Documents & instructions
             </Typography>
             <Stack spacing={0.75}>
-              {employment.everifyStatus ? (
+              {isSelectEntity && employment.everifyStatus ? (
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                   <CheckCircleIcon sx={{ fontSize: 16, color: 'success.main' }} />
                   <Typography variant="body2" color="text.secondary">
@@ -412,7 +444,9 @@ const MyEmploymentDetailPage: React.FC = () => {
                   {employment.drugScreenRequired && 'Drug screening may be required. Follow any instructions sent to you by your recruiter or HR.'}
                 </Typography>
               )}
-              {!employment.everifyStatus && !employment.backgroundRequired && !employment.drugScreenRequired && (
+              {!(isSelectEntity && employment.everifyStatus) &&
+                !employment.backgroundRequired &&
+                !employment.drugScreenRequired && (
                 <Typography variant="body2" color="text.secondary">
                   No documents or instructions are listed for this entity. Your recruiter or HR will share any forms or next steps with you.
                 </Typography>

@@ -30,7 +30,19 @@ import {
   TableRow,
   TableSortLabel,
 } from '@mui/material';
-import { Search, LocationOn, Business, Schedule, Work, AttachMoney, People, Add, Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
+import {
+  Search,
+  LocationOn,
+  Business,
+  Schedule,
+  Work,
+  AttachMoney,
+  People,
+  Add,
+  Close as CloseIcon,
+  AutoAwesome as AutoAwesomeIcon,
+  ContentCopy as ContentCopyIcon,
+} from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
 import {
   JobsBoardService,
@@ -56,6 +68,8 @@ import { getOptionsForField } from '../../utils/fieldOptions';
 import { autoAddGroupsPickerValue, dedupeUserGroupsForUi } from '../../utils/dedupeUserGroupsForUi';
 import { generateJobDescriptionWithAi } from '../../utils/jobDescriptionAiGenerate';
 import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
+import { hasJobBoardSyndicationUrl } from '../../utils/jobBoardSyndicationUrls';
+import JobBoardSyndicationIconRow from '../../components/JobBoardSyndicationIconRow';
 
 /** Firestore Timestamp, {seconds}, Date, or ISO string → ms for sorting/display */
 function toMillisFromUnknown(value: unknown): number {
@@ -105,7 +119,7 @@ const JobsBoard: React.FC = () => {
   const [openNewPostModal, setOpenNewPostModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  
+
   const normalizeGroupIds = (value?: string | string[] | null): string[] => {
     if (Array.isArray(value)) {
       return value
@@ -444,14 +458,14 @@ const JobsBoard: React.FC = () => {
 
   const loadPosts = async () => {
     if (!tenantId) return;
-    
+
     try {
       setLoading(true);
       // Use getAllPosts to show all job posts regardless of status/visibility for internal management
       const postsData = await jobsBoardService.getAllPosts(tenantId);
       setPosts(postsData);
       setFilteredJobs(postsData);
-      
+
       // Load company names for posts that have companyId but empty companyName
       await loadCompanyNamesForPosts(postsData);
     } catch (err: any) {
@@ -1489,9 +1503,13 @@ const JobsBoard: React.FC = () => {
                 label="Location"
                 onChange={(e) => setLocationFilter(e.target.value)}
               >
-                <MenuItem value="all">All Locations</MenuItem>
-                {getUniqueLocations().map(location => (
-                  <MenuItem key={location} value={location}>{location}</MenuItem>
+                <MenuItem key="filter-location-all" value="all">
+                  All Locations
+                </MenuItem>
+                {getUniqueLocations().map((location, idx) => (
+                  <MenuItem key={`filter-location-${location || 'empty'}-${idx}`} value={location}>
+                    {location}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -1504,9 +1522,13 @@ const JobsBoard: React.FC = () => {
                 label="Company"
                 onChange={(e) => setCompanyFilter(e.target.value)}
               >
-                <MenuItem value="all">All Companies</MenuItem>
-                {getUniqueCompanies().map(company => (
-                  <MenuItem key={company} value={company}>{company}</MenuItem>
+                <MenuItem key="filter-company-all" value="all">
+                  All Companies
+                </MenuItem>
+                {getUniqueCompanies().map((company, idx) => (
+                  <MenuItem key={`filter-company-${company || 'empty'}-${idx}`} value={company}>
+                    {company}
+                  </MenuItem>
                 ))}
               </Select>
             </FormControl>
@@ -1671,10 +1693,31 @@ const JobsBoard: React.FC = () => {
                     <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary' }}>
                       {post.postTitle}
                     </Typography>
-                    {post.jobTitle && (
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {post.jobTitle}
-                      </Typography>
+                    {(post.jobTitle ||
+                      hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl)) && (
+                      <Box
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          flexWrap: 'wrap',
+                          gap: 0.75,
+                          mt: 0.25,
+                        }}
+                      >
+                        {post.jobTitle ? (
+                          <Typography variant="caption" color="text.secondary" component="span">
+                            {post.jobTitle}
+                          </Typography>
+                        ) : null}
+                        {hasJobBoardSyndicationUrl(post.indeedUrl, post.craigslistUrl) ? (
+                          <JobBoardSyndicationIconRow
+                            indeedUrl={post.indeedUrl}
+                            craigslistUrl={post.craigslistUrl}
+                            inline
+                            sx={{ mt: 0 }}
+                          />
+                        ) : null}
+                      </Box>
                     )}
                   </TableCell>
                   <TableCell>
@@ -1742,11 +1785,21 @@ const JobsBoard: React.FC = () => {
                             sx: { zIndex: 9999 } // Ensure dropdown appears above other elements
                           }}
                         >
-                          <MenuItem value="draft">Draft</MenuItem>
-                          <MenuItem value="active">Active</MenuItem>
-                          <MenuItem value="paused">Paused</MenuItem>
-                          <MenuItem value="cancelled">Cancelled</MenuItem>
-                          <MenuItem value="expired">Expired</MenuItem>
+                          <MenuItem key={`${post.id}-status-draft`} value="draft">
+                            Draft
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-active`} value="active">
+                            Active
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-paused`} value="paused">
+                            Paused
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-cancelled`} value="cancelled">
+                            Cancelled
+                          </MenuItem>
+                          <MenuItem key={`${post.id}-status-expired`} value="expired">
+                            Expired
+                          </MenuItem>
                         </Select>
                       </FormControl>
                     ) : (
@@ -1834,8 +1887,12 @@ const JobsBoard: React.FC = () => {
                     label="Job Type"
                     onChange={(e) => setNewPost({ ...newPost, jobType: e.target.value as 'gig' | 'career' })}
                   >
-                    <MenuItem value="gig">Gig</MenuItem>
-                    <MenuItem value="career">Career</MenuItem>
+                    <MenuItem key="newpost-jobtype-gig" value="gig">
+                      Gig
+                    </MenuItem>
+                    <MenuItem key="newpost-jobtype-career" value="career">
+                      Career
+                    </MenuItem>
                   </Select>
                 </FormControl>
               </Grid>
@@ -1875,12 +1932,24 @@ const JobsBoard: React.FC = () => {
                       label="Status"
                       onChange={(e) => setNewPost({ ...newPost, status: e.target.value as any })}
                     >
-                      <MenuItem value="draft">Draft</MenuItem>
-                      <MenuItem value="active">Active</MenuItem>
-                      <MenuItem value="paused">Paused</MenuItem>
-                      <MenuItem value="cancelled">Cancelled</MenuItem>
-                      <MenuItem value="expired">Expired</MenuItem>
-                      <MenuItem value="complete">Complete</MenuItem>
+                      <MenuItem key="newpost-status-draft" value="draft">
+                        Draft
+                      </MenuItem>
+                      <MenuItem key="newpost-status-active" value="active">
+                        Active
+                      </MenuItem>
+                      <MenuItem key="newpost-status-paused" value="paused">
+                        Paused
+                      </MenuItem>
+                      <MenuItem key="newpost-status-cancelled" value="cancelled">
+                        Cancelled
+                      </MenuItem>
+                      <MenuItem key="newpost-status-expired" value="expired">
+                        Expired
+                      </MenuItem>
+                      <MenuItem key="newpost-status-complete" value="complete">
+                        Complete
+                      </MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
@@ -1925,13 +1994,17 @@ const JobsBoard: React.FC = () => {
                       onChange={(e) => handleJobOrderChange(e.target.value)}
                       disabled={loadingJobOrders}
                     >
-                      <MenuItem value="">
+                      <MenuItem key="newpost-joborder-none" value="">
                         <em>No Job Order Connection</em>
                       </MenuItem>
                       {loadingJobOrders ? (
-                        <MenuItem value="" disabled>Loading job orders...</MenuItem>
+                        <MenuItem key="newpost-joborder-loading" value="" disabled>
+                          Loading job orders...
+                        </MenuItem>
                       ) : jobOrders.length === 0 ? (
-                        <MenuItem value="" disabled>No available job orders to connect</MenuItem>
+                        <MenuItem key="newpost-joborder-empty" value="" disabled>
+                          No available job orders to connect
+                        </MenuItem>
                       ) : (
                         jobOrders.map((jobOrder) => (
                           <MenuItem key={jobOrder.id} value={jobOrder.id}>
@@ -2286,9 +2359,13 @@ const JobsBoard: React.FC = () => {
                         disabled={loadingLocations || !selectedCompanyId}
                       >
                         {loadingLocations ? (
-                          <MenuItem value="">Loading locations...</MenuItem>
+                          <MenuItem key="newpost-worksite-loading" value="">
+                            Loading locations...
+                          </MenuItem>
                         ) : locations.length === 0 ? (
-                          <MenuItem value="">No locations available</MenuItem>
+                          <MenuItem key="newpost-worksite-empty" value="">
+                            No locations available
+                          </MenuItem>
                         ) : (
                           locations.map((location) => (
                             <MenuItem key={location.id} value={location.id}>
@@ -2355,9 +2432,15 @@ const JobsBoard: React.FC = () => {
                         });
                       }}
                     >
-                      <MenuItem value="public">Public - Visible to everyone</MenuItem>
-                      <MenuItem value="restricted">Restricted - Visible to specific user groups</MenuItem>
-                      <MenuItem value="private">Private - Internal only</MenuItem>
+                      <MenuItem key="newpost-vis-public" value="public">
+                        Public - Visible to everyone
+                      </MenuItem>
+                      <MenuItem key="newpost-vis-restricted" value="restricted">
+                        Restricted - Visible to specific user groups
+                      </MenuItem>
+                      <MenuItem key="newpost-vis-private" value="private">
+                        Private - Internal only
+                      </MenuItem>
                     </Select>
                   </FormControl>
                 </Grid>
@@ -2372,9 +2455,13 @@ const JobsBoard: React.FC = () => {
                       multiple
                     >
                       {loadingUserGroups ? (
-                        <MenuItem value="" disabled>Loading user groups...</MenuItem>
+                        <MenuItem key="newpost-groups-loading" value="" disabled>
+                          Loading user groups...
+                        </MenuItem>
                       ) : userGroupsForUi.length === 0 ? (
-                        <MenuItem value="" disabled>No user groups available</MenuItem>
+                        <MenuItem key="newpost-groups-empty" value="" disabled>
+                          No user groups available
+                        </MenuItem>
                       ) : (
                         userGroupsForUi.map((group) => (
                           <MenuItem key={group.id} value={group.id}>

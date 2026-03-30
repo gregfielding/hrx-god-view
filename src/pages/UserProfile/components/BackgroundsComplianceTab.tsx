@@ -1,6 +1,6 @@
 /**
- * User Details → Backgrounds: compliance operations (E-Verify + AccuSource).
- * Read-only Firestore-backed rows; actions use existing server callables only.
+ * User Details → Backgrounds: compliance operations (AccuSource + C1 Select work authorization).
+ * E-Verify UI is scoped to C1 Select only; Workforce I-9 is shown without E-Verify; Events omit USCIS work auth.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -22,6 +22,8 @@ import {
   InputLabel,
   Link,
   MenuItem,
+  Radio,
+  RadioGroup,
   Paper,
   Select,
   Stack,
@@ -63,7 +65,21 @@ import {
   USER_EMPLOYMENT_I9_STATUS_LABELS,
   USER_EMPLOYMENT_I9_STATUS_VALUES,
 } from '../../../constants/userEmploymentI9Status';
+import {
+  EVERIFY_DOC_CUSTOM,
+  EVERIFY_LIST_A_NUMBER_FIELD_LABELS,
+  EVERIFY_LIST_A_PRESETS,
+  EVERIFY_LIST_B_PRESETS,
+  EVERIFY_LIST_C_PRESETS,
+  filterDocPresetsByCitizenship,
+  type EverifyListANumberField,
+} from '../../../constants/everifyI9DocumentWizard';
 import { useAuth } from '../../../contexts/AuthContext';
+import {
+  deriveC1EntityKeyFromEntityName,
+  filterEverifyCasesForSelectUi,
+  resolveC1SelectEntityId,
+} from '../../../utils/c1EntityWorkAuthorizationUi';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
 import {
   buildComplianceSummary,
@@ -81,13 +97,15 @@ const PAGE_LIMIT = 100;
 const everifyCasesCol = (tenantId: string) => collection(db, 'tenants', tenantId, 'everify_cases');
 const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenantId, 'user_employments');
 
-/** ICA citizenship_status_code — confirm against your signed ICA (matches DEFAULT_CITIZENSHIP_ICA_CODE on server). */
+/**
+ * Values match REST `citizenship_status_code` enums; server also accepts legacy "1"–"5" from fixtures.
+ */
 const EVERIFY_CITIZENSHIP_OPTIONS: { value: string; label: string }[] = [
-  { value: '1', label: 'U.S. citizen' },
-  { value: '2', label: 'U.S. noncitizen national' },
-  { value: '3', label: 'Lawful permanent resident' },
-  { value: '4', label: 'Alien authorized to work' },
-  { value: '5', label: 'Other (verify with ICA)' },
+  { value: 'US_CITIZEN', label: 'U.S. citizen' },
+  { value: 'NONCITIZEN', label: 'U.S. noncitizen national' },
+  { value: 'LAWFUL_PERMANENT_RESIDENT', label: 'Lawful permanent resident' },
+  { value: 'ALIEN_AUTHORIZED_TO_WORK', label: 'Alien authorized to work' },
+  { value: 'NONCITIZEN_AUTHORIZED_TO_WORK', label: 'Noncitizen authorized to work' },
 ];
 
 const everifyCheckEligibility = httpsCallable(functions, 'everifyCheckEligibility');
@@ -110,6 +128,14 @@ function formatTime(value: unknown): string {
     }
   }
   return '—';
+}
+
+/** SSN display ###-##-#### while typing (stores digits + dashes in state; submit strips non-digits). */
+function formatSsnInputDisplay(raw: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 9);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 5) return `${digits.slice(0, 3)}-${digits.slice(3)}`;
+  return `${digits.slice(0, 3)}-${digits.slice(3, 5)}-${digits.slice(5)}`;
 }
 
 /** yyyy-MM-dd from Firestore Timestamp / string / Date */
@@ -193,6 +219,15 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
   const [everifyRows, setEverifyRows] = useState<Array<{ id: string; data: Record<string, unknown> }>>([]);
   const [screeningRows, setScreeningRows] = useState<BackgroundCheckRecord[]>([]);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
+  /** tenants/…/entities/{id}.name for E-Verify row filtering (Select-only). */
+  const [entityNameById, setEntityNameById] = useState<Record<string, string>>({});
+  /** Id + name + entityCode for resolveC1SelectEntityId (C1SL code match). */
+  const [tenantEntitiesBrief, setTenantEntitiesBrief] = useState<
+    Array<{ id: string; name: string; entityCode: string }>
+  >([]);
+  const [userEmploymentsSnapshot, setUserEmploymentsSnapshot] = useState<
+    Array<{ id: string; entityId: string; i9Status: string }>
+  >([]);
 
   const [evModalOpen, setEvModalOpen] = useState(false);
   const [bgModalOpen, setBgModalOpen] = useState(false);
@@ -215,6 +250,20 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
   const [evWorkerDob, setEvWorkerDob] = useState('');
   const [evWorkerSsn, setEvWorkerSsn] = useState('');
   const [evCitizenshipCode, setEvCitizenshipCode] = useState('');
+  /** List A vs List B + C for `i9_case_flat` document fields (USCIS create-draft). */
+  const [evDocMode, setEvDocMode] = useState<'list_a' | 'list_bc'>('list_a');
+  const [evDocASelection, setEvDocASelection] = useState('');
+  const [evDocACustomCode, setEvDocACustomCode] = useState('');
+  const [evDocANumberField, setEvDocANumberField] = useState<EverifyListANumberField | ''>('');
+  const [evDocANumberValue, setEvDocANumberValue] = useState('');
+  const [evDocExpiration, setEvDocExpiration] = useState('');
+  const [evDocNoExpiration, setEvDocNoExpiration] = useState(false);
+  const [evDocBSelection, setEvDocBSelection] = useState('');
+  const [evDocBCustomCode, setEvDocBCustomCode] = useState('');
+  const [evDocBNumber, setEvDocBNumber] = useState('');
+  const [evDocCSelection, setEvDocCSelection] = useState('');
+  const [evDocCCustomCode, setEvDocCCustomCode] = useState('');
+  const [evDocCNumber, setEvDocCNumber] = useState('');
 
   /** Loading tenants/…/entities to resolve C1 Select LLC for E-Verify. */
   const [tenantEntitiesLoading, setTenantEntitiesLoading] = useState(false);
@@ -279,6 +328,46 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     [isHRX, tenantId, claimsRoles]
   );
 
+  const listAFilteredPresets = useMemo(
+    () => filterDocPresetsByCitizenship(EVERIFY_LIST_A_PRESETS, evCitizenshipCode),
+    [evCitizenshipCode]
+  );
+  const listBFilteredPresets = useMemo(
+    () => filterDocPresetsByCitizenship(EVERIFY_LIST_B_PRESETS, evCitizenshipCode),
+    [evCitizenshipCode]
+  );
+  const listCFilteredPresets = useMemo(
+    () => filterDocPresetsByCitizenship(EVERIFY_LIST_C_PRESETS, evCitizenshipCode),
+    [evCitizenshipCode]
+  );
+
+  const everifyDocFormValid = useMemo(() => {
+    if (!evCitizenshipCode.trim()) return false;
+    if (evDocMode === 'list_a') {
+      if (!evDocASelection) return false;
+      if (evDocASelection === EVERIFY_DOC_CUSTOM) return evDocACustomCode.trim() !== '';
+      return true;
+    }
+    const bOk =
+      evDocBSelection === EVERIFY_DOC_CUSTOM
+        ? evDocBCustomCode.trim() !== ''
+        : Boolean(evDocBSelection);
+    const cOk =
+      evDocCSelection === EVERIFY_DOC_CUSTOM
+        ? evDocCCustomCode.trim() !== ''
+        : Boolean(evDocCSelection);
+    return bOk && cOk;
+  }, [
+    evCitizenshipCode,
+    evDocMode,
+    evDocASelection,
+    evDocACustomCode,
+    evDocBSelection,
+    evDocBCustomCode,
+    evDocCSelection,
+    evDocCCustomCode,
+  ]);
+
   const canAccusourceAdmin = useMemo(() => {
     if (viewerUserDoc === undefined) return false;
     return canAccusourceAdminFromUserDoc(viewerUserDoc, tenantId);
@@ -294,16 +383,41 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     if (!tenantId || !uid) {
       setEverifyRows([]);
       setScreeningRows([]);
+      setEntityNameById({});
+      setTenantEntitiesBrief([]);
+      setUserEmploymentsSnapshot([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     setError(null);
     try {
-      const [evSnap, bgSnap] = await Promise.all([
+      const [evSnap, bgSnap, empSnap, entSnap] = await Promise.all([
         getDocs(query(everifyCasesCol(tenantId), where('userId', '==', uid))),
         getDocs(query(collection(db, 'backgroundChecks'), where('candidateId', '==', uid), limit(PAGE_LIMIT))),
+        getDocs(query(userEmploymentsCol(tenantId), where('userId', '==', uid))),
+        getDocs(collection(db, 'tenants', tenantId, 'entities')),
       ]);
+      const names: Record<string, string> = {};
+      const brief: Array<{ id: string; name: string; entityCode: string }> = [];
+      entSnap.docs.forEach((d) => {
+        const data = d.data() as { name?: string; entityCode?: string };
+        const name = String(data.name || d.id);
+        names[d.id] = name;
+        brief.push({ id: d.id, name, entityCode: String(data.entityCode || '') });
+      });
+      setEntityNameById(names);
+      setTenantEntitiesBrief(brief);
+      setUserEmploymentsSnapshot(
+        empSnap.docs.map((d) => {
+          const raw = d.data() as Record<string, unknown>;
+          return {
+            id: d.id,
+            entityId: String(raw.entityId || ''),
+            i9Status: String(raw.i9Status || '—'),
+          };
+        })
+      );
       const evList = evSnap.docs
         .map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }))
         .sort((a, b) => {
@@ -326,6 +440,9 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
       setError(e instanceof Error ? e.message : 'Failed to load compliance data');
       setEverifyRows([]);
       setScreeningRows([]);
+      setEntityNameById({});
+      setTenantEntitiesBrief([]);
+      setUserEmploymentsSnapshot([]);
     } finally {
       setLoading(false);
     }
@@ -334,6 +451,15 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
   useEffect(() => {
     loadAll();
   }, [loadAll]);
+
+  useEffect(() => {
+    if (!evDocASelection || evDocASelection === EVERIFY_DOC_CUSTOM) return;
+    if (!listAFilteredPresets.some((p) => p.code === evDocASelection)) {
+      setEvDocASelection('');
+      setEvDocANumberField('');
+      setEvDocANumberValue('');
+    }
+  }, [evCitizenshipCode, listAFilteredPresets, evDocASelection]);
 
   useEffect(() => {
     if (!tenantId || !uid) {
@@ -357,16 +483,38 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     };
   }, [tenantId, uid, lastRefresh]);
 
+  const selectEntityIdResolved = useMemo(() => resolveC1SelectEntityId(tenantEntitiesBrief), [tenantEntitiesBrief]);
+
+  const selectEverifyRows = useMemo(
+    () => filterEverifyCasesForSelectUi(everifyRows, new Map(Object.entries(entityNameById))),
+    [everifyRows, entityNameById]
+  );
+
+  const hiddenEverifyCount = everifyRows.length - selectEverifyRows.length;
+
+  const workforceI9Employments = useMemo(() => {
+    return userEmploymentsSnapshot.filter((e) => {
+      if (!e.entityId) return false;
+      const n = entityNameById[e.entityId] || '';
+      return deriveC1EntityKeyFromEntityName(n) === 'workforce';
+    });
+  }, [userEmploymentsSnapshot, entityNameById]);
+
+  const selectI9Employment = useMemo(() => {
+    if (!selectEntityIdResolved) return null;
+    return userEmploymentsSnapshot.find((e) => e.entityId === selectEntityIdResolved) ?? null;
+  }, [userEmploymentsSnapshot, selectEntityIdResolved]);
+
   const summary = useMemo(
-    () => buildComplianceSummary(everifyRows, screeningRows),
-    [everifyRows, screeningRows]
+    () => buildComplianceSummary(selectEverifyRows, screeningRows),
+    [selectEverifyRows, screeningRows]
   );
 
   const normalizedRows = useMemo(() => {
-    const ev = everifyRows.map(({ id, data }) => normalizeEverifyRow(id, data));
+    const ev = selectEverifyRows.map(({ id, data }) => normalizeEverifyRow(id, data));
     const bg = screeningRows.map(normalizeScreeningRow);
     return [...ev, ...bg];
-  }, [everifyRows, screeningRows]);
+  }, [selectEverifyRows, screeningRows]);
 
   const loadEmploymentOptionsForUser = useCallback(
     async (tid: string, userId: string) => {
@@ -453,6 +601,19 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     setEvWorkerDob('');
     setEvWorkerSsn('');
     setEvCitizenshipCode('');
+    setEvDocMode('list_a');
+    setEvDocASelection('');
+    setEvDocACustomCode('');
+    setEvDocANumberField('');
+    setEvDocANumberValue('');
+    setEvDocExpiration('');
+    setEvDocNoExpiration(false);
+    setEvDocBSelection('');
+    setEvDocBCustomCode('');
+    setEvDocBNumber('');
+    setEvDocCSelection('');
+    setEvDocCCustomCode('');
+    setEvDocCNumber('');
     setCreateEmploymentError(null);
     setEverifyHiringEntityResolved(null);
     setNewEmploymentStartIso(new Date().toISOString().slice(0, 10));
@@ -670,6 +831,43 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
       setEvMessage('SSN must be 9 digits (dashes optional).');
       return;
     }
+    const resolveIcaDocCode = (sel: string, custom: string) =>
+      sel === EVERIFY_DOC_CUSTOM ? custom.trim() : sel.trim();
+    const docFields: Record<string, string | boolean> = {};
+    if (evDocMode === 'list_a') {
+      const aCode = resolveIcaDocCode(evDocASelection, evDocACustomCode);
+      if (!aCode) {
+        setEvMessage('Select or enter a List A document type (ICA code).');
+        return;
+      }
+      docFields.document_a_type_code = aCode;
+      if (evDocExpiration.trim()) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(evDocExpiration.trim())) {
+          setEvMessage('Document expiration must be YYYY-MM-DD.');
+          return;
+        }
+        docFields.expiration_date = evDocExpiration.trim();
+      }
+      if (evDocNoExpiration) docFields.no_expiration_date = true;
+      const aNumKey: EverifyListANumberField | '' =
+        evDocASelection === EVERIFY_DOC_CUSTOM
+          ? evDocANumberField
+          : EVERIFY_LIST_A_PRESETS.find((x) => x.code === evDocASelection)?.numberField ?? '';
+      if (aNumKey && evDocANumberValue.trim()) {
+        docFields[aNumKey] = evDocANumberValue.trim();
+      }
+    } else {
+      const bCode = resolveIcaDocCode(evDocBSelection, evDocBCustomCode);
+      const cCode = resolveIcaDocCode(evDocCSelection, evDocCCustomCode);
+      if (!bCode || !cCode) {
+        setEvMessage('Select or enter List B and List C document types (ICA codes).');
+        return;
+      }
+      docFields.document_b_type_code = bCode;
+      docFields.document_c_type_code = cCode;
+      if (evDocBNumber.trim()) docFields.document_bc_number = evDocBNumber.trim();
+      if (evDocCNumber.trim()) docFields.document_c_number = evDocCNumber.trim();
+    }
     setEvSubmitting(true);
     setEvMessage(null);
     try {
@@ -690,16 +888,26 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
       return;
     }
     try {
+      const i9Payload: Record<string, string | boolean> = {
+        first_name: fn,
+        last_name: ln,
+        date_of_birth: dob,
+        ssn: ssnRaw,
+        citizenship_status_code: cit,
+        ...docFields,
+      };
+      const i9Employee = Object.fromEntries(
+        Object.entries(i9Payload).filter(([, v]) => {
+          if (v === undefined || v === null) return false;
+          if (typeof v === 'string' && v.trim() === '') return false;
+          return true;
+        })
+      ) as typeof i9Payload;
+
       await everifyCreateCase({
         tenantId,
         userEmploymentId: selectedEmpId,
-        i9Employee: {
-          first_name: fn,
-          last_name: ln,
-          date_of_birth: dob,
-          ssn: ssnRaw,
-          citizenship_status_code: cit,
-        },
+        i9Employee,
       });
       if (evNotes.trim()) {
         await logCustomActivity(uid, 'everify_start_requested', evNotes.trim(), 'medium', {
@@ -711,7 +919,8 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     } catch (e: unknown) {
       const msg = formatFirebaseHttpsError(e);
       setEvMessage(msg);
-      console.warn('[E-Verify] everifyCreateCase failed', e);
+      const det = e && typeof e === 'object' && 'details' in e ? (e as { details?: unknown }).details : undefined;
+      console.warn('[E-Verify] everifyCreateCase failed', e, det != null ? { details: det } : '');
     } finally {
       setEvSubmitting(false);
     }
@@ -819,7 +1028,9 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
       <Typography variant="subtitle2" color="text.secondary">
-        Compliance control center — E-Verify and AccuSource screening. Data is loaded from Firestore; actions use server functions only.
+        Compliance control center — <strong>C1 Select</strong> work authorization (I-9 + E-Verify), <strong>C1 Workforce</strong> I-9 status, and
+        AccuSource screening. E-Verify cases tied to non-Select entities are hidden here (fix <code>entityId</code> on the case if needed). Data loads
+        from Firestore; actions use server functions only.
       </Typography>
 
       {error && (
@@ -850,10 +1061,47 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
             {summary.maxMillis > 0 && ` · data max ${new Date(summary.maxMillis).toLocaleString()}`}
           </Typography>
         </Stack>
+        {hiddenEverifyCount > 0 && (
+          <Alert severity="info" sx={{ mt: 1 }}>
+            {hiddenEverifyCount} E-Verify case(s) on file are not shown because they are not linked to a <strong>C1 Select</strong> hiring entity
+            (check <code>everify_cases.entityId</code>).
+          </Alert>
+        )}
+        {(selectI9Employment || workforceI9Employments.length > 0) && (
+          <Stack spacing={1} sx={{ mt: 1.5 }}>
+            {selectI9Employment && (
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>
+                  Work authorization — C1 Select (I-9)
+                </Typography>
+                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
+                  <Chip size="small" variant="outlined" label={`I-9: ${selectI9Employment.i9Status || '—'}`} />
+                </Stack>
+              </Box>
+            )}
+            {workforceI9Employments.length > 0 && (
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>
+                  Work authorization — C1 Workforce (I-9 only)
+                </Typography>
+                <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mt: 0.5 }}>
+                  {workforceI9Employments.map((e) => (
+                    <Chip
+                      key={e.id}
+                      size="small"
+                      variant="outlined"
+                      label={`I-9: ${e.i9Status || '—'} (${entityNameById[e.entityId] || e.entityId})`}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            )}
+          </Stack>
+        )}
         <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5, mb: 1 }}>
           <Chip
             size="small"
-            label={`E-Verify: ${summary.evStatusLabel}`}
+            label={`Select — E-Verify: ${summary.evStatusLabel}`}
             color={statusToneFromStatusString(summary.evStatusLabel)}
             variant="outlined"
           />
@@ -867,10 +1115,23 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
           <Chip size="small" label={`Additional: ${summary.additionalSummaryLabel}`} variant="outlined" />
         </Stack>
         <Stack direction="row" flexWrap="wrap" gap={1}>
-          <Tooltip title={!canManageEverify ? EVERIFY_PERM_HINT : ''}>
+          <Tooltip
+            title={
+              !canManageEverify
+                ? EVERIFY_PERM_HINT
+                : !selectEntityIdResolved
+                  ? 'Add or resolve C1 Select LLC under Settings → Entities before starting E-Verify.'
+                  : ''
+            }
+          >
             <span>
-              <Button variant="contained" size="small" onClick={openEverifyModal} disabled={!canManageEverify}>
-                Start E-Verify
+              <Button
+                variant="contained"
+                size="small"
+                onClick={openEverifyModal}
+                disabled={!canManageEverify || !selectEntityIdResolved}
+              >
+                Start E-Verify (Select)
               </Button>
             </span>
           </Tooltip>
@@ -933,6 +1194,9 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
           <Typography variant="subtitle2" fontWeight={600}>
             Active orders & compliance items
           </Typography>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+            E-Verify rows are <strong>C1 Select</strong> only. Screenings (AccuSource) apply per job/account rules.
+          </Typography>
         </Box>
         <TableContainer>
           <Table size="small">
@@ -949,11 +1213,14 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
               </TableRow>
             </TableHead>
             <TableBody>
-              {everifyRows.length === 0 && screeningRows.length === 0 && (
+              {selectEverifyRows.length === 0 && screeningRows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={8}>
                     <Typography variant="body2" color="text.secondary">
-                      No E-Verify cases or screening orders for this worker yet.
+                      No C1 Select E-Verify cases or screening orders for this worker yet.
+                      {hiddenEverifyCount > 0
+                        ? ' Other E-Verify cases exist but are hidden until linked to C1 Select (see note above).'
+                        : ''}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -965,7 +1232,12 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
                   const retryEligible = data.status === 'error' || data.error;
                   return (
                     <TableRow key={row.key}>
-                      <TableCell>E-Verify</TableCell>
+                      <TableCell>
+                        E-Verify
+                        <Typography variant="caption" display="block" color="text.secondary">
+                          C1 Select
+                        </Typography>
+                      </TableCell>
                       <TableCell>{row.packageLabel}</TableCell>
                       <TableCell>
                         <Typography variant="body2">{row.statusPrimary}</Typography>
@@ -1061,7 +1333,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
 
       {/* 3A E-Verify modal */}
       <Dialog open={evModalOpen} onClose={() => setEvModalOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Start E-Verify</DialogTitle>
+        <DialogTitle>Start E-Verify (C1 Select)</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Typography variant="body2" color="text.secondary">
@@ -1267,18 +1539,19 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
                   size="small"
                   label="SSN"
                   value={evWorkerSsn}
-                  onChange={(e) => setEvWorkerSsn(e.target.value)}
+                  onChange={(e) => setEvWorkerSsn(formatSsnInputDisplay(e.target.value))}
                   fullWidth
                   required
                   autoComplete="off"
+                  inputProps={{ maxLength: 11, inputMode: 'numeric' }}
                   placeholder="###-##-####"
-                  helperText="Must match the completed I-9. Format with or without dashes."
+                  helperText="Must match the completed I-9. Enter 9 digits; dashes are added automatically."
                 />
                 <FormControl fullWidth size="small" required>
-                  <InputLabel id="ev-cit-label">Citizenship / status (ICA code)</InputLabel>
+                  <InputLabel id="ev-cit-label">Citizenship / work authorization</InputLabel>
                   <Select
                     labelId="ev-cit-label"
-                    label="Citizenship / status (ICA code)"
+                    label="Citizenship / work authorization"
                     value={evCitizenshipCode}
                     displayEmpty
                     onChange={(e) => setEvCitizenshipCode(e.target.value as string)}
@@ -1294,6 +1567,215 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
                   </Select>
                   <FormHelperText sx={{ mx: 0 }}>Must match Section 1 of the I-9.</FormHelperText>
                 </FormControl>
+                <Divider />
+                <Typography variant="subtitle2">I-9 document data (USCIS create case)</Typography>
+                <Typography variant="caption" color="text.secondary" display="block">
+                  E-Verify requires List A <strong>or</strong> List B + List C type codes in the API payload. Preset codes are
+                  placeholders — confirm exact strings in your signed ICA; use &quot;Other&quot; to paste the code from your
+                  ICA appendix.
+                </Typography>
+                <RadioGroup
+                  row
+                  value={evDocMode}
+                  onChange={(e) => setEvDocMode(e.target.value as 'list_a' | 'list_bc')}
+                >
+                  <FormControlLabel
+                    value="list_a"
+                    control={<Radio size="small" />}
+                    label="List A (one document)"
+                  />
+                  <FormControlLabel
+                    value="list_bc"
+                    control={<Radio size="small" />}
+                    label="List B + List C"
+                  />
+                </RadioGroup>
+                {evDocMode === 'list_a' ? (
+                  <Stack spacing={1.5}>
+                    <FormControl fullWidth size="small" required>
+                      <InputLabel id="ev-doc-a-label">List A document type</InputLabel>
+                      <Select
+                        labelId="ev-doc-a-label"
+                        label="List A document type"
+                        value={evDocASelection}
+                        displayEmpty
+                        onChange={(e) => {
+                          const v = e.target.value as string;
+                          setEvDocASelection(v);
+                          if (v === EVERIFY_DOC_CUSTOM) {
+                            setEvDocANumberField('');
+                          } else {
+                            const p = EVERIFY_LIST_A_PRESETS.find((x) => x.code === v);
+                            setEvDocANumberField(p?.numberField ?? '');
+                          }
+                        }}
+                      >
+                        <MenuItem value="">
+                          <em>Select…</em>
+                        </MenuItem>
+                        {listAFilteredPresets.map((p) => (
+                          <MenuItem key={p.code} value={p.code}>
+                            {p.label}
+                          </MenuItem>
+                        ))}
+                        <MenuItem value={EVERIFY_DOC_CUSTOM}>Other (enter ICA code)</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {evDocASelection === EVERIFY_DOC_CUSTOM ? (
+                      <TextField
+                        size="small"
+                        label="List A ICA type code"
+                        value={evDocACustomCode}
+                        onChange={(e) => setEvDocACustomCode(e.target.value)}
+                        fullWidth
+                        required
+                        autoComplete="off"
+                        helperText="Exact value for document_a_type_code from your ICA."
+                      />
+                    ) : null}
+                    {evDocASelection === EVERIFY_DOC_CUSTOM ? (
+                      <FormControl fullWidth size="small">
+                        <InputLabel id="ev-doc-a-numkey-label">Primary document number field (ICA)</InputLabel>
+                        <Select
+                          labelId="ev-doc-a-numkey-label"
+                          label="Primary document number field (ICA)"
+                          value={evDocANumberField}
+                          displayEmpty
+                          onChange={(e) => setEvDocANumberField(e.target.value as EverifyListANumberField | '')}
+                        >
+                          <MenuItem value="">
+                            <em>None / not sending number</em>
+                          </MenuItem>
+                          {(Object.keys(EVERIFY_LIST_A_NUMBER_FIELD_LABELS) as EverifyListANumberField[]).map((k) => (
+                            <MenuItem key={k} value={k}>
+                              {EVERIFY_LIST_A_NUMBER_FIELD_LABELS[k]}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    ) : null}
+                    {evDocASelection && evDocASelection !== EVERIFY_DOC_CUSTOM && evDocANumberField ? (
+                      <TextField
+                        size="small"
+                        label={EVERIFY_LIST_A_NUMBER_FIELD_LABELS[evDocANumberField]}
+                        value={evDocANumberValue}
+                        onChange={(e) => setEvDocANumberValue(e.target.value)}
+                        fullWidth
+                        autoComplete="off"
+                        helperText="Must match the physical document shown for Section 2."
+                      />
+                    ) : null}
+                    {evDocASelection === EVERIFY_DOC_CUSTOM && evDocANumberField ? (
+                      <TextField
+                        size="small"
+                        label={EVERIFY_LIST_A_NUMBER_FIELD_LABELS[evDocANumberField]}
+                        value={evDocANumberValue}
+                        onChange={(e) => setEvDocANumberValue(e.target.value)}
+                        fullWidth
+                        autoComplete="off"
+                      />
+                    ) : null}
+                    <TextField
+                      type="date"
+                      size="small"
+                      label="Document expiration (if any)"
+                      value={evDocExpiration}
+                      onChange={(e) => setEvDocExpiration(e.target.value)}
+                      fullWidth
+                      InputLabelProps={{ shrink: true }}
+                      helperText="YYYY-MM-DD. Leave blank if not applicable or use “no expiration” below per ICA."
+                    />
+                    <FormControlLabel
+                      control={
+                        <Checkbox checked={evDocNoExpiration} onChange={(_, v) => setEvDocNoExpiration(v)} />
+                      }
+                      label="Document has no expiration (no_expiration_date)"
+                    />
+                  </Stack>
+                ) : (
+                  <Stack spacing={1.5}>
+                    <FormControl fullWidth size="small" required>
+                      <InputLabel id="ev-doc-b-label">List B document type</InputLabel>
+                      <Select
+                        labelId="ev-doc-b-label"
+                        label="List B document type"
+                        value={evDocBSelection}
+                        displayEmpty
+                        onChange={(e) => setEvDocBSelection(e.target.value as string)}
+                      >
+                        <MenuItem value="">
+                          <em>Select…</em>
+                        </MenuItem>
+                        {listBFilteredPresets.map((p) => (
+                          <MenuItem key={p.code} value={p.code}>
+                            {p.label}
+                          </MenuItem>
+                        ))}
+                        <MenuItem value={EVERIFY_DOC_CUSTOM}>Other (enter ICA code)</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {evDocBSelection === EVERIFY_DOC_CUSTOM ? (
+                      <TextField
+                        size="small"
+                        label="List B ICA type code"
+                        value={evDocBCustomCode}
+                        onChange={(e) => setEvDocBCustomCode(e.target.value)}
+                        fullWidth
+                        required
+                        autoComplete="off"
+                      />
+                    ) : null}
+                    <TextField
+                      size="small"
+                      label="List B document number (document_bc_number)"
+                      value={evDocBNumber}
+                      onChange={(e) => setEvDocBNumber(e.target.value)}
+                      fullWidth
+                      autoComplete="off"
+                      helperText="ICA field name may differ; confirm in your ICA."
+                    />
+                    <FormControl fullWidth size="small" required>
+                      <InputLabel id="ev-doc-c-label">List C document type</InputLabel>
+                      <Select
+                        labelId="ev-doc-c-label"
+                        label="List C document type"
+                        value={evDocCSelection}
+                        displayEmpty
+                        onChange={(e) => setEvDocCSelection(e.target.value as string)}
+                      >
+                        <MenuItem value="">
+                          <em>Select…</em>
+                        </MenuItem>
+                        {listCFilteredPresets.map((p) => (
+                          <MenuItem key={p.code} value={p.code}>
+                            {p.label}
+                          </MenuItem>
+                        ))}
+                        <MenuItem value={EVERIFY_DOC_CUSTOM}>Other (enter ICA code)</MenuItem>
+                      </Select>
+                    </FormControl>
+                    {evDocCSelection === EVERIFY_DOC_CUSTOM ? (
+                      <TextField
+                        size="small"
+                        label="List C ICA type code"
+                        value={evDocCCustomCode}
+                        onChange={(e) => setEvDocCCustomCode(e.target.value)}
+                        fullWidth
+                        required
+                        autoComplete="off"
+                      />
+                    ) : null}
+                    <TextField
+                      size="small"
+                      label="List C document number (document_c_number)"
+                      value={evDocCNumber}
+                      onChange={(e) => setEvDocCNumber(e.target.value)}
+                      fullWidth
+                      autoComplete="off"
+                      helperText="If USCIS rejects this attribute name, adjust mapping in everifySchemas / ICA."
+                    />
+                  </Stack>
+                )}
               </>
             ) : null}
             <FormControlLabel
@@ -1314,7 +1796,8 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
               !canManageEverify ||
               !selectedEmpId ||
               !i9SystemCompleted ||
-              !i9Confirmed
+              !i9Confirmed ||
+              !everifyDocFormValid
             }
           >
             {evSubmitting ? <CircularProgress size={22} /> : 'Submit'}

@@ -36,6 +36,15 @@ import EntityComplianceTab from './EntityComplianceTab';
 import EntityDocumentsTab from './EntityDocumentsTab';
 import EntityWorkersCompTab from './EntityWorkersCompTab';
 import type { PayrollSettings as PayrollSettingsType } from '../../../types/payroll';
+import {
+  ONBOARDING_WORKFLOW_STEPS,
+  type OnboardingStepCategory,
+  type OnboardingWorkflowStepDef,
+  type OnboardingWorkflowStepsConfig,
+} from '../../../utils/onboardingWorkflowStepCatalog';
+
+export type { OnboardingStepCategory, OnboardingWorkflowStepDef, OnboardingWorkflowStepsConfig };
+export { ONBOARDING_WORKFLOW_STEPS };
 
 export type EntityTab = 'overview' | 'workflow' | 'documents' | 'compliance' | 'costcenters' | 'workerscomp' | 'export';
 
@@ -74,9 +83,6 @@ export interface EntityDocuments {
   workersCompInfoDocKey?: string;
 }
 
-/** Which steps are enabled for this entity (stepId -> true). Unset = not enabled. */
-export type OnboardingWorkflowStepsConfig = Record<string, boolean>;
-
 export interface Entity {
   id: string;
   name: string;
@@ -113,38 +119,6 @@ export interface Entity {
 const WORKER_TYPES = ['W2', '1099', 'BOTH'] as const;
 const ENTITY_TYPES: EntityType[] = ['LLC', 'Inc', 'LP', 'SoleProp', 'Other'];
 const US_STATES = ['AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA', 'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD', 'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ', 'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC', 'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'];
-
-/** All available onboarding steps. Shown for every entity; checkboxes enable which apply to that entity. */
-export type OnboardingStepCategory = '1099' | 'W2' | 'both';
-export interface OnboardingWorkflowStepDef {
-  id: string;
-  label: string;
-  category: OnboardingStepCategory;
-}
-export const ONBOARDING_WORKFLOW_STEPS: OnboardingWorkflowStepDef[] = [
-  // 1099 / Contractor
-  { id: 'ic_agreement_sent', label: 'Independent Contractor Agreement Sent', category: '1099' },
-  { id: 'ic_agreement_signed', label: 'Independent Contractor Agreement Signed', category: '1099' },
-  { id: '1099_sent', label: '1099 / W-9 Sent', category: '1099' },
-  { id: '1099_completed', label: '1099 / W-9 Completed', category: '1099' },
-  { id: 'payroll_invite_sent', label: 'Payroll Invite Sent', category: '1099' },
-  { id: 'payroll_setup_complete', label: 'Payroll Setup Complete', category: '1099' },
-  { id: 'w9_received', label: 'W-9 Received', category: '1099' },
-  { id: 'direct_deposit_contractor', label: 'Direct Deposit / Banking Info (Contractor)', category: '1099' },
-  // W2
-  { id: 'handbook_sent', label: 'Handbook Sent', category: 'W2' },
-  { id: 'handbook_signed', label: 'Handbook Signed', category: 'W2' },
-  { id: 'i9_sent', label: 'I-9 Sent', category: 'W2' },
-  { id: 'i9_completed', label: 'I-9 Completed', category: 'W2' },
-  { id: 'everify_sent', label: 'E-Verify Sent', category: 'W2' },
-  { id: 'everify_completed', label: 'E-Verify Completed', category: 'W2' },
-  { id: 'w4_sent', label: 'W-4 Sent', category: 'W2' },
-  { id: 'w4_completed', label: 'W-4 Completed', category: 'W2' },
-  { id: 'direct_deposit_w2', label: 'Direct Deposit Setup', category: 'W2' },
-  { id: 'policy_acknowledgments', label: 'Policy Acknowledgments (e.g. harassment, confidentiality)', category: 'W2' },
-  { id: 'background_initiated', label: 'Background Check Initiated', category: 'W2' },
-  { id: 'background_completed', label: 'Background Check Completed', category: 'W2' },
-];
 
 const EntitiesPage: React.FC = () => {
   const { activeTenant } = useAuth();

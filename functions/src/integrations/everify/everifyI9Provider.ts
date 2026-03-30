@@ -36,6 +36,26 @@ function validateI9Required(merged: Record<string, unknown>): void {
   }
 }
 
+function nonEmptyString(v: unknown): boolean {
+  if (v === undefined || v === null) return false;
+  if (typeof v === 'string') return v.trim() !== '';
+  return false;
+}
+
+/**
+ * REST create-draft rejects empty List A and empty B/C (ATTRIBUTE_A_OR_B_AND_C_DOCUMENTS_REQUIRED).
+ */
+function validateI9ListDocumentsForEverifyRest(data: Record<string, unknown>): void {
+  const hasA = nonEmptyString(data.document_a_type_code);
+  const hasB = nonEmptyString(data.document_b_type_code);
+  const hasC = nonEmptyString(data.document_c_type_code);
+  if (hasA || (hasB && hasC)) return;
+  throw new Error(
+    'E-Verify requires List A (document_a_type_code) or both List B and List C (document_b_type_code and document_c_type_code). ' +
+      'Use the Start E-Verify document section or set these fields in EVERIFY_I9_FIXTURE_JSON. Codes must match your ICA.'
+  );
+}
+
 /**
  * ICA rejects bare 9-digit SSN; pattern is ###-##-#### and disallows 123-45-6789 / 111-11-1111.
  * Normalizes env fixtures so values match USCIS pattern (###-##-####); applies in stage and prod.
@@ -55,6 +75,63 @@ function normalizeSsnInI9Payload(data: Record<string, unknown>): void {
     formatted = '890-12-3456';
   }
   data.ssn = formatted;
+}
+
+/**
+ * REST create-draft expects `citizenship_status_code` as USCIS enum strings (e.g. US_CITIZEN), not legacy "1"–"5" digits.
+ * Admin UI and old fixtures may still send digits; map them here. Pass through values already in the API set.
+ */
+const REST_CITIZENSHIP_STATUS_ENUMS = new Set([
+  'US_CITIZEN',
+  'NONCITIZEN',
+  'LAWFUL_PERMANENT_RESIDENT',
+  'ALIEN_AUTHORIZED_TO_WORK',
+  'NONCITIZEN_AUTHORIZED_TO_WORK',
+]);
+
+const LEGACY_DIGIT_CITIZENSHIP_TO_REST: Record<string, string> = {
+  '1': 'US_CITIZEN',
+  '2': 'NONCITIZEN',
+  '3': 'LAWFUL_PERMANENT_RESIDENT',
+  '4': 'ALIEN_AUTHORIZED_TO_WORK',
+  '5': 'NONCITIZEN_AUTHORIZED_TO_WORK',
+};
+
+const LEGACY_HRX_LABEL_TO_REST: Record<string, string> = {
+  NONCITIZEN_NATIONAL: 'NONCITIZEN',
+  OTHER: 'NONCITIZEN_AUTHORIZED_TO_WORK',
+};
+
+function normalizeCitizenshipStatusCodeInI9Payload(data: Record<string, unknown>): void {
+  const v = data.citizenship_status_code;
+  if (v === undefined || v === null) return;
+  let raw: string;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    raw = String(Math.trunc(Math.abs(v)));
+  } else if (typeof v === 'string') {
+    raw = v.trim();
+  } else {
+    return;
+  }
+  if (!raw) return;
+  if (REST_CITIZENSHIP_STATUS_ENUMS.has(raw)) return;
+  const fromDigit = LEGACY_DIGIT_CITIZENSHIP_TO_REST[raw];
+  if (fromDigit) {
+    data.citizenship_status_code = fromDigit;
+    return;
+  }
+  const fromHrx = LEGACY_HRX_LABEL_TO_REST[raw];
+  if (fromHrx) {
+    data.citizenship_status_code = fromHrx;
+  }
+}
+
+/**
+ * Final pass immediately before POST /cases. Idempotent; covers any code path that skipped resolveI9Payload*.
+ */
+export function applyRestDraftPayloadNormalization(data: Record<string, unknown>): void {
+  normalizeSsnInI9Payload(data);
+  normalizeCitizenshipStatusCodeInI9Payload(data);
 }
 
 function parseEnvI9FixtureJson(): Record<string, unknown> | null {
@@ -140,6 +217,8 @@ export async function resolveI9PayloadForCreateCase(params: {
   assignDefined(merged, params.serviceOverrides as Record<string, unknown>);
 
   normalizeSsnInI9Payload(merged);
+  normalizeCitizenshipStatusCodeInI9Payload(merged);
+  validateI9ListDocumentsForEverifyRest(merged);
   validateI9Required(merged);
   return merged as I9CaseFlat;
 }
@@ -161,6 +240,8 @@ export function resolveI9PayloadFromFixture(overrides?: Partial<I9CaseFlat>): I9
 
   const merged: Record<string, unknown> = overrides ? { ...data, ...overrides } : { ...data };
   normalizeSsnInI9Payload(merged);
+  normalizeCitizenshipStatusCodeInI9Payload(merged);
+  validateI9ListDocumentsForEverifyRest(merged);
   validateI9Required(merged);
   return merged as I9CaseFlat;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { db } from "../firebase";
+import { everifyUiAppliesToEntityKey } from "../utils/c1EntityWorkAuthorizationUi";
 
 export type WorkerOnboardingTaskStatus = "missing" | "in_progress" | "complete" | "recommended";
 export type WorkerOnboardingTaskPriority = "required" | "high_impact" | "optional";
@@ -26,6 +27,7 @@ interface WorkerOnboardingPipelineDoc {
   id: string;
   status?: string;
   entityName?: string;
+  entityKey?: string;
   tasks?: WorkerOnboardingTaskRow[];
   updatedAt?: unknown;
 }
@@ -84,11 +86,16 @@ export function useWorkerOnboardingPipeline(uid: string | undefined, tenantId: s
     pipelines.forEach((pipeline) => {
       const pipelineStatus = String(pipeline.status || "").toLowerCase();
       if (pipelineStatus === "complete") return;
+      const entityKey = String(pipeline.entityKey || "").toLowerCase();
       const entityLabel = pipeline.entityName || "this entity";
       const taskRows = Array.isArray(pipeline.tasks) ? pipeline.tasks : [];
       taskRows
         .filter((task) => task.owner === "worker")
         .filter((task) => task.status !== "complete")
+        .filter((task) => {
+          if (task.stepId !== "e_verify") return true;
+          return everifyUiAppliesToEntityKey(entityKey);
+        })
         .forEach((task) => {
           workerTasks.push({
             id: `${pipeline.id}__${task.id}`,

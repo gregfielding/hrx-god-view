@@ -16,11 +16,25 @@ const iconButtonSx = {
   transition: 'all 0.2s ease',
 } as const;
 
+const inlineIconButtonSx = {
+  p: 0.375,
+  color: 'primary.main',
+  bgcolor: 'action.hover',
+  borderRadius: 0.75,
+  '&:hover': {
+    color: 'primary.dark',
+    bgcolor: 'primary.light',
+  },
+  transition: 'background-color 0.15s ease',
+} as const;
+
 export interface JobBoardSyndicationIconRowProps {
   indeedUrl?: string | null;
   craigslistUrl?: string | null;
   /** Extra spacing above row (default matches job order header) */
   sx?: object;
+  /** Smaller controls for table caption rows (no top margin) */
+  inline?: boolean;
 }
 
 /**
@@ -30,13 +44,23 @@ const JobBoardSyndicationIconRow: React.FC<JobBoardSyndicationIconRowProps> = ({
   indeedUrl,
   craigslistUrl,
   sx = {},
+  inline = false,
 }) => {
   const indeedHref = normalizeJobBoardSyndicationUrl(indeedUrl);
   const clHref = normalizeJobBoardSyndicationUrl(craigslistUrl);
   if (!indeedHref && !clHref) return null;
 
+  const btnSx = inline ? inlineIconButtonSx : iconButtonSx;
+  const imgSize = inline ? 16 : 20;
+  const stackSpacing = inline ? 0.5 : 1;
+  const defaultMt = inline ? 0 : 0.75;
+
   return (
-    <Stack direction="row" spacing={1} sx={{ alignItems: 'center', mt: 0.75, ...sx }}>
+    <Stack
+      direction="row"
+      spacing={stackSpacing}
+      sx={{ alignItems: 'center', mt: defaultMt, flexShrink: 0, ...sx }}
+    >
       {indeedHref ? (
         <Tooltip title="Open Indeed listing">
           <IconButton
@@ -46,13 +70,14 @@ const JobBoardSyndicationIconRow: React.FC<JobBoardSyndicationIconRowProps> = ({
             rel="noopener noreferrer"
             size="small"
             aria-label="Open Indeed listing"
-            sx={iconButtonSx}
+            sx={btnSx}
+            onClick={(e) => e.stopPropagation()}
           >
             <Box
               component="img"
               src="https://www.indeed.com/favicon.ico"
               alt=""
-              sx={{ width: 20, height: 20, display: 'block' }}
+              sx={{ width: imgSize, height: imgSize, display: 'block' }}
             />
           </IconButton>
         </Tooltip>
@@ -66,13 +91,14 @@ const JobBoardSyndicationIconRow: React.FC<JobBoardSyndicationIconRowProps> = ({
             rel="noopener noreferrer"
             size="small"
             aria-label="Open Craigslist listing"
-            sx={iconButtonSx}
+            sx={btnSx}
+            onClick={(e) => e.stopPropagation()}
           >
             <Box
               component="img"
               src="https://www.craigslist.org/favicon.ico"
               alt=""
-              sx={{ width: 20, height: 20, display: 'block' }}
+              sx={{ width: imgSize, height: imgSize, display: 'block' }}
             />
           </IconButton>
         </Tooltip>

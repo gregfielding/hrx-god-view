@@ -22,6 +22,7 @@ import { useNavigate } from 'react-router-dom';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getEmploymentStatusLabel } from '../../../utils/employmentStatusLabel';
+import { countPipelineProgressForEntity } from '../../../utils/onboardingPipelineProgress';
 
 interface EntityEmploymentRecord {
   id: string;
@@ -92,10 +93,7 @@ const MyEmploymentPage: React.FC = () => {
             const snap = await getDoc(pipelineRef);
             const data = snap.data();
             const steps = Array.isArray(data?.steps) ? data.steps : [];
-            counts[rec.onboardingPipelineId] = {
-              complete: steps.filter((s: { status?: string }) => s.status === 'complete').length,
-              total: steps.length,
-            };
+            counts[rec.onboardingPipelineId] = countPipelineProgressForEntity(steps, rec.entityKey);
           } catch {
             counts[rec.onboardingPipelineId] = { complete: 0, total: 0 };
           }
