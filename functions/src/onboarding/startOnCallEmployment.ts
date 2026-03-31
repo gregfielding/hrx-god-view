@@ -13,6 +13,12 @@ import {
   assertEntityAllowsOnCallPool,
   assertWorkerTenantMembership,
 } from "./onCallOnboardingGuards";
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from "../messaging/twilioSecrets";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -20,6 +26,11 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 const ON_CALL_AUDIT_V = "v1";
+
+const onCallWithTwilioSms = {
+  cors: true as const,
+  secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+};
 
 export interface StartOnCallEmploymentPayload {
   tenantId: string;
@@ -253,7 +264,7 @@ export async function runStartOnCallEmploymentFlow(
   };
 }
 
-export const startOnCallEmployment = onCall({ cors: true }, async (request) => {
+export const startOnCallEmployment = onCall(onCallWithTwilioSms, async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Authentication required");
   }
@@ -287,7 +298,7 @@ export const startOnCallEmployment = onCall({ cors: true }, async (request) => {
  * Same payload and outcome as {@link startOnCallEmployment}, but enforces on-call-only policy:
  * hiring entity must allow on-call pool hires, and the target worker must be associated with the tenant.
  */
-export const startOnCallOnboarding = onCall({ cors: true }, async (request) => {
+export const startOnCallOnboarding = onCall(onCallWithTwilioSms, async (request) => {
   if (!request.auth?.uid) {
     throw new HttpsError("unauthenticated", "Authentication required");
   }

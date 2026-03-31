@@ -39,6 +39,10 @@ import {
   catalogStepAppliesToEntityWorkerType,
   workflowStepVisibleForEntityTab,
 } from './onboardingWorkflowStepCatalog';
+import {
+  mergeBackgroundOperationalPathRows,
+  mergeEverifyOperationalPathRows,
+} from './employmentOnboardingOperationalMerge';
 
 function entityAssignmentJobOrderIds(rows: EmploymentAssignmentSummary[]): Set<string> {
   const s = new Set<string>();
@@ -224,6 +228,22 @@ function buildAssignmentRequirementRows(
   return rows;
 }
 
+function internalPipelineTaskVerificationLabel(title: string, stepId: string): string {
+  const raw = (title || '').trim();
+  const combined = `${raw} ${stepId}`.toLowerCase();
+  if (/\bi-?9\b/.test(combined)) {
+    return 'I-9 completed in TempWorks';
+  }
+  if (combined.includes('tempworks') && (combined.includes('onboarding') || combined.includes('form'))) {
+    return 'TempWorks onboarding packet completed';
+  }
+  if (!raw) {
+    return 'Internal step completed in TempWorks';
+  }
+  const stripped = raw.replace(/^complete\s+/i, '').trim();
+  return `${stripped} completed in TempWorks`;
+}
+
 function buildInternalTaskRows(
   entityKey: EmploymentEntityKey,
   pipeline: WorkerOnboardingPipeline | null
@@ -240,12 +260,13 @@ function buildInternalTaskRows(
     const done = isOnboardingPathRowDone(status);
     const owner = taskOwner(t.owner);
     const recruiterTask = t.owner === 'recruiter';
+    const baseTitle = t.title || 'Recruiter / admin task';
     rows.push({
       rowId: `task__${entityKey}__${String(t.id || sid || idx)}`,
       entityKey,
       groupId: 'internal_readiness',
       stepKey: `task:${t.id || sid}`,
-      label: t.title || 'Recruiter / admin task',
+      label: internalPipelineTaskVerificationLabel(baseTitle, sid),
       sourceType: 'pipeline_task',
       sourceRef: { pipelineStepId: sid || undefined, taskId: t.id ? String(t.id) : undefined },
       owner,
@@ -256,7 +277,7 @@ function buildInternalTaskRows(
       status,
       statusLabel,
       helperText:
-        'From worker_onboarding.tasks (internal recruiter/admin queue). Not a Settings checkbox; shown for operational visibility.',
+        'Pipeline task from worker_onboarding.tasks. Use the global Tasks list for full context; confirm here after you verify completion in TempWorks.',
       lastUpdatedAt: null,
     });
   });
@@ -348,8 +369,8 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
       const required = pStep ? applicability !== 'not_required' : runtimeDef.defaultRequired;
       // blocking: catalog heuristic defaultBlocking; any error state gates readiness (strict blocker rule).
       let blocking = runtimeDef.defaultBlocking || derived.status === 'error';
-      const workflowExternalKey = externalStepKeyForWorkflowStep(def.id);
-      const extStepKey = (workflowExternalKey ??
+      const mappedWorkflowExternalKey = externalStepKeyForWorkflowStep(def.id);
+      const extStepKey = (mappedWorkflowExternalKey ??
         (derived.sourceRef?.externalStepKey as ExternalOnboardingStepKey | undefined)) as
         | ExternalOnboardingStepKey
         | undefined;
@@ -385,6 +406,10 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         ...derived.sourceRef,
         ...(pipeId && !derived.sourceRef?.pipelineStepId ? { pipelineStepId: pipeId } : {}),
       };
+      if (mappedWorkflowExternalKey) {
+        rowSourceRef.externalStepKey = mappedWorkflowExternalKey;
+        rowSourceRef.requirementKey = mappedWorkflowExternalKey;
+      }
       let rowHelperText = derived.helperText;
 
       if (missingTempWorksRow && extStepKey) {
@@ -401,6 +426,11 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         rowHelperText = `${MISSING_TEMPWORKS_ROW_LABEL_ADMIN} ${derived.helperText}`.trim();
       }
 
+      let actionableBy = runtimeDef.actionableBy;
+      if (mappedWorkflowExternalKey === 'payroll_onboarding') {
+        actionableBy = 'either';
+      }
+
       byGroup.get(groupId)!.push({
         rowId: `${entityKey}__${def.id}`,
         entityKey,
@@ -411,7 +441,7 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         sourceRef: rowSourceRef,
         owner: runtimeDef.owner,
         audience: runtimeDef.audience,
-        actionableBy: runtimeDef.actionableBy,
+        actionableBy,
         required,
         blocking,
         status: rowStatus,
@@ -440,6 +470,15 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
   assignRows.forEach((r) => byGroup.get('assignment_requirements')!.push(r));
 
   buildInternalTaskRows(entityKey, pipeline).forEach((r) => byGroup.get('internal_readiness')!.push(r));
+
+  const workAuth = byGroup.get('work_authorization');
+  if (workAuth?.length) {
+    byGroup.set('work_authorization', mergeEverifyOperationalPathRows(workAuth));
+  }
+  const screenings = byGroup.get('screenings');
+  if (screenings?.length) {
+    byGroup.set('screenings', mergeBackgroundOperationalPathRows(screenings));
+  }
 
   return WORKFLOW_UI_GROUP_ORDER.map((groupId) => {
     const rows = byGroup.get(groupId) || [];

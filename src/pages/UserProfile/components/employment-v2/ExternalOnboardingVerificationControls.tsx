@@ -15,8 +15,10 @@ import {
   FormControlLabel,
   Stack,
   TextField,
+  Tooltip,
   Typography,
 } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { httpsCallable } from 'firebase/functions';
 
 import { functions } from '../../../../firebase';
@@ -170,16 +172,19 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
 
   const checkboxChecked = verified || optimisticChecked;
 
+  const tempWorksHelp =
+    'There is no TempWorks API in HRX. After you confirm this step in TempWorks, record it here. Several checklist lines can share one TempWorks milestone — marking complete updates all of them.';
+
   return (
-    <Box sx={{ mt: 1.25, pt: 1.25, borderTop: 1, borderColor: 'divider' }}>
-      <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.25 }}>
-        TempWorks milestone (manual in HRX)
-      </Typography>
-      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
-        There is no TempWorks API in HRX. After you confirm this step in TempWorks, record it here so the worker and
-        team see progress. Several checklist lines can share one TempWorks milestone — marking complete updates all of
-        them.
-      </Typography>
+    <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+      <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" fontWeight={600}>
+          HRX verification (TempWorks)
+        </Typography>
+        <Tooltip title={tempWorksHelp} placement="right">
+          <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
+        </Tooltip>
+      </Stack>
 
       <FormControlLabel
         sx={{ alignItems: 'flex-start', mr: 0, mb: 0.5 }}
@@ -215,7 +220,9 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
               </>
             ) : (
               <>
-                Mark complete in HRX (check after confirming in TempWorks)
+                {stepKey === 'handbook_acknowledgment'
+                  ? 'Confirmed signed in TempWorks'
+                  : 'Confirm completed in TempWorks'}
               </>
             )}
           </Typography>

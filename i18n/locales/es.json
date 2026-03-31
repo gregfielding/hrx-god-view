@@ -340,6 +340,8 @@
     "submittingApplication": "Enviando tu solicitud…",
     "completePersonalInfo": "Completa el paso de datos personales para crear tu cuenta antes de enviar.",
     "completeRequiredItems": "Completa todos los requisitos (pruebas de drogas, antecedentes, E‑Verify y evaluaciones adicionales) antes de enviar.",
+    "phoneTenDigits": "Ingresa un número de teléfono válido de 10 dígitos en EE. UU. (código de área + número).",
+    "phoneTenDigitsHelper": "Se requieren 10 dígitos. Solo números; el formato se aplica al escribir.",
     "enterEmail": "Por favor ingresa tu correo electrónico.",
     "createPassword": "Crea una contraseña (mínimo 6 caracteres) para continuar.",
     "passwordsDontMatch": "Las contraseñas no coinciden. Inténtalo de nuevo.",

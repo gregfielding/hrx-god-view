@@ -124,6 +124,11 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
   const hasDemand = overview.hasOpenOnboardingDemand;
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  /** No non-terminal assignment for this hiring entity — assignmentsRows are already scoped by hiringEntityId → tab. */
+  if (!vm.hasPrimaryAssignment) {
+    return null;
+  }
+
   const hasAnyJobContent =
     vm.hasPrimaryAssignment ||
     vm.entityScreeningMilestones.length > 0 ||

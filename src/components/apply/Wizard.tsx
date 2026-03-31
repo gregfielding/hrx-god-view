@@ -74,6 +74,7 @@ import { getUserScore } from '../../utils/scoreSummary';
 import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
+import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 
 type WizardProps = {
   tenantId: string;
@@ -1324,6 +1325,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const tidAppId = tenantAppId || `${uid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
           const personal = partial.personal || formData.personal || {};
+          const applicantPhone =
+            personal.phone && isValidUsPhone10(String(personal.phone))
+              ? normalizeUsPhoneDigits(String(personal.phone))
+              : null;
           await setDoc(
             tRef,
             {
@@ -1332,7 +1337,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 firstName: personal.firstName || null,
                 lastName: personal.lastName || null,
                 email: personal.email || null,
-                phone: personal.phone || null,
+                phone: applicantPhone,
               },
             },
             { merge: true },
@@ -1350,6 +1355,14 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // Save-and-continue: persist current step into user profile where applicable
     setSaving(true);
     try {
+      if (actualStep === 0) {
+        const ph = String(formData?.personal?.phone || '');
+        if (!isValidUsPhone10(ph)) {
+          alert(t('apply.phoneTenDigits'));
+          setSaving(false);
+          return;
+        }
+      }
       if (actualStep === 3) {
         const ev = String(
           formDataRef.current?.requirements?.eVerifyComfort ||
@@ -1493,7 +1506,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           } catch (e) {
             // ignore auth update failure; profile still updates
           }
-          if (p.phone) update.phone = String(p.phone).trim();
+          if (p.phone && isValidUsPhone10(String(p.phone))) {
+            update.phone = normalizeUsPhoneDigits(String(p.phone));
+          }
           if (p.dob) update.dob = String(p.dob).trim();
           update.preferredLanguage =
             String((p as any).preferredLanguage || '').toLowerCase() === 'es'
@@ -2091,6 +2106,21 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       // Merge selected profile fields into users/{uid}
       const userRef = doc(db, 'users', effectiveUid!);
       let personal = await ensurePersonalCoordinates({ ...(formData.personal || {}) });
+
+      {
+        const formDigits = normalizeUsPhoneDigits(String(personal.phone || ''));
+        const profilePhoneRaw = String(userProfile?.phone || userProfile?.phoneE164 || '');
+        const effectivePhone =
+          formDigits.length > 0 ? String(personal.phone || '') : profilePhoneRaw;
+        if (!isValidUsPhone10(effectivePhone)) {
+          alert(t('apply.phoneTenDigits'));
+          setSaving(false);
+          const idx = visibleStepIndices.indexOf(0);
+          if (idx >= 0) setActiveStep(idx);
+          return;
+        }
+      }
+
       const resumeAddress =
         !personal.street && (userProfile?.contact?.address || userProfile?.contact?.city)
           ? userProfile?.contact?.address ||
@@ -2191,7 +2221,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       if (personal.firstName) profileUpdate.firstName = String(personal.firstName).trim();
       if (personal.lastName) profileUpdate.lastName = String(personal.lastName).trim();
       if (personal.email) profileUpdate.email = String(personal.email).trim();
-      if (personal.phone) profileUpdate.phone = String(personal.phone).trim();
+      if (personal.phone && isValidUsPhone10(String(personal.phone))) {
+        profileUpdate.phone = normalizeUsPhoneDigits(String(personal.phone));
+      }
       if (personal.dob) profileUpdate.dob = String(personal.dob).trim();
       profileUpdate.preferredLanguage =
         String((personal as any).preferredLanguage || '').toLowerCase() === 'es'
@@ -2453,13 +2485,17 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             } catch (_) {}
             const qual = formData?.qualifications || {};
             const prefs = formData?.preferences || {};
+            const scorePhoneRaw =
+              personal.phone && isValidUsPhone10(String(personal.phone))
+                ? normalizeUsPhoneDigits(String(personal.phone))
+                : userData.phone;
             const userDocForScore = {
               ...userData,
               workEligibility: formData?.eligibility?.workAuthorized ?? userData.workEligibility,
               firstName: personal.firstName ?? userData.firstName,
               lastName: personal.lastName ?? userData.lastName,
               email: personal.email ?? userData.email,
-              phone: personal.phone ?? userData.phone,
+              phone: scorePhoneRaw,
               skills: qual.skills ?? userData.skills,
               education: qual.education ?? userData.education,
               certifications: qual.certifications ?? userData.certifications,
@@ -2498,7 +2534,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 firstName: personal.firstName || null,
                 lastName: personal.lastName || null,
                 email: personal.email || null,
-                phone: personal.phone || null,
+                phone:
+                  personal.phone && isValidUsPhone10(String(personal.phone))
+                    ? normalizeUsPhoneDigits(String(personal.phone))
+                    : isValidUsPhone10(String(userProfile?.phone || userProfile?.phoneE164 || ''))
+                      ? normalizeUsPhoneDigits(String(userProfile?.phone || userProfile?.phoneE164 || ''))
+                      : null,
               },
               ...(jobScoreSummaryPayload ? { jobScoreSummary: jobScoreSummaryPayload } : {}),
               // Store shift information for gig jobs
@@ -2960,8 +3001,8 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     // If the new phone is the same as current phone (ignoring formatting), don't require verification
     if (newDigits === currentDigits) return false;
 
-    // If the new phone is empty or just formatting differences, don't require verification
-    if (newDigits.length < 10) return false;
+    // If the new phone is empty or not a full US number, don't require verification
+    if (!isValidUsPhone10(newPhone)) return false;
 
     return true;
   })();
@@ -2974,14 +3015,12 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     const lastName = typeof p.lastName === 'string' ? p.lastName.trim() : '';
     const email = typeof p.email === 'string' ? p.email.trim() : '';
     const phone = String(p.phone ?? '').trim();
-    const phoneDigits = phone.replace(/\D/g, '');
     const dob = toDobString(p.dob);
     return !!(
       firstName &&
       lastName &&
       email &&
-      phone &&
-      phoneDigits.length >= 10 &&
+      isValidUsPhone10(phone) &&
       dob &&
       dob.length >= 10
     );
@@ -3057,26 +3096,6 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       String(formData.profilePicture.profilePicture).trim()) ||
     (userProfile?.avatar && String(userProfile.avatar).trim())
   );
-
-  // Debug logging for form validation
-  if (actualStep === 0) {
-    console.log('🔍 Personal Info Validation Debug:', {
-      personalValid,
-      phoneNeedsVerification,
-      formData: formData?.personal,
-      missingFields: {
-        firstName: !formData?.personal?.firstName,
-        lastName: !formData?.personal?.lastName,
-        email: !formData?.personal?.email,
-        phone: !formData?.personal?.phone,
-        dob: !formData?.personal?.dob,
-        street: !formData?.personal?.street,
-        city: !formData?.personal?.city,
-        state: !formData?.personal?.state,
-        zip: !formData?.personal?.zip,
-      },
-    });
-  }
 
   const applicationsPath = tenantSlug ? `/${tenantSlug}/applications` : '/c1/applications';
   const jobsBoardPath = tenantSlug ? `/${tenantSlug}/jobs-board` : '/c1/jobs-board';

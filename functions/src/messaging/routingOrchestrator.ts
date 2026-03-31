@@ -421,12 +421,13 @@ async function shouldUseChannel(
       return { allowed: false, reason: 'Push notifications disabled in notification settings' };
     }
     
-    // Check if user has push tokens
-    const pushTokens = userData.pushTokens;
-    if (!pushTokens || !Array.isArray(pushTokens) || pushTokens.length === 0) {
+    // Align with deliverPush: subcollection users/{uid}/pushTokens is canonical; optional
+    // legacy users/{uid}.pushTokens[]. Routing used to check only the legacy array.
+    const deviceTokens = await getDeviceTokensForUser(context.userId, userData);
+    if (!deviceTokens.length) {
       return { allowed: false, reason: 'No push tokens registered' };
     }
-    
+
     return { allowed: true };
   }
   
@@ -1616,9 +1617,17 @@ async function deliverPush(
 }
 
 /**
- * Get device tokens for a user — canonical path users/{uid}/pushTokens per HRX-FCM-Messaging-Complete
+ * Device tokens for FCM — canonical: users/{uid}/pushTokens (enabled == true).
+ * Legacy: users/{uid}.pushTokens string array (deduped with subcollection).
+ * @param userId Recipient Firebase Auth uid.
+ * @param userData Optional user document for legacy pushTokens array field.
  */
-async function getDeviceTokensForUser(userId: string): Promise<string[]> {
+async function getDeviceTokensForUser(
+  userId: string,
+  userData?: admin.firestore.DocumentData
+): Promise<string[]> {
+  const tokens: string[] = [];
+  const seen = new Set<string>();
   try {
     const pushTokensSnap = await db
       .collection('users')
@@ -1627,16 +1636,33 @@ async function getDeviceTokensForUser(userId: string): Promise<string[]> {
       .where('enabled', '==', true)
       .get();
 
-    const tokens: string[] = [];
     for (const docSnap of pushTokensSnap.docs) {
       const token = docSnap.data().token ?? docSnap.id;
-      if (token) tokens.push(token);
+      if (token) {
+        const s = String(token).trim();
+        if (s && !seen.has(s)) {
+          seen.add(s);
+          tokens.push(s);
+        }
+      }
     }
-    return tokens;
   } catch (error: any) {
     logger.error(`Error fetching push tokens for user ${userId}:`, error);
-    return [];
   }
+
+  const legacy = userData?.pushTokens;
+  if (Array.isArray(legacy)) {
+    for (const t of legacy) {
+      if (typeof t !== 'string') continue;
+      const s = t.trim();
+      if (s && !seen.has(s)) {
+        seen.add(s);
+        tokens.push(s);
+      }
+    }
+  }
+
+  return tokens;
 }
 
 /**

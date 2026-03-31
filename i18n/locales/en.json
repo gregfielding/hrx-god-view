@@ -340,6 +340,8 @@
     "submittingApplication": "Submitting your application…",
     "completePersonalInfo": "Please complete the Personal Info step to create your account before submitting.",
     "completeRequiredItems": "Please complete all required items (Drug, Background, E‑Verify, and Additional screenings) before submitting.",
+    "phoneTenDigits": "Enter a valid 10-digit U.S. phone number (area code + number).",
+    "phoneTenDigitsHelper": "10 digits required. Numbers only; formatting is applied as you type.",
     "enterEmail": "Please enter your email address.",
     "createPassword": "Please create a password (minimum 6 characters) to continue.",
     "passwordsDontMatch": "Passwords do not match. Please try again.",

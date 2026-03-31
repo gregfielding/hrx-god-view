@@ -91,7 +91,7 @@ function normalizeNarrativeActor(role: EmploymentOnboardingRow['owner']): Employ
   return 'worker';
 }
 
-function isGenericFallbackSummary(summary: string, ctx: OnboardingNarrativeContext): boolean {
+function isGenericFallbackSummary(summary: string, _ctx: OnboardingNarrativeContext): boolean {
   return summary === FALLBACK_ADMIN || summary === FALLBACK_WORKER;
 }
 
@@ -1356,6 +1356,13 @@ function narrativeContextFromBuildOverview(ctx: {
   };
 }
 
+function combineMergedRequirementNarratives(parts: EmploymentOnboardingNarrative[]): EmploymentOnboardingNarrative {
+  const summaries = parts.map((p) => p.summary).filter((s) => s && String(s).trim());
+  const summary = summaries.length ? summaries.join(' · ') : '—';
+  const events = sortEventsChronologically(parts.flatMap((p) => p.events || []));
+  return { summary, events: events.length ? events : undefined };
+}
+
 /** Attach `narrative` to every row in grouped path output. */
 export function enrichOnboardingPathGroupsWithNarratives(
   groups: OnboardingPathGroup[],
@@ -1363,10 +1370,29 @@ export function enrichOnboardingPathGroupsWithNarratives(
 ): OnboardingPathGroup[] {
   return groups.map((g) => ({
     ...g,
-    rows: g.rows.map((r) => ({
-      ...r,
-      narrative: buildOnboardingRowNarrative(r, context),
-    })),
+    rows: g.rows.map((r) => {
+      const details = r.requirementDetailRows;
+      if (details?.length) {
+        const perDetail = details.map((dr) => {
+          const base = buildOnboardingRowNarrative({ ...dr, narrative: undefined }, context);
+          return mergeMessaging(dr, base, context);
+        });
+        const combined = combineMergedRequirementNarratives(perDetail);
+        const narrative = mergeMessaging(r, combined, context);
+        return {
+          ...r,
+          narrative,
+          requirementDetailRows: details.map((dr, i) => ({
+            ...dr,
+            narrative: perDetail[i],
+          })),
+        };
+      }
+      return {
+        ...r,
+        narrative: mergeMessaging(r, buildOnboardingRowNarrative(r, context), context),
+      };
+    }),
   }));
 }
 

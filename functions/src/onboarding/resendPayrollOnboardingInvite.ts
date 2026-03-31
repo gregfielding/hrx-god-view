@@ -6,6 +6,12 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
 import { runPayrollOnboardingInviteResend } from '../messaging/payrollInviteResend';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from '../messaging/twilioSecrets';
 import { canManageOnboarding } from './workerOnboardingPipeline';
 
 if (!admin.apps.length) {
@@ -28,6 +34,7 @@ export const resendPayrollOnboardingInvite = onCall(
     enforceAppCheck: false,
     cors: CALLABLE_BROWSER_CORS,
     memory: '256MiB',
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request) => {
     if (!request.auth?.uid) {

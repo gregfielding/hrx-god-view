@@ -5,6 +5,7 @@ import ResumeSuggestionField from '../../common/ResumeSuggestionField';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { auth } from '../../../firebase';
 import { useT } from '../../../i18n';
+import { isValidUsPhone10 } from '../../../utils/usPhoneValidation';
 
 type Props = {
   value: any;
@@ -118,8 +119,10 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [dobDisplayValue, setDobDisplayValue] = useState(formatDateForDisplay(value.dob || ''));
+  const [phoneBlurred, setPhoneBlurred] = useState(false);
   const selectedPreferredLanguage: 'en' | 'es' =
     value.preferredLanguage === 'es' ? 'es' : 'en';
+  const phoneInvalidAfterBlur = phoneBlurred && !isValidUsPhone10(value.phone || '');
   
   // Sync display value when value.dob changes externally
   useEffect(() => {
@@ -626,7 +629,10 @@ label={t('profile.phone')}
                       // Store only digits, remove formatting
                       const digits = e.target.value.replace(/\D/g, '');
                       handle('phone', digits);
-                    }} 
+                    }}
+                    onBlur={() => setPhoneBlurred(true)}
+                    error={phoneInvalidAfterBlur}
+                    helperText={phoneInvalidAfterBlur ? t('apply.phoneTenDigits') : t('apply.phoneTenDigitsHelper')}
                   />
                 </ResumeSuggestionField>
               </Grid>

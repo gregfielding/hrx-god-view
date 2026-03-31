@@ -19,6 +19,8 @@ const PHASE_1_ACTION_KEYS = new Set([
   'assignment.recruiter_open',
   'everify.select.check_eligibility',
   'everify.select.error_retry',
+  'everify.select.in_progress',
+  'payroll.recruiter_review',
   'background.recruiter_order',
   'background.vendor_in_progress',
   'background.error_recruiter',
@@ -83,6 +85,13 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
       resolved.actionKey === 'background.error_recruiter'
     ) {
       openBackgroundsTab();
+      return;
+    }
+
+    if (resolved.actionKey === 'everify.select.in_progress' || resolved.actionKey === 'payroll.recruiter_review') {
+      const empParams = new URLSearchParams(location.search);
+      empParams.set('employmentFocus', 'Employment');
+      navigate({ pathname: location.pathname, search: empParams.toString() }, { replace: false });
       return;
     }
 
@@ -169,6 +178,9 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
     entityKey,
     canEverify,
     openBackgroundsTab,
+    location.pathname,
+    location.search,
+    navigate,
     runNavigate,
     onComplete,
   ]);
@@ -177,7 +189,11 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
     return null;
   }
 
-  if (resolved.actionKey.startsWith('everify.') && (!canEverify || entityKey !== 'select')) {
+  if (
+    (resolved.actionKey === 'everify.select.check_eligibility' ||
+      resolved.actionKey === 'everify.select.error_retry') &&
+    (!canEverify || entityKey !== 'select')
+  ) {
     return null;
   }
 
@@ -186,7 +202,11 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
       ? 'Run E-Verify'
       : resolved.actionKey === 'everify.select.error_retry'
         ? 'Retry E-Verify'
-        : resolved.actionKey.startsWith('background.')
+        : resolved.actionKey === 'everify.select.in_progress'
+          ? 'Open E-Verify status'
+          : resolved.actionKey === 'payroll.recruiter_review'
+            ? 'Review payroll setup'
+            : resolved.actionKey.startsWith('background.')
           ? resolved.actionKey === 'background.recruiter_order'
             ? 'Order screening'
             : resolved.actionKey === 'background.error_recruiter'

@@ -328,6 +328,13 @@ export interface EmploymentOnboardingRow {
     assignmentId?: string;
     /** worker_onboarding.externalOnboardingSteps key when row is driven by TempWorks/HRIS state. */
     externalStepKey?: string;
+    /**
+     * Stable requirement id for CTAs after merge (e.g. `e_verify`, `background_check`, or same as `externalStepKey`
+     * for TempWorks-mapped Settings steps). Path-builder only — not stored in Firestore.
+     */
+    requirementKey?: string;
+    /** When this row is the result of merging siblings (e.g. E-Verify pair), their Settings `stepKey` values. */
+    mergedFromStepKeys?: string[];
   };
   owner: EmploymentOnboardingPathRowOwner;
   audience: EmploymentOnboardingRowAudience;
@@ -357,6 +364,10 @@ export interface EmploymentOnboardingRow {
   workerGroupKey?: string;
   /** Worker UI: source rows collapsed into this line (omit when not merged); debug expandable only. */
   workerGroupDetailRows?: EmploymentOnboardingRow[];
+  /**
+   * Pre-merge path rows for this requirement (narrative + “View activity”). Set in path builder only.
+   */
+  requirementDetailRows?: EmploymentOnboardingRow[];
   /** Worker UI: coarse `sourceRef.pipelineStepId` when group is pipeline-based. */
   workerGroupPipelineStepId?: string | null;
 }

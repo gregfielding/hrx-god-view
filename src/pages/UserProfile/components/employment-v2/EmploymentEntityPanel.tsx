@@ -6,7 +6,6 @@ import type { EmploymentV2ActionResolutionContext } from '../../../../utils/empl
 import EmploymentEntityHeaderCard from './EmploymentEntityHeaderCard';
 import EmploymentOnboardingPathCard from './EmploymentOnboardingPathCard';
 import EmploymentActiveAssignmentRequirementsCard from './EmploymentActiveAssignmentRequirementsCard';
-import EmploymentBlockersCard from './EmploymentBlockersCard';
 import EmploymentAssignmentsCard from './EmploymentAssignmentsCard';
 import EmploymentSystemsSummaryCard from './EmploymentSystemsSummaryCard';
 import EmploymentEmptyStateCard from './EmploymentEmptyStateCard';
@@ -122,9 +121,6 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         tenantId={tenantId}
         profileUserId={profileUserId}
         onPayrollResendComplete={() => onRefresh?.()}
-      />
-      <EmploymentBlockersCard
-        blockers={overview.hasOpenOnboardingDemand ? overview.blockers : []}
       />
       <EmploymentAssignmentsCard
         assignments={overview.assignments}

@@ -13,12 +13,16 @@ import {
   List,
   ListItem,
   ListItemText,
+  Tooltip,
+  IconButton,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { alpha, useTheme } from '@mui/material/styles';
 import type {
   EmploymentEntityKey,
   EmploymentOnboardingArtifactScope,
+  EmploymentOnboardingNarrativeEvent,
   EmploymentOnboardingRow,
   OnboardingPathGroup,
   OnboardingPathUiStatus,
@@ -30,9 +34,20 @@ import {
 } from '../../../../utils/employmentBlockerActionMap';
 import { isEmploymentOnboardingPathDebugEnvEnabled } from '../../../../utils/employmentPathDebugEnv';
 import { narrativeActorLabelForUi } from '../../../../utils/employmentOnboardingNarrative';
-import { isExternalOnboardingStepVerificationUiKey } from '../../../../utils/externalOnboardingSteps';
+import {
+  isExternalOnboardingStepVerificationUiKey,
+  parseExternalOnboardingSteps,
+} from '../../../../utils/externalOnboardingSteps';
+import {
+  mergeOnboardingPathRowsByExternalStepKey,
+  recruiterExternalStepChip,
+  TEMPWORKS_WIRING_HINT,
+  type MergedPathRow,
+} from '../../../../utils/employmentOnboardingPathRecruiterView';
+import { isOnboardingPathRowBlocker, isOnboardingPathRowDone } from '../../../../utils/employmentOnboardingPath';
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
+import InternalPipelineTaskVerification from './InternalPipelineTaskVerification';
 
 /** Explicit `false` turns debug off; `undefined` uses `REACT_APP_EMPLOYMENT_ONBOARDING_PATH_DEBUG`. */
 export function resolveEmploymentOnboardingPathDebugMode(explicit?: boolean): boolean {
@@ -110,116 +125,72 @@ const ARTIFACT_TYPE_LABEL: Record<NonNullable<EmploymentOnboardingRow['artifactS
   document: 'Document',
 };
 
-function formatUpdated(iso: string | null | undefined): string | null {
-  if (!iso) return null;
-  try {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return null;
-    return d.toLocaleString();
-  } catch {
-    return null;
-  }
-}
-
-/** Canonical status chip copy so “this flow” vs “reuse” is obvious at a glance. */
-function plainLanguageStatusLabel(row: EmploymentOnboardingRow): string {
-  switch (row.status) {
-    case 'completed':
-      if (row.sourceType === 'external_onboarding') {
-        const s = row.narrative?.summary?.trim();
-        if (s) return s;
-      }
-      return 'This step is finished.';
-    case 'satisfied_by_existing_record':
-      return 'An existing record already satisfies this requirement.';
-    case 'not_required':
-      return 'This does not apply here.';
-    case 'error':
-      return row.statusLabel || 'Something went wrong with this step.';
-    case 'in_progress':
-      return row.statusLabel || 'In progress.';
-    case 'not_started':
-      return row.statusLabel || 'Not started yet.';
-    default:
-      return row.statusLabel || UI_STATUS_LABEL[row.status];
-  }
-}
-
-const HANDLING_LABEL: Record<EmploymentOnboardingRow['owner'], string> = {
-  worker: 'You (the worker)',
-  recruiter: 'Your hiring team',
-  system: 'Automated processing',
-  vendor: 'Outside verification partner',
-};
-
-function handlingLabelForRow(
-  row: EmploymentOnboardingRow,
-  ctx: EmploymentV2ActionResolutionContext | null
-): string {
-  const owner = row.owner;
-  if (!ctx || ctx.viewer !== 'recruiter') {
-    return HANDLING_LABEL[owner];
-  }
-  const workerName = ctx.workerDisplayName?.trim();
-  const entityName = ctx.entityDisplayName?.trim();
-  switch (owner) {
-    case 'worker':
-      return workerName || 'The worker';
-    case 'recruiter':
-      return entityName ? `Hiring team (${entityName})` : 'Hiring team';
-    case 'system':
-      return HANDLING_LABEL.system;
-    case 'vendor':
-      return HANDLING_LABEL.vendor;
-    default:
-      return HANDLING_LABEL[owner];
-  }
-}
-
 function normalizeWs(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
-function NarrativeBlock({ row }: { row: EmploymentOnboardingRow }) {
-  const [open, setOpen] = React.useState(false);
-  const summary = row.narrative?.summary?.trim();
-  const events = row.narrative?.events?.filter((e) => String(e.message || '').trim());
-  /** Primary status line already shows narrative summary for verified external completions. */
-  const summaryShownInStatusLine =
-    row.status === 'completed' && row.sourceType === 'external_onboarding' && Boolean(summary);
-  const statusLineText = plainLanguageStatusLabel(row);
-  const duplicateSummary =
-    Boolean(summary) && normalizeWs(summary) === normalizeWs(String(statusLineText));
-  const hasVisibleSummary = Boolean(summary) && !summaryShownInStatusLine && !duplicateSummary;
+const TONE_CHIP_COLOR: Record<
+  'default' | 'info' | 'warning' | 'success' | 'error',
+  'default' | 'warning' | 'success' | 'error' | 'info'
+> = {
+  default: 'default',
+  info: 'info',
+  warning: 'warning',
+  success: 'success',
+  error: 'error',
+};
 
-  if (!hasVisibleSummary && (!events || events.length === 0)) {
-    return null;
+function collectActivityFromRows(rows: EmploymentOnboardingRow[]): {
+  summaries: string[];
+  events: EmploymentOnboardingNarrativeEvent[];
+} {
+  const summaries: string[] = [];
+  const events: EmploymentOnboardingNarrativeEvent[] = [];
+  const seenSummary = new Set<string>();
+  for (const row of rows) {
+    const s = row.narrative?.summary?.trim();
+    if (s && !seenSummary.has(normalizeWs(s))) {
+      seenSummary.add(normalizeWs(s));
+      summaries.push(s);
+    }
+    row.narrative?.events?.forEach((ev) => {
+      if (String(ev.message || '').trim()) events.push(ev);
+    });
   }
+  events.sort((a, b) => (a.timestamp?.getTime() || 0) - (b.timestamp?.getTime() || 0));
+  return { summaries, events };
+}
+
+/** Collapsed “View activity” only — keeps the default row surface minimal. */
+function ActivityCollapse({ rows }: { rows: EmploymentOnboardingRow[] }) {
+  const [open, setOpen] = React.useState(false);
+  const { summaries, events } = React.useMemo(() => collectActivityFromRows(rows), [rows]);
+  if (summaries.length === 0 && events.length === 0) return null;
 
   return (
-    <Box sx={{ mb: 1 }}>
-      {summary && !summaryShownInStatusLine && !duplicateSummary ? (
-        <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.45 }}>
-          {summary}
-        </Typography>
-      ) : null}
-      {events && events.length > 0 ? (
-        <>
-          <Button
-            size="small"
-            onClick={() => setOpen((o) => !o)}
-            endIcon={
-              <ExpandMoreIcon
-                fontSize="small"
-                sx={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-              />
-            }
-            sx={{ mt: 0.5, px: 0, minWidth: 0, textTransform: 'none' }}
-          >
-            View activity
-          </Button>
-          <Collapse in={open}>
-            <List dense disablePadding sx={{ mt: 0.5 }}>
+    <Box sx={{ mt: 0.5 }}>
+      <Button
+        size="small"
+        onClick={() => setOpen((o) => !o)}
+        endIcon={
+          <ExpandMoreIcon
+            fontSize="small"
+            sx={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+          />
+        }
+        sx={{ px: 0, minWidth: 0, textTransform: 'none' }}
+      >
+        View activity
+      </Button>
+      <Collapse in={open}>
+        <Box sx={{ mt: 0.75 }}>
+          {summaries.map((s, i) => (
+            <Typography key={i} variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
+              {s}
+            </Typography>
+          ))}
+          {events.length > 0 ? (
+            <List dense disablePadding>
               {events.map((ev, i) => (
                 <ListItem key={i} disableGutters sx={{ py: 0.2, alignItems: 'flex-start' }}>
                   <ListItemText
@@ -239,9 +210,9 @@ function NarrativeBlock({ row }: { row: EmploymentOnboardingRow }) {
                 </ListItem>
               ))}
             </List>
-          </Collapse>
-        </>
-      ) : null}
+          ) : null}
+        </Box>
+      </Collapse>
     </Box>
   );
 }
@@ -256,6 +227,38 @@ function primaryStatusChipLabel(row: EmploymentOnboardingRow): string {
   return row.statusLabel || UI_STATUS_LABEL[row.status];
 }
 
+function recruiterFacingChip(
+  row: EmploymentOnboardingRow,
+  workerOnboarding: WorkerOnboardingPipeline | null | undefined,
+  debugMode: boolean
+): { label: string; color: 'default' | 'warning' | 'success' | 'error' | 'info' } {
+  if (debugMode) {
+    return { label: primaryStatusChipLabel(row), color: STATUS_CHIP_COLOR[row.status] };
+  }
+  const extKey = row.sourceRef?.externalStepKey;
+  if (extKey) {
+    const map = parseExternalOnboardingSteps(workerOnboarding?.externalOnboardingSteps);
+    const rec = map?.[extKey];
+    const { label, tone } = recruiterExternalStepChip(rec);
+    return { label, color: TONE_CHIP_COLOR[tone] };
+  }
+  if (row.status === 'error') return { label: 'Needs attention', color: 'error' };
+  if (row.status === 'satisfied_by_existing_record') return { label: 'Satisfied (prior record)', color: 'info' };
+  if (row.status === 'completed') return { label: 'Verified', color: 'success' };
+  if (row.status === 'in_progress') return { label: row.statusLabel || 'In progress', color: 'info' };
+  if (row.status === 'not_required') return { label: 'Not required', color: 'default' };
+  return { label: row.statusLabel || 'Not started', color: 'default' };
+}
+
+function tempWorksHintText(row: EmploymentOnboardingRow): string | null {
+  const h = row.helperText?.trim();
+  if (h && (h.includes('TempWorks') || h.includes(TEMPWORKS_WIRING_HINT.slice(0, 24)))) {
+    return h;
+  }
+  if (row.statusLabel?.includes('TempWorks')) return row.statusLabel;
+  return null;
+}
+
 function StepRow({
   row,
   entityKey,
@@ -264,80 +267,130 @@ function StepRow({
   debugMode,
   relationshipPathHistorical,
   workerOnboarding,
+  mergedSources,
+  onDismissOptionalPolicyRow,
 }: {
   row: EmploymentOnboardingRow;
   entityKey: EmploymentEntityKey;
   actionContext: EmploymentV2ActionResolutionContext | null;
   onActionComplete?: () => void;
   debugMode: boolean;
-  /** When true, rows stay visible but CTAs and emphasis read as prior onboarding, not current work. */
   relationshipPathHistorical: boolean;
   workerOnboarding?: WorkerOnboardingPipeline | null;
+  mergedSources: EmploymentOnboardingRow[];
+  onDismissOptionalPolicyRow?: (rowId: string) => void;
 }) {
   const theme = useTheme();
-  const updated = formatUpdated(row.lastUpdatedAt);
-  const artifactAt = formatUpdated(row.artifactCompletedAt);
-
   const isCompletedFlow = row.status === 'completed';
   const isSatisfiedReuse = row.status === 'satisfied_by_existing_record';
   const showReuseCallout =
     isSatisfiedReuse || (row.satisfiedByArtifact === true && row.artifactSourceType != null);
 
-  const statusColor = STATUS_CHIP_COLOR[row.status];
-
-  const rowSurface =
-    isSatisfiedReuse
-      ? alpha(theme.palette.info.main, 0.07)
-      : isCompletedFlow
-        ? alpha(theme.palette.success.main, 0.08)
-        : theme.palette.action.hover;
-
-  const rowAccent = isSatisfiedReuse
-    ? theme.palette.info.main
-    : isCompletedFlow
-      ? theme.palette.success.main
-      : 'transparent';
-
+  const chip = recruiterFacingChip(row, workerOnboarding, debugMode);
   const extBusinessKey = row.sourceRef?.externalStepKey;
-  /** TempWorks milestones: show manual completion on every path row that maps to a verifiable external key. */
+  const policyOptionalDismiss =
+    extBusinessKey === 'policies_acknowledgment' && row.required === false;
   const showExternalVerificationControls =
-    Boolean(extBusinessKey && isExternalOnboardingStepVerificationUiKey(extBusinessKey));
+    Boolean(extBusinessKey && isExternalOnboardingStepVerificationUiKey(extBusinessKey)) &&
+    !policyOptionalDismiss;
+
+  const twLine = tempWorksHintText(row);
+  const internalExplain =
+    row.groupId === 'internal_readiness' && row.helperText?.trim() ? row.helperText.trim() : null;
+  const longExplain =
+    !internalExplain && row.helperText && row.helperText.trim().length >= 72 ? row.helperText.trim() : null;
+  const rowInfoTooltip = [twLine, internalExplain || longExplain].filter(Boolean).join('\n\n') || null;
+
+  const recruiterActionable =
+    actionContext?.viewer === 'recruiter' &&
+    (row.actionableBy === 'recruiter' || row.actionableBy === 'either') &&
+    !relationshipPathHistorical &&
+    !isOnboardingPathRowDone(row.status);
+
+  const verifiedQuiet =
+    (extBusinessKey &&
+      (() => {
+        const map = parseExternalOnboardingSteps(workerOnboarding?.externalOnboardingSteps);
+        const rec = map?.[extBusinessKey];
+        return rec && rec.status === 'completed' && String(rec.verifiedAt || '').length > 0;
+      })()) ||
+    isCompletedFlow ||
+    isSatisfiedReuse;
+
+  const vendorOnlyQuiet = row.owner === 'vendor' && !isOnboardingPathRowBlocker(row) && row.status !== 'error';
+
+  const rowSurface = debugMode
+    ? theme.palette.action.hover
+    : verifiedQuiet
+      ? alpha(theme.palette.divider, 0.2)
+      : recruiterActionable
+        ? alpha(theme.palette.primary.main, 0.06)
+        : vendorOnlyQuiet
+          ? alpha(theme.palette.action.hover, 0.5)
+          : theme.palette.action.hover;
+
+  const rowAccent =
+    recruiterActionable && !verifiedQuiet
+      ? theme.palette.primary.main
+      : isSatisfiedReuse
+        ? theme.palette.info.main
+        : isCompletedFlow
+          ? theme.palette.success.main
+          : 'transparent';
+
+  const oneLineHelper =
+    !debugMode &&
+    relationshipPathHistorical &&
+    !isCompletedFlow &&
+    !isSatisfiedReuse &&
+    !recruiterActionable
+      ? 'Historical — not current required work.'
+      : showReuseCallout && !debugMode
+        ? 'Met by an existing compliance record on file.'
+        : null;
 
   return (
     <Box
       sx={{
-        py: 1.25,
-        px: 1.5,
+        py: verifiedQuiet ? 0.75 : 1.15,
+        px: 1.25,
         borderRadius: 1,
         bgcolor: rowSurface,
-        borderLeft: rowAccent !== 'transparent' ? 4 : 0,
+        borderLeft: rowAccent !== 'transparent' ? 3 : 0,
         borderLeftColor: rowAccent,
         borderLeftStyle: 'solid',
+        opacity: vendorOnlyQuiet ? 0.92 : 1,
       }}
     >
-      <Typography variant="body2" fontWeight={700} sx={{ mb: 0.25 }}>
-        {row.label}
-      </Typography>
-      <NarrativeBlock row={row} />
+      <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1} sx={{ mb: 0.75 }}>
+        <Stack direction="row" alignItems="flex-start" gap={0.5} sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={verifiedQuiet ? 600 : 700}
+            color={verifiedQuiet ? 'text.secondary' : 'text.primary'}
+            sx={{ lineHeight: 1.35 }}
+          >
+            {row.label}
+          </Typography>
+          {rowInfoTooltip && !debugMode ? (
+            <Tooltip title={rowInfoTooltip} placement="right" enterTouchDelay={0}>
+              <IconButton size="small" aria-label="Row details" sx={{ mt: -0.5, color: 'text.secondary' }}>
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          ) : null}
+        </Stack>
+        <Chip
+          size="small"
+          label={relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse ? `Prior: ${chip.label}` : chip.label}
+          color={chip.color}
+          variant={verifiedQuiet ? 'outlined' : 'filled'}
+          sx={{ flexShrink: 0, fontWeight: verifiedQuiet ? 500 : 600 }}
+        />
+      </Stack>
 
       {debugMode ? (
         <Stack direction="row" flexWrap="wrap" useFlexGap spacing={0.5} gap={0.5} sx={{ mb: 1 }}>
-          <Chip
-            size="small"
-            label={primaryStatusChipLabel(row)}
-            color={statusColor}
-            variant="filled"
-            sx={
-              isSatisfiedReuse
-                ? {
-                    fontWeight: 700,
-                    border: `1px solid ${alpha(theme.palette.info.dark, 0.35)}`,
-                  }
-                : isCompletedFlow
-                  ? { fontWeight: 700 }
-                  : undefined
-            }
-          />
           <Chip size="small" variant="outlined" label={`Owner: ${OWNER_LABEL[row.owner]}`} />
           <Chip size="small" variant="outlined" label={AUDIENCE_LABEL[row.audience]} />
           <Chip size="small" variant="outlined" label={ACTIONABLE_LABEL[row.actionableBy]} />
@@ -345,107 +398,67 @@ function StepRow({
           <Chip size="small" variant="outlined" label={row.blocking ? 'Blocking' : 'Non-blocking'} />
           <Chip size="small" variant="outlined" color="default" label={`Signal: ${ROW_SIGNAL_LABEL[row.sourceType]}`} />
         </Stack>
-      ) : (
-        <Stack spacing={0.5} sx={{ mb: 1 }}>
-          <Typography
-            variant="body2"
-            fontWeight={600}
-            color={
-              relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse && row.status !== 'error'
-                ? 'text.secondary'
-                : row.status === 'error'
-                  ? 'error'
-                  : isCompletedFlow
-                    ? 'success.main'
-                    : isSatisfiedReuse
-                      ? 'info.main'
-                      : 'text.primary'
-            }
-          >
-            {relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse
-              ? `Prior activity: ${plainLanguageStatusLabel(row)}`
-              : plainLanguageStatusLabel(row)}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
-            <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
-              Who is handling this:{' '}
-            </Box>
-            {handlingLabelForRow(row, actionContext)}
-          </Typography>
-        </Stack>
-      )}
+      ) : null}
 
-      {showReuseCallout && (
+      {debugMode && row.helperText ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
+          <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+            Why this status:{' '}
+          </Box>
+          {row.helperText}
+        </Typography>
+      ) : null}
+
+      {oneLineHelper ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5, lineHeight: 1.4 }}>
+          {oneLineHelper}
+        </Typography>
+      ) : null}
+
+      <ActivityCollapse rows={mergedSources} />
+
+      {actionContext?.viewer === 'recruiter' &&
+      policyOptionalDismiss &&
+      onDismissOptionalPolicyRow &&
+      !relationshipPathHistorical ? (
+        <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
+          <Stack direction="row" alignItems="center" gap={0.5} flexWrap="wrap">
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={() => onDismissOptionalPolicyRow(row.rowId)}
+              sx={{ textTransform: 'none' }}
+            >
+              Dismiss
+            </Button>
+            <Tooltip title="Optional policy acknowledgment — dismiss to hide this row on the checklist until you refresh the page.">
+              <IconButton size="small" aria-label="About dismiss" sx={{ color: 'text.secondary' }}>
+                <InfoOutlinedIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          </Stack>
+        </Box>
+      ) : null}
+
+      {showReuseCallout && debugMode ? (
         <Box
           sx={{
             mt: 0.5,
-            mb: row.helperText || updated || artifactAt ? 0.75 : 0,
+            mb: 0.75,
             p: 1,
             borderRadius: 1,
             border: `1px solid ${alpha(theme.palette.info.main, 0.45)}`,
             bgcolor: alpha(theme.palette.info.main, 0.04),
           }}
         >
-          <Stack direction="row" alignItems="center" spacing={0.75} sx={{ mb: 0.75 }} flexWrap="wrap" useFlexGap>
-            <Chip size="small" label="Prior compliance record" color="info" variant="filled" sx={{ fontWeight: 700 }} />
-            <Typography variant="caption" color="text.secondary">
-              Not completed as a new step in this onboarding flow — an existing valid record satisfies the requirement.
-            </Typography>
-          </Stack>
-          <Stack spacing={0.35}>
-            <Typography variant="caption" color="text.secondary">
-              <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                Artifact type:{' '}
-              </Box>
-              {row.artifactSourceType != null
-                ? ARTIFACT_TYPE_LABEL[row.artifactSourceType]
-                : '— (not returned for this row yet)'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                Scope:{' '}
-              </Box>
-              {row.artifactScope != null
-                ? SCOPE_LABEL[row.artifactScope as EmploymentOnboardingArtifactScope]
-                : '—'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                Record completed:{' '}
-              </Box>
-              {artifactAt ?? '—'}
-            </Typography>
-            {(row.artifactId != null && row.artifactId !== '') ? (
-              <Typography variant="caption" color="text.secondary" sx={{ wordBreak: 'break-all' }}>
-                <Box component="span" sx={{ fontWeight: 700, color: 'text.primary' }}>
-                  Record ID:{' '}
-                </Box>
-                {row.artifactId}
-              </Typography>
-            ) : null}
-          </Stack>
+          <Chip size="small" label="Prior compliance record" color="info" variant="filled" sx={{ fontWeight: 700, mb: 0.5 }} />
+          <Typography variant="caption" color="text.secondary" display="block">
+            Artifact:{' '}
+            {row.artifactSourceType != null ? ARTIFACT_TYPE_LABEL[row.artifactSourceType] : '—'} · Scope:{' '}
+            {row.artifactScope != null ? SCOPE_LABEL[row.artifactScope as EmploymentOnboardingArtifactScope] : '—'}
+          </Typography>
         </Box>
-      )}
-
-      {debugMode && row.helperText && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, lineHeight: 1.45 }}>
-          <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
-            Why this status:{' '}
-          </Box>
-          {row.helperText}
-        </Typography>
-      )}
-
-      {updated && !isSatisfiedReuse && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
-          Last updated: {updated}
-        </Typography>
-      )}
-      {isSatisfiedReuse && updated && (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
-          Row last synced: {updated}
-        </Typography>
-      )}
+      ) : null}
 
       {actionContext && (
         <EmploymentOnboardingPathRowAction
@@ -453,13 +466,18 @@ function StepRow({
           entityKey={entityKey}
           ctx={actionContext}
           onComplete={onActionComplete}
-          primaryCta={!debugMode && !relationshipPathHistorical}
+          primaryCta={!debugMode && !relationshipPathHistorical && recruiterActionable}
         />
       )}
-      {actionContext &&
-      row.sourceType === 'external_onboarding' &&
-      row.sourceRef?.externalStepKey &&
-      showExternalVerificationControls ? (
+      {actionContext ? (
+        <InternalPipelineTaskVerification
+          row={row}
+          ctx={actionContext}
+          onComplete={onActionComplete}
+          suppress={relationshipPathHistorical}
+        />
+      ) : null}
+      {actionContext && row.sourceRef?.externalStepKey && showExternalVerificationControls ? (
         <ExternalOnboardingVerificationControls
           ctx={actionContext}
           entityKey={entityKey}
@@ -481,6 +499,8 @@ function GroupSection({
   debugMode,
   suppressCurrentDemandBlockers,
   workerOnboarding,
+  dismissedOptionalPolicyRowIds = new Set<string>(),
+  onDismissOptionalPolicyRow = () => {},
 }: {
   group: OnboardingPathGroup;
   entityKey: EmploymentEntityKey;
@@ -489,11 +509,53 @@ function GroupSection({
   debugMode: boolean;
   suppressCurrentDemandBlockers: boolean;
   workerOnboarding?: WorkerOnboardingPipeline | null;
+  /** Lifted from parent so optional-policy dismiss persists across groups; defaults are no-ops. */
+  dismissedOptionalPolicyRowIds?: ReadonlySet<string>;
+  onDismissOptionalPolicyRow?: (rowId: string) => void;
 }) {
-  const frac = group.totalCount > 0 ? `${group.doneCount} / ${group.totalCount}` : '—';
-  const reuseDone = group.rows.filter((r) => r.status === 'satisfied_by_existing_record').length;
-  const flowDone = group.rows.filter((r) => r.status === 'completed').length;
+  const merged = React.useMemo(() => {
+    const ext = mergeOnboardingPathRowsByExternalStepKey(group.rows);
+    return ext.map((m) => ({
+      row: m.row,
+      mergedSources:
+        m.row.requirementDetailRows && m.row.requirementDetailRows.length > 0
+          ? m.row.requirementDetailRows
+          : m.mergedSources,
+    }));
+  }, [group.rows]);
+
+  const visibleMerged = React.useMemo(
+    () => merged.filter((m) => !dismissedOptionalPolicyRowIds.has(m.row.rowId)),
+    [merged, dismissedOptionalPolicyRowIds]
+  );
+
+  const doneCount = visibleMerged.filter((m) => isOnboardingPathRowDone(m.row.status)).length;
+  const totalCount = visibleMerged.length;
+  const blockerCount = visibleMerged.filter((m) => isOnboardingPathRowBlocker(m.row)).length;
+  const reuseDone = visibleMerged.filter((m) => m.row.status === 'satisfied_by_existing_record').length;
+  const flowDone = visibleMerged.filter((m) => m.row.status === 'completed').length;
   const historical = suppressCurrentDemandBlockers;
+
+  const frac = totalCount > 0 ? `${doneCount} / ${totalCount}` : '—';
+  const isInternal = group.groupId === 'internal_readiness';
+  const internalOnlyTasks =
+    isInternal && visibleMerged.length > 0 && visibleMerged.every((m) => m.row.sourceType === 'pipeline_task');
+  const [internalOpen, setInternalOpen] = React.useState(true);
+
+  const renderMergedRow = (m: MergedPathRow) => (
+    <StepRow
+      key={m.row.rowId}
+      row={m.row}
+      entityKey={entityKey}
+      actionContext={actionContext}
+      onActionComplete={onActionComplete}
+      debugMode={debugMode}
+      relationshipPathHistorical={historical}
+      workerOnboarding={workerOnboarding}
+      mergedSources={m.mergedSources}
+      onDismissOptionalPolicyRow={onDismissOptionalPolicyRow}
+    />
+  );
 
   return (
     <Box sx={{ mb: 2 }}>
@@ -503,42 +565,56 @@ function GroupSection({
             {group.title}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
-            {group.totalCount > 0 && (
+            {totalCount > 0 && !internalOnlyTasks && (
               <>
-                {historical ? 'Recorded progress: ' : ''}
-                {frac} steps done{reuseDone > 0 ? ' (includes prior-record satisfaction)' : ''}.
-                {flowDone > 0 && <span> {flowDone} completed in this flow.</span>}
-                {reuseDone > 0 && (
-                  <span>
-                    {' '}
-                    {reuseDone} satisfied by prior record{reuseDone === 1 ? '' : 's'}.
-                  </span>
-                )}
+                {historical ? 'Recorded: ' : ''}
+                {frac} complete
+                {reuseDone > 0 ? ` · ${reuseDone} prior record` : ''}
+                {flowDone > 0 && reuseDone === 0 ? ` · ${flowDone} finished in this flow` : null}
+              </>
+            )}
+            {internalOnlyTasks && (
+              <>
+                {frac} verification items
+                {!historical && blockerCount > 0
+                  ? ` · ${blockerCount} open blocker${blockerCount === 1 ? '' : 's'}`
+                  : ''}
               </>
             )}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Chip size="small" variant="outlined" label={historical ? `Prior: ${frac} steps` : `${frac} complete`} />
-          {!suppressCurrentDemandBlockers && group.blockerCount > 0 && (
-            <Chip size="small" color="error" label={`${group.blockerCount} blocker${group.blockerCount === 1 ? '' : 's'}`} />
+          {!internalOnlyTasks ? (
+            <Chip size="small" variant="outlined" label={historical ? `Prior: ${frac}` : `${frac} done`} />
+          ) : null}
+          {!suppressCurrentDemandBlockers && blockerCount > 0 && (
+            <Chip size="small" color="error" label={`${blockerCount} blocker${blockerCount === 1 ? '' : 's'}`} />
           )}
         </Stack>
       </Stack>
-      <Stack spacing={1.25}>
-        {group.rows.map((r) => (
-          <StepRow
-            key={r.rowId}
-            row={r}
-            entityKey={entityKey}
-            actionContext={actionContext}
-            onActionComplete={onActionComplete}
-            debugMode={debugMode}
-            relationshipPathHistorical={historical}
-            workerOnboarding={workerOnboarding}
-          />
-        ))}
-      </Stack>
+
+      {internalOnlyTasks ? (
+        <>
+          <Button
+            size="small"
+            onClick={() => setInternalOpen((o) => !o)}
+            endIcon={
+              <ExpandMoreIcon
+                fontSize="small"
+                sx={{ transform: internalOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
+              />
+            }
+            sx={{ textTransform: 'none', px: 0, minWidth: 0, mb: 0.5 }}
+          >
+            {internalOpen ? 'Hide internal verification' : 'Show internal verification'}
+          </Button>
+          <Collapse in={internalOpen}>
+            <Stack spacing={1}>{visibleMerged.map(renderMergedRow)}</Stack>
+          </Collapse>
+        </>
+      ) : (
+        <Stack spacing={1.15}>{visibleMerged.map(renderMergedRow)}</Stack>
+      )}
     </Box>
   );
 }
@@ -571,6 +647,12 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
   workerOnboarding,
 }) => {
   const debugMode = resolveEmploymentOnboardingPathDebugMode(debugModeProp);
+  const [dismissedOptionalPolicyRowIds, setDismissedOptionalPolicyRowIds] = React.useState<Set<string>>(
+    () => new Set()
+  );
+  const dismissOptionalPolicyRow = React.useCallback((rowId: string) => {
+    setDismissedOptionalPolicyRowIds((prev) => new Set([...prev, rowId]));
+  }, []);
 
   React.useEffect(() => {
     if (!actionContext || suppressCurrentDemandBlockers) return;
@@ -591,7 +673,7 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
             ) : null}
           </Typography>
         }
-        subheader="Work authorization, forms & policies, payroll, and internal readiness — not job package or screening orders."
+        subheader="Work authorization, forms & policies, payroll, and internal verification — not job package or screening orders."
         titleTypographyProps={{ component: 'div' }}
         subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
       />
@@ -614,6 +696,8 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
                   debugMode={debugMode}
                   suppressCurrentDemandBlockers={suppressCurrentDemandBlockers}
                   workerOnboarding={workerOnboarding}
+                  dismissedOptionalPolicyRowIds={dismissedOptionalPolicyRowIds}
+                  onDismissOptionalPolicyRow={dismissOptionalPolicyRow}
                 />
               </React.Fragment>
             ))}

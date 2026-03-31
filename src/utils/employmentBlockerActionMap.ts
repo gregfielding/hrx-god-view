@@ -91,7 +91,7 @@ export const EMPLOYMENT_V2_BLOCKER_ACTION_SCENARIOS: readonly EmploymentV2Blocke
   },
   {
     actionKey: 'everify.select.in_progress',
-    actionLabel: 'View E-Verify status',
+    actionLabel: 'Open E-Verify status',
     actionKind: 'review_panel',
     legacyActionKind: 'review',
     owner: 'recruiter',
@@ -130,7 +130,7 @@ export const EMPLOYMENT_V2_BLOCKER_ACTION_SCENARIOS: readonly EmploymentV2Blocke
   },
   {
     actionKey: 'payroll.recruiter_review',
-    actionLabel: 'Review payroll invite',
+    actionLabel: 'Review payroll setup',
     actionKind: 'review_panel',
     legacyActionKind: 'review',
     owner: 'recruiter',
@@ -258,6 +258,53 @@ function ownerFromRow(row: EmploymentOnboardingRow): EmploymentV2ActionOwner {
   return o === 'admin' ? 'recruiter' : o;
 }
 
+const PATH_REQ_E_VERIFY = 'e_verify';
+const PATH_REQ_BACKGROUND_CHECK = 'background_check';
+
+function pathRowRequirementKey(row: EmploymentOnboardingRow): string | undefined {
+  const k = row.sourceRef?.requirementKey;
+  return typeof k === 'string' && k.length > 0 ? k : undefined;
+}
+
+function pathRowExternalBusinessKey(row: EmploymentOnboardingRow): string | undefined {
+  const k = row.sourceRef?.externalStepKey;
+  return typeof k === 'string' && k.length > 0 ? k : undefined;
+}
+
+function pathRowMergedFromKeys(row: EmploymentOnboardingRow): string[] | undefined {
+  return row.sourceRef?.mergedFromStepKeys;
+}
+
+/** Select entity E-Verify path row — uses `requirementKey` / merged Settings keys, not only representative `stepKey`. */
+function isSelectEverifyPathRow(row: EmploymentOnboardingRow): boolean {
+  if (row.entityKey !== 'select') return false;
+  if (pathRowRequirementKey(row) === PATH_REQ_E_VERIFY) return true;
+  if (row.stepKey.startsWith('everify_')) return true;
+  return Boolean(pathRowMergedFromKeys(row)?.some((k) => k.startsWith('everify_')));
+}
+
+/** Background screening path row (merged or single milestone). */
+function isBackgroundScreeningsPathRow(row: EmploymentOnboardingRow): boolean {
+  if (row.groupId !== 'screenings') return false;
+  if (pathRowRequirementKey(row) === PATH_REQ_BACKGROUND_CHECK) return true;
+  if (row.sourceType === 'background_check') return true;
+  if (row.stepKey.startsWith('background_')) return true;
+  return Boolean(pathRowMergedFromKeys(row)?.some((k) => k.startsWith('background_')));
+}
+
+/** Payroll invite + setup (same external business key when mapped). */
+function isPayrollOnboardingPathRow(row: EmploymentOnboardingRow): boolean {
+  if (row.groupId !== 'payroll') return false;
+  const req = pathRowRequirementKey(row);
+  const ext = pathRowExternalBusinessKey(row);
+  return (
+    req === 'payroll_onboarding' ||
+    ext === 'payroll_onboarding' ||
+    row.stepKey === 'payroll_invite_sent' ||
+    row.stepKey === 'payroll_setup_complete'
+  );
+}
+
 /**
  * Scenario-specific mapping only (no last-resort fallbacks). For diagnostics / gap detection.
  */
@@ -266,7 +313,7 @@ function resolveEmploymentV2DedicatedPrimaryAction(
   ctx: EmploymentV2ActionResolutionContext
 ): EmploymentV2BlockerAction | null {
   const owner = ownerFromRow(row);
-  const { status, entityKey, groupId, stepKey, sourceType } = row;
+  const { status, groupId, stepKey } = row;
   const assignmentId = row.sourceRef?.assignmentId;
 
   if (groupId === 'assignment_requirements' && assignmentId) {
@@ -346,7 +393,7 @@ function resolveEmploymentV2DedicatedPrimaryAction(
         },
       };
     }
-    if (entityKey === 'select' && stepKey.startsWith('everify_')) {
+    if (isSelectEverifyPathRow(row)) {
       if (status === 'error') {
         return {
           actionKey: 'everify.select.error_retry',
@@ -370,7 +417,7 @@ function resolveEmploymentV2DedicatedPrimaryAction(
       if (status === 'in_progress') {
         return {
           actionKey: 'everify.select.in_progress',
-          actionLabel: 'View E-Verify status',
+          actionLabel: 'Open E-Verify status',
           actionKind: 'review_panel',
           legacyActionKind: 'review',
           owner: 'recruiter',
@@ -384,7 +431,11 @@ function resolveEmploymentV2DedicatedPrimaryAction(
   }
 
   if (groupId === 'payroll') {
-    if (owner === 'worker' && (stepKey === 'payroll_setup_complete' || stepKey.startsWith('direct_deposit'))) {
+    if (
+      ctx.viewer === 'worker' &&
+      owner === 'worker' &&
+      (stepKey === 'payroll_setup_complete' || stepKey.startsWith('direct_deposit'))
+    ) {
       if (ctx.payrollPortalUrl) {
         return {
           actionKey: 'payroll.worker_open_portal',
@@ -404,10 +455,10 @@ function resolveEmploymentV2DedicatedPrimaryAction(
         target: { routeTemplate: '/c1/workers/my-employment/:employmentId' },
       };
     }
-    if (owner === 'recruiter' && stepKey === 'payroll_invite_sent') {
+    if (ctx.viewer === 'recruiter' && isPayrollOnboardingPathRow(row)) {
       return {
         actionKey: 'payroll.recruiter_review',
-        actionLabel: 'Review payroll invite',
+        actionLabel: 'Review payroll setup',
         actionKind: 'review_panel',
         legacyActionKind: 'review',
         owner: 'recruiter',
@@ -416,7 +467,7 @@ function resolveEmploymentV2DedicatedPrimaryAction(
     }
   }
 
-  if (groupId === 'screenings' && (sourceType === 'background_check' || stepKey.startsWith('background_'))) {
+  if (isBackgroundScreeningsPathRow(row)) {
     if (status === 'error') {
       return {
         actionKey: 'background.error_recruiter',
@@ -427,8 +478,17 @@ function resolveEmploymentV2DedicatedPrimaryAction(
         target: { routeTemplate: '/users/:uid', componentHint: 'BackgroundsComplianceTab' },
       };
     }
-    /** No orders yet surfaces on `background_completed` (blocking milestone), not `background_initiated`. */
-    if (stepKey === 'background_completed' && status === 'not_started') {
+    if (status === 'in_progress') {
+      return {
+        actionKey: 'background.vendor_in_progress',
+        actionLabel: 'View screening status',
+        actionKind: 'review_panel',
+        legacyActionKind: 'review',
+        owner: 'recruiter',
+        target: { routeTemplate: '/users/:uid', componentHint: 'UserProfile → Backgrounds tab' },
+      };
+    }
+    if (status === 'not_started') {
       return {
         actionKey: 'background.recruiter_order',
         actionLabel: 'Order background check',
@@ -442,19 +502,6 @@ function resolveEmploymentV2DedicatedPrimaryAction(
         },
       };
     }
-    if (
-      (stepKey === 'background_completed' || stepKey === 'background_initiated') &&
-      status === 'in_progress'
-    ) {
-      return {
-        actionKey: 'background.vendor_in_progress',
-        actionLabel: 'View screening status',
-        actionKind: 'review_panel',
-        legacyActionKind: 'review',
-        owner: 'recruiter',
-        target: { routeTemplate: '/users/:uid', componentHint: 'UserProfile → Backgrounds tab' },
-      };
-    }
   }
 
   return null;
@@ -462,7 +509,7 @@ function resolveEmploymentV2DedicatedPrimaryAction(
 
 /**
  * Primary action for a path row when it is a blocker; otherwise `null`.
- * Heuristics use `stepKey`, `groupId`, `sourceType`, `status`, and `entityKey`.
+ * Heuristics use `stepKey`, `groupId`, `status`, `entityKey`, and `sourceRef.requirementKey` / `externalStepKey`.
  * Last-resort fallbacks ensure every blocking row still has a navigable CTA.
  */
 export function resolveEmploymentV2PrimaryAction(

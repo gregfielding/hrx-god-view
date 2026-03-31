@@ -346,10 +346,17 @@ export function employmentHeaderStateExplanation(
     pathDoneCount: number;
     pipelineBlockerCount: number;
   },
-  meta?: { noOpenOnboardingDemand?: boolean }
+  meta?: {
+    noOpenOnboardingDemand?: boolean;
+    /**
+     * When true, omit numeric blocker / open-step tallies — UI shows categorized blocker chips instead.
+     */
+    suppressBlockerCountsInCopy?: boolean;
+  }
 ): string {
   const { pathBlockerCount, pathRowCount, pathDoneCount, pipelineBlockerCount } = opts;
   const openPathSteps = Math.max(0, pathRowCount - pathDoneCount);
+  const shortCounts = meta?.suppressBlockerCountsInCopy === true;
 
   switch (state) {
     case 'not_started':
@@ -363,11 +370,17 @@ export function employmentHeaderStateExplanation(
       return 'Relationship onboarding requirements are satisfied — ready for next steps.';
     case 'action_required':
       if (pathBlockerCount > 0) {
+        if (shortCounts) {
+          return 'Something on the onboarding path needs attention — use the checklist below.';
+        }
         return `${pathBlockerCount} blocking item${pathBlockerCount === 1 ? '' : 's'} need your attention on the onboarding path.`;
       }
       return 'Complete your open onboarding tasks to continue.';
     case 'waiting_on_company':
       if (pathBlockerCount > 0) {
+        if (shortCounts) {
+          return 'Some blocking items are waiting on your hiring team or a partner.';
+        }
         return `${pathBlockerCount} blocking item${pathBlockerCount === 1 ? '' : 's'} are waiting on your hiring team or a partner.`;
       }
       if (pipelineBlockerCount > 0) {
@@ -376,9 +389,15 @@ export function employmentHeaderStateExplanation(
       return 'Waiting on your hiring team for the next onboarding step.';
     case 'in_progress':
       if (pathBlockerCount > 0) {
+        if (shortCounts) {
+          return 'Onboarding in progress.';
+        }
         return `${pathBlockerCount} blocking item${pathBlockerCount === 1 ? '' : 's'} remain on the onboarding path.`;
       }
       if (openPathSteps > 0) {
+        if (shortCounts) {
+          return 'Onboarding in progress.';
+        }
         return `Onboarding in progress (${openPathSteps} open path step${openPathSteps === 1 ? '' : 's'}).`;
       }
       return 'Onboarding in progress.';

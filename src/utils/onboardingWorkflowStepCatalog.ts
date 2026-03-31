@@ -166,5 +166,5 @@ export const WORKFLOW_UI_GROUP_TITLES: Record<WorkflowUiGroupId, string> = {
   payroll: 'Payroll',
   screenings: 'Screenings',
   assignment_requirements: 'Assignment Requirements',
-  internal_readiness: 'Internal Readiness',
+  internal_readiness: 'Internal verification',
 };

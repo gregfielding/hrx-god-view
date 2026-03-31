@@ -144,6 +144,8 @@ export const EXTERNAL_ONBOARDING_STEP_VERIFICATION_UI_KEYS: readonly ExternalOnb
   'contractor_tax_form_w9',
   'i9_employee_section',
   'independent_contractor_agreement',
+  'handbook_acknowledgment',
+  'policies_acknowledgment',
 ] as const;
 
 export type ExternalOnboardingStepsState = Record<string, ExternalOnboardingStepRecord>;

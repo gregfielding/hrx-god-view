@@ -46,6 +46,7 @@ import {
 import { buildAssignmentRequirementsViewModel } from './assignmentRequirementsViewModel';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import { entityLabelForKey, defaultWorkerTypeForEntity } from './employmentEntityPresentation';
+import { categorizeBlockersForHeader } from './employmentOnboardingPathRecruiterView';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type {
@@ -452,6 +453,10 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     employmentEntryMode: ee?.employmentEntryMode ?? null,
     hasNonTerminalAssignment: liveAssignmentRow != null,
   });
+  const categorized = categorizeBlockersForHeader(headerMergedBlockers);
+  const showBlockerCategoryChips =
+    hasOpenOnboardingDemand &&
+    categorized.pendingWorker + categorized.pendingRecruiter + categorized.pendingVendor > 0;
   const headerReadinessExplanation = employmentHeaderStateExplanation(
     employmentHeaderState,
     {
@@ -460,7 +465,10 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
       pathDoneCount,
       pipelineBlockerCount: hasOpenOnboardingDemand ? pipelineBlockerCount : 0,
     },
-    { noOpenOnboardingDemand: !hasOpenOnboardingDemand }
+    {
+      noOpenOnboardingDemand: !hasOpenOnboardingDemand,
+      suppressBlockerCountsInCopy: showBlockerCategoryChips,
+    }
   );
 
   const lifecycleStatus = lifecycleStatusFromEmploymentHeaderState(employmentHeaderState);
@@ -526,7 +534,7 @@ const GROUP_TITLES: Record<ProgressGroupId, string> = {
   forms_and_policies: 'Forms & Policies',
   payroll: 'Payroll',
   screenings: 'Screenings',
-  internal_readiness: 'Internal Readiness',
+  internal_readiness: 'Internal verification',
 };
 
 export interface ProgressGroupRow {
