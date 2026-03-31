@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Button, Stack, Typography } from '@mui/material';
+import { Alert, Button, Collapse, Stack, Typography } from '@mui/material';
 import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
 import type { EmploymentEntityKey, EmploymentEntityOverview } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
@@ -10,6 +10,16 @@ import EmploymentAssignmentsCard from './EmploymentAssignmentsCard';
 import EmploymentSystemsSummaryCard from './EmploymentSystemsSummaryCard';
 import EmploymentEmptyStateCard from './EmploymentEmptyStateCard';
 import StartOnCallEmploymentDialog from './StartOnCallEmploymentDialog';
+
+const ON_CALL_DETAIL_GUIDANCE = (
+  <>
+    Work Authorization rows often stay on &quot;waiting for TempWorks&quot; until data syncs into HRX or you use
+    verification where the product exposes it — there is no separate button on this line. Payroll invites are logged
+    under the profile <strong>Messages</strong> tab (use <strong>Resend invite</strong> on the row, or{' '}
+    <strong>Resend payroll invite</strong> under Systems summary). If SMS shows failed, check the worker&apos;s phone
+    number and carrier deliverability.
+  </>
+);
 
 export interface EmploymentEntityPanelProps {
   entityKey: EmploymentEntityKey;
@@ -38,12 +48,12 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   workerDisplayName,
 }) => {
   const [onCallOpen, setOnCallOpen] = useState(false);
+  const [onCallLearnMoreOpen, setOnCallLearnMoreOpen] = useState(false);
   const showEmptyExplainer = !overview.entityEmployment && !overview.workerOnboarding;
   const onCallPoolActive = overview.entityEmployment?.employmentEntryMode === 'on_call_pool';
   const showStartOnCallButton = Boolean(allowStartOnCallEmployment && !onCallPoolActive);
 
   const actionContext: EmploymentV2ActionResolutionContext = useMemo(() => {
-    const firstAssign = overview.assignments?.[0]?.assignmentId ?? null;
     const entityDisplayName =
       overview.headerEntityName?.trim() ||
       overview.entityEmployment?.entityName?.trim() ||
@@ -61,21 +71,30 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         overview.systems.payroll?.entityPortalUrl ||
         overview.systems.payroll?.portalUrl ||
         null,
-      everifyAssignmentId: firstAssign,
+      everifyOnCallLaborPool: onCallPoolActive,
     };
-  }, [profileUserId, tenantId, tenantSlug, overview, workerDisplayName]);
+  }, [profileUserId, tenantId, tenantSlug, overview, workerDisplayName, onCallPoolActive]);
 
   return (
     <Stack spacing={0}>
       {allowStartOnCallEmployment && onCallPoolActive ? (
-        <Alert severity="info" sx={{ mb: 1 }}>
-          <Typography variant="body2" component="div">
-            On-call onboarding is already open for this entity. Work Authorization rows often stay on “waiting for
-            TempWorks” until data syncs into HRX or you use verification where the product exposes it — there is no
-            separate button on this line.             Payroll invites are logged under the profile <strong>Messages</strong> tab (use <strong>Resend invite</strong>{' '}
-            on the row, or <strong>Resend payroll invite</strong> under Systems summary). If SMS shows failed, check the
-            worker’s phone number and carrier deliverability.
+        <Alert severity="info" sx={{ mb: 1 }} variant="outlined">
+          <Typography variant="body2" fontWeight={700} sx={{ mb: 0.75 }}>
+            On-call onboarding is active. Complete checklist below.
           </Typography>
+          <Button
+            size="small"
+            onClick={() => setOnCallLearnMoreOpen((o) => !o)}
+            sx={{ textTransform: 'none', px: 0, minWidth: 0, mb: onCallLearnMoreOpen ? 0.5 : 0 }}
+            aria-expanded={onCallLearnMoreOpen}
+          >
+            {onCallLearnMoreOpen ? 'Hide details' : 'Learn more'}
+          </Button>
+          <Collapse in={onCallLearnMoreOpen}>
+            <Typography variant="body2" color="text.secondary" component="div" sx={{ lineHeight: 1.5, pt: 0.5 }}>
+              {ON_CALL_DETAIL_GUIDANCE}
+            </Typography>
+          </Collapse>
         </Alert>
       ) : null}
       {showStartOnCallButton ? (
@@ -121,10 +140,12 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         tenantId={tenantId}
         profileUserId={profileUserId}
         onPayrollResendComplete={() => onRefresh?.()}
+        defaultExpanded={!onCallPoolActive}
       />
       <EmploymentAssignmentsCard
         assignments={overview.assignments}
         hasOpenOnboardingDemand={overview.hasOpenOnboardingDemand}
+        defaultListExpanded={!onCallPoolActive}
       />
       {showEmptyExplainer && <EmploymentEmptyStateCard entityKey={entityKey} />}
     </Stack>

@@ -14,7 +14,10 @@ import {
   Collapse,
   Box,
   Chip,
+  IconButton,
 } from '@mui/material';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { useNavigate } from 'react-router-dom';
 import type { EmploymentAssignmentSummary } from './employmentV2Types';
 import { isAssignmentTerminalNormalized } from '../../../../utils/assignmentStatusNormalize';
@@ -23,6 +26,11 @@ export interface EmploymentAssignmentsCardProps {
   assignments: EmploymentAssignmentSummary[];
   /** When false, all rows are framed as historical (no “current” live assignments). */
   hasOpenOnboardingDemand: boolean;
+  /**
+   * When false, assignment tables start collapsed (on-call pool — checklist first).
+   * Empty state (no rows) is always shown without collapsing.
+   */
+  defaultListExpanded?: boolean;
 }
 
 function AssignmentRows({
@@ -137,6 +145,70 @@ const EmploymentAssignmentsCard: React.FC<EmploymentAssignmentsCardProps> = ({
             ? 'All listed assignments are completed or cancelled.'
             : `${live.length} current assignment${live.length === 1 ? '' : 's'}`;
 
+  const tablesBody =
+    assignments.length === 0 ? null : (
+      <Stack spacing={3}>
+        {hasOpenOnboardingDemand && live.length > 0 ? (
+          <Box>
+            <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+              Current assignments
+            </Typography>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Job</TableCell>
+                  <TableCell>Assignment</TableCell>
+                  <TableCell>Onboarding</TableCell>
+                  <TableCell>Start</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <AssignmentRows
+                  assignments={live}
+                  expanded={expanded}
+                  setExpanded={setExpanded}
+                  navigate={navigate}
+                  historical={false}
+                />
+              </TableBody>
+            </Table>
+          </Box>
+        ) : null}
+
+        {past.length > 0 ? (
+          <Box>
+            <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1, color: 'text.secondary' }}>
+              Past assignments
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+              Completed or cancelled — package and snapshot values are for audit, not current required work.
+            </Typography>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Job</TableCell>
+                  <TableCell>Assignment</TableCell>
+                  <TableCell>Onboarding</TableCell>
+                  <TableCell>Start</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                <AssignmentRows
+                  assignments={past}
+                  expanded={expanded}
+                  setExpanded={setExpanded}
+                  navigate={navigate}
+                  historical
+                />
+              </TableBody>
+            </Table>
+          </Box>
+        ) : null}
+      </Stack>
+    );
+
   return (
     <Card sx={{ mb: 2 }}>
       <CardHeader
@@ -144,77 +216,26 @@ const EmploymentAssignmentsCard: React.FC<EmploymentAssignmentsCardProps> = ({
         subheader={subheader}
         titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
         subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
+        action={
+          assignments.length > 0 ? (
+            <IconButton aria-label="expand assignments list" onClick={() => setListOpen((v) => !v)} size="small">
+              {listOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            </IconButton>
+          ) : undefined
+        }
       />
-      <CardContent sx={{ pt: 0 }}>
-        {assignments.length === 0 ? (
+      {assignments.length === 0 ? (
+        <CardContent sx={{ pt: 0 }}>
           <Typography variant="body2" color="text.secondary">
             No assignments linked to this hiring entity yet. Assignments are matched using the job order&apos;s hiring
             entity.
           </Typography>
-        ) : (
-          <Stack spacing={3}>
-            {hasOpenOnboardingDemand && live.length > 0 ? (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
-                  Current assignments
-                </Typography>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Job</TableCell>
-                      <TableCell>Assignment</TableCell>
-                      <TableCell>Onboarding</TableCell>
-                      <TableCell>Start</TableCell>
-                      <TableCell align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    <AssignmentRows
-                      assignments={live}
-                      expanded={expanded}
-                      setExpanded={setExpanded}
-                      navigate={navigate}
-                      historical={false}
-                    />
-                  </TableBody>
-                </Table>
-              </Box>
-            ) : null}
-
-            {past.length > 0 ? (
-              <Box>
-                <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1, color: 'text.secondary' }}>
-                  Past assignments
-                </Typography>
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
-                  Completed or cancelled — package and snapshot values are for audit, not current required work.
-                </Typography>
-                <Table size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Job</TableCell>
-                      <TableCell>Assignment</TableCell>
-                      <TableCell>Onboarding</TableCell>
-                      <TableCell>Start</TableCell>
-                      <TableCell align="right">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    <AssignmentRows
-                      assignments={past}
-                      expanded={expanded}
-                      setExpanded={setExpanded}
-                      navigate={navigate}
-                      historical
-                    />
-                  </TableBody>
-                </Table>
-              </Box>
-            ) : null}
-
-          </Stack>
-        )}
-      </CardContent>
+        </CardContent>
+      ) : (
+        <Collapse in={listOpen}>
+          <CardContent sx={{ pt: 0 }}>{tablesBody}</CardContent>
+        </Collapse>
+      )}
     </Card>
   );
 };

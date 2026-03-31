@@ -61,7 +61,7 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
     (path: string) => {
       if (!path || path.includes(':/')) return;
       if (path.includes(':')) {
-        setInlineError('Missing link data for this action (e.g. assignment or employment id).');
+        setInlineError('Missing link data for this action (e.g. employment id).');
         return;
       }
       navigate(path);
@@ -110,7 +110,6 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
       if (!canEverify || entityKey !== 'select') return;
 
       const tid = ctx.tenantId;
-      const aid = ctx.everifyAssignmentId || undefined;
       const eid = ctx.entityEmploymentFirestoreId || undefined;
 
       if (resolved.actionKey === 'everify.select.error_retry') {
@@ -136,15 +135,18 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
       }
 
       if (resolved.actionKey === 'everify.select.check_eligibility') {
-        if (!aid && !eid) {
-          setInlineError('Link a Select employment or assignment before E-Verify.');
+        if (!eid) {
+          setInlineError(
+            ctx.everifyOnCallLaborPool
+              ? 'Add or open a Select employment record for this worker before running E-Verify.'
+              : 'Link a Select employment record before E-Verify.'
+          );
           return;
         }
         setLoading(true);
         try {
           const check = (await everifyCheckEligibility({
             tenantId: tid,
-            assignmentId: aid,
             userEmploymentId: eid,
           })) as { data: { eligible?: boolean; blockingReasons?: string[] } };
           if (!check.data?.eligible) {
@@ -153,7 +155,6 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
           }
           await everifyCreateCase({
             tenantId: tid,
-            assignmentId: aid,
             userEmploymentId: eid,
           });
           onComplete?.();
@@ -199,7 +200,9 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
 
   const label =
     resolved.actionKey === 'everify.select.check_eligibility'
-      ? 'Run E-Verify'
+      ? ctx.everifyOnCallLaborPool
+        ? 'Run E-Verify for employment'
+        : 'Run E-Verify'
       : resolved.actionKey === 'everify.select.error_retry'
         ? 'Retry E-Verify'
         : resolved.actionKey === 'everify.select.in_progress'
@@ -215,9 +218,7 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
           : resolved.actionLabel;
 
   const evDisabled =
-    resolved.actionKey === 'everify.select.check_eligibility' &&
-    !ctx.everifyAssignmentId &&
-    !ctx.entityEmploymentFirestoreId;
+    resolved.actionKey === 'everify.select.check_eligibility' && !ctx.entityEmploymentFirestoreId;
   const evRetryDisabled = resolved.actionKey === 'everify.select.error_retry' && !row.sourceRef?.caseId;
 
   return (

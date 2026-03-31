@@ -34,6 +34,11 @@ export interface EmploymentSystemsSummaryCardProps {
   tenantId: string;
   profileUserId: string;
   onPayrollResendComplete?: () => void;
+  /**
+   * When false, operational detail starts collapsed (on-call pool — checklist first).
+   * When true, body is expanded by default for assignment-based onboarding.
+   */
+  defaultExpanded?: boolean;
 }
 
 const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> = ({
@@ -41,8 +46,9 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
   tenantId,
   profileUserId,
   onPayrollResendComplete,
+  defaultExpanded = true,
 }) => {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultExpanded);
   const [payrollResendBusy, setPayrollResendBusy] = useState(false);
   const [payrollResendError, setPayrollResendError] = useState<string | null>(null);
   const { systems } = overview;

@@ -245,11 +245,16 @@ export interface EmploymentV2ActionResolutionContext {
    * Hiring entity shown on this tab (`overview.headerEntityName`). Used for recruiter-owned rows in admin UI.
    */
   entityDisplayName?: string | null;
-  /** `entity_employments` document id for C1 my-employment detail route. */
+  /**
+   * `user_employments/{id}` — used for E-Verify callables and my-employment routes.
+   * E-Verify eligibility/create uses this alone; do not require an assignment.
+   */
   entityEmploymentFirestoreId?: string | null;
   payrollPortalUrl?: string | null;
-  /** C1 Select E-Verify check/create: optional assignment link (mirrors EverifyComplianceCard). */
-  everifyAssignmentId?: string | null;
+  /**
+   * True when this entity employment is on-call / labor pool — tune E-Verify copy (employment-scoped, not job).
+   */
+  everifyOnCallLaborPool?: boolean;
 }
 
 /** Map path row owner to blocker action owner; tolerate legacy `'admin'` if present at runtime. */

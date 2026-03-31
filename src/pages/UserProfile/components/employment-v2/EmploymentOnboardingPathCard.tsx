@@ -250,6 +250,11 @@ function recruiterFacingChip(
   return { label: row.statusLabel || 'Not started', color: 'default' };
 }
 
+/** Presentation only — groups path rows for recruiter vs waiting buckets (no logic change). */
+function isRecruiterOwnedPathRow(row: EmploymentOnboardingRow): boolean {
+  return row.owner === 'recruiter' || row.actionableBy === 'recruiter' || row.actionableBy === 'either';
+}
+
 function tempWorksHintText(row: EmploymentOnboardingRow): string | null {
   const h = row.helperText?.trim();
   if (h && (h.includes('TempWorks') || h.includes(TEMPWORKS_WIRING_HINT.slice(0, 24)))) {
@@ -269,6 +274,7 @@ function StepRow({
   workerOnboarding,
   mergedSources,
   onDismissOptionalPolicyRow,
+  deemphasize,
 }: {
   row: EmploymentOnboardingRow;
   entityKey: EmploymentEntityKey;
@@ -279,6 +285,8 @@ function StepRow({
   workerOnboarding?: WorkerOnboardingPipeline | null;
   mergedSources: EmploymentOnboardingRow[];
   onDismissOptionalPolicyRow?: (rowId: string) => void;
+  /** Muted presentation for worker / vendor / system bucket (visual only). */
+  deemphasize?: boolean;
 }) {
   const theme = useTheme();
   const isCompletedFlow = row.status === 'completed';
@@ -349,6 +357,9 @@ function StepRow({
         ? 'Met by an existing compliance record on file.'
         : null;
 
+  const rowOpacity =
+    deemphasize && !debugMode ? 0.86 : vendorOnlyQuiet ? 0.92 : 1;
+
   return (
     <Box
       sx={{
@@ -359,15 +370,15 @@ function StepRow({
         borderLeft: rowAccent !== 'transparent' ? 3 : 0,
         borderLeftColor: rowAccent,
         borderLeftStyle: 'solid',
-        opacity: vendorOnlyQuiet ? 0.92 : 1,
+        opacity: rowOpacity,
       }}
     >
       <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1} sx={{ mb: 0.75 }}>
         <Stack direction="row" alignItems="flex-start" gap={0.5} sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="body2"
-            fontWeight={verifiedQuiet ? 600 : 700}
-            color={verifiedQuiet ? 'text.secondary' : 'text.primary'}
+            fontWeight={verifiedQuiet || deemphasize ? 600 : 700}
+            color={verifiedQuiet || deemphasize ? 'text.secondary' : 'text.primary'}
             sx={{ lineHeight: 1.35 }}
           >
             {row.label}
@@ -384,8 +395,8 @@ function StepRow({
           size="small"
           label={relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse ? `Prior: ${chip.label}` : chip.label}
           color={chip.color}
-          variant={verifiedQuiet ? 'outlined' : 'filled'}
-          sx={{ flexShrink: 0, fontWeight: verifiedQuiet ? 500 : 600 }}
+          variant={verifiedQuiet || deemphasize ? 'outlined' : 'filled'}
+          sx={{ flexShrink: 0, fontWeight: verifiedQuiet || deemphasize ? 500 : 600 }}
         />
       </Stack>
 
@@ -542,7 +553,16 @@ function GroupSection({
     isInternal && visibleMerged.length > 0 && visibleMerged.every((m) => m.row.sourceType === 'pipeline_task');
   const [internalOpen, setInternalOpen] = React.useState(true);
 
-  const renderMergedRow = (m: MergedPathRow) => (
+  const recruiterBucket = React.useMemo(
+    () => visibleMerged.filter((m) => isRecruiterOwnedPathRow(m.row)),
+    [visibleMerged]
+  );
+  const waitingBucket = React.useMemo(
+    () => visibleMerged.filter((m) => !isRecruiterOwnedPathRow(m.row)),
+    [visibleMerged]
+  );
+
+  const renderMergedRow = (m: MergedPathRow, deemphasize: boolean) => (
     <StepRow
       key={m.row.rowId}
       row={m.row}
@@ -554,7 +574,29 @@ function GroupSection({
       workerOnboarding={workerOnboarding}
       mergedSources={m.mergedSources}
       onDismissOptionalPolicyRow={onDismissOptionalPolicyRow}
+      deemphasize={deemphasize}
     />
+  );
+
+  const renderPathRowBuckets = (spacing: number) => (
+    <Stack spacing={spacing}>
+      {recruiterBucket.length > 0 ? (
+        <Box>
+          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.75 }}>
+            Your verification tasks
+          </Typography>
+          <Stack spacing={spacing}>{recruiterBucket.map((m) => renderMergedRow(m, false))}</Stack>
+        </Box>
+      ) : null}
+      {waitingBucket.length > 0 ? (
+        <Box>
+          <Typography variant="subtitle2" fontWeight={600} color="text.secondary" sx={{ mb: 0.75 }}>
+            Waiting on worker or system
+          </Typography>
+          <Stack spacing={spacing}>{waitingBucket.map((m) => renderMergedRow(m, true))}</Stack>
+        </Box>
+      ) : null}
+    </Stack>
   );
 
   return (
@@ -609,11 +651,11 @@ function GroupSection({
             {internalOpen ? 'Hide internal verification' : 'Show internal verification'}
           </Button>
           <Collapse in={internalOpen}>
-            <Stack spacing={1}>{visibleMerged.map(renderMergedRow)}</Stack>
+            {renderPathRowBuckets(1)}
           </Collapse>
         </>
       ) : (
-        <Stack spacing={1.15}>{visibleMerged.map(renderMergedRow)}</Stack>
+        renderPathRowBuckets(1.15)
       )}
     </Box>
   );
