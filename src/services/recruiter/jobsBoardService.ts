@@ -74,6 +74,16 @@ export const normalizeJobsBoardPostRecord = (id: string, data: Record<string, un
   }
   const cu = out.customUniformRequirements;
   out.customUniformRequirements = typeof cu === 'string' ? cu : cu != null ? String(cu) : '';
+  // Coerce payRate from string/legacy types so public UI gets a proper number (decimals preserved).
+  if (out.payRate !== undefined && out.payRate !== null) {
+    const raw = out.payRate;
+    if (typeof raw === 'string') {
+      const n = parseFloat(raw.trim());
+      out.payRate = Number.isFinite(n) ? n : null;
+    } else if (typeof raw === 'number' && !Number.isFinite(raw)) {
+      out.payRate = null;
+    }
+  }
   return out as unknown as JobsBoardPost;
 };
 

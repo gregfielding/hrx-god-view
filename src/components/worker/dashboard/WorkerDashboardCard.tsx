@@ -7,6 +7,7 @@ import React, { useRef, useCallback, useState } from 'react';
 import { Card, CardContent, Typography, Button, Stack } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../i18n';
+import { formatHourlyPayRateForDisplay } from '../../../utils/hourlyPayDisplay';
 
 export type DashboardCardCategory = 'hospitality' | 'warehouse' | 'events' | 'cleaning' | 'default';
 
@@ -36,11 +37,6 @@ export interface WorkerDashboardCardProps {
   onSwipeDown?: (item: WorkerDashboardCardItem) => void;
 }
 
-function formatPayRate(payRate: number | undefined): string {
-  if (payRate == null || Number.isNaN(payRate)) return '';
-  return `$${Number(payRate).toFixed(2)}/hr`;
-}
-
 const WorkerDashboardCard: React.FC<WorkerDashboardCardProps> = ({ item, onSwipeDown }) => {
   const navigate = useNavigate();
   const t = useT();
@@ -49,7 +45,7 @@ const WorkerDashboardCard: React.FC<WorkerDashboardCardProps> = ({ item, onSwipe
 
   const category = item.category ?? 'default';
   const { bg, contrast } = CATEGORY_COLORS[category];
-  const payStr = formatPayRate(item.payRate);
+  const payStr = formatHourlyPayRateForDisplay(item.payRate) ?? '';
 
   const handlePrimary = useCallback(() => {
     if (item.primaryAction?.to) {

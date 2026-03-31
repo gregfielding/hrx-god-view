@@ -47,6 +47,7 @@ import { JobOrderService } from '../../services/recruiter/jobOrderService';
 import { JobOrder, JobOrderStatus } from '../../types/recruiter/jobOrder';
 import JobOrderForm from '../JobOrderForm';
 import PostToJobsBoardDialog from './PostToJobsBoardDialog';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 interface JobOrdersManagementProps {
   onViewJobOrder?: (jobOrderId: string) => void;
@@ -434,7 +435,7 @@ const JobOrdersManagement: React.FC<JobOrdersManagementProps> = ({ onViewJobOrde
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <MoneyIcon fontSize="small" color="action" />
                         <Typography variant="body2">
-                          ${jobOrder.payRate}/hr
+                          {formatHourlyPayRateForDisplay(jobOrder.payRate) ?? '—'}
                         </Typography>
                       </Box>
                     </TableCell>

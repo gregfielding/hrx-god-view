@@ -32,6 +32,7 @@ import CardDeck from '../components/worker/cards/CardDeck';
 import ApplicationCard from '../components/worker/dashboard/cards/ApplicationCard';
 import type { ApplicationCardPayload } from '../components/worker/dashboard/cards/types';
 import { emitWorkerCardSignal } from '../utils/workerCardSignals';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 
 interface Application {
   id: string;
@@ -492,7 +493,7 @@ const UserApplications: React.FC = () => {
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {app.payRate ? `$${app.payRate}/hr` : t('applications.na')}
+                      {formatHourlyPayRateForDisplay(app.payRate) ?? t('applications.na')}
                     </Typography>
                   </TableCell>
                   <TableCell>

@@ -56,6 +56,7 @@ import {
 import { db } from '../../firebase';
 import { JobsBoardService } from '../../services/recruiter/jobsBoardService';
 import { getDateRange, formatDayAndDate, dateHasHours } from '../../utils/dateSchedule';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
 export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
@@ -850,18 +851,21 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               onChange={(event, newValue) => {
                 setFormData({ ...formData, defaultJobTitle: newValue ? newValue.jobTitle : '' });
               }}
-              renderOption={(props, option) => (
-                <Box component="li" {...props} key={option.jobTitle}>
-                  <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                    <Typography>{option.jobTitle}</Typography>
-                    {option.payRate && (
-                      <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
-                        ${option.payRate}/hr
-                      </Typography>
-                    )}
+              renderOption={(props, option) => {
+                const positionPayLabel = formatHourlyPayRateForDisplay(option.payRate);
+                return (
+                  <Box component="li" {...props} key={option.jobTitle}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                      <Typography>{option.jobTitle}</Typography>
+                      {positionPayLabel && (
+                        <Typography variant="body2" color="text.secondary" sx={{ ml: 2 }}>
+                          {positionPayLabel}
+                        </Typography>
+                      )}
+                    </Box>
                   </Box>
-                </Box>
-              )}
+                );
+              }}
               renderInput={(params) => (
                 <TextField
                   {...params}

@@ -78,6 +78,7 @@ import { checkMissingCertifications } from '../utils/checkMissingCertifications'
 import { toChipLabel } from '../utils/chipLabel';
 import { getLastShiftDateFromShifts } from '../utils/dateSchedule';
 import { formatWorksiteCityStateZip } from '../utils/formatWorksiteAddress';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import CardDeck from '../components/worker/cards/CardDeck';
 import JobRecommendationCard from '../components/worker/dashboard/cards/JobRecommendationCard';
 import JobFeedCard from '../components/worker/JobFeedCard';
@@ -1910,6 +1911,7 @@ const PublicJobsBoard: React.FC = () => {
             <Grid item xs={12} md={6} key={`${job.tenantId}-${job.id}`}>
               {(() => {
                 const jobDistanceLabel = getDistanceLabel(getJobDistanceMiles(job));
+                const payLabel = formatHourlyPayRateForDisplay(job.payRate);
                 return (
               <Card
                 elevation={2}
@@ -1973,10 +1975,10 @@ const PublicJobsBoard: React.FC = () => {
                     </Box>
                   </Box>
 
-                  {job.payRate && job.showPayRate && (
+                  {job.showPayRate && payLabel && (
                     <Box sx={{ mb: 1.25 }}>
                       <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '1.2rem', color: 'success.dark' }}>
-                        ${job.payRate}/hr
+                        {payLabel}
                       </Typography>
                     </Box>
                   )}
@@ -2086,11 +2088,16 @@ const PublicJobsBoard: React.FC = () => {
                       {selectedJob.companyName}
                     </Typography>
                     {/* Hide pay rate for gig jobs with shifts - it's shown on individual shift cards instead */}
-                    {selectedJob.payRate && selectedJob.showPayRate && !(selectedJob.jobType === 'gig' && selectedJobShifts.length > 0) && (
-                      <Typography variant="h6" color="primary" sx={{ fontWeight: 700, fontSize: '1.1rem' }}>
-                        ${selectedJob.payRate}/hr
-                      </Typography>
-                    )}
+                    {selectedJob.showPayRate && !(selectedJob.jobType === 'gig' && selectedJobShifts.length > 0)
+                      ? (() => {
+                          const pl = formatHourlyPayRateForDisplay(selectedJob.payRate);
+                          return pl ? (
+                            <Typography variant="h6" color="primary" sx={{ fontWeight: 700, fontSize: '1.1rem' }}>
+                              {pl}
+                            </Typography>
+                          ) : null;
+                        })()
+                      : null}
                   </Stack>
                   
                   {selectedJob.jobTitle && (

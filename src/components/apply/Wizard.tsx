@@ -75,6 +75,7 @@ import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 type WizardProps = {
   tenantId: string;
@@ -844,12 +845,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
     }
     let cancelled = false;
     const jobOrderId = posting.jobOrderId || jobId;
-    const pay =
-      typeof posting.payRate === 'number'
-        ? `$${posting.payRate}/hr`
-        : posting.payRate
-          ? `$${posting.payRate}/hr`
-          : '';
+    const pay = formatHourlyPayRateForDisplay(posting.payRate) || '';
     const location =
       posting.worksiteName ||
       (posting.city && posting.state ? `${posting.city}, ${posting.state}` : '') ||
@@ -3173,16 +3169,19 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                   ? `${posting.city}, ${posting.state}`
                   : posting.worksiteName || ''}
               </Typography>
-              {posting.payRate && (
-                <>
-                  <Typography variant="body2" color="text.secondary">
-                    •
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    ${posting.payRate}/hr
-                  </Typography>
-                </>
-              )}
+              {(() => {
+                const payLbl = formatHourlyPayRateForDisplay(posting.payRate);
+                return payLbl ? (
+                  <>
+                    <Typography variant="body2" color="text.secondary">
+                      •
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {payLbl}
+                    </Typography>
+                  </>
+                ) : null;
+              })()}
             </Stack>
           </Box>
         </Box>

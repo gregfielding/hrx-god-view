@@ -22,6 +22,7 @@ import { formatDateScheduleSummary, getDateScheduleEntriesWithHours, formatDateS
 import { getShiftDisplayText } from '../utils/shiftI18n';
 import { hasDaySpecificKeyForShift } from '../utils/gigShiftState';
 import { useT } from '../i18n';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 
 interface ShiftSelectorProps {
   shifts: JobBoardShift[];
@@ -182,6 +183,7 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
 
     const dateLabel = item.type === 'day' ? item.dayLabel : null;
     const timeLabel = item.type === 'day' ? formatDateScheduleEntry(item.date, item.startTime, item.endTime) : null;
+    const shiftPayLabel = formatHourlyPayRateForDisplay(shift.payRate);
 
     return (
       <Card
@@ -265,10 +267,10 @@ const ShiftSelector: React.FC<ShiftSelectorProps> = ({
                   </>
                 )}
 
-                {shift.payRate && (
+                {shiftPayLabel && (
                   <Chip
                     icon={<AttachMoneyIcon />}
-                    label={`$${shift.payRate}/hr`}
+                    label={shiftPayLabel}
                     size="small"
                     color="success"
                     variant="outlined"

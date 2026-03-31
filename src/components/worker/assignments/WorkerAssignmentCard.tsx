@@ -9,6 +9,7 @@ import { Card, CardContent, CardActions, Typography, Stack, Chip, Button, IconBu
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import { useNavigate } from 'react-router-dom';
 import { useT, getLanguage } from '../../../i18n';
+import { formatHourlyPayRateForDisplay } from '../../../utils/hourlyPayDisplay';
 
 export type AssignmentStatus =
   | 'scheduled'
@@ -88,11 +89,6 @@ export interface WorkerAssignmentCardProps {
   onCancelShift?: (assignment: WorkerAssignmentItem) => void;
 }
 
-function formatPayRate(payRate: number | undefined): string {
-  if (payRate == null || Number.isNaN(payRate)) return '';
-  return `$${Number(payRate).toFixed(2)}/hr`;
-}
-
 const localeForLang = (lang: string) => (lang === 'es' ? 'es' : 'en-US');
 
 const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
@@ -107,7 +103,7 @@ const WorkerAssignmentCard: React.FC<WorkerAssignmentCardProps> = ({
   const dateTimeStr = formatDateAndTime(assignment.startAt, assignment.endAt, locale);
   const statusKey = getStatusKey(assignment.status);
   const chipColor = getStatusChipColor(assignment.status);
-  const payStr = formatPayRate(assignment.payRate);
+  const payStr = formatHourlyPayRateForDisplay(assignment.payRate) ?? '';
   const locationLine = formatLocationLine(assignment);
 
   const canCancelShift = isUpcoming && (assignment.status === 'scheduled' || assignment.status === 'confirmed') && !!onCancelShift;

@@ -17,6 +17,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 
 interface Assignment {
   id: string;
@@ -234,7 +235,7 @@ const MyAssignments: React.FC = () => {
                     </TableCell>
                     <TableCell>
                       <Typography variant="body2" color="text.secondary">
-                        {assignment.payRate != null ? `$${Number(assignment.payRate)}/hr` : 'N/A'}
+                        {formatHourlyPayRateForDisplay(assignment.payRate) ?? 'N/A'}
                       </Typography>
                     </TableCell>
                     <TableCell>

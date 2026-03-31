@@ -17,6 +17,7 @@ import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firesto
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { formatHourlyPayRateForDisplay } from '../../../utils/hourlyPayDisplay';
 
 interface Application {
   id: string;
@@ -287,7 +288,7 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
                   </TableCell>
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
-                      {app.payRate ? `$${app.payRate}/hr` : 'N/A'}
+                      {formatHourlyPayRateForDisplay(app.payRate) ?? 'N/A'}
                     </Typography>
                   </TableCell>
                   <TableCell>

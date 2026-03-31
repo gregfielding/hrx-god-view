@@ -22,6 +22,7 @@ import { formatWorksiteCityStateZip } from '../../utils/formatWorksiteAddress';
 import { getCategoryForTitle } from '../../utils/dashboardCardCategory';
 import { CARD_THEMES } from './dashboard/cards/types';
 import type { JobCategory } from './dashboard/cards/types';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 const SWIPE_THRESHOLD_PX = 80;
 const SWIPE_ANIMATION_MS = 200;
@@ -51,11 +52,6 @@ export interface JobFeedCardProps {
   dateTimeLabel?: string;
   /** Optional computed distance label (e.g., "3.2 miles away") */
   distanceLabel?: string;
-}
-
-function formatPay(pay: number | undefined): string {
-  if (pay == null || Number.isNaN(pay)) return '';
-  return `$${Number(pay).toFixed(2)}/hr`;
 }
 
 const JobFeedCard: React.FC<JobFeedCardProps> = ({
@@ -140,7 +136,8 @@ const JobFeedCard: React.FC<JobFeedCardProps> = ({
     commitAction('view');
   };
 
-  const payStr = job.showPayRate !== false && job.payRate != null ? formatPay(job.payRate) : null;
+  const payStr =
+    job.showPayRate !== false ? formatHourlyPayRateForDisplay(job.payRate) : null;
 
   return (
     <Stack spacing={2} sx={{ width: '100%' }}>

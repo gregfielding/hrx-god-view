@@ -130,6 +130,7 @@ import LogActivityDialog from '../components/LogActivityDialog';
 import DealAgeChip from '../components/DealAgeChip';
 import HealthBadge from '../components/HealthBadge';
 import { calculateDealHealth, calculateDealAge } from '../utils/dealHealthCalculator';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { ensureCityInSmartGroups } from '../services/smartGroupMetroSync';
 import FavoriteButton from '../components/FavoriteButton';
 import { useFavorites } from '../hooks/useFavorites';
@@ -4932,7 +4933,7 @@ const IndeedJobsTab: React.FC<{
                     <TableCell>
                       {job.city && job.state ? `${job.city}, ${job.state}` : job.worksiteName || '-'}
                     </TableCell>
-                    <TableCell>${job.payRate || 0}/hr</TableCell>
+                    <TableCell>{formatHourlyPayRateForDisplay(job.payRate ?? 0) ?? '—'}</TableCell>
                     <TableCell>
                       <Chip 
                         label={job.status || 'Unknown'} 

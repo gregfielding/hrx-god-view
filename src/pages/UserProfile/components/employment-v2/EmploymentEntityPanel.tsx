@@ -147,6 +147,7 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         tenantId={tenantId}
         profileUserId={profileUserId}
         onPayrollResendComplete={() => onRefresh?.()}
+        onEverifyComplete={() => onRefresh?.()}
         defaultExpanded={false}
       />
       <EmploymentAssignmentsCard

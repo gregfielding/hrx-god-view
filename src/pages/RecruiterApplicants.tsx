@@ -41,6 +41,7 @@ import {
 } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 
 // Security levels for filtering
 type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
@@ -697,11 +698,15 @@ const RecruiterApplicants: React.FC = () => {
                             📍 {candidate.mostRecentApplication.location}
                           </Typography>
                         )}
-                        {candidate.mostRecentApplication.payRate && (
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
-                            💰 ${candidate.mostRecentApplication.payRate}/hr
-                          </Typography>
-                        )}
+                        {(() => {
+                          const payLbl = formatHourlyPayRateForDisplay(candidate.mostRecentApplication.payRate);
+                          if (!payLbl) return null;
+                          return (
+                            <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary' }}>
+                              💰 {payLbl}
+                            </Typography>
+                          );
+                        })()}
                         {candidate.mostRecentApplication.appliedAt && (
                           <Typography variant="body2" sx={{ fontSize: '0.75rem', color: 'text.secondary', fontStyle: 'italic' }}>
                             Applied: {formatDate(candidate.mostRecentApplication.appliedAt)}

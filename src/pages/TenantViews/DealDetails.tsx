@@ -90,6 +90,7 @@ import ManageLocationDialog from '../../components/ManageLocationDialog';
 import ManageCompaniesDialog, { CompanyOption } from '../../components/ManageCompaniesDialog';
 import GenerateJobOrderButton from '../../components/GenerateJobOrderButton';
 import PageHeader from '../../components/PageHeader';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 interface DealData {
   id: string;
@@ -3170,7 +3171,14 @@ const DealDetails: React.FC = () => {
                     Shifts: {stageData?.discovery?.shifts?.join(', ') || 'Not specified'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Pay Rate: ${stageData?.qualification?.expectedAveragePayRate || 'Not specified'}/hr
+                    Pay Rate:{' '}
+                    {(() => {
+                      const raw = stageData?.qualification?.expectedAveragePayRate;
+                      const formatted = formatHourlyPayRateForDisplay(raw);
+                      if (formatted) return formatted;
+                      if (raw != null && String(raw).trim() !== '') return String(raw);
+                      return 'Not specified';
+                    })()}
                   </Typography>
                 </Box>
               </Grid>

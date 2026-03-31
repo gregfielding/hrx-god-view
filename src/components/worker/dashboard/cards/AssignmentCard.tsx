@@ -8,11 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { useT } from '../../../../i18n';
 import type { AssignmentCardPayload } from './types';
 import { CARD_THEMES } from './types';
-
-function formatPay(pay: number | undefined): string {
-  if (pay == null || Number.isNaN(pay)) return '';
-  return `$${Number(pay).toFixed(2)}/hr`;
-}
+import { formatHourlyPayRateForDisplay } from '../../../../utils/hourlyPayDisplay';
 
 export interface AssignmentCardProps {
   payload: AssignmentCardPayload;
@@ -23,7 +19,7 @@ const AssignmentCard: React.FC<AssignmentCardProps> = ({ payload, onTap }) => {
   const navigate = useNavigate();
   const t = useT();
   const { bg, contrast } = CARD_THEMES.assignment;
-  const payStr = formatPay(payload.pay);
+  const payStr = formatHourlyPayRateForDisplay(payload.pay) ?? '';
   const detailLine = [payload.dateTime, payStr].filter(Boolean).join(' · ');
 
   const handleViewAssignment = (e: React.MouseEvent) => {

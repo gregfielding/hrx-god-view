@@ -74,6 +74,7 @@ import { RequirementInteraction } from '../components/RequirementInteraction';
 import { getJobPostingDisplayText, localizeJobDescriptionEmbeddedLabels } from '../utils/jobPostingI18n';
 import { logAssignmentUpdateActivity } from '../utils/activityLogger';
 import { buildCanonicalWorkerProfileWritePatch } from '../utils/workerReadinessWriteModel';
+import { formatHourlyPayAmountForI18n } from '../utils/hourlyPayDisplay';
 import AuthDialog from '../components/AuthDialog';
 import WorkerBottomSheet from '../components/worker/WorkerBottomSheet';
 
@@ -1987,7 +1988,7 @@ const JobPostingDetail: React.FC = () => {
                   lineHeight: 1.2,
                 }}
               >
-                {t('jobs.hourlyRateDisplay', { amount: Number(posting.payRate).toFixed(0) })}
+                {t('jobs.hourlyRateDisplay', { amount: formatHourlyPayAmountForI18n(posting.payRate) })}
               </Typography>
             )}
 
@@ -2372,9 +2373,9 @@ const JobPostingDetail: React.FC = () => {
                             <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
                             <Typography variant="body1" sx={{ fontWeight: 600 }}>
                               {assignmentData.payRate != null
-                                ? t('jobs.hourlyRateDisplay', { amount: String(assignmentData.payRate) })
+                                ? t('jobs.hourlyRateDisplay', { amount: formatHourlyPayAmountForI18n(assignmentData.payRate) })
                                 : posting?.payRate != null
-                                  ? t('jobs.hourlyRateDisplay', { amount: String(posting.payRate) })
+                                  ? t('jobs.hourlyRateDisplay', { amount: formatHourlyPayAmountForI18n(posting.payRate) })
                                   : '—'}
                             </Typography>
                           </Box>
@@ -2902,7 +2903,7 @@ const JobPostingDetail: React.FC = () => {
           const isGigWithShifts = posting.jobType === 'gig' && dynamicShifts.length > 0;
           const payLabel =
             posting.showPayRate && posting.payRate != null
-              ? t('jobs.hourlyRateDisplay', { amount: Number(posting.payRate).toFixed(0) })
+              ? t('jobs.hourlyRateDisplay', { amount: formatHourlyPayAmountForI18n(posting.payRate) })
               : null;
           let nextLabel = '';
           if (isGigWithShifts && dynamicShifts.length > 0) {

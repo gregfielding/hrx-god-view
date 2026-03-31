@@ -40,6 +40,7 @@ import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
 
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 
 interface Assignment {
   id: string;
@@ -471,17 +472,18 @@ const WorkerAssignments: React.FC = () => {
                         }
                       />
                     </ListItem>
-                    {selectedAssignment.hourlyRate && (
-                      <ListItem>
-                        <ListItemIcon>
-                          <Business />
-                        </ListItemIcon>
-                        <ListItemText
-                          primary="Hourly Rate"
-                          secondary={`$${selectedAssignment.hourlyRate}/hr`}
-                        />
-                      </ListItem>
-                    )}
+                    {(() => {
+                      const hourlyPayLabel = formatHourlyPayRateForDisplay(selectedAssignment.hourlyRate);
+                      if (!hourlyPayLabel) return null;
+                      return (
+                        <ListItem>
+                          <ListItemIcon>
+                            <Business />
+                          </ListItemIcon>
+                          <ListItemText primary="Hourly Rate" secondary={hourlyPayLabel} />
+                        </ListItem>
+                      );
+                    })()}
                   </List>
                 </Grid>
                 {selectedAssignment.notes && (

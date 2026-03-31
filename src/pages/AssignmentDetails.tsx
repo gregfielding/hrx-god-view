@@ -38,6 +38,7 @@ import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage'
 import { useT } from '../i18n';
 import SmsWarningBanner from '../components/worker/SmsWarningBanner';
 import { getShiftDisplayText } from '../utils/shiftI18n';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { parseCalendarDateLocal } from '../utils/dateUtils';
 import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
 import { format } from 'date-fns';
@@ -1136,7 +1137,7 @@ const AssignmentDetails: React.FC = () => {
                     <Box>
                       <Typography variant="body2" color="text.secondary">{t('jobs.payRate')}</Typography>
                       <Typography variant="body1" sx={{ fontWeight: 600 }}>
-                        {assignment.payRate != null ? `$${assignment.payRate}/hr` : '—'}
+                        {formatHourlyPayRateForDisplay(assignment.payRate) ?? '—'}
                       </Typography>
                     </Box>
                   </Stack>

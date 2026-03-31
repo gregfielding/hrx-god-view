@@ -44,6 +44,7 @@ import {
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import { Autocomplete as GoogleAutocomplete } from '@react-google-maps/api';
+import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 import {
   JobsBoardService,
   JobsBoardPost,
@@ -1664,6 +1665,7 @@ const JobsBoard: React.FC = () => {
             <TableBody>
               {paginatedJobs.map((post) => {
                 const worksiteLocationLine = formatWorksiteCityStateZip(post.worksiteAddress);
+                const payDisplay = formatHourlyPayRateForDisplay(post.payRate);
                 return (
                 <TableRow 
                   key={post.id}
@@ -1755,9 +1757,9 @@ const JobsBoard: React.FC = () => {
                     )}
                   </TableCell>
                   <TableCell>
-                    {post.payRate && post.showPayRate ? (
+                    {post.showPayRate && payDisplay ? (
                       <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
-                        ${post.payRate}/hr
+                        {payDisplay}
                       </Typography>
                     ) : (
                       <Typography variant="body2" color="text.secondary">

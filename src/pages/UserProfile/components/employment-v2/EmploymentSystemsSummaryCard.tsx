@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Box,
   Button,
@@ -10,6 +10,7 @@ import {
   Collapse,
   IconButton,
   Divider,
+  Tooltip,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
@@ -17,6 +18,9 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../../../firebase';
 import type { EmploymentEntityOverview } from './employmentV2Types';
 import { assignmentRequirementsSystemsLine } from '../../../../utils/assignmentRequirementsViewModel';
+import { useAuth } from '../../../../contexts/AuthContext';
+import { canManageEverifyFromClaims } from '../backgroundsComplianceModel';
+import { StartEverifySelectDialog, EVERIFY_SELECT_PERM_HINT } from '../StartEverifySelectDialog';
 
 const resendPayrollInvite = httpsCallable<
   {
@@ -39,6 +43,8 @@ export interface EmploymentSystemsSummaryCardProps {
    * When true, body is expanded by default for assignment-based onboarding.
    */
   defaultExpanded?: boolean;
+  /** Refetch employment overview after a successful E-Verify case create from this card. */
+  onEverifyComplete?: () => void;
 }
 
 const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> = ({
@@ -46,11 +52,18 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
   tenantId,
   profileUserId,
   onPayrollResendComplete,
+  onEverifyComplete,
   defaultExpanded = true,
 }) => {
   const [open, setOpen] = useState(defaultExpanded);
+  const [everifyDialogOpen, setEverifyDialogOpen] = useState(false);
   const [payrollResendBusy, setPayrollResendBusy] = useState(false);
   const [payrollResendError, setPayrollResendError] = useState<string | null>(null);
+  const { isHRX, claimsRoles } = useAuth();
+  const canManageEverify = useMemo(
+    () => canManageEverifyFromClaims(isHRX, tenantId, claimsRoles),
+    [isHRX, tenantId, claimsRoles]
+  );
   const { systems } = overview;
   const historical = !overview.hasOpenOnboardingDemand;
   const iaLine = assignmentRequirementsSystemsLine(overview.assignmentRequirementsViewModel);
@@ -122,11 +135,19 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
         <CardContent sx={{ pt: 0 }}>
           <Stack spacing={1.5}>
             {systems.everify && systems.everify.applicable && (
-              <Box>
+              <Box
+                sx={{
+                  border: 1,
+                  borderColor: 'primary.light',
+                  bgcolor: 'action.hover',
+                  borderRadius: 1,
+                  p: 1.5,
+                }}
+              >
                 <Typography variant="subtitle2" fontWeight={600}>
                   E-Verify (Select)
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                   {systems.everify.statusDisplay} · {systems.everify.caseCount} case(s)
                   {systems.everify.actionNeeded
                     ? historical
@@ -134,6 +155,26 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                       : ' · Action may be needed'
                     : ''}
                 </Typography>
+                <Tooltip title={!canManageEverify ? EVERIFY_SELECT_PERM_HINT : ''}>
+                  <span>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      disabled={!canManageEverify}
+                      onClick={() => setEverifyDialogOpen(true)}
+                      sx={{ textTransform: 'none', alignSelf: 'flex-start', mt: 1, display: 'inline-flex' }}
+                    >
+                      Run E-Verify for employment
+                    </Button>
+                  </span>
+                </Tooltip>
+                <StartEverifySelectDialog
+                  open={everifyDialogOpen}
+                  onClose={() => setEverifyDialogOpen(false)}
+                  uid={profileUserId}
+                  tenantId={tenantId}
+                  onSuccess={() => void onEverifyComplete?.()}
+                />
               </Box>
             )}
             {systems.payroll && (

@@ -8,6 +8,7 @@ import { db } from '../firebase';
 import { CalendarEvent } from '../types/calendar';
 import { eachDayOfInterval, endOfDay, isSameDay, isValid, parseISO, startOfDay } from 'date-fns';
 import { formatWeeklyScheduleSummary } from '../utils/weeklySchedule';
+import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { getDateScheduleEntriesWithHours, formatDateScheduleEntry } from '../utils/dateSchedule';
 
 function parseLocalYyyyMmDd(dateStr: string): Date | null {
@@ -286,7 +287,8 @@ function shiftToCalendarEvent(shift: any, jobOrder: any, jobOrderColor: string):
   if (jobOrder?.worksiteName) descriptionParts.push(`Location: ${jobOrder.worksiteName}`);
   if (shift.shiftDescription) descriptionParts.push(`\n${shift.shiftDescription}`);
   if (shift.totalStaffRequested) descriptionParts.push(`\nStaff Needed: ${shift.totalStaffRequested}`);
-  if (jobOrder?.payRate) descriptionParts.push(`Pay Rate: $${jobOrder.payRate}/hr`);
+  const payLine = formatHourlyPayRateForDisplay(jobOrder?.payRate);
+  if (payLine) descriptionParts.push(`Pay Rate: ${payLine}`);
   if (shift.poNumber) descriptionParts.push(`PO: ${shift.poNumber}`);
 
   const description = descriptionParts.join('\n');
