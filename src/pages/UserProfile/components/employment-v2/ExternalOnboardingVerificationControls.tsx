@@ -25,6 +25,7 @@ import { functions } from '../../../../firebase';
 import type { EmploymentEntityKey, WorkerOnboardingPipeline } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
 import type { ExternalOnboardingStepStatus } from '../../../../types/externalOnboardingSteps';
+import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
 import {
   formatVerifiedAtDisplayForExternalRecord,
   isExternalOnboardingStepVerificationUiKey,
@@ -34,17 +35,13 @@ import {
 
 const updateExternalOnboardingStepVerification = httpsCallable(functions, 'updateExternalOnboardingStepVerification');
 
-function friendlyExternalVerificationError(err: unknown): string {
-  const o = err as { code?: string; message?: string } | undefined;
+function externalVerificationErrorMessage(err: unknown): string {
+  const base = formatFirebaseHttpsError(err);
+  if (base && base !== 'Request failed') return base;
+  const o = err as { code?: string } | undefined;
   const code = String(o?.code ?? '');
   if (code.includes('permission-denied')) {
     return "You don't have permission to update this step. Ask a tenant admin if you need access.";
-  }
-  if (code.includes('failed-precondition')) {
-    return 'That action is not available for this step right now. Refresh the page and try again.';
-  }
-  if (code.includes('invalid-argument')) {
-    return 'Something was invalid. Refresh the page and try again.';
   }
   if (code.includes('not-found')) {
     return 'No onboarding record found for this worker and entity.';
@@ -153,7 +150,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
       setOptimisticChecked(false);
       onComplete?.();
     } catch (e: unknown) {
-      setErr(friendlyExternalVerificationError(e));
+      setErr(externalVerificationErrorMessage(e));
     } finally {
       setLoading(false);
     }
