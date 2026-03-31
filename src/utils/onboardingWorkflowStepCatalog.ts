@@ -162,9 +162,40 @@ export const WORKFLOW_UI_GROUP_ORDER: WorkflowUiGroupId[] = [
 
 export const WORKFLOW_UI_GROUP_TITLES: Record<WorkflowUiGroupId, string> = {
   work_authorization: 'Work Authorization',
-  forms_and_policies: 'Forms & Policies',
-  payroll: 'Payroll',
-  screenings: 'Screenings',
+  forms_and_policies: 'Company Forms & Policies',
+  payroll: 'Payroll Setup',
+  screenings: 'Background Checks & Screenings',
   assignment_requirements: 'Assignment Requirements',
-  internal_readiness: 'Internal verification',
+  internal_readiness: 'Your tasks',
 };
+
+/**
+ * Recruiter profile checklist: short task-oriented titles (entity Settings still uses `label` above).
+ */
+export const RECRUITER_CHECKLIST_TITLE_BY_WORKFLOW_STEP: Record<string, string> = {
+  ...Object.fromEntries(ONBOARDING_WORKFLOW_STEPS.map((s) => [s.id, s.label])),
+  ic_agreement_sent: 'Send contractor agreement',
+  ic_agreement_signed: 'Sign contractor agreement',
+  '1099_sent': 'Send W-9',
+  '1099_completed': 'Complete W-9',
+  payroll_invite_sent: 'Send payroll invite',
+  payroll_setup_complete: 'Confirm payroll setup',
+  w9_received: 'Submit W-9',
+  direct_deposit_contractor: 'Enter direct deposit',
+  handbook_sent: 'Send handbook',
+  handbook_signed: 'Sign handbook',
+  i9_sent: 'Send I-9',
+  i9_completed: 'Complete I-9',
+  everify_sent: 'Submit to E-Verify',
+  everify_completed: 'Confirm E-Verify',
+  w4_sent: 'Send tax forms',
+  w4_completed: 'Fill out tax forms',
+  direct_deposit_w2: 'Enter direct deposit',
+  policy_acknowledgments: 'Sign policies',
+  background_initiated: 'Start background check',
+  background_completed: 'Review background check',
+};
+
+export function recruiterChecklistTitleForWorkflowStep(stepId: string, fallback: string): string {
+  return RECRUITER_CHECKLIST_TITLE_BY_WORKFLOW_STEP[stepId] ?? fallback;
+}

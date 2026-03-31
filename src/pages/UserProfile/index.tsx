@@ -69,6 +69,8 @@ import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../../components/EVerifyComfortChip';
 import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
 import { useScoringDistribution } from '../../hooks/useScoringDistribution';
+import { useUserProfileEntityEmploymentChips } from '../../hooks/useUserProfileEntityEmploymentChips';
+import UserEntityOnboardingStatusCell from '../../components/tables/UserEntityOnboardingStatusCell';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -941,6 +943,28 @@ const UserProfilePage = () => {
       navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
     }
   };
+
+  const pathnameForEntityChips = location.pathname;
+  const isRecruiterRouteForEntityChips =
+    pathnameForEntityChips.includes('/users/') ||
+    (pathnameForEntityChips.includes('/users') && pathnameForEntityChips.split('/').length > 3);
+  const isWorkforceUserRouteForEntityChips = pathnameForEntityChips.includes('/workforce/users/');
+  const useRecordHeaderForEntityChips = isWorkforceUserRouteForEntityChips || isRecruiterRouteForEntityChips;
+  const viewerSecurityLevelForEntityChips = parseInt(String(securityLevel || '0'), 10);
+  const showRecordHeaderEntityStatus =
+    Boolean(uid) &&
+    !accessDenied &&
+    useRecordHeaderForEntityChips &&
+    user?.uid !== uid &&
+    viewerSecurityLevelForEntityChips >= 5 &&
+    viewerSecurityLevelForEntityChips <= 7 &&
+    Boolean(effectiveTenantId);
+
+  const { items: recordHeaderEntityChips, loading: recordHeaderEntityChipsLoading } = useUserProfileEntityEmploymentChips(
+    effectiveTenantId ?? undefined,
+    uid,
+    showRecordHeaderEntityStatus
+  );
 
   const handleSkillsUpdate = async (updated: any) => {
     if (!uid) return;
@@ -1894,6 +1918,24 @@ const UserProfilePage = () => {
                         })}
                       </Box>
                     )}
+                    {showRecordHeaderEntityStatus &&
+                      (recordHeaderEntityChipsLoading || recordHeaderEntityChips.length > 0) && (
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
+                          <Typography
+                            component="span"
+                            variant="body2"
+                            sx={{ fontSize: '14px', fontWeight: 500, color: 'rgba(0, 0, 0, 0.55)' }}
+                          >
+                            Employment:
+                          </Typography>
+                          <UserEntityOnboardingStatusCell
+                            items={recordHeaderEntityChips}
+                            loading={recordHeaderEntityChipsLoading}
+                            emptyDisplay="hidden"
+                            density="compact"
+                          />
+                        </Box>
+                      )}
                     {/* Line 5: Status (Onboarding/Hired/Dismissed/etc.) */}
                     {!isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && (statusLine?.text || interviewLine?.text) && (
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>

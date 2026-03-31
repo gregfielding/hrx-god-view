@@ -37,6 +37,7 @@ import {
   WORKFLOW_UI_GROUP_ORDER,
   WORKFLOW_UI_GROUP_TITLES,
   catalogStepAppliesToEntityWorkerType,
+  recruiterChecklistTitleForWorkflowStep,
   workflowStepVisibleForEntityTab,
 } from './onboardingWorkflowStepCatalog';
 import {
@@ -82,10 +83,11 @@ export function isOnboardingPathRowBlocker(row: EmploymentOnboardingRow): boolea
   return Boolean(row.required && row.blocking);
 }
 
-const MISSING_TEMPWORKS_ROW_LABEL_ADMIN =
-  'TempWorks is not wired into HRX by API — confirm work in TempWorks, then mark complete on this card when done.';
-const MISSING_TEMPWORKS_ROW_LABEL_WORKER =
-  'Your hiring team updates this when TempWorks steps are finished — check back after they record progress in HRX.';
+/** Shown when payroll milestone data is not synced yet; also used in checklist tooltips. */
+export const RECRUITER_PAYROLL_ROW_HINT =
+  'Complete this step in your payroll system, then confirm it here.';
+const PAYROLL_STEP_MISSING_WORKER =
+  'Your hiring team will confirm this here once payroll progress is recorded.';
 
 function getPipelineSteps(pipeline: WorkerOnboardingPipeline | null) {
   return Array.isArray(pipeline?.steps) ? pipeline!.steps! : [];
@@ -180,8 +182,8 @@ function buildAssignmentRequirementRows(
         status,
         statusLabel,
         isEsign
-          ? 'Status from signature envelope for this assignment (e-sign).'
-          : 'Required document from assignment onboarding package (non e-sign).',
+          ? 'E-sign status updates as the worker signs.'
+          : 'Upload or confirm when the worker submits this document.',
         'worker',
         'both',
         'either'
@@ -199,7 +201,7 @@ function buildAssignmentRequirementRows(
         Boolean(s.blocking) || status === 'error',
         status,
         statusLabel,
-        'From onboarding_instances.resolvedSteps for this assignment.',
+        'Complete or unblock this step in the assignment package.',
         'recruiter',
         'both',
         'recruiter'
@@ -217,7 +219,7 @@ function buildAssignmentRequirementRows(
         Boolean(c.blocking) || status === 'error',
         status,
         statusLabel,
-        'From onboarding_instances.resolvedChecks (screening / vendor).',
+        'Vendor or screening partner updates this; check the assignment for detail.',
         'vendor',
         'both',
         'none'
@@ -228,20 +230,45 @@ function buildAssignmentRequirementRows(
   return rows;
 }
 
+/** Recruiter checklist: short task title for merged pipeline tasks. */
 function internalPipelineTaskVerificationLabel(title: string, stepId: string): string {
   const raw = (title || '').trim();
   const combined = `${raw} ${stepId}`.toLowerCase();
-  if (/\bi-?9\b/.test(combined)) {
-    return 'I-9 completed in TempWorks';
+  const sid = String(stepId || '').toLowerCase();
+
+  if (/\bi-?9\b/.test(combined) || sid === 'i9') {
+    return 'Verify I-9';
   }
-  if (combined.includes('tempworks') && (combined.includes('onboarding') || combined.includes('form'))) {
-    return 'TempWorks onboarding packet completed';
+  if (/\be-?verify\b/.test(combined) || combined.includes('everify') || sid === 'e_verify') {
+    return 'Confirm E-Verify';
+  }
+  if (
+    sid === 'background_check' ||
+    (/\bbackground\b/.test(combined) && /(check|screen|review|status|order)/.test(combined))
+  ) {
+    return 'Review background check';
+  }
+  if (sid === 'drug_screen' || sid === 'drug_screening' || /\bdrug\b/.test(combined)) {
+    return 'Review background check';
+  }
+  if (sid === 'everee' || /\bpayroll\b/.test(combined)) {
+    return 'Confirm payroll setup';
+  }
+  if (combined.includes('onboarding') && combined.includes('form')) {
+    return 'Confirm onboarding forms';
+  }
+  if (sid === 'onboarding_forms') {
+    return 'Confirm onboarding forms';
   }
   if (!raw) {
-    return 'Internal step completed in TempWorks';
+    return 'Confirm completion';
   }
-  const stripped = raw.replace(/^complete\s+/i, '').trim();
-  return `${stripped} completed in TempWorks`;
+  const stripped = raw.replace(/^(complete|review)\s+/i, '').trim();
+  if (stripped.length > 44 || /completed in /i.test(stripped)) {
+    if (sid === 'background_check') return 'Review background check';
+    return 'Confirm completion';
+  }
+  return stripped;
 }
 
 function buildInternalTaskRows(
@@ -260,7 +287,7 @@ function buildInternalTaskRows(
     const done = isOnboardingPathRowDone(status);
     const owner = taskOwner(t.owner);
     const recruiterTask = t.owner === 'recruiter';
-    const baseTitle = t.title || 'Recruiter / admin task';
+    const baseTitle = t.title || 'Confirm completion';
     rows.push({
       rowId: `task__${entityKey}__${String(t.id || sid || idx)}`,
       entityKey,
@@ -276,8 +303,7 @@ function buildInternalTaskRows(
       blocking: (!done && recruiterTask) || status === 'error',
       status,
       statusLabel,
-      helperText:
-        'Pipeline task from worker_onboarding.tasks. Use the global Tasks list for full context; confirm here after you verify completion in TempWorks.',
+      helperText: 'Finish the work in your payroll system or task list, then mark done here.',
       lastUpdatedAt: null,
     });
   });
@@ -422,8 +448,8 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
           rowStatus = 'in_progress';
         }
         rowStatusLabel =
-          pathLabelAudience === 'worker' ? MISSING_TEMPWORKS_ROW_LABEL_WORKER : MISSING_TEMPWORKS_ROW_LABEL_ADMIN;
-        rowHelperText = `${MISSING_TEMPWORKS_ROW_LABEL_ADMIN} ${derived.helperText}`.trim();
+          pathLabelAudience === 'worker' ? PAYROLL_STEP_MISSING_WORKER : 'Waiting on payroll';
+        rowHelperText = RECRUITER_PAYROLL_ROW_HINT;
       }
 
       let actionableBy = runtimeDef.actionableBy;
@@ -436,7 +462,10 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         entityKey,
         groupId,
         stepKey: def.id,
-        label: runtimeDef.label,
+        label:
+          pathLabelAudience === 'admin'
+            ? recruiterChecklistTitleForWorkflowStep(def.id, runtimeDef.label)
+            : runtimeDef.label,
         sourceType: rowSourceType,
         sourceRef: rowSourceRef,
         owner: runtimeDef.owner,

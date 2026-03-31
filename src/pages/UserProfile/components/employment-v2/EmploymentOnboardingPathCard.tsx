@@ -38,16 +38,21 @@ import {
   isExternalOnboardingStepVerificationUiKey,
   parseExternalOnboardingSteps,
 } from '../../../../utils/externalOnboardingSteps';
+import { recruiterExternalStepChip } from '../../../../utils/employmentOnboardingPathRecruiterView';
 import {
-  mergeOnboardingPathRowsByExternalStepKey,
-  recruiterExternalStepChip,
-  TEMPWORKS_WIRING_HINT,
-  type MergedPathRow,
-} from '../../../../utils/employmentOnboardingPathRecruiterView';
-import { isOnboardingPathRowBlocker, isOnboardingPathRowDone } from '../../../../utils/employmentOnboardingPath';
+  consolidateRecruiterOnboardingPathGroups,
+  type RecruiterConsolidatedPathGroup,
+  type RecruiterConsolidatedPathItem,
+} from '../../../../utils/employmentOnboardingPathRecruiterConsolidation';
+import {
+  isOnboardingPathRowBlocker,
+  isOnboardingPathRowDone,
+  RECRUITER_PAYROLL_ROW_HINT,
+} from '../../../../utils/employmentOnboardingPath';
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
 import InternalPipelineTaskVerification from './InternalPipelineTaskVerification';
+import ManualScreeningOrderSelect from './ManualScreeningOrderSelect';
 
 /** Explicit `false` turns debug off; `undefined` uses `REACT_APP_EMPLOYMENT_ONBOARDING_PATH_DEBUG`. */
 export function resolveEmploymentOnboardingPathDebugMode(explicit?: boolean): boolean {
@@ -60,8 +65,8 @@ const UI_STATUS_LABEL: Record<OnboardingPathUiStatus, string> = {
   not_started: 'Not started',
   in_progress: 'In progress',
   completed: 'Completed',
-  satisfied_by_existing_record: 'Satisfied by existing record',
-  not_required: 'Not required',
+  satisfied_by_existing_record: 'Already on file',
+  not_required: 'Doesn’t apply',
   error: 'Error',
 };
 
@@ -84,6 +89,19 @@ const OWNER_LABEL: Record<EmploymentOnboardingRow['owner'], string> = {
   system: 'System',
   vendor: 'Vendor',
 };
+
+/** Recruiter profile: one owner label per row (no combined contributors). */
+function recruiterLeadOwnerLabel(row: EmploymentOnboardingRow, internalTaskRow: EmploymentOnboardingRow | undefined): string {
+  if (internalTaskRow || row.actionableBy === 'recruiter') return 'You';
+  if (row.actionableBy === 'worker') return 'Worker';
+  if (row.actionableBy === 'either') {
+    return row.owner === 'recruiter' ? 'You' : 'Worker';
+  }
+  if (row.owner === 'vendor') return 'Vendor';
+  if (row.owner === 'system') return 'System';
+  if (row.owner === 'recruiter') return 'You';
+  return 'Worker';
+}
 
 const AUDIENCE_LABEL: Record<EmploymentOnboardingRow['audience'], string> = {
   worker: 'Visible: worker',
@@ -109,7 +127,7 @@ const ROW_SIGNAL_LABEL: Record<EmploymentOnboardingRow['sourceType'], string> = 
   payroll: 'Payroll account',
   assignment_requirement: 'Assignment package',
   derived: 'Derived',
-  external_onboarding: 'External onboarding (TempWorks / HRIS)',
+  external_onboarding: 'Payroll milestones',
 };
 
 const SCOPE_LABEL: Record<NonNullable<EmploymentOnboardingRow['artifactScope']>, string> = {
@@ -127,6 +145,16 @@ const ARTIFACT_TYPE_LABEL: Record<NonNullable<EmploymentOnboardingRow['artifactS
 
 function normalizeWs(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
+}
+
+/** Collapse near-duplicate activity lines (same event, different punctuation). */
+function activityFingerprint(s: string): string {
+  const n = normalizeWs(s).toLowerCase();
+  return n
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\d{1,2}\/\d{1,2}\/\d{2,4}[^a-z0-9:]*/gi, 'DATE ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 const TONE_CHIP_COLOR: Record<
@@ -147,14 +175,24 @@ function collectActivityFromRows(rows: EmploymentOnboardingRow[]): {
   const summaries: string[] = [];
   const events: EmploymentOnboardingNarrativeEvent[] = [];
   const seenSummary = new Set<string>();
+  const seenEvent = new Set<string>();
   for (const row of rows) {
     const s = row.narrative?.summary?.trim();
-    if (s && !seenSummary.has(normalizeWs(s))) {
-      seenSummary.add(normalizeWs(s));
-      summaries.push(s);
+    if (s) {
+      const fp = activityFingerprint(s);
+      if (!seenSummary.has(fp)) {
+        seenSummary.add(fp);
+        summaries.push(s);
+      }
     }
     row.narrative?.events?.forEach((ev) => {
-      if (String(ev.message || '').trim()) events.push(ev);
+      const msg = String(ev.message || '').trim();
+      if (!msg) return;
+      const ts = ev.timestamp?.getTime() ?? 0;
+      const k = `${Math.floor(ts / 60000)}|${activityFingerprint(msg)}`;
+      if (seenEvent.has(k)) return;
+      seenEvent.add(k);
+      events.push(ev);
     });
   }
   events.sort((a, b) => (a.timestamp?.getTime() || 0) - (b.timestamp?.getTime() || 0));
@@ -227,6 +265,16 @@ function primaryStatusChipLabel(row: EmploymentOnboardingRow): string {
   return row.statusLabel || UI_STATUS_LABEL[row.status];
 }
 
+function humanizeRecruiterStatusLabel(label: string): string {
+  const t = label.trim();
+  if (/pending\s*admin\s*verification/i.test(t)) return 'Needs review';
+  if (/waiting\s*on\s*admin/i.test(t)) return 'Needs review';
+  if (/pending\s*verification/i.test(t) && !/worker/i.test(t)) return 'Needs review';
+  if (/verification\s*pending/i.test(t)) return 'Needs review';
+  if (/internal\s*verification/i.test(t)) return 'Your tasks';
+  return label;
+}
+
 function recruiterFacingChip(
   row: EmploymentOnboardingRow,
   workerOnboarding: WorkerOnboardingPipeline | null | undefined,
@@ -240,27 +288,23 @@ function recruiterFacingChip(
     const map = parseExternalOnboardingSteps(workerOnboarding?.externalOnboardingSteps);
     const rec = map?.[extKey];
     const { label, tone } = recruiterExternalStepChip(rec);
-    return { label, color: TONE_CHIP_COLOR[tone] };
+    return { label: humanizeRecruiterStatusLabel(label), color: TONE_CHIP_COLOR[tone] };
   }
   if (row.status === 'error') return { label: 'Needs attention', color: 'error' };
-  if (row.status === 'satisfied_by_existing_record') return { label: 'Satisfied (prior record)', color: 'info' };
-  if (row.status === 'completed') return { label: 'Verified', color: 'success' };
-  if (row.status === 'in_progress') return { label: row.statusLabel || 'In progress', color: 'info' };
-  if (row.status === 'not_required') return { label: 'Not required', color: 'default' };
-  return { label: row.statusLabel || 'Not started', color: 'default' };
+  if (row.status === 'satisfied_by_existing_record') return { label: 'Already on file', color: 'info' };
+  if (row.status === 'completed') return { label: 'Done', color: 'success' };
+  if (row.status === 'in_progress') {
+    return { label: humanizeRecruiterStatusLabel(row.statusLabel || 'In progress'), color: 'info' };
+  }
+  if (row.status === 'not_required') return { label: 'Doesn’t apply', color: 'default' };
+  return { label: humanizeRecruiterStatusLabel(row.statusLabel || 'Not started'), color: 'default' };
 }
 
-/** Presentation only — groups path rows for recruiter vs waiting buckets (no logic change). */
-function isRecruiterOwnedPathRow(row: EmploymentOnboardingRow): boolean {
-  return row.owner === 'recruiter' || row.actionableBy === 'recruiter' || row.actionableBy === 'either';
-}
-
-function tempWorksHintText(row: EmploymentOnboardingRow): string | null {
+function payrollRowHintText(row: EmploymentOnboardingRow): string | null {
   const h = row.helperText?.trim();
-  if (h && (h.includes('TempWorks') || h.includes(TEMPWORKS_WIRING_HINT.slice(0, 24)))) {
+  if (h && (h.includes('payroll system') || h.includes(RECRUITER_PAYROLL_ROW_HINT.slice(0, 28)))) {
     return h;
   }
-  if (row.statusLabel?.includes('TempWorks')) return row.statusLabel;
   return null;
 }
 
@@ -274,7 +318,7 @@ function StepRow({
   workerOnboarding,
   mergedSources,
   onDismissOptionalPolicyRow,
-  deemphasize,
+  internalTaskRow,
 }: {
   row: EmploymentOnboardingRow;
   entityKey: EmploymentEntityKey;
@@ -285,8 +329,8 @@ function StepRow({
   workerOnboarding?: WorkerOnboardingPipeline | null;
   mergedSources: EmploymentOnboardingRow[];
   onDismissOptionalPolicyRow?: (rowId: string) => void;
-  /** Muted presentation for worker / vendor / system bucket (visual only). */
-  deemphasize?: boolean;
+  /** Consolidated internal pipeline_task (recruiter checkbox) merged into this requirement row. */
+  internalTaskRow?: EmploymentOnboardingRow;
 }) {
   const theme = useTheme();
   const isCompletedFlow = row.status === 'completed';
@@ -302,9 +346,9 @@ function StepRow({
     Boolean(extBusinessKey && isExternalOnboardingStepVerificationUiKey(extBusinessKey)) &&
     !policyOptionalDismiss;
 
-  const twLine = tempWorksHintText(row);
+  const twLine = payrollRowHintText(row);
   const internalExplain =
-    row.groupId === 'internal_readiness' && row.helperText?.trim() ? row.helperText.trim() : null;
+    mergedSources.find((r) => r.groupId === 'internal_readiness' && r.helperText?.trim())?.helperText?.trim() || null;
   const longExplain =
     !internalExplain && row.helperText && row.helperText.trim().length >= 72 ? row.helperText.trim() : null;
   const rowInfoTooltip = [twLine, internalExplain || longExplain].filter(Boolean).join('\n\n') || null;
@@ -327,18 +371,40 @@ function StepRow({
 
   const vendorOnlyQuiet = row.owner === 'vendor' && !isOnboardingPathRowBlocker(row) && row.status !== 'error';
 
+  const dominantOwner = React.useMemo((): EmploymentOnboardingRow['owner'] => {
+    if (mergedSources.some((r) => r.owner === 'recruiter')) return 'recruiter';
+    if (mergedSources.some((r) => r.owner === 'vendor')) return 'vendor';
+    if (mergedSources.some((r) => r.owner === 'system')) return 'system';
+    return row.owner;
+  }, [mergedSources, row.owner]);
+
+  const internalTaskSurface =
+    Boolean(internalTaskRow) && !(showExternalVerificationControls && Boolean(internalTaskRow));
+
+  const recruiterLeanIn =
+    !verifiedQuiet &&
+    (internalTaskSurface ||
+      mergedSources.some(
+        (r) => r.owner === 'recruiter' || r.actionableBy === 'recruiter' || r.actionableBy === 'either'
+      ));
+
+  const workerVendorMuted =
+    !verifiedQuiet &&
+    !recruiterLeanIn &&
+    (dominantOwner === 'worker' || dominantOwner === 'vendor' || dominantOwner === 'system');
+
   const rowSurface = debugMode
     ? theme.palette.action.hover
     : verifiedQuiet
-      ? alpha(theme.palette.divider, 0.2)
-      : recruiterActionable
-        ? alpha(theme.palette.primary.main, 0.06)
+      ? alpha(theme.palette.divider, 0.15)
+      : recruiterLeanIn
+        ? alpha(theme.palette.primary.main, 0.09)
         : vendorOnlyQuiet
-          ? alpha(theme.palette.action.hover, 0.5)
+          ? alpha(theme.palette.action.hover, 0.45)
           : theme.palette.action.hover;
 
   const rowAccent =
-    recruiterActionable && !verifiedQuiet
+    recruiterLeanIn && !verifiedQuiet
       ? theme.palette.primary.main
       : isSatisfiedReuse
         ? theme.palette.info.main
@@ -357,8 +423,12 @@ function StepRow({
         ? 'Met by an existing compliance record on file.'
         : null;
 
-  const rowOpacity =
-    deemphasize && !debugMode ? 0.86 : vendorOnlyQuiet ? 0.92 : 1;
+  const rowOpacity = verifiedQuiet && !debugMode ? 0.88 : workerVendorMuted && !debugMode ? 0.93 : 1;
+
+  const workerAssignmentCta =
+    row.groupId === 'assignment_requirements' &&
+    (row.actionableBy === 'worker' || row.actionableBy === 'either') &&
+    !isOnboardingPathRowDone(row.status);
 
   return (
     <Box
@@ -377,8 +447,8 @@ function StepRow({
         <Stack direction="row" alignItems="flex-start" gap={0.5} sx={{ flex: 1, minWidth: 0 }}>
           <Typography
             variant="body2"
-            fontWeight={verifiedQuiet || deemphasize ? 600 : 700}
-            color={verifiedQuiet || deemphasize ? 'text.secondary' : 'text.primary'}
+            fontWeight={verifiedQuiet ? 500 : workerVendorMuted ? 600 : 700}
+            color={verifiedQuiet || workerVendorMuted ? 'text.secondary' : 'text.primary'}
             sx={{ lineHeight: 1.35 }}
           >
             {row.label}
@@ -391,13 +461,24 @@ function StepRow({
             </Tooltip>
           ) : null}
         </Stack>
-        <Chip
-          size="small"
-          label={relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse ? `Prior: ${chip.label}` : chip.label}
-          color={chip.color}
-          variant={verifiedQuiet || deemphasize ? 'outlined' : 'filled'}
-          sx={{ flexShrink: 0, fontWeight: verifiedQuiet || deemphasize ? 500 : 600 }}
-        />
+        <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.5} useFlexGap sx={{ flexShrink: 0 }}>
+          {!debugMode && actionContext?.viewer === 'recruiter' ? (
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mr: 0.25 }}>
+              {recruiterLeadOwnerLabel(row, internalTaskRow)}
+            </Typography>
+          ) : !debugMode ? (
+            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mr: 0.25 }}>
+              {OWNER_LABEL[row.owner]}
+            </Typography>
+          ) : null}
+          <Chip
+            size="small"
+            label={relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse ? `Prior: ${chip.label}` : chip.label}
+            color={chip.color}
+            variant={verifiedQuiet ? 'outlined' : 'filled'}
+            sx={{ flexShrink: 0, fontWeight: verifiedQuiet ? 500 : 600 }}
+          />
+        </Stack>
       </Stack>
 
       {debugMode ? (
@@ -477,15 +558,24 @@ function StepRow({
           entityKey={entityKey}
           ctx={actionContext}
           onComplete={onActionComplete}
-          primaryCta={!debugMode && !relationshipPathHistorical && recruiterActionable}
+          primaryCta={
+            !debugMode &&
+            !relationshipPathHistorical &&
+            (recruiterActionable || workerAssignmentCta)
+          }
         />
       )}
       {actionContext ? (
         <InternalPipelineTaskVerification
           row={row}
+          taskRow={internalTaskRow}
           ctx={actionContext}
           onComplete={onActionComplete}
-          suppress={relationshipPathHistorical}
+          suppress={
+            relationshipPathHistorical ||
+            /* Payroll verification is the single source of truth for these milestones; pipeline task is legacy overlap. */
+            (showExternalVerificationControls && Boolean(internalTaskRow))
+          }
         />
       ) : null}
       {actionContext && row.sourceRef?.externalStepKey && showExternalVerificationControls ? (
@@ -503,7 +593,7 @@ function StepRow({
 }
 
 function GroupSection({
-  group,
+  consolidated,
   entityKey,
   actionContext,
   onActionComplete,
@@ -513,90 +603,47 @@ function GroupSection({
   dismissedOptionalPolicyRowIds = new Set<string>(),
   onDismissOptionalPolicyRow = () => {},
 }: {
-  group: OnboardingPathGroup;
+  consolidated: RecruiterConsolidatedPathGroup;
   entityKey: EmploymentEntityKey;
   actionContext: EmploymentV2ActionResolutionContext | null;
   onActionComplete?: () => void;
   debugMode: boolean;
   suppressCurrentDemandBlockers: boolean;
   workerOnboarding?: WorkerOnboardingPipeline | null;
-  /** Lifted from parent so optional-policy dismiss persists across groups; defaults are no-ops. */
   dismissedOptionalPolicyRowIds?: ReadonlySet<string>;
   onDismissOptionalPolicyRow?: (rowId: string) => void;
 }) {
-  const merged = React.useMemo(() => {
-    const ext = mergeOnboardingPathRowsByExternalStepKey(group.rows);
-    return ext.map((m) => ({
-      row: m.row,
-      mergedSources:
-        m.row.requirementDetailRows && m.row.requirementDetailRows.length > 0
-          ? m.row.requirementDetailRows
-          : m.mergedSources,
-    }));
-  }, [group.rows]);
-
-  const visibleMerged = React.useMemo(
-    () => merged.filter((m) => !dismissedOptionalPolicyRowIds.has(m.row.rowId)),
-    [merged, dismissedOptionalPolicyRowIds]
+  const visibleItems = React.useMemo(
+    () => consolidated.items.filter((it) => !dismissedOptionalPolicyRowIds.has(it.row.rowId)),
+    [consolidated.items, dismissedOptionalPolicyRowIds]
   );
 
-  const doneCount = visibleMerged.filter((m) => isOnboardingPathRowDone(m.row.status)).length;
-  const totalCount = visibleMerged.length;
-  const blockerCount = visibleMerged.filter((m) => isOnboardingPathRowBlocker(m.row)).length;
-  const reuseDone = visibleMerged.filter((m) => m.row.status === 'satisfied_by_existing_record').length;
-  const flowDone = visibleMerged.filter((m) => m.row.status === 'completed').length;
+  const doneCount = visibleItems.filter((it) => isOnboardingPathRowDone(it.row.status)).length;
+  const totalCount = visibleItems.length;
+  const blockerCount = visibleItems.filter((it) => isOnboardingPathRowBlocker(it.row)).length;
+  const reuseDone = visibleItems.filter((it) => it.row.status === 'satisfied_by_existing_record').length;
+  const flowDone = visibleItems.filter((it) => it.row.status === 'completed').length;
   const historical = suppressCurrentDemandBlockers;
 
   const frac = totalCount > 0 ? `${doneCount} / ${totalCount}` : '—';
-  const isInternal = group.groupId === 'internal_readiness';
-  const internalOnlyTasks =
-    isInternal && visibleMerged.length > 0 && visibleMerged.every((m) => m.row.sourceType === 'pipeline_task');
-  const [internalOpen, setInternalOpen] = React.useState(true);
 
-  const recruiterBucket = React.useMemo(
-    () => visibleMerged.filter((m) => isRecruiterOwnedPathRow(m.row)),
-    [visibleMerged]
-  );
-  const waitingBucket = React.useMemo(
-    () => visibleMerged.filter((m) => !isRecruiterOwnedPathRow(m.row)),
-    [visibleMerged]
-  );
-
-  const renderMergedRow = (m: MergedPathRow, deemphasize: boolean) => (
+  const renderItem = (it: RecruiterConsolidatedPathItem) => (
     <StepRow
-      key={m.row.rowId}
-      row={m.row}
+      key={it.mergedSources
+        .map((r) => r.rowId)
+        .sort()
+        .join('|')}
+      row={it.row}
       entityKey={entityKey}
       actionContext={actionContext}
       onActionComplete={onActionComplete}
       debugMode={debugMode}
       relationshipPathHistorical={historical}
       workerOnboarding={workerOnboarding}
-      mergedSources={m.mergedSources}
+      mergedSources={it.mergedSources}
       onDismissOptionalPolicyRow={onDismissOptionalPolicyRow}
-      deemphasize={deemphasize}
+      internalTaskRow={it.internalTaskRow}
     />
-  );
-
-  const renderPathRowBuckets = (spacing: number) => (
-    <Stack spacing={spacing}>
-      {recruiterBucket.length > 0 ? (
-        <Box>
-          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.75 }}>
-            Your verification tasks
-          </Typography>
-          <Stack spacing={spacing}>{recruiterBucket.map((m) => renderMergedRow(m, false))}</Stack>
-        </Box>
-      ) : null}
-      {waitingBucket.length > 0 ? (
-        <Box>
-          <Typography variant="subtitle2" fontWeight={600} color="text.secondary" sx={{ mb: 0.75 }}>
-            Waiting on worker or system
-          </Typography>
-          <Stack spacing={spacing}>{waitingBucket.map((m) => renderMergedRow(m, true))}</Stack>
-        </Box>
-      ) : null}
-    </Stack>
   );
 
   return (
@@ -604,59 +651,34 @@ function GroupSection({
       <Stack direction="row" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
         <Box>
           <Typography variant="subtitle1" fontWeight={700}>
-            {group.title}
+            {consolidated.title}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
-            {totalCount > 0 && !internalOnlyTasks && (
+            {totalCount > 0 ? (
               <>
                 {historical ? 'Recorded: ' : ''}
                 {frac} complete
                 {reuseDone > 0 ? ` · ${reuseDone} prior record` : ''}
                 {flowDone > 0 && reuseDone === 0 ? ` · ${flowDone} finished in this flow` : null}
               </>
-            )}
-            {internalOnlyTasks && (
-              <>
-                {frac} verification items
-                {!historical && blockerCount > 0
-                  ? ` · ${blockerCount} open blocker${blockerCount === 1 ? '' : 's'}`
-                  : ''}
-              </>
-            )}
+            ) : null}
           </Typography>
         </Box>
         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          {!internalOnlyTasks ? (
-            <Chip size="small" variant="outlined" label={historical ? `Prior: ${frac}` : `${frac} done`} />
-          ) : null}
+          <Chip size="small" variant="outlined" label={historical ? `Prior: ${frac}` : `${frac} done`} />
           {!suppressCurrentDemandBlockers && blockerCount > 0 && (
-            <Chip size="small" color="error" label={`${blockerCount} blocker${blockerCount === 1 ? '' : 's'}`} />
+            <Chip
+              size="small"
+              color="warning"
+              variant="outlined"
+              label={`${blockerCount} need${blockerCount === 1 ? 's' : ''} attention`}
+            />
           )}
         </Stack>
       </Stack>
 
-      {internalOnlyTasks ? (
-        <>
-          <Button
-            size="small"
-            onClick={() => setInternalOpen((o) => !o)}
-            endIcon={
-              <ExpandMoreIcon
-                fontSize="small"
-                sx={{ transform: internalOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-              />
-            }
-            sx={{ textTransform: 'none', px: 0, minWidth: 0, mb: 0.5 }}
-          >
-            {internalOpen ? 'Hide internal verification' : 'Show internal verification'}
-          </Button>
-          <Collapse in={internalOpen}>
-            {renderPathRowBuckets(1)}
-          </Collapse>
-        </>
-      ) : (
-        renderPathRowBuckets(1.15)
-      )}
+      <Stack spacing={1.15}>{visibleItems.map(renderItem)}</Stack>
+      {consolidated.groupId === 'screenings' && actionContext?.viewer === 'recruiter' ? <ManualScreeningOrderSelect /> : null}
     </Box>
   );
 }
@@ -675,7 +697,7 @@ export interface EmploymentOnboardingPathCardProps {
    * When true, hide red group blocker chips — path rows remain for history/audit without implying current action demand.
    */
   suppressCurrentDemandBlockers?: boolean;
-  /** Pipeline doc for external step verification (admin). */
+  /** Worker onboarding pipeline (payroll milestone + task state for this tab). */
   workerOnboarding?: WorkerOnboardingPipeline | null;
 }
 
@@ -689,6 +711,7 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
   workerOnboarding,
 }) => {
   const debugMode = resolveEmploymentOnboardingPathDebugMode(debugModeProp);
+  const consolidatedGroups = React.useMemo(() => consolidateRecruiterOnboardingPathGroups(groups), [groups]);
   const [dismissedOptionalPolicyRowIds, setDismissedOptionalPolicyRowIds] = React.useState<Set<string>>(
     () => new Set()
   );
@@ -698,40 +721,40 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
 
   React.useEffect(() => {
     if (!actionContext || suppressCurrentDemandBlockers) return;
-    const rows = groups.flatMap((g) => g.rows);
+    const rows = consolidatedGroups.flatMap((cg) => cg.items.map((it) => it.row));
     warnBlockingPathRowsMissingDedicatedActions(rows, actionContext, `entity:${entityKey}`);
-  }, [actionContext, groups, entityKey, suppressCurrentDemandBlockers]);
+  }, [actionContext, consolidatedGroups, entityKey, suppressCurrentDemandBlockers]);
 
   return (
     <Card sx={{ mb: 2 }}>
       <CardHeader
         title={
           <Typography variant="h6" fontWeight={700}>
-            Employment relationship path
+            Onboarding checklist
             {suppressCurrentDemandBlockers ? (
               <Typography component="span" variant="body2" color="text.secondary" fontWeight={500} display="block" sx={{ mt: 0.5 }}>
-                Record of prior relationship onboarding — not current required work
+                Record of prior onboarding — not current required work
               </Typography>
             ) : null}
           </Typography>
         }
-        subheader="Work authorization, forms & policies, payroll, and internal verification — not job package or screening orders."
+        subheader="One row per requirement. Assignment package items appear below when there is an active job assignment. Use View activity on a row for the detailed timeline."
         titleTypographyProps={{ component: 'div' }}
         subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
       />
       <CardContent sx={{ pt: 0 }}>
-        {groups.length === 0 ? (
+        {consolidatedGroups.length === 0 ? (
           <Typography variant="body2" color="text.secondary">
             No onboarding steps are configured for this entity in Settings, or nothing applies yet. Enable workflow
             steps on the entity to see the path here.
           </Typography>
         ) : (
           <>
-            {groups.map((g, i) => (
+            {consolidatedGroups.map((g, i) => (
               <React.Fragment key={g.groupId}>
                 {i > 0 && <Divider sx={{ my: 2 }} />}
                 <GroupSection
-                  group={g}
+                  consolidated={g}
                   entityKey={entityKey}
                   actionContext={actionContext}
                   onActionComplete={onActionComplete}

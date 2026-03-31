@@ -1,6 +1,5 @@
 /**
- * Recruiter checkbox for pipeline tasks in the Internal verification group.
- * Completes the linked Firestore task (same id as worker_onboarding.tasks[].id) when present.
+ * Recruiter checkbox for pipeline tasks merged into a checklist row.
  */
 import React, { useCallback, useState } from 'react';
 import {
@@ -26,6 +25,8 @@ import type { EmploymentOnboardingRow } from './employmentV2Types';
 
 export interface InternalPipelineTaskVerificationProps {
   row: EmploymentOnboardingRow;
+  /** When the path row is consolidated, pass the internal pipeline_task row for task id / completion state. */
+  taskRow?: EmploymentOnboardingRow | null;
   ctx: EmploymentV2ActionResolutionContext;
   onComplete?: () => void;
   suppress?: boolean;
@@ -33,6 +34,7 @@ export interface InternalPipelineTaskVerificationProps {
 
 const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificationProps> = ({
   row,
+  taskRow,
   ctx,
   onComplete,
   suppress,
@@ -43,8 +45,9 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
   const [err, setErr] = useState<string | null>(null);
   const [optimisticChecked, setOptimisticChecked] = useState(false);
 
-  const taskId = row.sourceRef?.taskId?.trim();
-  const done = isOnboardingPathRowDone(row.status);
+  const source = taskRow ?? row;
+  const taskId = source.sourceRef?.taskId?.trim();
+  const done = isOnboardingPathRowDone(source.status);
   const checked = done || optimisticChecked;
 
   const submit = useCallback(async () => {
@@ -64,23 +67,30 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
     return null;
   }
 
-  if (row.groupId !== 'internal_readiness' || row.sourceType !== 'pipeline_task') {
+  if (source.groupId !== 'internal_readiness' || source.sourceType !== 'pipeline_task') {
     return null;
   }
 
-  if (row.actionableBy !== 'recruiter' && row.owner !== 'recruiter') {
+  if (source.actionableBy !== 'recruiter' && source.owner !== 'recruiter') {
     return null;
   }
 
-  const help =
-    'Check this after you confirm the work in TempWorks. This marks the linked task complete in HRX (same as the Tasks list). Optional note is stored on the task when supported.';
+  const pipeId = String(source.sourceRef?.pipelineStepId || '');
+  const screeningPipe =
+    pipeId === 'background_check' || pipeId === 'drug_screen' || pipeId === 'drug_screening';
+  const help = screeningPipe
+    ? 'Check this when the screening task is finished. Same as completing it from the global Tasks list.'
+    : 'Check this after you finish the work in payroll or your task list. This matches marking the task done from the global Tasks list.';
+  const taskCheckboxLabel = screeningPipe
+    ? source.label?.trim() || 'Complete screening task'
+    : 'Confirm completed in payroll';
 
   if (!taskId) {
     return (
       <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
         <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>
           <Typography variant="caption" color="text.secondary" fontWeight={600}>
-            Internal verification
+            Your tasks
           </Typography>
           <Tooltip title={help} placement="right">
             <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
@@ -90,7 +100,7 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
           Open Tasks
         </Button>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.75, maxWidth: 360 }}>
-          No task id on this row — open the global task queue to complete it.
+          No task link on this row — open Tasks to complete it.
         </Typography>
       </Box>
     );
@@ -101,14 +111,14 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
       <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
         <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>
           <Typography variant="caption" color="text.secondary" fontWeight={600}>
-            Internal verification
+            Your tasks
           </Typography>
           <Tooltip title={help} placement="right">
             <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
           </Tooltip>
         </Stack>
         <Typography variant="body2" color="success.main" fontWeight={600}>
-          Task marked complete in HRX
+          Task marked complete
         </Typography>
       </Box>
     );
@@ -118,7 +128,7 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
     <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
       <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>
         <Typography variant="caption" color="text.secondary" fontWeight={600}>
-          Internal verification
+          Your tasks
         </Typography>
         <Tooltip title={help} placement="right">
           <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
@@ -145,7 +155,7 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
         }
         label={
           <Typography variant="body2" color="text.secondary" sx={{ pt: 0.5, lineHeight: 1.45 }}>
-            Confirm completed in TempWorks
+            {taskCheckboxLabel}
           </Typography>
         }
       />
@@ -154,7 +164,7 @@ const InternalPipelineTaskVerification: React.FC<InternalPipelineTaskVerificatio
         <DialogTitle>Mark task complete</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary">
-            This marks the linked task complete in HRX (same outcome as completing it from the Tasks list).
+            Same as completing this task from the Tasks list.
           </Typography>
           {err ? (
             <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>

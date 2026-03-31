@@ -119,7 +119,7 @@ export function mapExternalOnboardingStepToPathStatus(
       if (!isExternalOnboardingStepVerifiedComplete(record)) {
         return audience === 'worker'
           ? { status: 'in_progress', statusLabel: 'Submitted — waiting on your hiring team' }
-          : { status: 'in_progress', statusLabel: 'Verification pending in HRX' };
+          : { status: 'in_progress', statusLabel: 'Needs review' };
       }
       return { status: 'completed', statusLabel: 'Completed' };
     case 'error':
@@ -129,15 +129,15 @@ export function mapExternalOnboardingStepToPathStatus(
     case 'pending_admin_verification':
       return audience === 'worker'
         ? { status: 'in_progress', statusLabel: 'Submitted — waiting on your hiring team' }
-        : { status: 'in_progress', statusLabel: 'Completed in TempWorks — pending C1 verification' };
+        : { status: 'in_progress', statusLabel: 'Needs review' };
     case 'worker_completed_external':
       return audience === 'worker'
         ? { status: 'in_progress', statusLabel: 'Submitted — waiting on your hiring team' }
-        : { status: 'in_progress', statusLabel: 'Completed in TempWorks — verify in HRX' };
+        : { status: 'in_progress', statusLabel: 'Needs review' };
     case 'invite_sent':
       return audience === 'worker'
-        ? { status: 'in_progress', statusLabel: 'Complete this in TempWorks' }
-        : { status: 'in_progress', statusLabel: 'Invite sent' };
+        ? { status: 'in_progress', statusLabel: 'Complete this in your payroll system' }
+        : { status: 'in_progress', statusLabel: 'Waiting on worker' };
     case 'not_started':
     default:
       return { status: 'not_started', statusLabel: 'Not started' };

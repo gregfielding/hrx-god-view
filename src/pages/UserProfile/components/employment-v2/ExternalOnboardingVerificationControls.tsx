@@ -1,6 +1,5 @@
 /**
- * Admin-only completion for TempWorks external onboarding steps (worker_onboarding.externalOnboardingSteps).
- * TempWorks has no API — recruiters mark milestones complete in HRX after confirming work in TempWorks.
+ * Admin-only completion for payroll-system onboarding milestones stored on the worker onboarding record.
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -18,13 +17,19 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import { httpsCallable } from 'firebase/functions';
 
 import { functions } from '../../../../firebase';
 import type { EmploymentEntityKey, WorkerOnboardingPipeline } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
-import type { ExternalOnboardingStepStatus } from '../../../../types/externalOnboardingSteps';
+import type {
+  ExternalOnboardingStepKey,
+  ExternalOnboardingStepRecord,
+  ExternalOnboardingStepStatus,
+} from '../../../../types/externalOnboardingSteps';
 import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
 import {
   formatVerifiedAtDisplayForExternalRecord,
@@ -34,6 +39,136 @@ import {
 } from '../../../../utils/externalOnboardingSteps';
 
 const updateExternalOnboardingStepVerification = httpsCallable(functions, 'updateExternalOnboardingStepVerification');
+
+/** Payroll milestone progress + coarse pipeline fallback when the milestone row is missing. */
+const PAYROLL_MICRO_UI: Partial<
+  Record<ExternalOnboardingStepKey, { title: string; step1: string; step2: string; pipelineStepId?: string }>
+> = {
+  i9_employee_section: {
+    title: 'I-9 payroll',
+    step1: 'Sent to worker',
+    step2: 'Worker completed',
+    pipelineStepId: 'i9',
+  },
+  handbook_acknowledgment: {
+    title: 'Handbook',
+    step1: 'Sent to worker',
+    step2: 'Signed by worker',
+    pipelineStepId: 'onboarding_forms',
+  },
+  tax_withholding_forms: {
+    title: 'Tax forms (W-4)',
+    step1: 'W-4 sent to worker',
+    step2: 'W-4 completed',
+    pipelineStepId: 'onboarding_forms',
+  },
+  policies_acknowledgment: {
+    title: 'Company policies',
+    step1: 'Sent to worker',
+    step2: 'Signed by worker',
+    pipelineStepId: 'onboarding_forms',
+  },
+  payroll_onboarding: {
+    title: 'Payroll setup',
+    step1: 'Invite sent to worker',
+    step2: 'Worker completed payroll setup',
+    pipelineStepId: 'everee',
+  },
+  direct_deposit: {
+    title: 'Direct deposit',
+    step1: 'Sent to worker',
+    step2: 'Worker completed',
+    pipelineStepId: 'onboarding_forms',
+  },
+  contractor_tax_form_w9: {
+    title: 'W-9',
+    step1: 'W-9 sent to worker',
+    step2: 'W-9 completed',
+    pipelineStepId: 'onboarding_forms',
+  },
+  independent_contractor_agreement: {
+    title: 'Contractor agreement',
+    step1: 'Sent to worker',
+    step2: 'Signed by worker',
+    pipelineStepId: 'onboarding_forms',
+  },
+};
+
+function pipelineStepById(workerOnboarding: WorkerOnboardingPipeline | null | undefined, id: string) {
+  return (workerOnboarding?.steps || []).find((s) => String(s.id || '') === id);
+}
+
+function payrollMilestoneSentDone(
+  record: ExternalOnboardingStepRecord | undefined,
+  workerOnboarding: WorkerOnboardingPipeline | null | undefined,
+  pipelineStepId: string | undefined
+): boolean {
+  if (record && record.status !== 'not_started') return true;
+  if (!pipelineStepId) return false;
+  const pipe = pipelineStepById(workerOnboarding, pipelineStepId);
+  const st = String(pipe?.status || '').toLowerCase();
+  if (!pipe || !st || st === 'not_started') return false;
+  return true;
+}
+
+function payrollMilestoneWorkerDone(
+  record: ExternalOnboardingStepRecord | undefined,
+  workerOnboarding: WorkerOnboardingPipeline | null | undefined,
+  pipelineStepId: string | undefined
+): boolean {
+  if (record) {
+    return (
+      record.status === 'worker_completed_external' ||
+      record.status === 'pending_admin_verification' ||
+      record.status === 'completed'
+    );
+  }
+  if (!pipelineStepId) return false;
+  const pipe = pipelineStepById(workerOnboarding, pipelineStepId);
+  const st = String(pipe?.status || '').toLowerCase();
+  return st === 'complete' || st === 'completed';
+}
+
+function PayrollMicroSubsteps({
+  step1,
+  step2,
+  record,
+  workerOnboarding,
+  pipelineStepId,
+}: {
+  step1: string;
+  step2: string;
+  record: ExternalOnboardingStepRecord | undefined;
+  workerOnboarding: WorkerOnboardingPipeline | null | undefined;
+  pipelineStepId: string | undefined;
+}) {
+  const sent = payrollMilestoneSentDone(record, workerOnboarding, pipelineStepId);
+  const workerDone = payrollMilestoneWorkerDone(record, workerOnboarding, pipelineStepId);
+  return (
+    <Stack spacing={0.75} sx={{ mb: 1.25 }}>
+      <Stack direction="row" alignItems="center" gap={1}>
+        {sent ? (
+          <CheckCircleIcon color="success" sx={{ fontSize: 20 }} />
+        ) : (
+          <RadioButtonUncheckedIcon sx={{ fontSize: 20, color: 'action.disabled' }} />
+        )}
+        <Typography variant="body2" color={sent ? 'text.primary' : 'text.secondary'}>
+          {step1}
+        </Typography>
+      </Stack>
+      <Stack direction="row" alignItems="center" gap={1}>
+        {workerDone ? (
+          <CheckCircleIcon color="success" sx={{ fontSize: 20 }} />
+        ) : (
+          <RadioButtonUncheckedIcon sx={{ fontSize: 20, color: 'action.disabled' }} />
+        )}
+        <Typography variant="body2" color={workerDone ? 'text.primary' : 'text.secondary'}>
+          {step2}
+        </Typography>
+      </Stack>
+    </Stack>
+  );
+}
 
 function externalVerificationErrorMessage(err: unknown): string {
   const base = formatFirebaseHttpsError(err);
@@ -158,7 +293,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
 
   const dialogTitle =
     dialogMode === 'verify'
-      ? 'Mark complete in HRX'
+      ? 'Mark complete'
       : dialogMode === 'correction'
         ? 'Request correction'
         : dialogMode === 'error'
@@ -169,19 +304,34 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
 
   const checkboxChecked = verified || optimisticChecked;
 
-  const tempWorksHelp =
-    'There is no TempWorks API in HRX. After you confirm this step in TempWorks, record it here. Several checklist lines can share one TempWorks milestone — marking complete updates all of them.';
+  const payrollHelp =
+    'HRX does not receive live updates from every payroll system. After you confirm the step there, record it here. Related checklist lines may update together.';
+
+  const micro =
+    stepKey && isExternalOnboardingStepVerificationUiKey(stepKey)
+      ? PAYROLL_MICRO_UI[stepKey as ExternalOnboardingStepKey]
+      : undefined;
 
   return (
     <Box sx={{ mt: 1, pt: 1, borderTop: 1, borderColor: 'divider' }}>
       <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>
         <Typography variant="caption" color="text.secondary" fontWeight={600}>
-          HRX verification (TempWorks)
+          {micro?.title ?? 'Confirm in payroll'}
         </Typography>
-        <Tooltip title={tempWorksHelp} placement="right">
+        <Tooltip title={payrollHelp} placement="right">
           <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
         </Tooltip>
       </Stack>
+
+      {micro ? (
+        <PayrollMicroSubsteps
+          step1={micro.step1}
+          step2={micro.step2}
+          record={record}
+          workerOnboarding={workerOnboarding}
+          pipelineStepId={micro.pipelineStepId}
+        />
+      ) : null}
 
       <FormControlLabel
         sx={{ alignItems: 'flex-start', mr: 0, mb: 0.5 }}
@@ -206,7 +356,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
             {verified ? (
               <>
                 <Box component="span" sx={{ fontWeight: 600, color: 'success.main' }}>
-                  Marked complete in HRX
+                  {micro ? 'C1 completed' : 'Marked complete here'}
                 </Box>
                 {verifiedAtDisplay ? (
                   <>
@@ -216,11 +366,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
                 ) : null}
               </>
             ) : (
-              <>
-                {stepKey === 'handbook_acknowledgment'
-                  ? 'Confirmed signed in TempWorks'
-                  : 'Confirm completed in TempWorks'}
-              </>
+              <>{micro ? 'C1 completed' : 'Confirm completed in payroll'}</>
             )}
           </Typography>
         }
@@ -254,7 +400,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {dialogMode === 'verify'
-              ? 'Records that this TempWorks milestone is done. Optional note (e.g. what you verified in TempWorks).'
+              ? 'Records that this payroll step is done. Add an optional note if helpful.'
               : dialogMode === 'correction'
                 ? 'Sends the step back to the worker flow. A short note is required.'
                 : 'Flags the step for internal review. A note is required.'}

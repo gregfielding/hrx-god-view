@@ -117,6 +117,9 @@ export const formatCalendarDate = (dateValue: Date | { toDate: () => Date } | st
   }
 };
 
+/** Values that can be reduced to a local calendar YYYY-MM-DD (Firestore timestamps often use optional `toDate`). */
+export type CalendarDayLocalInput = string | Date | { toDate?: () => Date } | null | undefined;
+
 /**
  * Return the calendar day (YYYY-MM-DD) for a shift date in the user's local timezone.
  * Use for "same day" comparisons (e.g. double-book checks) so that a shift at 11 PM Saturday
@@ -126,7 +129,7 @@ export const formatCalendarDate = (dateValue: Date | { toDate: () => Date } | st
  * - Timestamps and date-time strings are interpreted as a moment and converted to the
  *   local calendar day (getFullYear/getMonth/getDate).
  */
-export const getCalendarDayLocal = (shiftDate: string | Date | { toDate: () => Date } | null | undefined): string => {
+export function getCalendarDayLocal(shiftDate: CalendarDayLocalInput): string {
   if (shiftDate == null || shiftDate === '') return '';
   if (typeof shiftDate === 'string') {
     const dateOnly = shiftDate.split('T')[0];
@@ -151,15 +154,13 @@ export const getCalendarDayLocal = (shiftDate: string | Date | { toDate: () => D
   } catch {
     return '';
   }
-};
+}
 
 /**
  * Parse a value (YYYY-MM-DD string, Timestamp, or Date) as a calendar date and return a Date at local midnight.
  * Avoids UTC interpretation: "2026-03-13" stays March 13 in the user's timezone instead of becoming March 12.
  */
-export function parseCalendarDateLocal(
-  value: string | Date | { toDate: () => Date } | null | undefined
-): Date | undefined {
+export function parseCalendarDateLocal(value: CalendarDayLocalInput): Date | undefined {
   const dayStr = getCalendarDayLocal(value);
   if (!dayStr || !/^\d{4}-\d{2}-\d{2}$/.test(dayStr)) return undefined;
   const [y, m, d] = dayStr.split('-').map(Number);

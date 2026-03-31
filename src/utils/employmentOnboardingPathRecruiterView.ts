@@ -147,13 +147,13 @@ export function mergeOnboardingPathRowsByExternalStepKey(rows: EmploymentOnboard
   return merged;
 }
 
-/** Simplified recruiter-facing status for external (TempWorks) steps from Firestore record. */
+/** Simplified recruiter-facing status for payroll-system milestones. */
 export function recruiterExternalStepChip(
   record: ExternalOnboardingStepRecord | undefined,
   audience: 'admin' | 'worker' = 'admin'
 ): { label: string; tone: 'default' | 'info' | 'warning' | 'success' | 'error' } {
   if (!record) {
-    return { label: 'Pending verification', tone: 'warning' };
+    return { label: 'Waiting on payroll', tone: 'warning' };
   }
 
   if (record.status === 'error') {
@@ -165,20 +165,20 @@ export function recruiterExternalStepChip(
   }
 
   if (record.status === 'invite_sent') {
-    return { label: 'Pending worker', tone: 'info' };
+    return { label: 'Waiting on worker', tone: 'info' };
   }
 
   if (record.status === 'worker_completed_external' || record.status === 'pending_admin_verification') {
-    return { label: 'Pending verification', tone: 'warning' };
+    return { label: 'Needs review', tone: 'warning' };
   }
 
   if (record.status === 'completed' && !isExternalOnboardingStepVerifiedComplete(record)) {
-    return { label: 'Pending verification', tone: 'warning' };
+    return { label: 'Needs review', tone: 'warning' };
   }
 
   const mapped = mapExternalOnboardingStepToPathStatus(record, audience);
   if (mapped.status === 'not_started') {
-    return { label: 'Pending worker', tone: 'default' };
+    return { label: 'Waiting on worker', tone: 'default' };
   }
   return { label: mapped.statusLabel, tone: 'default' };
 }
@@ -199,6 +199,3 @@ export function categorizeBlockersForHeader(blockers: EmploymentBlockerItem[]): 
   }
   return { pendingWorker, pendingRecruiter, pendingVendor };
 }
-
-export const TEMPWORKS_WIRING_HINT =
-  'TempWorks is not wired into HRX by API — confirm work in TempWorks, then mark complete on this card when done.';

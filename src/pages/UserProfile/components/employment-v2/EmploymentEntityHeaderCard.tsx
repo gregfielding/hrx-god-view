@@ -1,12 +1,7 @@
-import React, { useMemo } from 'react';
+import React from 'react';
 import { Card, CardContent, Typography, Stack, Chip, Box } from '@mui/material';
 import type { EmploymentEntityOverview, EmploymentV2HeaderState } from './employmentV2Types';
-import {
-  employmentBlockerItemFromPathRow,
-  employmentHeaderStateLabel,
-} from '../../../../utils/deriveEmploymentHeaderState';
-import { isOnboardingPathRowBlocker } from '../../../../utils/employmentOnboardingPath';
-import { categorizeBlockersForHeader } from '../../../../utils/employmentOnboardingPathRecruiterView';
+import { employmentHeaderStateLabel } from '../../../../utils/deriveEmploymentHeaderState';
 
 const HEADER_STATE_COLOR: Record<
   EmploymentV2HeaderState,
@@ -44,43 +39,6 @@ const EmploymentEntityHeaderCard: React.FC<EmploymentEntityHeaderCardProps> = ({
     noOpenDemand && !terminalEmployment ? `Record · ${chipLabel}` : `Status: ${chipLabel}`;
   const chipVariant = noOpenDemand && !terminalEmployment ? 'outlined' : 'filled';
 
-  const blockerBreakdown = useMemo(() => {
-    if (!overview.hasOpenOnboardingDemand) {
-      return { pendingWorker: 0, pendingRecruiter: 0, pendingVendor: 0 };
-    }
-    const pathBlockingRows = overview.onboardingPath
-      .flatMap((g) => g.rows)
-      .filter(isOnboardingPathRowBlocker);
-    const merged = [
-      ...overview.blockers,
-      ...pathBlockingRows.map(employmentBlockerItemFromPathRow),
-    ];
-    return categorizeBlockersForHeader(merged);
-  }, [overview.blockers, overview.hasOpenOnboardingDemand, overview.onboardingPath]);
-
-  const blockerBreakdownSegments: { label: string; count: number; color: 'info' | 'warning' | 'default' }[] = [];
-  if (blockerBreakdown.pendingWorker > 0) {
-    blockerBreakdownSegments.push({
-      label: 'Pending worker',
-      count: blockerBreakdown.pendingWorker,
-      color: 'info',
-    });
-  }
-  if (blockerBreakdown.pendingRecruiter > 0) {
-    blockerBreakdownSegments.push({
-      label: 'Pending recruiter',
-      count: blockerBreakdown.pendingRecruiter,
-      color: 'warning',
-    });
-  }
-  if (blockerBreakdown.pendingVendor > 0) {
-    blockerBreakdownSegments.push({
-      label: 'Pending vendor',
-      count: blockerBreakdown.pendingVendor,
-      color: 'default',
-    });
-  }
-
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
@@ -107,20 +65,6 @@ const EmploymentEntityHeaderCard: React.FC<EmploymentEntityHeaderCardProps> = ({
             <Typography variant="body2" sx={{ mt: noOpenDemand ? 1 : 1.25, lineHeight: 1.5 }} color="text.primary">
               {overview.headerReadinessExplanation}
             </Typography>
-            {!noOpenDemand && blockerBreakdownSegments.length > 0 ? (
-              <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 1 }}>
-                {blockerBreakdownSegments.map((seg) => (
-                  <Chip
-                    key={seg.label}
-                    size="small"
-                    variant="outlined"
-                    color={seg.color}
-                    label={`${seg.label}: ${seg.count}`}
-                    sx={{ fontWeight: 600 }}
-                  />
-                ))}
-              </Stack>
-            ) : null}
           </Box>
           <Chip
             size="small"

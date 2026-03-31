@@ -480,6 +480,11 @@ export interface EmploymentEntityOverview {
    */
   onboardingPath: OnboardingPathGroup[];
 
+  /**
+   * Recruiter checklist source: relationship path plus assignment package rows when a live assignment exists.
+   */
+  onboardingChecklistGroups: OnboardingPathGroup[];
+
   /** Primary assignment package + entity screening milestones + linked screening orders. */
   assignmentRequirementsViewModel: AssignmentRequirementsViewModel;
 

@@ -13,8 +13,8 @@ import StartOnCallEmploymentDialog from './StartOnCallEmploymentDialog';
 
 const ON_CALL_DETAIL_GUIDANCE = (
   <>
-    Work Authorization rows often stay on &quot;waiting for TempWorks&quot; until data syncs into HRX or you use
-    verification where the product exposes it — there is no separate button on this line. Payroll invites are logged
+    Work Authorization rows may show &quot;waiting on payroll&quot; until data syncs or you confirm the step where
+    the product exposes it — there is no separate button on this line. Payroll invites are logged
     under the profile <strong>Messages</strong> tab (use <strong>Resend invite</strong> on the row, or{' '}
     <strong>Resend payroll invite</strong> under Systems summary). If SMS shows failed, check the worker&apos;s phone
     number and carrier deliverability.
@@ -52,6 +52,12 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   const showEmptyExplainer = !overview.entityEmployment && !overview.workerOnboarding;
   const onCallPoolActive = overview.entityEmployment?.employmentEntryMode === 'on_call_pool';
   const showStartOnCallButton = Boolean(allowStartOnCallEmployment && !onCallPoolActive);
+
+  const assignmentPackageSummarizedInChecklist =
+    overview.hasOpenOnboardingDemand &&
+    overview.onboardingChecklistGroups.some(
+      (g) => g.groupId === 'assignment_requirements' && g.rows.length > 0
+    );
 
   const actionContext: EmploymentV2ActionResolutionContext = useMemo(() => {
     const entityDisplayName =
@@ -121,7 +127,7 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
       ) : null}
       <EmploymentEntityHeaderCard overview={overview} />
       <EmploymentOnboardingPathCard
-        groups={overview.onboardingPath}
+        groups={overview.onboardingChecklistGroups}
         entityKey={entityKey}
         actionContext={actionContext}
         onActionComplete={onRefresh}
@@ -134,18 +140,19 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         entityKey={entityKey}
         actionContext={actionContext}
         onActionComplete={onRefresh}
+        assignmentPackageSummarizedInChecklist={assignmentPackageSummarizedInChecklist}
       />
       <EmploymentSystemsSummaryCard
         overview={overview}
         tenantId={tenantId}
         profileUserId={profileUserId}
         onPayrollResendComplete={() => onRefresh?.()}
-        defaultExpanded={!onCallPoolActive}
+        defaultExpanded={false}
       />
       <EmploymentAssignmentsCard
         assignments={overview.assignments}
         hasOpenOnboardingDemand={overview.hasOpenOnboardingDemand}
-        defaultListExpanded={!onCallPoolActive}
+        defaultListExpanded={false}
       />
       {showEmptyExplainer && <EmploymentEmptyStateCard entityKey={entityKey} />}
     </Stack>

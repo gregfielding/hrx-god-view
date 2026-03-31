@@ -75,6 +75,8 @@ import {
 } from '../../../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../../../components/EVerifyComfortChip';
+import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
+import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -526,6 +528,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     membersPage * membersRowsPerPage,
     membersPage * membersRowsPerPage + membersRowsPerPage,
   );
+
+  const paginatedMemberIds = useMemo(() => paginatedMembers.map((m) => m.id), [paginatedMembers]);
+  const { itemsByUserId: entityEmploymentChipsByUser, loading: entityEmploymentChipsLoading } =
+    useRecruiterUsersEntityEmploymentChips(tenantId, paginatedMemberIds);
 
   const selectedCount = selectAllResults ? sortedMembers.length : selectedIds.size;
   const allOnPageSelected =
@@ -1214,6 +1220,9 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                         Interview
                       </TableSortLabel>
                     </TableCell>
+                    <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 200 }}>
+                      Status
+                    </TableCell>
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       <TableSortLabel
                         active={membersSortBy === 'groupStatus'}
@@ -1247,7 +1256,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                 <TableBody>
                   {members.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={13} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
+                      <TableCell colSpan={14} sx={{ color: 'text.secondary', fontStyle: 'italic', py: 2 }}>
                         No members in this group.
                       </TableCell>
                     </TableRow>
@@ -1374,6 +1383,13 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                               userId={u.id}
                               scoreSummary={u.scoreSummary}
                               formatDate={formatDate}
+                            />
+                          </TableCell>
+
+                          <TableCell sx={{ verticalAlign: 'middle', py: 0.75 }}>
+                            <UserEntityOnboardingStatusCell
+                              items={entityEmploymentChipsByUser.get(u.id) ?? []}
+                              loading={entityEmploymentChipsLoading}
                             />
                           </TableCell>
 

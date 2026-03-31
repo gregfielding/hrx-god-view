@@ -1024,8 +1024,8 @@ function narrativeForAssignmentRequirement(row: EmploymentOnboardingRow, ctx: On
   } else {
     summary =
       aud(ctx) === 'worker'
-        ? `${hiringTeam(ctx)} still has an admin task here.`
-        : 'Recruiter/admin step pending.';
+        ? `${hiringTeam(ctx)} still has a step to finish here.`
+        : 'Team step pending.';
   }
 
   let out: EmploymentOnboardingNarrative = { summary, events: sorted.length ? sorted : undefined };
@@ -1158,8 +1158,8 @@ function narrativeForExternalOnboarding(
       timestamp: inviteAt,
       message:
         a === 'worker'
-          ? withWhen('TempWorks activity recorded for this step', inviteAt)
-          : withWhen('TempWorks / invite activity recorded', inviteAt),
+          ? withWhen('Payroll activity recorded for this step', inviteAt)
+          : withWhen('Payroll / invite activity recorded', inviteAt),
     });
   }
   if (workerDone) {
@@ -1168,8 +1168,8 @@ function narrativeForExternalOnboarding(
       timestamp: workerDone,
       message:
         a === 'worker'
-          ? withWhen('You completed this step in TempWorks', workerDone)
-          : withWhen(`${workerNameAdmin(ctx)} completed this step in TempWorks`, workerDone),
+          ? withWhen('You completed this step in payroll', workerDone)
+          : withWhen(`${workerNameAdmin(ctx)} completed this step in payroll`, workerDone),
     });
   }
   if (correctionAt && rec.correctionRequestedAt != null) {
@@ -1213,7 +1213,7 @@ function narrativeForExternalOnboarding(
     summary =
       a === 'worker'
         ? 'Submitted — waiting on your hiring team.'
-        : 'Marked complete in data — C1 verification in HRX is still pending.';
+        : 'Marked complete in payroll — confirm here when ready.';
   } else if (rec.correctionRequestedAt != null && rec.status === 'invite_sent' && correctionAt) {
     const base =
       a === 'worker'
@@ -1224,7 +1224,7 @@ function narrativeForExternalOnboarding(
     summary =
       a === 'worker'
         ? 'Submitted — waiting on your hiring team.'
-        : 'Completed in TempWorks — pending C1 verification.';
+        : 'Completed in payroll — confirm here when ready.';
   } else if (rec.status === 'error') {
     summary =
       a === 'worker'
@@ -1233,7 +1233,7 @@ function narrativeForExternalOnboarding(
           ? `Marked for review by C1 Staffing on ${formatWhen(updatedAt)}.`
           : 'Marked for review by C1 Staffing.';
   } else if (rec.status === 'invite_sent') {
-    summary = a === 'worker' ? 'Complete this step in TempWorks.' : 'Invite sent — worker action in TempWorks.';
+    summary = a === 'worker' ? 'Complete this step in your payroll system.' : 'Waiting on worker in payroll.';
   } else {
     summary = narrativeFallbackFromRow(row, ctx).summary;
   }

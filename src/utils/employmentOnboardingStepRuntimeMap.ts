@@ -64,13 +64,13 @@ const LABEL_BY_KEY = Object.fromEntries(ONBOARDING_WORKFLOW_STEPS.map((s) => [s.
 >;
 
 const SHARED_FORMS =
-  'Derived from the shared onboarding_forms pipeline step; individual form milestones are not stored separately in runtime yet.';
+  'Several form milestones share one status until each has its own live update.';
 const SHARED_I9 =
-  'Derived from the shared I-9 pipeline step; “sent” vs “completed” are not separate runtime fields yet.';
+  'I-9 milestones share one status until sent and completed are tracked separately.';
 const SHARED_EVEREE =
-  'Derived from the shared everee payroll pipeline step; individual payroll milestones may share this status.';
+  'Payroll milestones may share one status until each step updates on its own.';
 const SHARED_BG_PIPELINE =
-  'Derived from the shared background_check pipeline step; order-level detail may differ from this coarse status.';
+  'Screening status is summarized here; the vendor order may show more detail.';
 
 function def(
   stepKey: string,
@@ -694,7 +694,7 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
             statusLabel: String(everifySummary?.statusDisplay || 'E-Verify complete'),
             effectiveSourceType: 'everify',
             sourceRef: { pipelineStepId: 'e_verify', caseId },
-            helperText: `Case and pipeline both reflect completion. ${helperParts.join(' ')}`.trim(),
+            helperText: `E-Verify case and pipeline both show complete. ${helperParts.join(' ')}`.trim(),
             lastUpdatedAt: pipelineTs,
             satisfiedByArtifact: false,
             artifactCompletedAt: null,
@@ -706,7 +706,7 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
             statusLabel: 'Satisfied by existing E-Verify case',
             effectiveSourceType: 'everify',
             sourceRef: { pipelineStepId: 'e_verify', caseId },
-            helperText: `${reuse.artifact.policyNote} Pipeline step not yet complete. ${helperParts.join(' ')}`.trim(),
+            helperText: `${reuse.artifact.policyNote} Finish the pipeline step when you are ready. ${helperParts.join(' ')}`.trim(),
             lastUpdatedAt: pipelineTs,
             satisfiedByArtifact: true,
             artifactSourceType: 'everify',
@@ -742,13 +742,13 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
             pipelineStepId: 'e_verify',
             caseId: everifySummary?.latestCaseId ?? undefined,
           },
-          helperText: `Using latest E-Verify case status. ${helperParts.join(' ')}`.trim(),
+          helperText: `Status from the latest E-Verify case. ${helperParts.join(' ')}`.trim(),
           lastUpdatedAt: pipelineTs,
           satisfiedByArtifact: false,
           artifactCompletedAt: null,
         };
       }
-      helperParts.push('No E-Verify case on file; falling back to pipeline.');
+      helperParts.push('No E-Verify case on file — using pipeline status.');
     }
     if (source === 'payroll' && definition.groupId === 'payroll') {
       const pr = statusFromPayrollAccount(definition.stepKey, payrollAccount, pStep);
@@ -759,7 +759,7 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
           statusLabel: pr.statusLabel,
           effectiveSourceType: 'payroll',
           sourceRef: { pipelineStepId: pipeId || undefined },
-          helperText: `Worker payroll account: ${pr.statusLabel}. ${helperParts.join(' ')}`.trim(),
+          helperText: `Payroll account: ${pr.statusLabel}. ${helperParts.join(' ')}`.trim(),
           lastUpdatedAt: pr.lastUpdatedAt ?? pipelineTs,
           satisfiedByArtifact: false,
           artifactCompletedAt: null,
@@ -778,7 +778,9 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
             pipelineStepId: pipeId || undefined,
             backgroundCheckId: backgroundChecksForEntity[0]?.id,
           },
-          helperText: `Background orders linked to this entity’s assignments (${backgroundChecksForEntity.length}). ${helperParts.join(' ')}`.trim(),
+          helperText: `Background screening for this job (${backgroundChecksForEntity.length} order${
+            backgroundChecksForEntity.length === 1 ? '' : 's'
+          }). ${helperParts.join(' ')}`.trim(),
           lastUpdatedAt: bg.lastUpdatedAt ?? pipelineTs,
           satisfiedByArtifact: false,
           artifactCompletedAt: null,
@@ -811,7 +813,7 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
         }
       }
       if (backgroundChecksForEntity.length === 0) {
-        helperParts.push('No background orders linked to this entity’s assignments yet; using pipeline if present.');
+        helperParts.push('No screening orders for this job yet — using pipeline if available.');
       }
     }
     if (source === 'pipeline') {
@@ -823,7 +825,7 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
         extRow.externalSource === 'tempworks' &&
         !externalStepAppliesToWorkerType(extKey, externalOnboardingWorkerType)
       ) {
-        helperParts.push('External onboarding row ignored due to worker-type mismatch.');
+        helperParts.push('This step does not apply to this worker type.');
       }
       if (
         extKey &&
@@ -844,10 +846,8 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
             externalStepKey: extKey,
           },
           helperText: isSettingsOnly
-            ? `No TempWorks activity yet for “${externalStepLabel(extKey)}”. ${definition.fidelityExplanation}`.trim()
-            : `TempWorks / worker_onboarding.externalOnboardingSteps (“${externalStepLabel(extKey)}”). ${helperParts.join(
-                ' '
-              )}`.trim(),
+            ? `No payroll activity recorded yet for ${externalStepLabel(extKey)}. ${definition.fidelityExplanation}`.trim()
+            : `Payroll system — ${externalStepLabel(extKey)}. ${helperParts.join(' ')}`.trim(),
           lastUpdatedAt: extTs ?? pipelineTs,
           satisfiedByArtifact: false,
           artifactCompletedAt: null,
@@ -863,8 +863,8 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
         effectiveSourceType: isSettingsOnly ? 'settings_only' : 'pipeline_step',
         sourceRef: pipeId ? { pipelineStepId: pipeId } : {},
         helperText: isSettingsOnly
-          ? `No dedicated runtime state yet for this step. ${definition.fidelityExplanation}`.trim()
-          : `Derived from worker_onboarding step “${pipeId}”. ${helperParts.join(' ')}`.trim(),
+          ? `Onboarding has not started for this step yet. ${definition.fidelityExplanation}`.trim()
+          : `Status from the onboarding pipeline. ${helperParts.join(' ')}`.trim(),
         lastUpdatedAt: pipelineTs,
         satisfiedByArtifact: false,
         artifactCompletedAt: null,
@@ -878,7 +878,7 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
     statusLabel: 'Not started',
     effectiveSourceType: 'settings_only',
     sourceRef: pipeId ? { pipelineStepId: pipeId } : {},
-    helperText: helperParts.join(' ').trim() || 'No runtime signal yet.',
+    helperText: helperParts.join(' ').trim() || 'No status update yet.',
     lastUpdatedAt: null,
     satisfiedByArtifact: false,
     artifactCompletedAt: null,

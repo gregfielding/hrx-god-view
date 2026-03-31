@@ -110,6 +110,10 @@ export interface EmploymentActiveAssignmentRequirementsCardProps {
   entityKey: EmploymentEntityKey;
   actionContext: EmploymentV2ActionResolutionContext | null;
   onActionComplete?: () => void;
+  /**
+   * When the onboarding checklist already lists this assignment’s package rows, omit duplicate line-item sections here.
+   */
+  assignmentPackageSummarizedInChecklist?: boolean;
 }
 
 const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssignmentRequirementsCardProps> = ({
@@ -117,6 +121,7 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
   entityKey,
   actionContext,
   onActionComplete,
+  assignmentPackageSummarizedInChecklist = false,
 }) => {
   const navigate = useNavigate();
   const vm = overview.assignmentRequirementsViewModel;
@@ -128,6 +133,9 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
   if (!vm.hasPrimaryAssignment) {
     return null;
   }
+
+  const compactAssignmentSurface =
+    Boolean(assignmentPackageSummarizedInChecklist && hasDemand);
 
   const hasAnyJobContent =
     vm.hasPrimaryAssignment ||
@@ -141,19 +149,29 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
   return (
     <Card sx={{ mb: 2 }}>
       <CardHeader
-        title={hasDemand ? 'Active assignment requirements' : 'Assignment & screening record'}
+        title={
+          compactAssignmentSurface
+            ? 'Active assignment'
+            : hasDemand
+              ? 'Active assignment requirements'
+              : 'Assignment & screening record'
+        }
         subheader={
-          hasDemand
-            ? 'Job-specific package, screening orders, and entity screening policy — separate from the employment relationship path above.'
-            : 'No active assignment onboarding for this entity. Expand history to review prior milestones and screening orders — not current required work by default.'
+          compactAssignmentSurface
+            ? 'Steps for this job are in the checklist above'
+            : hasDemand
+              ? 'Job-specific package, screening orders, and entity screening policy — separate from the employment relationship path above.'
+              : 'No active assignment onboarding for this entity. Expand history to review prior milestones and screening orders — not current required work by default.'
         }
         titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
       />
       <CardContent sx={{ pt: 0 }}>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.5 }}>
-          {hasDemand
-            ? 'Entity Settings still control which screening milestones apply to this hiring relationship; detail and fulfillment for orders and assignment tasks are grouped here so the main path stays focused on I-9, forms, payroll, and internal readiness.'
-            : 'When you have a live assignment, job package and screening activity will appear here as current work. What follows is retained for reference.'}
+          {compactAssignmentSurface
+            ? 'Open the assignment for full detail.'
+            : hasDemand
+              ? 'Entity Settings still control which screening milestones apply to this hiring relationship; detail and fulfillment for orders and assignment tasks are grouped here so the main path stays focused on I-9, forms, payroll, and internal readiness.'
+              : 'When you have a live assignment, job package and screening activity will appear here as current work. What follows is retained for reference.'}
         </Typography>
 
         {!hasAnyJobContent ? (
@@ -243,51 +261,55 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
               ) : null}
             </Stack>
 
-            <Subsection
-              title="Required checks"
-              items={vm.requiredChecks}
-              emptyHint="No package checks in this assignment’s onboarding instance."
-              entityKey={entityKey}
-              actionContext={actionContext}
-              onActionComplete={onActionComplete}
-              demoteBlockingChips={demoteChips}
-            />
-            <Subsection
-              title="Required certifications"
-              items={vm.requiredCertifications}
-              emptyHint="No certification-style checks detected (naming heuristic)."
-              entityKey={entityKey}
-              actionContext={actionContext}
-              onActionComplete={onActionComplete}
-              demoteBlockingChips={demoteChips}
-            />
-            <Subsection
-              title="Required uploads / verifications"
-              items={vm.requiredUploads}
-              emptyHint="No non–e-sign document requirements in the package."
-              entityKey={entityKey}
-              actionContext={actionContext}
-              onActionComplete={onActionComplete}
-              demoteBlockingChips={demoteChips}
-            />
-            <Subsection
-              title="Assignment documents (e-sign)"
-              items={vm.assignmentDocuments}
-              emptyHint="No e-sign documents required for this assignment."
-              entityKey={entityKey}
-              actionContext={actionContext}
-              onActionComplete={onActionComplete}
-              demoteBlockingChips={demoteChips}
-            />
-            <Subsection
-              title="Assignment admin steps"
-              items={vm.adminSteps}
-              emptyHint="No recruiter/admin steps in the package."
-              entityKey={entityKey}
-              actionContext={actionContext}
-              onActionComplete={onActionComplete}
-              demoteBlockingChips={demoteChips}
-            />
+            {!compactAssignmentSurface ? (
+              <>
+                <Subsection
+                  title="Required checks"
+                  items={vm.requiredChecks}
+                  emptyHint="No package checks in this assignment’s onboarding instance."
+                  entityKey={entityKey}
+                  actionContext={actionContext}
+                  onActionComplete={onActionComplete}
+                  demoteBlockingChips={demoteChips}
+                />
+                <Subsection
+                  title="Required certifications"
+                  items={vm.requiredCertifications}
+                  emptyHint="No certification-style checks detected (naming heuristic)."
+                  entityKey={entityKey}
+                  actionContext={actionContext}
+                  onActionComplete={onActionComplete}
+                  demoteBlockingChips={demoteChips}
+                />
+                <Subsection
+                  title="Required uploads / verifications"
+                  items={vm.requiredUploads}
+                  emptyHint="No non–e-sign document requirements in the package."
+                  entityKey={entityKey}
+                  actionContext={actionContext}
+                  onActionComplete={onActionComplete}
+                  demoteBlockingChips={demoteChips}
+                />
+                <Subsection
+                  title="Assignment documents (e-sign)"
+                  items={vm.assignmentDocuments}
+                  emptyHint="No e-sign documents required for this assignment."
+                  entityKey={entityKey}
+                  actionContext={actionContext}
+                  onActionComplete={onActionComplete}
+                  demoteBlockingChips={demoteChips}
+                />
+                <Subsection
+                  title="Assignment admin steps"
+                  items={vm.adminSteps}
+                  emptyHint="No recruiter/admin steps in the package."
+                  entityKey={entityKey}
+                  actionContext={actionContext}
+                  onActionComplete={onActionComplete}
+                  demoteBlockingChips={demoteChips}
+                />
+              </>
+            ) : null}
           </>
         ) : null}
 
@@ -308,8 +330,9 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
 
         {hasDemand && vm.openBlockerCount > 0 ? (
           <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 1 }}>
-            {vm.openBlockerCount} blocking item{vm.openBlockerCount === 1 ? '' : 's'} in this job / screening area (not counted in
-            the relationship path above).
+            {compactAssignmentSurface
+              ? `${vm.openBlockerCount} open item${vm.openBlockerCount === 1 ? '' : 's'} — see checklist`
+              : `${vm.openBlockerCount} blocking item${vm.openBlockerCount === 1 ? '' : 's'} in this job / screening area (not counted in the relationship path above).`}
           </Typography>
         ) : null}
       </CardContent>

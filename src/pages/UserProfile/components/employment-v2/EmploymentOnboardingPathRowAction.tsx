@@ -10,7 +10,7 @@ import {
   interpolateEmploymentV2Route,
   type EmploymentV2ActionResolutionContext,
 } from '../../../../utils/employmentBlockerActionMap';
-import { isOnboardingPathRowBlocker } from '../../../../utils/employmentOnboardingPath';
+import { isOnboardingPathRowBlocker, isOnboardingPathRowDone } from '../../../../utils/employmentOnboardingPath';
 import type { EmploymentEntityKey, EmploymentOnboardingRow } from './employmentV2Types';
 
 /** Initial rollout: only these primary actions (see employmentBlockerActionMap). */
@@ -186,7 +186,14 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
     onComplete,
   ]);
 
-  if (!isOnboardingPathRowBlocker(row) || !resolved || !phase1) {
+  if (!resolved || !phase1) {
+    return null;
+  }
+
+  const allowOpenWorkerPackage =
+    resolved.actionKey === 'assignment.open_worker_package' && !isOnboardingPathRowDone(row.status);
+
+  if (!isOnboardingPathRowBlocker(row) && !allowOpenWorkerPackage) {
     return null;
   }
 

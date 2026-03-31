@@ -49,6 +49,8 @@ import AddUserNoteDialog from './AddUserNoteDialog';
 import StartOnboardingDialog from './StartOnboardingDialog';
 import { isOnboardingInProgress, getActiveOnboardingType, cancelOnboarding } from '../utils/onboardingHelpers';
 import ImageCropDialog from '../../../components/common/ImageCropDialog';
+import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
+import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
 
 interface UserProfileHeaderProps {
   uid: string;
@@ -227,6 +229,13 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const isOwnProfile = !!user?.uid && user.uid === uid;
   // Contact icons row should only show for admin viewers (5-7) and never on a user's own profile.
   const canShowContactIconsRow = !isOwnProfile && viewerLevel >= 5 && viewerLevel <= 7;
+  const showEntityEmploymentStatusRow =
+    isAdminView && !isOwnProfile && viewerLevel >= 5 && viewerLevel <= 7 && Boolean(effectiveTenantId);
+  const { items: entityEmploymentChipItems, loading: entityEmploymentChipsLoading } = useUserProfileEntityEmploymentChips(
+    effectiveTenantId || undefined,
+    uid,
+    showEntityEmploymentStatusRow
+  );
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -896,6 +905,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             </Box>
           )}
 
+          {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75, mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                Employment:
+              </Typography>
+              <UserEntityOnboardingStatusCell
+                items={entityEmploymentChipItems}
+                loading={entityEmploymentChipsLoading}
+                emptyDisplay="hidden"
+                density="compact"
+              />
+            </Box>
+          )}
+
           {/* Mobile: Joined Date */}
           {createdAt && (
             <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 1 }}>
@@ -1448,6 +1471,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 </React.Fragment>
               ))}
             </Typography>
+          )}
+
+          {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75, mb: 0.25 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+                Employment:
+              </Typography>
+              <UserEntityOnboardingStatusCell
+                items={entityEmploymentChipItems}
+                loading={entityEmploymentChipsLoading}
+                emptyDisplay="hidden"
+                density="compact"
+              />
+            </Box>
           )}
 
           {/* Joined Date */}

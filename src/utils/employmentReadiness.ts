@@ -17,12 +17,14 @@ import type {
   EmploymentEverifySummary,
   EmploymentEntityKey,
   EmploymentEntityOverview,
+  EmploymentOnboardingRow,
   EmploymentPayrollSummary,
   EmploymentReadinessChip,
   EmploymentScreeningSummary,
   EntityEmploymentRecord,
   EntityTabSettingsSnapshot,
   OnboardingInstanceSnapshot,
+  OnboardingPathGroup,
   PipelineStepRow,
   PipelineTaskRow,
   WorkerOnboardingPipeline,
@@ -44,9 +46,9 @@ import {
   primaryAssignmentRowForHeader,
 } from './deriveEmploymentHeaderState';
 import { buildAssignmentRequirementsViewModel } from './assignmentRequirementsViewModel';
+import { isAssignmentTerminalNormalized } from './assignmentStatusNormalize';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import { entityLabelForKey, defaultWorkerTypeForEntity } from './employmentEntityPresentation';
-import { categorizeBlockersForHeader } from './employmentOnboardingPathRecruiterView';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type {
@@ -56,6 +58,30 @@ import type {
 import { enrichOnboardingPathWithNarrativesFromOverviewDeps } from './employmentOnboardingNarrative';
 import { resolveEffectiveEmploymentWorkerType } from './employmentWorkerTypeResolution';
 import type { ExternalOnboardingWorkerTypeNorm } from './externalOnboardingSteps';
+
+/** Drop redundant recruiter pipeline tasks; payroll milestones cover forms on the checklist. */
+function omitInternalOnboardingFormsTasksFromChecklist(row: EmploymentOnboardingRow): boolean {
+  if (row.groupId !== 'internal_readiness' || row.sourceType !== 'pipeline_task') return true;
+  return String(row.sourceRef?.pipelineStepId || '') !== 'onboarding_forms';
+}
+
+function recomputeOnboardingPathGroupCounts(g: OnboardingPathGroup): OnboardingPathGroup {
+  const rows = g.rows;
+  return {
+    ...g,
+    doneCount: rows.filter((r) => isOnboardingPathRowDone(r.status)).length,
+    totalCount: rows.length,
+    blockerCount: rows.filter(isOnboardingPathRowBlocker).length,
+  };
+}
+
+function filterChecklistPathGroups(groups: OnboardingPathGroup[]): OnboardingPathGroup[] {
+  return groups
+    .map((g) =>
+      recomputeOnboardingPathGroupCounts({ ...g, rows: g.rows.filter(omitInternalOnboardingFormsTasksFromChecklist) })
+    )
+    .filter((g) => g.rows.length > 0);
+}
 
 export function stepIdToGroupId(stepId: string): EmploymentBlockerGroupId {
   const id = String(stepId || '').toLowerCase();
@@ -349,6 +375,13 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
 
   const onboardingPath = filterEntityRelationshipOnboardingPathGroups(fullOnboardingPath);
 
+  const assignmentPathGroup = fullOnboardingPath.find((g) => g.groupId === 'assignment_requirements');
+  const hasLiveAssignment = assignments.some((a) => !isAssignmentTerminalNormalized(a.status));
+  const onboardingChecklistGroups = [
+    ...filterChecklistPathGroups(onboardingPath),
+    ...(assignmentPathGroup && hasLiveAssignment && assignmentPathGroup.rows.length > 0 ? [assignmentPathGroup] : []),
+  ];
+
   const allPathRows = onboardingPath.flatMap((g) => g.rows);
   const pathRowCount = allPathRows.length;
   const pathDoneCount = allPathRows.filter((r) => isOnboardingPathRowDone(r.status)).length;
@@ -453,10 +486,6 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     employmentEntryMode: ee?.employmentEntryMode ?? null,
     hasNonTerminalAssignment: liveAssignmentRow != null,
   });
-  const categorized = categorizeBlockersForHeader(headerMergedBlockers);
-  const showBlockerCategoryChips =
-    hasOpenOnboardingDemand &&
-    categorized.pendingWorker + categorized.pendingRecruiter + categorized.pendingVendor > 0;
   const headerReadinessExplanation = employmentHeaderStateExplanation(
     employmentHeaderState,
     {
@@ -467,7 +496,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     },
     {
       noOpenOnboardingDemand: !hasOpenOnboardingDemand,
-      suppressBlockerCountsInCopy: showBlockerCategoryChips,
+      suppressBlockerCountsInCopy: false,
     }
   );
 
@@ -496,6 +525,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     blockers,
     assignments,
     onboardingPath,
+    onboardingChecklistGroups,
     assignmentRequirementsViewModel,
     systems,
   };
@@ -531,10 +561,10 @@ const GROUP_ORDER: ProgressGroupId[] = [
 
 const GROUP_TITLES: Record<ProgressGroupId, string> = {
   work_authorization: 'Work Authorization',
-  forms_and_policies: 'Forms & Policies',
-  payroll: 'Payroll',
-  screenings: 'Screenings',
-  internal_readiness: 'Internal verification',
+  forms_and_policies: 'Company Forms & Policies',
+  payroll: 'Payroll Setup',
+  screenings: 'Background Checks & Screenings',
+  internal_readiness: 'Your tasks',
 };
 
 export interface ProgressGroupRow {

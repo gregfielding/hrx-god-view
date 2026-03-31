@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 
-import { safeToDate, getJobOrderAge } from '../utils/dateUtils';
+import { safeToDate, getJobOrderAge, getCalendarDayLocal } from '../utils/dateUtils';
 import {
   Box,
   Typography,
@@ -190,6 +190,7 @@ interface ShiftOption {
   dateSchedule?: Record<string, { startTime?: string; endTime?: string; workersNeeded?: number; overstaff?: number }>;
   /** Multi-day gig: last date of shift range */
   endDate?: string | { toDate?: () => Date } | Date;
+  shiftMode?: 'single' | 'multi';
 }
 
 interface Applicant {
@@ -425,10 +426,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         const loaded = snap.docs
           .map((d) => ({ id: d.id, ...d.data() } as ShiftOption))
           .sort((a, b) => {
-            const toDateStr = (val: ShiftOption['shiftDate']) =>
-              typeof val === 'string' ? val : (val && typeof (val as any).toDate === 'function' ? (val as any).toDate()?.toISOString?.() || '' : '');
-            const da = toDateStr(a.shiftDate);
-            const db_ = toDateStr(b.shiftDate);
+            const da = getCalendarDayLocal(a.shiftDate);
+            const db_ = getCalendarDayLocal(b.shiftDate);
             return da.localeCompare(db_);
           });
         setShifts(loaded);
@@ -469,25 +468,21 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   // Selected shift (full object) and multi-day day options
   const selectedShift = selectedShiftId ? shifts.find((s) => s.id === selectedShiftId) ?? null : null;
-  const toDateStr = (val: ShiftOption['shiftDate'] | ShiftOption['endDate']): string => {
-    if (!val) return '';
-    if (typeof val === 'string') return val.split('T')[0];
-    if (val instanceof Date) return val.toISOString().split('T')[0];
-    if (typeof (val as { toDate?: () => Date }).toDate === 'function') return (val as { toDate: () => Date }).toDate().toISOString().split('T')[0] ?? '';
-    return '';
-  };
+  /** YYYY-MM-DD in local calendar — matches Shift Setup / Placements / dateSchedule keys (not UTC from toISOString). */
+  const shiftScheduleDayKey = (val: ShiftOption['shiftDate'] | ShiftOption['endDate'] | undefined): string =>
+    getCalendarDayLocal(val ?? null);
   const isGigMultiDay = Boolean(
     selectedShift &&
     selectedShift.dateSchedule &&
     selectedShift.endDate &&
-    toDateStr(selectedShift.endDate) !== toDateStr(selectedShift.shiftDate),
+    shiftScheduleDayKey(selectedShift.endDate) !== shiftScheduleDayKey(selectedShift.shiftDate),
   );
   const dayOptions = useMemo(() => {
     if (!isGigMultiDay || !selectedShift) return [];
     return getDateScheduleEntriesWithHours(
       selectedShift.dateSchedule as unknown as DateSchedule | undefined,
-      toDateStr(selectedShift.shiftDate),
-      toDateStr(selectedShift.endDate),
+      shiftScheduleDayKey(selectedShift.shiftDate),
+      shiftScheduleDayKey(selectedShift.endDate),
     );
   }, [isGigMultiDay, selectedShift]);
   useEffect(() => {
@@ -1264,12 +1259,24 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     <em>All shifts</em>
                   </MenuItem>
                   {shifts.map((shift) => {
-                    const dv = shift.shiftDate;
-                    let dateStr = '';
-                    if (typeof dv === 'string') dateStr = dv.split('T')[0];
-                    else if (dv instanceof Date) dateStr = dv.toISOString().split('T')[0];
-                    else if (dv && typeof (dv as { toDate?: () => Date }).toDate === 'function') dateStr = (dv as { toDate: () => Date }).toDate().toISOString().split('T')[0];
-                    const formatted = dateStr ? format(new Date(dateStr), 'EEE, MMM d, yyyy') : 'Unknown date';
+                    const startDateStr = getCalendarDayLocal(shift.shiftDate);
+                    const endDateStr =
+                      shift.shiftMode === 'multi' &&
+                      shift.endDate &&
+                      getCalendarDayLocal(shift.endDate) !== startDateStr
+                        ? getCalendarDayLocal(shift.endDate)
+                        : null;
+                    const formatLocalGigDay = (dateStr: string) => {
+                      if (!isIsoGigDay(dateStr)) return dateStr || 'Unknown date';
+                      const [y, m, d] = dateStr.split('-').map(Number);
+                      return format(new Date(y, m - 1, d), 'EEE, MMM d, yyyy');
+                    };
+                    const formatted =
+                      startDateStr && endDateStr && startDateStr !== endDateStr
+                        ? `${formatLocalGigDay(startDateStr)} – ${formatLocalGigDay(endDateStr)}`
+                        : startDateStr
+                          ? formatLocalGigDay(startDateStr)
+                          : 'Unknown date';
                     const jobTitle = shift.defaultJobTitle ?? shift.shiftTitle ?? '';
                     return (
                       <MenuItem key={shift.id} value={shift.id}>

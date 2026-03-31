@@ -64,6 +64,8 @@ import {
 } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
+import UserEntityOnboardingStatusCell from '../components/tables/UserEntityOnboardingStatusCell';
+import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
 
 type SecurityLevel =
   | '0'
@@ -902,6 +904,10 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     return filteredUsers.slice(start, end);
   }, [filteredUsers, page, rowsPerPage]);
 
+  const paginatedUserIds = useMemo(() => paginatedUsers.map((u) => u.id), [paginatedUsers]);
+  const { itemsByUserId: entityEmploymentChipsByUser, loading: entityEmploymentChipsLoading } =
+    useRecruiterUsersEntityEmploymentChips(activeTenant?.id, paginatedUserIds);
+
   const selectedCount = selectAllResults ? filteredUsers.length : selectedIds.size;
   const allOnPageSelected =
     paginatedUsers.length > 0 &&
@@ -1447,6 +1453,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                     Interview
                   </TableSortLabel>
                 </TableCell>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 200 }}>
+                  Status
+                </TableCell>
                 <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                   Groups
                 </TableCell>
@@ -1591,6 +1600,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       userId={user.id}
                       scoreSummary={user.scoreSummary}
                       formatDate={formatDate}
+                    />
+                  </TableCell>
+                  <TableCell sx={{ verticalAlign: 'middle', py: 0.75 }}>
+                    <UserEntityOnboardingStatusCell
+                      items={entityEmploymentChipsByUser.get(user.id) ?? []}
+                      loading={entityEmploymentChipsLoading}
                     />
                   </TableCell>
                   <TableCell>
