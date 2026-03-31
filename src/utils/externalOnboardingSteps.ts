@@ -156,6 +156,14 @@ export function formatExternalOnboardingLocalTimestamp(iso: string | null | unde
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+/** When C1 marked a TempWorks-linked step complete in HRX (`verifiedAt` on the external step record). */
+export function formatVerifiedAtDisplayForExternalRecord(
+  record: ExternalOnboardingStepRecord | undefined
+): string | null {
+  if (!record?.verifiedAt) return null;
+  return formatExternalOnboardingLocalTimestamp(tsToIso(record.verifiedAt));
+}
+
 export function lastUpdatedIsoForExternalStep(record: ExternalOnboardingStepRecord): string | null {
   return (
     tsToIso(record.verifiedAt) ??

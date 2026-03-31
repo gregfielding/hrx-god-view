@@ -34,13 +34,19 @@ import {
   DialogActions,
   TablePagination,
   Avatar,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  type SelectChangeEvent,
 } from '@mui/material';
 import EmailIcon from '@mui/icons-material/Email';
 import SmsIcon from '@mui/icons-material/Sms';
 import NotificationsIcon from '@mui/icons-material/Notifications';
 import ReplyIcon from '@mui/icons-material/Reply';
 import { collection, query, where, orderBy, limit, getDocs, Timestamp, doc, getDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { db, functions } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import ReplyDrawer from '../../../components/ReplyDrawer';
 import EmailThreadView from '../../../components/EmailThreadView';
@@ -96,6 +102,21 @@ interface MessagesTabProps {
   profileUpdateReminder?: ProfileUpdateReminderControls;
 }
 
+const resendPayrollOnboardingInviteCallable = httpsCallable<
+  {
+    tenantId: string;
+    userId: string;
+    entityId: string;
+    assignmentId?: string | null;
+    contextLabel?: string | null;
+  },
+  { ok: boolean; messageLogId?: string | null; correlationKey?: string }
+>(functions, 'resendPayrollOnboardingInvite');
+
+function isPayrollInviteOutbound(log: MessageLog): boolean {
+  return log.direction === 'outbound' && log.messageTypeId === 'payroll_onboarding_invite_needed';
+}
+
 interface EmailThread {
   id: string;
   tenantId: string;
@@ -141,6 +162,11 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [emailThreadPage, setEmailThreadPage] = useState(0);
   const [emailThreadRowsPerPage, setEmailThreadRowsPerPage] = useState(25);
+  const [internalHistoryRefresh, setInternalHistoryRefresh] = useState(0);
+  const [employmentEntities, setEmploymentEntities] = useState<{ entityId: string; label: string }[]>([]);
+  const [payrollResendDialogOpen, setPayrollResendDialogOpen] = useState(false);
+  const [payrollResendPick, setPayrollResendPick] = useState('');
+  const [payrollResendBusy, setPayrollResendBusy] = useState(false);
 
   const effectiveTenantId = tenantId || activeTenant?.id;
 
@@ -169,6 +195,39 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
   }, [uid]);
 
   useEffect(() => {
+    if (!uid || !effectiveTenantId) {
+      setEmploymentEntities([]);
+      return;
+    }
+    (async () => {
+      try {
+        const empQ = query(
+          collection(db, 'tenants', effectiveTenantId, 'entity_employments'),
+          where('userId', '==', uid)
+        );
+        const snap = await getDocs(empQ);
+        const rows = snap.docs
+          .map((d) => {
+            const x = d.data();
+            const entityId = String(x.entityId || '').trim();
+            const label = String(x.entityName || x.entityId || 'Hiring entity').trim();
+            return entityId ? { entityId, label } : null;
+          })
+          .filter((r): r is { entityId: string; label: string } => r !== null);
+        const byId = new Map<string, string>();
+        rows.forEach((r) => {
+          if (!byId.has(r.entityId)) byId.set(r.entityId, r.label);
+        });
+        setEmploymentEntities(
+          [...byId.entries()].map(([entityId, label]) => ({ entityId, label }))
+        );
+      } catch {
+        setEmploymentEntities([]);
+      }
+    })();
+  }, [uid, effectiveTenantId]);
+
+  useEffect(() => {
     if (!uid || !effectiveTenantId) return;
     
     if (activeTab === 'threads') {
@@ -178,7 +237,7 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
     } else {
       loadMessageHistory();
     }
-  }, [uid, effectiveTenantId, activeTab, messageHistoryRefreshTrigger]);
+  }, [uid, effectiveTenantId, activeTab, messageHistoryRefreshTrigger, internalHistoryRefresh]);
   
   // Reset pagination when tab changes
   useEffect(() => {
@@ -224,6 +283,47 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
     } finally {
       setLoading(false);
     }
+  };
+
+  const executePayrollResend = async (entityId: string) => {
+    if (!effectiveTenantId || !uid || !entityId) return;
+    setPayrollResendBusy(true);
+    setError(null);
+    try {
+      await resendPayrollOnboardingInviteCallable({
+        tenantId: effectiveTenantId,
+        userId: uid,
+        entityId,
+        contextLabel: 'your payroll onboarding',
+      });
+      setPayrollResendDialogOpen(false);
+      setInternalHistoryRefresh((n) => n + 1);
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setError(err?.message || 'Could not resend payroll invite');
+    } finally {
+      setPayrollResendBusy(false);
+    }
+  };
+
+  const beginPayrollResendFromRow = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (employmentEntities.length === 0) {
+      setError(
+        'No employment row found for this worker in this tenant. Open Employment and start or confirm a relationship before resending.'
+      );
+      return;
+    }
+    if (employmentEntities.length === 1) {
+      void executePayrollResend(employmentEntities[0].entityId);
+      return;
+    }
+    setPayrollResendPick(employmentEntities[0]?.entityId || '');
+    setPayrollResendDialogOpen(true);
+  };
+
+  const handlePayrollResendEntityChange = (ev: SelectChangeEvent<string>) => {
+    setPayrollResendPick(ev.target.value);
   };
 
   const loadSmsThreads = async () => {
@@ -494,7 +594,8 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
         Messages
       </Typography>
       <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 3 }}>
-        View message history and SMS conversations
+        View message history and SMS conversations. For payroll onboarding invites, use Resend on the row to repeat the
+        same message type and channel rules (timeline updates appear under Employment after send).
       </Typography>
 
       <Tabs
@@ -529,12 +630,13 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
                   <TableCell>Direction</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Content</TableCell>
+                  <TableCell align="right">Actions</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {paginatedMessages.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={4} align="center" sx={{ py: 4 }}>
+                    <TableCell colSpan={5} align="center" sx={{ py: 4 }}>
                       <Typography variant="body2" color="text.secondary">
                         No {activeTab.toUpperCase()} messages found
                       </Typography>
@@ -576,6 +678,23 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
                         >
                           {log.contentSent?.replace(/<[^>]*>/g, '').substring(0, 100) || 'N/A'}
                         </Typography>
+                      </TableCell>
+                      <TableCell
+                        align="right"
+                        onClick={(ev) => ev.stopPropagation()}
+                        sx={{ verticalAlign: 'middle' }}
+                      >
+                        {isPayrollInviteOutbound(log) ? (
+                          <Button
+                            size="small"
+                            variant="text"
+                            disabled={payrollResendBusy}
+                            onClick={beginPayrollResendFromRow}
+                            sx={{ textTransform: 'none', whiteSpace: 'nowrap' }}
+                          >
+                            Resend invite
+                          </Button>
+                        ) : null}
                       </TableCell>
                     </TableRow>
                   ))
@@ -892,6 +1011,48 @@ const MessagesTab: React.FC<MessagesTabProps> = ({
           }}
         />
       )}
+
+      <Dialog
+        open={payrollResendDialogOpen}
+        onClose={() => !payrollResendBusy && setPayrollResendDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Resend payroll invite</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            This worker has more than one hiring entity. Choose which entity’s payroll onboarding link and automation
+            rules to use. The same message type and channels apply as the original automation.
+          </Typography>
+          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+            <InputLabel id="payroll-resend-entity-label">Hiring entity</InputLabel>
+            <Select
+              labelId="payroll-resend-entity-label"
+              label="Hiring entity"
+              value={payrollResendPick}
+              onChange={handlePayrollResendEntityChange}
+            >
+              {employmentEntities.map((e) => (
+                <MenuItem key={e.entityId} value={e.entityId}>
+                  {e.label}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPayrollResendDialogOpen(false)} disabled={payrollResendBusy}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={payrollResendBusy || !payrollResendPick}
+            onClick={() => void executePayrollResend(payrollResendPick)}
+          >
+            {payrollResendBusy ? 'Sending…' : 'Send'}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Message Detail Modal */}
       <Dialog

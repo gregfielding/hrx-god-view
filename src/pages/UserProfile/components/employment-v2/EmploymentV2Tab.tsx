@@ -21,11 +21,18 @@ import EmploymentTab from '../EmploymentTab';
 export interface EmploymentV2TabProps {
   uid: string;
   tenantId: string | null;
+  /** Admin profile: worker name for third-person “who is handling this” labels. */
+  workerDisplayName?: string | null;
   /** Security level ≥ 4 / recruiter tooling — enables on-call labor pool hire. */
   allowStartOnCallEmployment?: boolean;
 }
 
-const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId, allowStartOnCallEmployment }) => {
+const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({
+  uid,
+  tenantId,
+  allowStartOnCallEmployment,
+  workerDisplayName,
+}) => {
   const [entityKey, setEntityKey] = useState<EmploymentEntityKey>('select');
   const { activeTenant } = useAuth();
   const tenantSlug =
@@ -80,6 +87,7 @@ const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId, allowS
         tenantSlug={tenantSlug}
         onRefresh={refetch}
         allowStartOnCallEmployment={allowStartOnCallEmployment}
+        workerDisplayName={workerDisplayName}
       />
 
       <Accordion sx={{ mt: 3 }}>

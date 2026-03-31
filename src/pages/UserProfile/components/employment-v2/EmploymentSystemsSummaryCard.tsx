@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   Box,
+  Button,
   Card,
   CardContent,
   CardHeader,
@@ -12,18 +13,77 @@ import {
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../../../../firebase';
 import type { EmploymentEntityOverview } from './employmentV2Types';
 import { assignmentRequirementsSystemsLine } from '../../../../utils/assignmentRequirementsViewModel';
 
+const resendPayrollInvite = httpsCallable<
+  {
+    tenantId: string;
+    userId: string;
+    entityId: string;
+    assignmentId?: string | null;
+    contextLabel?: string | null;
+  },
+  { ok: boolean; messageLogId?: string | null; correlationKey?: string }
+>(functions, 'resendPayrollOnboardingInvite');
+
 export interface EmploymentSystemsSummaryCardProps {
   overview: EmploymentEntityOverview;
+  tenantId: string;
+  profileUserId: string;
+  onPayrollResendComplete?: () => void;
 }
 
-const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> = ({ overview }) => {
+const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> = ({
+  overview,
+  tenantId,
+  profileUserId,
+  onPayrollResendComplete,
+}) => {
   const [open, setOpen] = useState(false);
+  const [payrollResendBusy, setPayrollResendBusy] = useState(false);
+  const [payrollResendError, setPayrollResendError] = useState<string | null>(null);
   const { systems } = overview;
   const historical = !overview.hasOpenOnboardingDemand;
   const iaLine = assignmentRequirementsSystemsLine(overview.assignmentRequirementsViewModel);
+
+  const hiringEntityId = overview.entityEmployment?.entityId?.trim() || '';
+  const payrollLinksConfigured = Boolean(
+    systems.payroll?.entityOnboardingUrl || systems.payroll?.entityPortalUrl || systems.payroll?.portalUrl
+  );
+  const showPayrollResend =
+    !historical &&
+    Boolean(systems.payroll && payrollLinksConfigured && hiringEntityId && tenantId && profileUserId);
+
+  const firstAssignmentId = overview.assignments?.[0]?.assignmentId?.trim() || '';
+  const resendContextLabel: string | null = firstAssignmentId
+    ? null
+    : overview.entityEmployment?.employmentEntryMode === 'on_call_pool'
+      ? 'your on-call employment'
+      : `your employment with ${overview.headerEntityName || 'this company'}`;
+
+  const handlePayrollResend = async () => {
+    if (!hiringEntityId || !tenantId || !profileUserId) return;
+    setPayrollResendBusy(true);
+    setPayrollResendError(null);
+    try {
+      await resendPayrollInvite({
+        tenantId,
+        userId: profileUserId,
+        entityId: hiringEntityId,
+        assignmentId: firstAssignmentId || null,
+        contextLabel: resendContextLabel,
+      });
+      onPayrollResendComplete?.();
+    } catch (e: unknown) {
+      const err = e as { message?: string };
+      setPayrollResendError(err?.message || 'Could not resend payroll invite');
+    } finally {
+      setPayrollResendBusy(false);
+    }
+  };
 
   return (
     <Card sx={{ mb: 2, opacity: 0.95 }}>
@@ -98,6 +158,29 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                       ) : null}
                     </Stack>
                   )}
+                  {showPayrollResend ? (
+                    <Stack spacing={0.5} sx={{ mt: 1 }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        disabled={payrollResendBusy}
+                        onClick={() => void handlePayrollResend()}
+                        sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
+                      >
+                        {payrollResendBusy ? 'Sending…' : 'Resend payroll invite'}
+                      </Button>
+                      {payrollResendError ? (
+                        <Typography variant="caption" color="error">
+                          {payrollResendError}
+                        </Typography>
+                      ) : (
+                        <Typography variant="caption" color="text.secondary">
+                          Same payroll message type and channel rules as automation. New sends appear under Messages and
+                          in Employment timelines.
+                        </Typography>
+                      )}
+                    </Stack>
+                  ) : null}
                 </Box>
               </>
             )}

@@ -31,8 +31,6 @@ import {
 import { isEmploymentOnboardingPathDebugEnvEnabled } from '../../../../utils/employmentPathDebugEnv';
 import { narrativeActorLabelForUi } from '../../../../utils/employmentOnboardingNarrative';
 import { isExternalOnboardingStepVerificationUiKey } from '../../../../utils/externalOnboardingSteps';
-import { buildExternalVerificationAnchorByExternalKey } from '../../../../utils/externalOnboardingVerificationAnchor';
-import type { ExternalOnboardingStepKey } from '../../../../types/externalOnboardingSteps';
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
 
@@ -154,6 +152,34 @@ const HANDLING_LABEL: Record<EmploymentOnboardingRow['owner'], string> = {
   vendor: 'Outside verification partner',
 };
 
+function handlingLabelForRow(
+  row: EmploymentOnboardingRow,
+  ctx: EmploymentV2ActionResolutionContext | null
+): string {
+  const owner = row.owner;
+  if (!ctx || ctx.viewer !== 'recruiter') {
+    return HANDLING_LABEL[owner];
+  }
+  const workerName = ctx.workerDisplayName?.trim();
+  const entityName = ctx.entityDisplayName?.trim();
+  switch (owner) {
+    case 'worker':
+      return workerName || 'The worker';
+    case 'recruiter':
+      return entityName ? `Hiring team (${entityName})` : 'Hiring team';
+    case 'system':
+      return HANDLING_LABEL.system;
+    case 'vendor':
+      return HANDLING_LABEL.vendor;
+    default:
+      return HANDLING_LABEL[owner];
+  }
+}
+
+function normalizeWs(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 function NarrativeBlock({ row }: { row: EmploymentOnboardingRow }) {
   const [open, setOpen] = React.useState(false);
   const summary = row.narrative?.summary?.trim();
@@ -161,7 +187,10 @@ function NarrativeBlock({ row }: { row: EmploymentOnboardingRow }) {
   /** Primary status line already shows narrative summary for verified external completions. */
   const summaryShownInStatusLine =
     row.status === 'completed' && row.sourceType === 'external_onboarding' && Boolean(summary);
-  const hasVisibleSummary = Boolean(summary) && !summaryShownInStatusLine;
+  const statusLineText = plainLanguageStatusLabel(row);
+  const duplicateSummary =
+    Boolean(summary) && normalizeWs(summary) === normalizeWs(String(statusLineText));
+  const hasVisibleSummary = Boolean(summary) && !summaryShownInStatusLine && !duplicateSummary;
 
   if (!hasVisibleSummary && (!events || events.length === 0)) {
     return null;
@@ -169,7 +198,7 @@ function NarrativeBlock({ row }: { row: EmploymentOnboardingRow }) {
 
   return (
     <Box sx={{ mb: 1 }}>
-      {summary && !summaryShownInStatusLine ? (
+      {summary && !summaryShownInStatusLine && !duplicateSummary ? (
         <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.45 }}>
           {summary}
         </Typography>
@@ -235,7 +264,6 @@ function StepRow({
   debugMode,
   relationshipPathHistorical,
   workerOnboarding,
-  verificationAnchorWorkflowStepIdByExternalKey,
 }: {
   row: EmploymentOnboardingRow;
   entityKey: EmploymentEntityKey;
@@ -245,8 +273,6 @@ function StepRow({
   /** When true, rows stay visible but CTAs and emphasis read as prior onboarding, not current work. */
   relationshipPathHistorical: boolean;
   workerOnboarding?: WorkerOnboardingPipeline | null;
-  /** One Settings `row.stepKey` per external business key hosts TempWorks verification controls. */
-  verificationAnchorWorkflowStepIdByExternalKey?: ReadonlyMap<ExternalOnboardingStepKey, string> | null;
 }) {
   const theme = useTheme();
   const updated = formatUpdated(row.lastUpdatedAt);
@@ -273,12 +299,9 @@ function StepRow({
       : 'transparent';
 
   const extBusinessKey = row.sourceRef?.externalStepKey;
-  const verificationAnchorWorkflowStepId =
-    extBusinessKey && isExternalOnboardingStepVerificationUiKey(extBusinessKey)
-      ? verificationAnchorWorkflowStepIdByExternalKey?.get(extBusinessKey as ExternalOnboardingStepKey)
-      : undefined;
+  /** TempWorks milestones: show manual completion on every path row that maps to a verifiable external key. */
   const showExternalVerificationControls =
-    verificationAnchorWorkflowStepId != null && row.stepKey === verificationAnchorWorkflowStepId;
+    Boolean(extBusinessKey && isExternalOnboardingStepVerificationUiKey(extBusinessKey));
 
   return (
     <Box
@@ -347,7 +370,7 @@ function StepRow({
             <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
               Who is handling this:{' '}
             </Box>
-            {HANDLING_LABEL[row.owner]}
+            {handlingLabelForRow(row, actionContext)}
           </Typography>
         </Stack>
       )}
@@ -458,7 +481,6 @@ function GroupSection({
   debugMode,
   suppressCurrentDemandBlockers,
   workerOnboarding,
-  verificationAnchorWorkflowStepIdByExternalKey,
 }: {
   group: OnboardingPathGroup;
   entityKey: EmploymentEntityKey;
@@ -467,7 +489,6 @@ function GroupSection({
   debugMode: boolean;
   suppressCurrentDemandBlockers: boolean;
   workerOnboarding?: WorkerOnboardingPipeline | null;
-  verificationAnchorWorkflowStepIdByExternalKey?: ReadonlyMap<ExternalOnboardingStepKey, string> | null;
 }) {
   const frac = group.totalCount > 0 ? `${group.doneCount} / ${group.totalCount}` : '—';
   const reuseDone = group.rows.filter((r) => r.status === 'satisfied_by_existing_record').length;
@@ -551,11 +572,6 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
 }) => {
   const debugMode = resolveEmploymentOnboardingPathDebugMode(debugModeProp);
 
-  const verificationAnchorWorkflowStepIdByExternalKey = React.useMemo(
-    () => buildExternalVerificationAnchorByExternalKey(groups),
-    [groups]
-  );
-
   React.useEffect(() => {
     if (!actionContext || suppressCurrentDemandBlockers) return;
     const rows = groups.flatMap((g) => g.rows);
@@ -598,7 +614,6 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
                   debugMode={debugMode}
                   suppressCurrentDemandBlockers={suppressCurrentDemandBlockers}
                   workerOnboarding={workerOnboarding}
-                  verificationAnchorWorkflowStepIdByExternalKey={verificationAnchorWorkflowStepIdByExternalKey}
                 />
               </React.Fragment>
             ))}

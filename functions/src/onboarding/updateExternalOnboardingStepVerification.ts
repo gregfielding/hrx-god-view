@@ -121,11 +121,25 @@ export const updateExternalOnboardingStepVerification = onCall(
     const now = FieldValue.serverTimestamp();
     const uid = auth.uid;
 
+    const alreadyVerifiedComplete = status === 'completed' && prev.verifiedAt != null;
+
     if (action === 'verify_complete') {
-      if (!['worker_completed_external', 'pending_admin_verification', 'invite_sent'].includes(status)) {
+      if (alreadyVerifiedComplete) {
+        return { ok: true };
+      }
+      /** TempWorks has no API — admins mark completion in HRX from cold start or after fixing errors. */
+      const allowedVerifyFrom = new Set([
+        'worker_completed_external',
+        'pending_admin_verification',
+        'invite_sent',
+        'not_started',
+        'error',
+        'completed',
+      ]);
+      if (!allowedVerifyFrom.has(status)) {
         throw new HttpsError(
           'failed-precondition',
-          `Cannot verify from status "${status}". Expected worker_completed_external, pending_admin_verification, or invite_sent.`
+          `Cannot verify from status "${status}". Use mark_error if this step needs review.`
         );
       }
       const next: Record<string, unknown> = {

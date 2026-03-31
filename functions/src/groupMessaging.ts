@@ -12,6 +12,7 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 import { sendWorkerMessageInternal } from './twilio';
+import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 
 /**
  * Send SMS to all members of a user group
@@ -123,19 +124,23 @@ export const sendGroupMessage = onCall(async (request) => {
         if (!userDoc.exists) continue;
         
         const userData = userDoc.data();
-        if (userData?.phoneE164 && userData?.phoneVerified && userData?.smsOptIn !== false) {
+        const phoneE164 = normalizeUserPhoneToE164(userData);
+        if (phoneE164 && userData?.smsOptIn !== false) {
           recipientsWithPhones.push({
             userId: userDoc.id,
-            phoneE164: userData.phoneE164,
+            phoneE164,
           });
         }
       }
     }
 
-    logger.info(`Found ${recipientsWithPhones.length} recipients with verified phones out of ${recipientUserIds.length} total`);
+    logger.info(`Found ${recipientsWithPhones.length} recipients with SMS-capable numbers out of ${recipientUserIds.length} total`);
 
     if (recipientsWithPhones.length === 0) {
-      throw new HttpsError('invalid-argument', 'No recipients found with verified phone numbers');
+      throw new HttpsError(
+        'invalid-argument',
+        'No recipients found with a phone number on file and SMS enabled (phone OTP verification is not required)'
+      );
     }
 
     // Send SMS in batches to respect rate limits

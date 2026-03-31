@@ -2227,6 +2227,9 @@ const UserProfilePage = () => {
                     uid={uid}
                     tenantId={tenantId || authTenantId || activeTenant?.id || null}
                     allowStartOnCallEmployment={viewerSecurityLevel >= 4}
+                    workerDisplayName={
+                      `${firstName} ${lastName}`.trim() || preferredName?.trim() || null
+                    }
                   />
                 );
               case 'Compliance':

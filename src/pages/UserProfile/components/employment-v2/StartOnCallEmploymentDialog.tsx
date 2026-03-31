@@ -119,10 +119,14 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
       onSuccess();
       onClose();
     } catch (e: unknown) {
+      const fe = e as { message?: string; code?: string };
+      const raw = typeof fe?.message === 'string' ? fe.message.trim() : '';
       const msg =
-        e && typeof e === 'object' && 'message' in e
-          ? String((e as { message?: string }).message)
-          : 'Request failed';
+        raw && raw !== 'INTERNAL'
+          ? raw
+          : typeof fe?.code === 'string'
+            ? `${fe.code.replace(/^functions\//, '')}: request failed`
+            : 'Request failed';
       setError(msg);
     } finally {
       setSubmitting(false);

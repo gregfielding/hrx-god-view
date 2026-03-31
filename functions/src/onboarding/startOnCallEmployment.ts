@@ -266,11 +266,21 @@ export const startOnCallEmployment = onCall({ cors: true }, async (request) => {
     throw new HttpsError("permission-denied", "Insufficient permissions to start on-call employment");
   }
 
-  return runStartOnCallEmploymentFlow({
-    ...data,
-    initiatedByUid: request.auth.uid,
-    authForAccusource: { token: request.auth.token as Record<string, unknown> | undefined },
-  });
+  try {
+    return await runStartOnCallEmploymentFlow({
+      ...data,
+      initiatedByUid: request.auth.uid,
+      authForAccusource: { token: request.auth.token as Record<string, unknown> | undefined },
+    });
+  } catch (e: unknown) {
+    if (e instanceof HttpsError) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.error("startOnCallEmployment failed", { message: msg, stack: e instanceof Error ? e.stack : undefined });
+    throw new HttpsError(
+      "failed-precondition",
+      msg.length > 320 ? `${msg.slice(0, 320)}…` : msg || "Could not start on-call employment"
+    );
+  }
 });
 
 /**
@@ -290,10 +300,20 @@ export const startOnCallOnboarding = onCall({ cors: true }, async (request) => {
     throw new HttpsError("permission-denied", "Insufficient permissions to start on-call onboarding");
   }
 
-  return runStartOnCallEmploymentFlow({
-    ...data,
-    initiatedByUid: request.auth.uid,
-    authForAccusource: { token: request.auth.token as Record<string, unknown> | undefined },
-    enforceOnCallOnboardingPolicy: true,
-  });
+  try {
+    return await runStartOnCallEmploymentFlow({
+      ...data,
+      initiatedByUid: request.auth.uid,
+      authForAccusource: { token: request.auth.token as Record<string, unknown> | undefined },
+      enforceOnCallOnboardingPolicy: true,
+    });
+  } catch (e: unknown) {
+    if (e instanceof HttpsError) throw e;
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.error("startOnCallOnboarding failed", { message: msg, stack: e instanceof Error ? e.stack : undefined });
+    throw new HttpsError(
+      "failed-precondition",
+      msg.length > 320 ? `${msg.slice(0, 320)}…` : msg || "Could not start on-call employment"
+    );
+  }
 });

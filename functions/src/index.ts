@@ -23,6 +23,7 @@ import type { TestResult } from './testFirestoreTriggers';
 import { logger } from './utils/logger';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from './twilio';
+import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 import { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
 import {
@@ -259,6 +260,7 @@ export {
   updateEntityEmploymentStatus,
 } from './onboarding/workerOnboardingPipeline';
 export { startOnCallEmployment, startOnCallOnboarding } from './onboarding/startOnCallEmployment';
+export { resendPayrollOnboardingInvite } from './onboarding/resendPayrollOnboardingInvite';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -3952,7 +3954,7 @@ async function sendBroadcastInternal(broadcastId: string, recipients: any[]) {
     
     await batch.commit();
     
-    // Send SMS to recipients with verified phones
+    // Send SMS to recipients with a dialable number (OTP phone verification not required)
     let smsSent = 0;
     let smsFailed = 0;
     
@@ -3963,9 +3965,9 @@ async function sendBroadcastInternal(broadcastId: string, recipients: any[]) {
           try {
             const userDoc = await db.doc(`users/${recipient.id}`).get();
             const userData = userDoc.data();
-            
-            if (userData?.phoneE164 && userData?.phoneVerified && userData?.smsOptIn !== false) {
-              return { ...recipient, phoneE164: userData.phoneE164 };
+            const phoneE164 = normalizeUserPhoneToE164(userData);
+            if (phoneE164 && userData?.smsOptIn !== false) {
+              return { ...recipient, phoneE164 };
             }
             return null;
           } catch (err) {

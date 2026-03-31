@@ -79,9 +79,9 @@ export function isOnboardingPathRowBlocker(row: EmploymentOnboardingRow): boolea
 }
 
 const MISSING_TEMPWORKS_ROW_LABEL_ADMIN =
-  'Waiting for TempWorks data in HRX — verification may be required after it appears.';
+  'TempWorks is not wired into HRX by API — confirm work in TempWorks, then mark complete on this card when done.';
 const MISSING_TEMPWORKS_ROW_LABEL_WORKER =
-  'Waiting for your hiring team’s systems to sync — this will update when TempWorks data appears in HRX.';
+  'Your hiring team updates this when TempWorks steps are finished — check back after they record progress in HRX.';
 
 function getPipelineSteps(pipeline: WorkerOnboardingPipeline | null) {
   return Array.isArray(pipeline?.steps) ? pipeline!.steps! : [];

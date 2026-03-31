@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Button, Stack } from '@mui/material';
+import { Alert, Button, Stack, Typography } from '@mui/material';
 import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
 import type { EmploymentEntityKey, EmploymentEntityOverview } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
@@ -19,6 +19,8 @@ export interface EmploymentEntityPanelProps {
   tenantId: string;
   tenantSlug?: string;
   onRefresh?: () => void;
+  /** Admin UserProfile: worker’s display name for third-person onboarding copy. */
+  workerDisplayName?: string | null;
   /** Recruiter/admin: show “Start on-call employment” for the active entity tab. */
   allowStartOnCallEmployment?: boolean;
   /** Forwarded to onboarding path card; see `resolveEmploymentOnboardingPathDebugMode`. */
@@ -34,17 +36,26 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   onRefresh,
   onboardingPathDebugMode,
   allowStartOnCallEmployment,
+  workerDisplayName,
 }) => {
   const [onCallOpen, setOnCallOpen] = useState(false);
   const showEmptyExplainer = !overview.entityEmployment && !overview.workerOnboarding;
+  const onCallPoolActive = overview.entityEmployment?.employmentEntryMode === 'on_call_pool';
+  const showStartOnCallButton = Boolean(allowStartOnCallEmployment && !onCallPoolActive);
 
   const actionContext: EmploymentV2ActionResolutionContext = useMemo(() => {
     const firstAssign = overview.assignments?.[0]?.assignmentId ?? null;
+    const entityDisplayName =
+      overview.headerEntityName?.trim() ||
+      overview.entityEmployment?.entityName?.trim() ||
+      null;
     return {
       userId: profileUserId,
       tenantId,
       tenantSlug,
       viewer: 'recruiter',
+      workerDisplayName: workerDisplayName?.trim() || null,
+      entityDisplayName,
       entityEmploymentFirestoreId: overview.entityEmployment?.id ?? null,
       payrollPortalUrl:
         overview.systems.payroll?.entityOnboardingUrl ||
@@ -53,11 +64,22 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         null,
       everifyAssignmentId: firstAssign,
     };
-  }, [profileUserId, tenantId, tenantSlug, overview]);
+  }, [profileUserId, tenantId, tenantSlug, overview, workerDisplayName]);
 
   return (
     <Stack spacing={0}>
-      {allowStartOnCallEmployment ? (
+      {allowStartOnCallEmployment && onCallPoolActive ? (
+        <Alert severity="info" sx={{ mb: 1 }}>
+          <Typography variant="body2" component="div">
+            On-call onboarding is already open for this entity. Work Authorization rows often stay on “waiting for
+            TempWorks” until data syncs into HRX or you use verification where the product exposes it — there is no
+            separate button on this line.             Payroll invites are logged under the profile <strong>Messages</strong> tab (use <strong>Resend invite</strong>{' '}
+            on the row, or <strong>Resend payroll invite</strong> under Systems summary). If SMS shows failed, check the
+            worker’s phone number and carrier deliverability.
+          </Typography>
+        </Alert>
+      ) : null}
+      {showStartOnCallButton ? (
         <>
           <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
             <Button
@@ -95,7 +117,12 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
         actionContext={actionContext}
         onActionComplete={onRefresh}
       />
-      <EmploymentSystemsSummaryCard overview={overview} />
+      <EmploymentSystemsSummaryCard
+        overview={overview}
+        tenantId={tenantId}
+        profileUserId={profileUserId}
+        onPayrollResendComplete={() => onRefresh?.()}
+      />
       <EmploymentBlockersCard
         blockers={overview.hasOpenOnboardingDemand ? overview.blockers : []}
       />

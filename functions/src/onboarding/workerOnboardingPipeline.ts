@@ -7,6 +7,16 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+try {
+  db.settings({ ignoreUndefinedProperties: true });
+} catch {
+  // settings() applies once per process; safe if another module configured Firestore first
+}
+
+/** Firestore rejects FieldValue.serverTimestamp() inside array elements (e.g. steps[].updatedAt). */
+function timestampForNestedDoc(): admin.firestore.Timestamp {
+  return admin.firestore.Timestamp.now();
+}
 
 type PipelineStepId =
   | "i9"
@@ -272,6 +282,7 @@ export async function syncEverifyStatusToPipelineAndEmployment(args: {
   const pipelineRef = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
   const employmentRef = db.doc(`tenants/${tenantId}/entity_employments/${pipelineId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const nestedTs = timestampForNestedDoc();
   const stepStatus = mapEverifyCaseStatusToStepStatus(caseStatus);
 
   const pipelineSnap = await pipelineRef.get();
@@ -280,7 +291,7 @@ export async function syncEverifyStatusToPipelineAndEmployment(args: {
     const steps = Array.isArray(data.steps) ? data.steps : [];
     const nextSteps: PipelineStep[] = steps.map((step: any) =>
       step.id === "e_verify"
-        ? { ...step, status: stepStatus, updatedAt: now, updatedBy: "everify_sync" }
+        ? { ...step, status: stepStatus, updatedAt: nestedTs, updatedBy: "everify_sync" }
         : step
     );
     const pipelineStatus = computePipelineStatus(nextSteps);
@@ -348,6 +359,7 @@ export async function ensureWorkerOnboardingPipeline(args: {
   const ref = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
   const employmentRef = db.doc(`tenants/${tenantId}/entity_employments/${pipelineId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const nestedNow = timestampForNestedDoc();
 
   const userSnap = await db.doc(`users/${userId}`).get();
   const userData = userSnap.exists ? userSnap.data() || {} : {};
@@ -388,7 +400,7 @@ export async function ensureWorkerOnboardingPipeline(args: {
           title: step.title,
           status: "not_started" as const,
           applicability: computeStepApplicability(entityContext.entityData, step.id),
-          updatedAt: now,
+          updatedAt: nestedNow,
           updatedBy: triggeredByUid,
         };
         return milestones?.length ? { ...base, milestones } : { ...base };
@@ -595,6 +607,7 @@ export const updateWorkerOnboardingStepStatus = onCall({ cors: true }, async (re
 
   const ref = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const nestedNow = timestampForNestedDoc();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -610,7 +623,7 @@ export const updateWorkerOnboardingStepStatus = onCall({ cors: true }, async (re
         ? {
             ...step,
             status,
-            updatedAt: now,
+            updatedAt: nestedNow,
             updatedBy: request.auth!.uid,
           }
         : step
@@ -675,6 +688,7 @@ export const updateWorkerOnboardingStepPackage = onCall({ cors: true }, async (r
 
   const ref = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const nestedNow = timestampForNestedDoc();
 
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -692,7 +706,7 @@ export const updateWorkerOnboardingStepPackage = onCall({ cors: true }, async (r
         selectedPackageLabel: packageLabel ?? undefined,
         workflowStatus: hasPackage ? "package_selected" : (step.workflowStatus ?? "pending_package"),
         status: hasPackage ? "in_progress" : step.status,
-        updatedAt: now,
+        updatedAt: nestedNow,
         updatedBy: request.auth!.uid,
       };
     });
@@ -741,6 +755,7 @@ export const updateWorkerOnboardingStepWorkflow = onCall({ cors: true }, async (
 
   const ref = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const nestedNow = timestampForNestedDoc();
   const uid = request.auth.uid;
 
   await db.runTransaction(async (tx) => {
@@ -756,14 +771,14 @@ export const updateWorkerOnboardingStepWorkflow = onCall({ cors: true }, async (
         ...step,
         workflowStatus,
         status: workflowStatusToStepStatus(workflowStatus),
-        updatedAt: now,
+        updatedAt: nestedNow,
         updatedBy: uid,
       };
       if (note !== undefined) updates.note = note ?? undefined;
       if (failureReason !== undefined) updates.failureReason = failureReason ?? undefined;
-      if (workflowStatus === "ordered") updates.orderedAt = now;
-      if (workflowStatus === "skipped" || workflowStatus === "canceled") updates.skippedAt = now;
-      if (workflowStatus === "complete") updates.completedAt = now;
+      if (workflowStatus === "ordered") updates.orderedAt = nestedNow;
+      if (workflowStatus === "skipped" || workflowStatus === "canceled") updates.skippedAt = nestedNow;
+      if (workflowStatus === "complete") updates.completedAt = nestedNow;
       return updates;
     });
     const pipelineStatus = computePipelineStatus(nextSteps);
@@ -795,6 +810,7 @@ export const updateWorkerOnboardingStepMilestone = onCall({ cors: true }, async 
 
   const ref = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
+  const nestedNow = timestampForNestedDoc();
   const uid = request.auth.uid;
 
   await db.runTransaction(async (tx) => {
@@ -811,11 +827,13 @@ export const updateWorkerOnboardingStepMilestone = onCall({ cors: true }, async 
           ? {
               ...m,
               completed: completed ?? !m.completed,
-              ...(completed ? { completedAt: now, completedBy: uid } : { completedAt: undefined, completedBy: undefined }),
+              ...(completed
+                ? { completedAt: nestedNow, completedBy: uid }
+                : { completedAt: null, completedBy: null }),
             }
           : m
       );
-      return { ...step, milestones, updatedAt: now, updatedBy: uid };
+      return { ...step, milestones, updatedAt: nestedNow, updatedBy: uid };
     });
     tx.set(ref, { steps: nextSteps, updatedAt: now, lastUpdatedBy: uid }, { merge: true });
   });

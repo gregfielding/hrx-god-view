@@ -1,15 +1,18 @@
 /**
- * Admin-only verification for TempWorks external onboarding steps (worker_onboarding.externalOnboardingSteps).
+ * Admin-only completion for TempWorks external onboarding steps (worker_onboarding.externalOnboardingSteps).
+ * TempWorks has no API — recruiters mark milestones complete in HRX after confirming work in TempWorks.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Button,
+  Checkbox,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  FormControlLabel,
   Stack,
   TextField,
   Typography,
@@ -21,6 +24,7 @@ import type { EmploymentEntityKey, WorkerOnboardingPipeline } from './employment
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
 import type { ExternalOnboardingStepStatus } from '../../../../types/externalOnboardingSteps';
 import {
+  formatVerifiedAtDisplayForExternalRecord,
   isExternalOnboardingStepVerificationUiKey,
   isExternalOnboardingStepVerifiedComplete,
   parseExternalOnboardingSteps,
@@ -70,6 +74,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [optimisticChecked, setOptimisticChecked] = useState(false);
 
   const record = useMemo(() => {
     if (!stepKey || !isExternalOnboardingStepVerificationUiKey(stepKey)) return undefined;
@@ -78,6 +83,12 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
   }, [stepKey, workerOnboarding?.externalOnboardingSteps]);
 
   const status: ExternalOnboardingStepStatus | undefined = record?.status;
+  const verified = record != null && isExternalOnboardingStepVerifiedComplete(record);
+  const verifiedAtDisplay = formatVerifiedAtDisplayForExternalRecord(record);
+
+  useEffect(() => {
+    if (verified) setOptimisticChecked(false);
+  }, [verified]);
 
   if (suppress || ctx.viewer !== 'recruiter') {
     return null;
@@ -92,20 +103,27 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
     record.status === 'completed' &&
     !isExternalOnboardingStepVerifiedComplete(record);
 
-  const canVerify =
+  const canManualOrApiVerify =
     orphanCompleted ||
     status === 'worker_completed_external' ||
     status === 'pending_admin_verification' ||
-    status === 'invite_sent';
+    status === 'invite_sent' ||
+    status === 'not_started' ||
+    status === 'error' ||
+    status === undefined;
+
+  const canVerifyAction = !verified && canManualOrApiVerify;
 
   const canRequestCorrection =
     status === 'worker_completed_external' || status === 'pending_admin_verification';
 
   const canMarkError =
     orphanCompleted ||
+    status === 'not_started' ||
+    status === 'error' ||
     Boolean(status && !['not_started', 'completed'].includes(status));
 
-  const showBlock = canVerify || canRequestCorrection || canMarkError;
+  const showBlock = verified || canVerifyAction || canRequestCorrection || canMarkError;
 
   if (!showBlock) {
     return null;
@@ -130,6 +148,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
       });
       setDialogMode(null);
       setNote('');
+      setOptimisticChecked(false);
       onComplete?.();
     } catch (e: unknown) {
       setErr(friendlyExternalVerificationError(e));
@@ -140,7 +159,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
 
   const dialogTitle =
     dialogMode === 'verify'
-      ? 'Verify & complete'
+      ? 'Mark complete in HRX'
       : dialogMode === 'correction'
         ? 'Request correction'
         : dialogMode === 'error'
@@ -149,20 +168,61 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
 
   const noteRequired = dialogMode === 'correction' || dialogMode === 'error';
 
+  const checkboxChecked = verified || optimisticChecked;
+
   return (
     <Box sx={{ mt: 1.25, pt: 1.25, borderTop: 1, borderColor: 'divider' }}>
       <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.25 }}>
-        C1 verification (TempWorks)
+        TempWorks milestone (manual in HRX)
       </Typography>
-      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.4 }}>
-        This confirms completion in TempWorks.
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
+        There is no TempWorks API in HRX. After you confirm this step in TempWorks, record it here so the worker and
+        team see progress. Several checklist lines can share one TempWorks milestone — marking complete updates all of
+        them.
       </Typography>
-      <Stack direction="row" flexWrap="wrap" gap={0.75} useFlexGap>
-        {canVerify ? (
-          <Button size="small" variant="contained" color="primary" onClick={() => setDialogMode('verify')}>
-            Verify & complete
-          </Button>
-        ) : null}
+
+      <FormControlLabel
+        sx={{ alignItems: 'flex-start', mr: 0, mb: 0.5 }}
+        control={
+          <Checkbox
+            checked={checkboxChecked}
+            disabled={verified || loading}
+            color={verified ? 'success' : 'primary'}
+            onChange={(_, checked) => {
+              if (verified || loading) return;
+              if (checked) {
+                setOptimisticChecked(true);
+                setDialogMode('verify');
+              } else {
+                setOptimisticChecked(false);
+              }
+            }}
+          />
+        }
+        label={
+          <Typography variant="body2" color="text.secondary" sx={{ pt: 0.5, lineHeight: 1.45 }}>
+            {verified ? (
+              <>
+                <Box component="span" sx={{ fontWeight: 600, color: 'success.main' }}>
+                  Marked complete in HRX
+                </Box>
+                {verifiedAtDisplay ? (
+                  <>
+                    {' '}
+                    · {verifiedAtDisplay}
+                  </>
+                ) : null}
+              </>
+            ) : (
+              <>
+                Mark complete in HRX (check after confirming in TempWorks)
+              </>
+            )}
+          </Typography>
+        }
+      />
+
+      <Stack direction="row" flexWrap="wrap" gap={0.75} useFlexGap sx={{ mt: 0.5 }}>
         {canRequestCorrection ? (
           <Button size="small" variant="outlined" color="warning" onClick={() => setDialogMode('correction')}>
             Request correction
@@ -175,12 +235,22 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
         ) : null}
       </Stack>
 
-      <Dialog open={dialogMode != null} onClose={() => !loading && setDialogMode(null)} maxWidth="sm" fullWidth>
+      <Dialog
+        open={dialogMode != null}
+        onClose={() => {
+          if (!loading) {
+            setDialogMode(null);
+            setOptimisticChecked(verified);
+          }
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
         <DialogTitle>{dialogTitle}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {dialogMode === 'verify'
-              ? 'Confirms completion in TempWorks. Optional note (e.g. “Confirmed in TempWorks”).'
+              ? 'Records that this TempWorks milestone is done. Optional note (e.g. what you verified in TempWorks).'
               : dialogMode === 'correction'
                 ? 'Sends the step back to the worker flow. A short note is required.'
                 : 'Flags the step for internal review. A note is required.'}
@@ -201,7 +271,15 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDialogMode(null)} disabled={loading}>
+          <Button
+            onClick={() => {
+              if (!loading) {
+                setDialogMode(null);
+                setOptimisticChecked(verified);
+              }
+            }}
+            disabled={loading}
+          >
             Cancel
           </Button>
           <Button

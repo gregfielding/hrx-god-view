@@ -74,6 +74,48 @@ async function getTemplateById(tenantId: string, templateId: string): Promise<Me
   } as MessageTemplate;
 }
 
+/**
+ * `resolveTemplateVariables` returns a fixed shape and drops payroll/on-call fields that callers pass only on
+ * `args.context`. Merge those into the render map so automation templates get {{entityName}}, URLs, etc.
+ */
+const AUTOMATION_CONTEXT_TEMPLATE_KEYS = [
+  'entityName',
+  'hiringEntityId',
+  'hiringEntityName',
+  'payrollOnboardingUrl',
+  'payrollSignupUrl',
+  'payrollPortalLoginUrl',
+  'payrollProvider',
+  'message',
+  'jobTitle',
+  'correlationKey',
+  'entityKey',
+  'onCallEmployment',
+  'contextLabel',
+] as const;
+
+function mergeDispatchContextForTemplateRender(
+  resolved: Record<string, unknown>,
+  ctx: Record<string, any>
+): Record<string, any> {
+  const merged: Record<string, any> = { ...resolved };
+  for (const k of AUTOMATION_CONTEXT_TEMPLATE_KEYS) {
+    const v = ctx[k];
+    if (v === undefined || v === null) continue;
+    merged[k] = typeof v === 'string' ? v : String(v);
+  }
+  const entityNamed = String(merged.entityName || merged.hiringEntityName || '').trim();
+  if (entityNamed && !String(merged.companyName || '').trim()) {
+    merged.companyName = entityNamed;
+  }
+  const payrollUrl = String(merged.payrollOnboardingUrl || merged.payrollSignupUrl || '').trim();
+  if (payrollUrl) {
+    if (merged.link == null || merged.link === '') merged.link = payrollUrl;
+    if (merged.url == null || merged.url === '') merged.url = payrollUrl;
+  }
+  return merged;
+}
+
 async function buildVariables(
   args: DispatchSystemMessageArgs,
   rule: MessageAutomationRule,
@@ -96,9 +138,10 @@ async function buildVariables(
   };
 
   const resolved = await resolveTemplateVariables(variableContext);
-  const rendered = await renderTemplate(template, resolved, args.tenantId);
+  const forRender = mergeDispatchContextForTemplateRender(resolved, ctx);
+  const rendered = await renderTemplate(template, forRender, args.tenantId);
   const rawSubject = template.subject || template.name || rule.name || '';
-  const _subject = rawSubject ? renderStringWithVariables(rawSubject, resolved) : '';
+  const _subject = rawSubject ? renderStringWithVariables(rawSubject, forRender) : '';
   return {
     ...resolved,
     ...ctx,

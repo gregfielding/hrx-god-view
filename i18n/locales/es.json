@@ -169,6 +169,7 @@
     "phoneVerification": "Verificación de teléfono",
     "verified": "Verificado",
     "notVerified": "No verificado",
+    "phoneVerificationSmsNote": "La verificación es para la seguridad de la cuenta. Los mensajes de trabajo pueden enviarse al número de tu perfil si las notificaciones por SMS están activadas.",
     "resetPasswordEmailHelp": "Envía un correo seguro para restablecer tu contraseña.",
     "sectionPersonalDetailsTitle": "Datos personales",
     "sectionPersonalDetailsDescription": "Actualiza tu nombre, correo, teléfono y foto de perfil.",

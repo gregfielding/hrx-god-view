@@ -2,6 +2,7 @@ import * as admin from 'firebase-admin';
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { logger } from 'firebase-functions/v2';
 import { sendLegacyShiftMessage } from './messaging/legacyMessageHelpers';
+import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 
 const db = admin.firestore();
 
@@ -137,9 +138,9 @@ async function notifyShiftWorkers(
       try {
         const userDoc = await db.doc(`users/${userId}`).get();
         const userData = userDoc.data();
-        
-        if (!userData?.phoneE164 || !userData?.phoneVerified) {
-          logger.info(`User ${userId} has no verified phone, skipping SMS for shift ${shiftId}`);
+        const phoneE164 = normalizeUserPhoneToE164(userData);
+        if (!phoneE164) {
+          logger.info(`User ${userId} has no dialable phone on file, skipping SMS for shift ${shiftId}`);
           continue;
         }
 
@@ -167,7 +168,7 @@ async function notifyShiftWorkers(
           const result = await sendLegacyShiftMessage({
             tenantId,
             userId,
-            phoneE164: userData.phoneE164,
+            phoneE164,
             message,
             messageTypeId,
             source: `shift_${notificationType}`,
@@ -176,9 +177,9 @@ async function notifyShiftWorkers(
           });
           
           if (result.success) {
-            logger.info(`SMS sent for shift ${notificationType} ${shiftId} to ${userData.phoneE164}`);
+            logger.info(`SMS sent for shift ${notificationType} ${shiftId} to ${phoneE164}`);
           } else {
-            logger.warn(`SMS failed for shift ${notificationType} ${shiftId} to ${userData.phoneE164}: ${result.error}`);
+            logger.warn(`SMS failed for shift ${notificationType} ${shiftId} to ${phoneE164}: ${result.error}`);
           }
         }
       } catch (userError: any) {

@@ -633,6 +633,9 @@ const WorkerProfileSection: React.FC = () => {
                   <Typography variant="body2" color="text.secondary">
                     {userDoc?.phoneVerified ? t('profile.verified') : t('profile.notVerified')}
                   </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.75, maxWidth: 480 }}>
+                    {t('profile.phoneVerificationSmsNote')}
+                  </Typography>
                 </Box>
               </Stack>
             </CardContent>

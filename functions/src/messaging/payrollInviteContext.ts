@@ -114,6 +114,11 @@ export function shouldSkipAutomatedPayrollInvite(data: admin.firestore.DocumentD
   return false;
 }
 
+/** Admin manual resend: only block when payroll is already satisfied (completed / account ready). */
+export function shouldBlockPayrollInviteResend(data: admin.firestore.DocumentData | undefined): boolean {
+  return isWorkerPayrollSatisfied(data);
+}
+
 export async function loadEntityPayrollInviteContext(
   tenantId: string,
   hiringEntityId: string,

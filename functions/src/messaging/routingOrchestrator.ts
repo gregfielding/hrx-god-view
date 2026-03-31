@@ -297,6 +297,30 @@ async function shouldUseChannel(
       return { allowed: true };
     }
 
+    /**
+     * Tenant message automation (`dispatchSystemMessage`) often uses template `messageTypeId` = direct_message with
+     * `metadata.triggerKey`. Do not require `phoneVerified` — only STOP/opt-out, smsOptIn, master SMS toggle, tenant
+     * channel policy, and a dialable number (same bar as payroll / assignment transactional SMS).
+     */
+    if (
+      context.messageTypeId === 'direct_message' &&
+      typeof context.metadata?.triggerKey === 'string' &&
+      context.metadata.triggerKey.length > 0 &&
+      context.source !== 'recruiter'
+    ) {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone?.trim()) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      if (!smsOptIn) {
+        return { allowed: false, reason: 'SMS consent not given' };
+      }
+      if (!notificationSettings.sms.enabled) {
+        return { allowed: false, reason: 'SMS disabled in notification settings' };
+      }
+      return { allowed: true };
+    }
+
     // Assignment-created: recruiter explicitly offered position - allow SMS if user has phone (relax verification)
     if (context.messageTypeId === 'assignment_created') {
       const phone = userData.phoneE164 || userData.phone;
@@ -360,7 +384,7 @@ async function shouldUseChannel(
         return { allowed: false, reason: `SMS disabled for message type ${context.messageTypeId}` };
       }
       
-      // Require a phone number, but do not require phone verification for internal/direct SMS.
+      // Require a phone number. `phoneVerified` is never required here (OTP verification is optional for delivery).
       const phone = userData.phoneE164 || userData.phone;
       if (!phone) {
         return { allowed: false, reason: 'Recipient has no phone number' };

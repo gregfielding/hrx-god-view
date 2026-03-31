@@ -236,6 +236,15 @@ export interface EmploymentV2ActionResolutionContext {
    * Employment V2 on the admin profile should pass `recruiter`.
    */
   viewer: 'recruiter' | 'worker';
+  /**
+   * Admin profile: profile user’s name for third-person copy (e.g. “Who is handling this: Gregory Fielding”).
+   * Omit on worker-facing surfaces; falls back to “The worker”.
+   */
+  workerDisplayName?: string | null;
+  /**
+   * Hiring entity shown on this tab (`overview.headerEntityName`). Used for recruiter-owned rows in admin UI.
+   */
+  entityDisplayName?: string | null;
   /** `entity_employments` document id for C1 my-employment detail route. */
   entityEmploymentFirestoreId?: string | null;
   payrollPortalUrl?: string | null;
