@@ -127,9 +127,11 @@ function AssignmentRows({
 const EmploymentAssignmentsCard: React.FC<EmploymentAssignmentsCardProps> = ({
   assignments,
   hasOpenOnboardingDemand,
+  defaultListExpanded = true,
 }) => {
   const navigate = useNavigate();
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [listOpen, setListOpen] = useState(defaultListExpanded);
 
   const live = assignments.filter((a) => !isAssignmentTerminalNormalized(a.status));
   const past = assignments.filter((a) => isAssignmentTerminalNormalized(a.status));
