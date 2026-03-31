@@ -627,6 +627,8 @@ export interface DeriveWorkflowStepStatusArgs {
    * entity worker type → employment fallback → `unknown`). Does not add path rows.
    */
   externalOnboardingWorkerType: ExternalOnboardingWorkerTypeNorm;
+  /** Wording for TempWorks-backed rows; machine status is unchanged. Default `admin`. */
+  labelAudience?: 'admin' | 'worker';
 }
 
 export interface DerivedWorkflowStepStatus {

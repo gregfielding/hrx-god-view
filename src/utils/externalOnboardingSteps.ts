@@ -91,6 +91,12 @@ function hasCorrectionReturn(record: ExternalOnboardingStepRecord): boolean {
   return record.status === 'invite_sent' && record.correctionRequestedAt != null;
 }
 
+/** `completed` in Firestore only counts as done in HRX when C1 verification wrote `verifiedAt`. */
+export function isExternalOnboardingStepVerifiedComplete(record: ExternalOnboardingStepRecord): boolean {
+  if (record.status !== 'completed') return false;
+  return tsToIso(record.verifiedAt) != null;
+}
+
 /**
  * Maps external lifecycle → Employment V2 path row status + label.
  * Worker UI: pass `pathLabelAudience: 'worker'` into `buildOnboardingPathFromSettings`, or call this with `'worker'`.
@@ -110,6 +116,11 @@ export function mapExternalOnboardingStepToPathStatus(
 
   switch (record.status) {
     case 'completed':
+      if (!isExternalOnboardingStepVerifiedComplete(record)) {
+        return audience === 'worker'
+          ? { status: 'in_progress', statusLabel: 'Submitted — waiting on your hiring team' }
+          : { status: 'in_progress', statusLabel: 'Verification pending in HRX' };
+      }
       return { status: 'completed', statusLabel: 'Completed' };
     case 'error':
       return audience === 'worker'

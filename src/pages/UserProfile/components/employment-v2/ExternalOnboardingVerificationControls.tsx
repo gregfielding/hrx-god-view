@@ -22,10 +22,29 @@ import type { EmploymentV2ActionResolutionContext } from '../../../../utils/empl
 import type { ExternalOnboardingStepStatus } from '../../../../types/externalOnboardingSteps';
 import {
   isExternalOnboardingStepVerificationUiKey,
+  isExternalOnboardingStepVerifiedComplete,
   parseExternalOnboardingSteps,
 } from '../../../../utils/externalOnboardingSteps';
 
 const updateExternalOnboardingStepVerification = httpsCallable(functions, 'updateExternalOnboardingStepVerification');
+
+function friendlyExternalVerificationError(err: unknown): string {
+  const o = err as { code?: string; message?: string } | undefined;
+  const code = String(o?.code ?? '');
+  if (code.includes('permission-denied')) {
+    return "You don't have permission to update this step. Ask a tenant admin if you need access.";
+  }
+  if (code.includes('failed-precondition')) {
+    return 'That action is not available for this step right now. Refresh the page and try again.';
+  }
+  if (code.includes('invalid-argument')) {
+    return 'Something was invalid. Refresh the page and try again.';
+  }
+  if (code.includes('not-found')) {
+    return 'No onboarding record found for this worker and entity.';
+  }
+  return 'Update failed. Please try again.';
+}
 
 export interface ExternalOnboardingVerificationControlsProps {
   ctx: EmploymentV2ActionResolutionContext;
@@ -68,7 +87,13 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
     return null;
   }
 
+  const orphanCompleted =
+    record != null &&
+    record.status === 'completed' &&
+    !isExternalOnboardingStepVerifiedComplete(record);
+
   const canVerify =
+    orphanCompleted ||
     status === 'worker_completed_external' ||
     status === 'pending_admin_verification' ||
     status === 'invite_sent';
@@ -76,7 +101,9 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
   const canRequestCorrection =
     status === 'worker_completed_external' || status === 'pending_admin_verification';
 
-  const canMarkError = Boolean(status && !['not_started', 'completed'].includes(status));
+  const canMarkError =
+    orphanCompleted ||
+    Boolean(status && !['not_started', 'completed'].includes(status));
 
   const showBlock = canVerify || canRequestCorrection || canMarkError;
 
@@ -105,13 +132,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
       setNote('');
       onComplete?.();
     } catch (e: unknown) {
-      const det =
-        e && typeof e === 'object' && 'message' in e
-          ? String((e as { message?: string }).message)
-          : e instanceof Error
-            ? e.message
-            : 'Update failed';
-      setErr(det);
+      setErr(friendlyExternalVerificationError(e));
     } finally {
       setLoading(false);
     }
@@ -130,8 +151,11 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
 
   return (
     <Box sx={{ mt: 1.25, pt: 1.25, borderTop: 1, borderColor: 'divider' }}>
-      <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.75 }}>
+      <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.25 }}>
         C1 verification (TempWorks)
+      </Typography>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.4 }}>
+        This confirms completion in TempWorks.
       </Typography>
       <Stack direction="row" flexWrap="wrap" gap={0.75} useFlexGap>
         {canVerify ? (

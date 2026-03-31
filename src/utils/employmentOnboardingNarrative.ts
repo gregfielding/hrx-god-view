@@ -19,7 +19,7 @@ import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { ExternalOnboardingStepRecord } from '../types/externalOnboardingSteps';
-import { parseExternalOnboardingSteps } from './externalOnboardingSteps';
+import { isExternalOnboardingStepVerifiedComplete, parseExternalOnboardingSteps } from './externalOnboardingSteps';
 
 const FALLBACK_ADMIN = 'Not started yet — no detailed activity recorded.';
 const FALLBACK_WORKER = 'Nothing to do here yet.';
@@ -1182,7 +1182,7 @@ function narrativeForExternalOnboarding(
           : withWhen('Correction requested by C1 Staffing', correctionAt),
     });
   }
-  if (verifiedAt && rec.status === 'completed') {
+  if (isExternalOnboardingStepVerifiedComplete(rec) && verifiedAt) {
     events.push({
       type: 'hiring_team',
       timestamp: verifiedAt,
@@ -1204,11 +1204,16 @@ function narrativeForExternalOnboarding(
   const note = String(rec.verificationNote || '').trim();
 
   let summary: string;
-  if (rec.status === 'completed' && verifiedAt) {
+  if (rec.status === 'completed' && isExternalOnboardingStepVerifiedComplete(rec) && verifiedAt) {
     summary =
       a === 'worker'
         ? `Verified by C1 Staffing on ${formatWhen(verifiedAt)}.`
         : `Verified by C1 Staffing on ${formatWhen(verifiedAt)}.`;
+  } else if (rec.status === 'completed' && !isExternalOnboardingStepVerifiedComplete(rec)) {
+    summary =
+      a === 'worker'
+        ? 'Submitted — waiting on your hiring team.'
+        : 'Marked complete in data — C1 verification in HRX is still pending.';
   } else if (rec.correctionRequestedAt != null && rec.status === 'invite_sent' && correctionAt) {
     const base =
       a === 'worker'
@@ -1233,7 +1238,13 @@ function narrativeForExternalOnboarding(
     summary = narrativeFallbackFromRow(row, ctx).summary;
   }
 
-  if (note && a === 'admin' && (rec.status === 'error' || rec.status === 'invite_sent' || rec.status === 'completed')) {
+  if (
+    note &&
+    a === 'admin' &&
+    (rec.status === 'error' ||
+      rec.status === 'invite_sent' ||
+      (rec.status === 'completed' && isExternalOnboardingStepVerifiedComplete(rec)))
+  ) {
     summary = `${summary} Note: ${note}`;
   }
 

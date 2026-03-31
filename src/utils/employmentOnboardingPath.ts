@@ -25,7 +25,12 @@ import type { ExternalOnboardingStepKey } from '../types/externalOnboardingSteps
 import { getExternalOnboardingStepDefinition } from '../types/externalOnboardingSteps';
 import type { EverifyCaseNarrativeBrief } from './employmentOnboardingNarrative';
 import { deriveWorkflowStepStatus, getWorkflowStepRuntimeDefinition } from './employmentOnboardingStepRuntimeMap';
-import { parseExternalOnboardingSteps } from './externalOnboardingSteps';
+import {
+  externalStepAppliesToWorkerType,
+  externalStepKeyForWorkflowStep,
+  isExternalOnboardingStepVerifiedComplete,
+  parseExternalOnboardingSteps,
+} from './externalOnboardingSteps';
 import { resolveEffectiveEmploymentWorkerType } from './employmentWorkerTypeResolution';
 import {
   ONBOARDING_WORKFLOW_STEPS,
@@ -72,6 +77,11 @@ export function isOnboardingPathRowBlocker(row: EmploymentOnboardingRow): boolea
   if (isOnboardingPathRowDone(row.status)) return false;
   return Boolean(row.required && row.blocking);
 }
+
+const MISSING_TEMPWORKS_ROW_LABEL_ADMIN =
+  'Waiting for TempWorks data in HRX — verification may be required after it appears.';
+const MISSING_TEMPWORKS_ROW_LABEL_WORKER =
+  'Waiting for your hiring team’s systems to sync — this will update when TempWorks data appears in HRX.';
 
 function getPipelineSteps(pipeline: WorkerOnboardingPipeline | null) {
   return Array.isArray(pipeline?.steps) ? pipeline!.steps! : [];
@@ -338,17 +348,57 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
       const required = pStep ? applicability !== 'not_required' : runtimeDef.defaultRequired;
       // blocking: catalog heuristic defaultBlocking; any error state gates readiness (strict blocker rule).
       let blocking = runtimeDef.defaultBlocking || derived.status === 'error';
-      const extStepKey = derived.sourceRef?.externalStepKey as ExternalOnboardingStepKey | undefined;
+      const workflowExternalKey = externalStepKeyForWorkflowStep(def.id);
+      const extStepKey = (workflowExternalKey ??
+        (derived.sourceRef?.externalStepKey as ExternalOnboardingStepKey | undefined)) as
+        | ExternalOnboardingStepKey
+        | undefined;
       const extStepRec =
         extStepKey && externalOnboardingSteps ? externalOnboardingSteps[extStepKey] : undefined;
       const extStepDef = extStepKey ? getExternalOnboardingStepDefinition(extStepKey) : undefined;
+      const externalAppliesToWorker =
+        extStepKey != null && externalStepAppliesToWorkerType(extStepKey, externalOnboardingWorkerType);
+      const missingTempWorksRow =
+        Boolean(
+          required &&
+            extStepDef?.adminVerificationRequired &&
+            extStepKey &&
+            externalAppliesToWorker &&
+            !extStepRec
+        );
       if (
         required &&
         extStepDef?.adminVerificationRequired &&
         extStepRec?.externalSource === 'tempworks' &&
-        extStepRec.status !== 'completed'
+        !isExternalOnboardingStepVerifiedComplete(extStepRec)
       ) {
         blocking = true;
+      }
+      if (missingTempWorksRow) {
+        blocking = true;
+      }
+
+      let rowStatus: EmploymentOnboardingRowStatus = derived.status;
+      let rowStatusLabel = derived.statusLabel;
+      let rowSourceType = derived.effectiveSourceType;
+      let rowSourceRef: EmploymentOnboardingRow['sourceRef'] = {
+        ...derived.sourceRef,
+        ...(pipeId && !derived.sourceRef?.pipelineStepId ? { pipelineStepId: pipeId } : {}),
+      };
+      let rowHelperText = derived.helperText;
+
+      if (missingTempWorksRow && extStepKey) {
+        rowSourceType = 'external_onboarding';
+        rowSourceRef = {
+          ...(pipeId ? { pipelineStepId: pipeId } : {}),
+          externalStepKey: extStepKey,
+        };
+        if (isOnboardingPathRowDone(rowStatus)) {
+          rowStatus = 'in_progress';
+        }
+        rowStatusLabel =
+          pathLabelAudience === 'worker' ? MISSING_TEMPWORKS_ROW_LABEL_WORKER : MISSING_TEMPWORKS_ROW_LABEL_ADMIN;
+        rowHelperText = `${MISSING_TEMPWORKS_ROW_LABEL_ADMIN} ${derived.helperText}`.trim();
       }
 
       byGroup.get(groupId)!.push({
@@ -357,25 +407,25 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         groupId,
         stepKey: def.id,
         label: runtimeDef.label,
-        sourceType: derived.effectiveSourceType,
-        sourceRef: derived.sourceRef,
+        sourceType: rowSourceType,
+        sourceRef: rowSourceRef,
         owner: runtimeDef.owner,
         audience: runtimeDef.audience,
         actionableBy: runtimeDef.actionableBy,
         required,
         blocking,
-        status: derived.status,
-        statusLabel: derived.statusLabel,
-        ...(derived.satisfiedByArtifact
-          ? {
+        status: rowStatus,
+        statusLabel: rowStatusLabel,
+        ...(missingTempWorksRow || !derived.satisfiedByArtifact
+          ? {}
+          : {
               satisfiedByArtifact: true,
               artifactSourceType: derived.artifactSourceType,
               artifactId: derived.artifactId ?? null,
               artifactCompletedAt: derived.artifactCompletedAt ?? null,
               artifactScope: derived.artifactScope ?? null,
-            }
-          : {}),
-        helperText: derived.helperText,
+            }),
+        helperText: rowHelperText,
         lastUpdatedAt: derived.lastUpdatedAt ?? null,
       });
     }
