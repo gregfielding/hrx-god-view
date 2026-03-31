@@ -11,7 +11,10 @@ const db = admin.firestore();
 
 const ENTITY_KEYS = new Set(['select', 'workforce', 'events']);
 
-/** Matches client EXTERNAL_ONBOARDING_STEP_VERIFICATION_UI_KEYS (first rollout). */
+/**
+ * Must stay in sync with client `EXTERNAL_ONBOARDING_STEP_VERIFICATION_UI_KEYS`
+ * (`src/types/externalOnboardingSteps.ts`).
+ */
 const ALLOWED_STEP_KEYS = new Set([
   'payroll_onboarding',
   'direct_deposit',
@@ -19,6 +22,8 @@ const ALLOWED_STEP_KEYS = new Set([
   'contractor_tax_form_w9',
   'i9_employee_section',
   'independent_contractor_agreement',
+  'handbook_acknowledgment',
+  'policies_acknowledgment',
 ]);
 
 type Action = 'verify_complete' | 'request_correction' | 'mark_error';
