@@ -1,26 +1,42 @@
 import React from 'react';
 import { Card, CardContent, Typography, Stack, Chip, Box } from '@mui/material';
-import type { EmploymentEntityOverview, HeaderEmploymentStatus } from './employmentV2Types';
+import type { EmploymentEntityOverview, EmploymentV2HeaderState } from './employmentV2Types';
+import { employmentHeaderStateLabel } from '../../../../utils/deriveEmploymentHeaderState';
 
-const STATUS_COLOR: Record<HeaderEmploymentStatus, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
-  none: 'default',
-  onboarding: 'warning',
+const HEADER_STATE_COLOR: Record<
+  EmploymentV2HeaderState,
+  'default' | 'warning' | 'success' | 'error' | 'info'
+> = {
+  not_started: 'default',
+  in_progress: 'warning',
+  action_required: 'warning',
+  waiting_on_company: 'info',
   ready: 'success',
-  active: 'success',
-  inactive: 'default',
+  on_assignment: 'success',
   terminated: 'error',
-  blocked: 'error',
+  inactive: 'default',
 };
-
-function statusLabel(s: HeaderEmploymentStatus): string {
-  return s.replace(/_/g, ' ');
-}
 
 export interface EmploymentEntityHeaderCardProps {
   overview: EmploymentEntityOverview;
 }
 
 const EmploymentEntityHeaderCard: React.FC<EmploymentEntityHeaderCardProps> = ({ overview }) => {
+  const chipLabel = employmentHeaderStateLabel(overview.employmentHeaderState);
+  const baseChipColor: 'default' | 'warning' | 'success' | 'error' | 'info' =
+    HEADER_STATE_COLOR[overview.employmentHeaderState] ?? 'default';
+  const noOpenDemand = !overview.hasOpenOnboardingDemand;
+  const terminalEmployment =
+    overview.employmentHeaderState === 'terminated' || overview.employmentHeaderState === 'inactive';
+  /** Avoid “all green” success when the relationship path is historical-only. */
+  const chipColor =
+    noOpenDemand && !terminalEmployment && (baseChipColor === 'success' || baseChipColor === 'info')
+      ? 'default'
+      : baseChipColor;
+  const chipLabelWithFraming =
+    noOpenDemand && !terminalEmployment ? `Record · ${chipLabel}` : `Status: ${chipLabel}`;
+  const chipVariant = noOpenDemand && !terminalEmployment ? 'outlined' : 'filled';
+
   return (
     <Card sx={{ mb: 2 }}>
       <CardContent>
@@ -32,14 +48,21 @@ const EmploymentEntityHeaderCard: React.FC<EmploymentEntityHeaderCardProps> = ({
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               Worker type: {overview.headerWorkerTypeDisplay}
             </Typography>
-            <Typography variant="body2" sx={{ mt: 1.25, lineHeight: 1.5 }} color="text.primary">
+            {noOpenDemand ? (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', lineHeight: 1.5 }}>
+                No open assignment onboarding for this entity — status reflects the employment record and retained
+                relationship history below, not live job-package work.
+              </Typography>
+            ) : null}
+            <Typography variant="body2" sx={{ mt: noOpenDemand ? 1 : 1.25, lineHeight: 1.5 }} color="text.primary">
               {overview.headerReadinessExplanation}
             </Typography>
           </Box>
           <Chip
             size="small"
-            label={`Employment: ${statusLabel(overview.headerEmploymentStatus)}`}
-            color={STATUS_COLOR[overview.headerEmploymentStatus] ?? 'default'}
+            label={chipLabelWithFraming}
+            color={chipColor}
+            variant={chipVariant}
             sx={{ alignSelf: 'flex-start' }}
           />
         </Stack>

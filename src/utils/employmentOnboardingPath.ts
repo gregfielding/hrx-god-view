@@ -1,6 +1,9 @@
 /**
  * Builds grouped Employment V2 onboarding rows from Settings + runtime data.
  * Uses employmentOnboardingStepRuntimeMap for explicit step → source mapping.
+ *
+ * TempWorks / HRIS milestones: read parsed `worker_onboarding.externalOnboardingSteps`
+ * (same pipeline doc as `steps` / `tasks`) and pass into `deriveWorkflowStepStatus`.
  */
 
 import type {
@@ -18,7 +21,12 @@ import type {
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import type { ExternalOnboardingStepKey } from '../types/externalOnboardingSteps';
+import { getExternalOnboardingStepDefinition } from '../types/externalOnboardingSteps';
+import type { EverifyCaseNarrativeBrief } from './employmentOnboardingNarrative';
 import { deriveWorkflowStepStatus, getWorkflowStepRuntimeDefinition } from './employmentOnboardingStepRuntimeMap';
+import { parseExternalOnboardingSteps } from './externalOnboardingSteps';
+import { resolveEffectiveEmploymentWorkerType } from './employmentWorkerTypeResolution';
 import {
   ONBOARDING_WORKFLOW_STEPS,
   WORKFLOW_UI_GROUP_ORDER,
@@ -48,6 +56,18 @@ export function isOnboardingPathRowDone(status: EmploymentOnboardingRowStatus): 
  * `required && blocking && !done` (see isOnboardingPathRowDone).
  * Rows in `error` set `blocking: true` when building assignment/settings rows so failures still gate readiness.
  */
+/** Groups shown on the entity relationship onboarding path (excludes screenings + assignment package). */
+const ENTITY_RELATIONSHIP_PATH_GROUP_IDS = new Set<OnboardingPathGroup['groupId']>([
+  'work_authorization',
+  'forms_and_policies',
+  'payroll',
+  'internal_readiness',
+]);
+
+export function filterEntityRelationshipOnboardingPathGroups(groups: OnboardingPathGroup[]): OnboardingPathGroup[] {
+  return groups.filter((g) => ENTITY_RELATIONSHIP_PATH_GROUP_IDS.has(g.groupId));
+}
+
 export function isOnboardingPathRowBlocker(row: EmploymentOnboardingRow): boolean {
   if (isOnboardingPathRowDone(row.status)) return false;
   return Boolean(row.required && row.blocking);
@@ -65,7 +85,7 @@ function taskToRowStatus(status: string | undefined): { status: EmploymentOnboar
 }
 
 function taskOwner(owner: string | undefined): EmploymentOnboardingRow['owner'] {
-  return owner === 'recruiter' ? 'admin' : 'worker';
+  return owner === 'recruiter' ? 'recruiter' : 'worker';
 }
 
 function buildAssignmentRequirementRows(
@@ -93,7 +113,10 @@ function buildAssignmentRequirementRows(
       blocking: boolean,
       status: EmploymentOnboardingRowStatus,
       statusLabel: string,
-      helperText: string
+      helperText: string,
+      rowOwner: EmploymentOnboardingRow['owner'],
+      audience: EmploymentOnboardingRow['audience'],
+      actionableBy: EmploymentOnboardingRow['actionableBy']
     ) => {
       rows.push({
         rowId: `assignment__${a.assignmentId}__${suffix}`,
@@ -103,7 +126,9 @@ function buildAssignmentRequirementRows(
         label: `${label}${a.title ? ` · ${a.title}` : ''}`,
         sourceType: 'assignment_requirement',
         sourceRef: { assignmentId: a.assignmentId },
-        owner: 'worker',
+        owner: rowOwner,
+        audience,
+        actionableBy,
         required,
         blocking,
         status,
@@ -142,7 +167,10 @@ function buildAssignmentRequirementRows(
         statusLabel,
         isEsign
           ? 'Status from signature envelope for this assignment (e-sign).'
-          : 'Required document from assignment onboarding package (non e-sign).'
+          : 'Required document from assignment onboarding package (non e-sign).',
+        'worker',
+        'both',
+        'either'
       );
     });
 
@@ -157,7 +185,10 @@ function buildAssignmentRequirementRows(
         Boolean(s.blocking) || status === 'error',
         status,
         statusLabel,
-        'From onboarding_instances.resolvedSteps for this assignment.'
+        'From onboarding_instances.resolvedSteps for this assignment.',
+        'recruiter',
+        'both',
+        'recruiter'
       );
     });
 
@@ -172,7 +203,10 @@ function buildAssignmentRequirementRows(
         Boolean(c.blocking) || status === 'error',
         status,
         statusLabel,
-        'From onboarding_instances.resolvedChecks (screening / vendor).'
+        'From onboarding_instances.resolvedChecks (screening / vendor).',
+        'vendor',
+        'both',
+        'none'
       );
     });
   });
@@ -195,6 +229,7 @@ function buildInternalTaskRows(
     const { status, statusLabel } = taskToRowStatus(t.status);
     const done = isOnboardingPathRowDone(status);
     const owner = taskOwner(t.owner);
+    const recruiterTask = t.owner === 'recruiter';
     rows.push({
       rowId: `task__${entityKey}__${String(t.id || sid || idx)}`,
       entityKey,
@@ -204,8 +239,10 @@ function buildInternalTaskRows(
       sourceType: 'pipeline_task',
       sourceRef: { pipelineStepId: sid || undefined, taskId: t.id ? String(t.id) : undefined },
       owner,
+      audience: recruiterTask ? 'internal' : 'both',
+      actionableBy: recruiterTask ? 'recruiter' : 'worker',
       required: true,
-      blocking: (!done && t.owner === 'recruiter') || status === 'error',
+      blocking: (!done && recruiterTask) || status === 'error',
       status,
       statusLabel,
       helperText:
@@ -229,6 +266,15 @@ export interface BuildOnboardingPathArgs {
   backgroundChecksForEntity: BackgroundCheckRecord[];
   /** All tenant background checks for this worker (reuse / artifact policy). */
   allTenantWorkerBackgroundChecks: BackgroundCheckRecord[];
+  /** Optional E-Verify case timestamps for activity narrative (Select entity). */
+  everifyCaseBriefs?: EverifyCaseNarrativeBrief[];
+  /**
+   * Fallback after `entitySettings.workerType` for external-step gating (e.g. `entity_employments.workerType`
+   * when entity string is empty). Precedence: entity → employment → `unknown` after normalize.
+   */
+  employmentRecordWorkerType?: string | null;
+  /** Path row `statusLabel` for TempWorks-backed steps; machine status unchanged. Default `admin`. */
+  pathLabelAudience?: 'admin' | 'worker';
 }
 
 export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): OnboardingPathGroup[] {
@@ -243,10 +289,18 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
     payrollAccount,
     backgroundChecksForEntity,
     allTenantWorkerBackgroundChecks,
+    employmentRecordWorkerType,
+    pathLabelAudience = 'admin',
   } = args;
 
   const entityLinkedJobOrderIds = entityAssignmentJobOrderIds(assignments);
   const pipelineSteps = getPipelineSteps(pipeline);
+  const externalOnboardingSteps = parseExternalOnboardingSteps(pipeline?.externalOnboardingSteps);
+  const effectiveWorkerType = resolveEffectiveEmploymentWorkerType({
+    entityWorkerType: entitySettings?.workerType,
+    employmentWorkerType: employmentRecordWorkerType,
+  });
+  const externalOnboardingWorkerType = effectiveWorkerType.normalizedExternal;
   const byGroup = new Map<(typeof WORKFLOW_UI_GROUP_ORDER)[number], EmploymentOnboardingRow[]>();
   WORKFLOW_UI_GROUP_ORDER.forEach((g) => byGroup.set(g, []));
 
@@ -254,7 +308,7 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
     const config = entitySettings.onboardingWorkflowSteps || {};
     for (const def of ONBOARDING_WORKFLOW_STEPS) {
       if (!config[def.id]) continue;
-      if (!catalogStepAppliesToEntityWorkerType(def, entitySettings.workerType)) continue;
+      if (!catalogStepAppliesToEntityWorkerType(def, effectiveWorkerType.forSettingsCatalog)) continue;
       if (!workflowStepVisibleForEntityTab(def.id, entityKey)) continue;
 
       const runtimeDef = getWorkflowStepRuntimeDefinition(def.id);
@@ -272,6 +326,9 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         backgroundChecksForEntity,
         entityLinkedJobOrderIds,
         allTenantWorkerChecks: allTenantWorkerBackgroundChecks,
+        externalOnboardingSteps,
+        externalOnboardingWorkerType,
+        labelAudience: pathLabelAudience,
       });
 
       const pipeId = runtimeDef.pipelineStepId;
@@ -280,7 +337,19 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
       // required: explicit from pipeline applicability when step exists; else catalog defaultRequired.
       const required = pStep ? applicability !== 'not_required' : runtimeDef.defaultRequired;
       // blocking: catalog heuristic defaultBlocking; any error state gates readiness (strict blocker rule).
-      const blocking = runtimeDef.defaultBlocking || derived.status === 'error';
+      let blocking = runtimeDef.defaultBlocking || derived.status === 'error';
+      const extStepKey = derived.sourceRef?.externalStepKey as ExternalOnboardingStepKey | undefined;
+      const extStepRec =
+        extStepKey && externalOnboardingSteps ? externalOnboardingSteps[extStepKey] : undefined;
+      const extStepDef = extStepKey ? getExternalOnboardingStepDefinition(extStepKey) : undefined;
+      if (
+        required &&
+        extStepDef?.adminVerificationRequired &&
+        extStepRec?.externalSource === 'tempworks' &&
+        extStepRec.status !== 'completed'
+      ) {
+        blocking = true;
+      }
 
       byGroup.get(groupId)!.push({
         rowId: `${entityKey}__${def.id}`,
@@ -291,6 +360,8 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
         sourceType: derived.effectiveSourceType,
         sourceRef: derived.sourceRef,
         owner: runtimeDef.owner,
+        audience: runtimeDef.audience,
+        actionableBy: runtimeDef.actionableBy,
         required,
         blocking,
         status: derived.status,

@@ -21,7 +21,14 @@ import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
-import { getEmploymentStatusLabel } from '../../../utils/employmentStatusLabel';
+import type { EmploymentAssignmentSummary, EmploymentEntityKey } from '../../../pages/UserProfile/components/employment-v2/employmentV2Types';
+import { normalizeEntityKey } from '../../../utils/employmentEntityPresentation';
+import {
+  computeHasOpenOnboardingDemand,
+  deriveEmploymentHeaderStateWorkerListFallback,
+  employmentHeaderStateLabel,
+} from '../../../utils/deriveEmploymentHeaderState';
+import { loadWorkerAssignmentsByEntityKey } from '../../../utils/loadWorkerAssignmentsByEntityKey';
 import { countPipelineProgressForEntity } from '../../../utils/onboardingPipelineProgress';
 
 interface EntityEmploymentRecord {
@@ -32,14 +39,19 @@ interface EntityEmploymentRecord {
   workerType: string;
   status: string;
   onboardingPipelineId: string;
+  onboardingPhase?: string | null;
   onboardingCompletedAt?: { toDate: () => Date } | null;
 }
 
-const STATUS_CHIP_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
-  onboarding: 'warning',
-  active: 'success',
-  inactive: 'default',
+const HEADER_LIST_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
+  not_started: 'default',
+  in_progress: 'warning',
+  action_required: 'warning',
+  waiting_on_company: 'info',
+  ready: 'success',
+  on_assignment: 'success',
   terminated: 'error',
+  inactive: 'default',
 };
 
 const MyEmploymentPage: React.FC = () => {
@@ -50,11 +62,16 @@ const MyEmploymentPage: React.FC = () => {
 
   const [loading, setLoading] = useState(true);
   const [records, setRecords] = useState<EntityEmploymentRecord[]>([]);
+  const [assignmentsByEntityKey, setAssignmentsByEntityKey] = useState<Record<
+    EmploymentEntityKey,
+    EmploymentAssignmentSummary[]
+  > | null>(null);
   const [stepCounts, setStepCounts] = useState<Record<string, { complete: number; total: number }>>({});
 
   useEffect(() => {
     if (!tenantId || !uid) {
       setRecords([]);
+      setAssignmentsByEntityKey(null);
       setLoading(false);
       return;
     }
@@ -63,14 +80,16 @@ const MyEmploymentPage: React.FC = () => {
       try {
         const ref = collection(db, 'tenants', tenantId, 'entity_employments');
         const q = query(ref, where('userId', '==', uid));
-        const snap = await getDocs(q);
+        const [snap, byKey] = await Promise.all([getDocs(q), loadWorkerAssignmentsByEntityKey(tenantId, uid)]);
         const list: EntityEmploymentRecord[] = snap.docs.map((d) => ({
           id: d.id,
           ...(d.data() as Omit<EntityEmploymentRecord, 'id'>),
         }));
         setRecords(list);
+        setAssignmentsByEntityKey(byKey);
       } catch {
         setRecords([]);
+        setAssignmentsByEntityKey({ select: [], workforce: [], events: [] });
       } finally {
         setLoading(false);
       }
@@ -149,12 +168,40 @@ const MyEmploymentPage: React.FC = () => {
             {records.map((rec) => {
               const counts = stepCounts[rec.onboardingPipelineId];
               const isComplete = rec.status === 'active' || rec.onboardingCompletedAt != null;
-              const progressText = isComplete
-                ? 'Onboarding complete'
-                : counts && counts.total > 0
-                  ? `${counts.complete} of ${counts.total} steps complete`
-                  : null;
-              const statusLabel = getEmploymentStatusLabel(rec.status, rec.workerType);
+              const entityKey = normalizeEntityKey(rec.entityKey);
+              const rowAssignments =
+                assignmentsByEntityKey != null && entityKey ? assignmentsByEntityKey[entityKey] : undefined;
+              const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
+                assignments: rowAssignments,
+                entityEmploymentStatus: rec.status,
+              });
+              const pipelineIncomplete = Boolean(counts && counts.total > 0 && counts.complete < counts.total);
+              const progressText = (() => {
+                if (isComplete) return 'Onboarding complete';
+                if (!hasOpenOnboardingDemand) {
+                  if (counts && counts.total > 0) {
+                    return `Prior relationship path on file (${counts.complete} of ${counts.total} steps)`;
+                  }
+                  return 'No current assignment onboarding';
+                }
+                if (counts && counts.total > 0) return `${counts.complete} of ${counts.total} steps complete`;
+                return null;
+              })();
+              const headerState = deriveEmploymentHeaderStateWorkerListFallback({
+                onboardingPhase: rec.onboardingPhase,
+                entityEmploymentStatus: rec.status,
+                pipelineIncomplete,
+                hasOpenOnboardingDemand,
+              });
+              const statusLabel = employmentHeaderStateLabel(headerState);
+              const terminalList = headerState === 'terminated' || headerState === 'inactive';
+              const listHistoricalChip =
+                !hasOpenOnboardingDemand && !terminalList;
+              const listChipColor =
+                listHistoricalChip &&
+                (HEADER_LIST_COLOR[headerState] === 'success' || HEADER_LIST_COLOR[headerState] === 'info')
+                  ? 'default'
+                  : HEADER_LIST_COLOR[headerState] || 'default';
 
               return (
                 <Card
@@ -194,9 +241,10 @@ const MyEmploymentPage: React.FC = () => {
                           />
                         )}
                         <Chip
-                          label={statusLabel}
+                          label={listHistoricalChip ? `Record · ${statusLabel}` : statusLabel}
                           size="small"
-                          color={STATUS_CHIP_COLOR[rec.status] || 'default'}
+                          color={listChipColor}
+                          variant={listHistoricalChip ? 'outlined' : 'filled'}
                         />
                         <ChevronRightIcon color="action" sx={{ fontSize: 20 }} />
                       </Stack>

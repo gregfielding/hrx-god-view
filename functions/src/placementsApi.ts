@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
+import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
 
 if (!admin.apps.length) {
@@ -44,8 +45,7 @@ function buildLegacyAssignmentDocId(args: { shiftId: string; userId: string }): 
 }
 
 function isAssignmentActiveStatus(status: string): boolean {
-  const normalized = String(status || '').toLowerCase();
-  return !['declined', 'canceled', 'cancelled'].includes(normalized);
+  return !isAssignmentTerminalNormalized(status);
 }
 
 function legacyAssignmentMatchesDay(args: {
@@ -450,7 +450,7 @@ export const placementsCreateAssignments = onCall(
           const activeAssignments = await db
             .collection(`tenants/${tenantId}/assignments`)
             .where('userId', '==', userId)
-            .where('status', 'in', ['proposed', 'confirmed', 'active'])
+            .where('status', 'in', [...ASSIGNMENT_STATUS_QUERY_LIVE])
             .get();
           let blockedByOverlap = false;
           activeAssignments.docs.forEach((docSnap) => {
@@ -470,7 +470,7 @@ export const placementsCreateAssignments = onCall(
             shiftId,
             candidateId: userId,
             userId,
-            status: 'proposed',
+            status: 'pending',
             startDate: singleDate,
             endDate: singleDate,
             startTime: shift.startTime || shift.defaultStartTime || '',
@@ -512,7 +512,7 @@ export const placementsCreateAssignments = onCall(
           if (isReactivating) {
             await assignmentRef.set(
               {
-                status: 'proposed',
+                status: 'pending',
                 updatedAt: admin.firestore.FieldValue.serverTimestamp(),
                 assignedAt: admin.firestore.FieldValue.serverTimestamp(),
                 suppressInitialNotification: true,
@@ -664,7 +664,7 @@ export const placementsCreateAssignments = onCall(
       const activeAssignments = await db
         .collection(`tenants/${tenantId}/assignments`)
         .where('userId', '==', userId)
-        .where('status', 'in', ['proposed', 'confirmed', 'active'])
+        .where('status', 'in', [...ASSIGNMENT_STATUS_QUERY_LIVE])
         .get();
 
       let blockedByOverlap = false;
@@ -715,7 +715,7 @@ export const placementsCreateAssignments = onCall(
             : 'blocked';
         await assignmentRef.set(
           {
-            status: 'proposed',
+            status: 'pending',
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             assignedAt: admin.firestore.FieldValue.serverTimestamp(),
             entityId: onboardingConfig.entityId,
@@ -750,7 +750,7 @@ export const placementsCreateAssignments = onCall(
           shiftId,
           candidateId: userId,
           userId,
-          status: 'proposed',
+          status: 'pending',
           startDate: effectiveStartDate || '',
           endDate: effectiveEndDate || effectiveStartDate || '',
           startTime: shift.startTime || shift.defaultStartTime || '',

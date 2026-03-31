@@ -1,15 +1,20 @@
 import React from 'react';
 import { Card, CardContent, Typography, Stack, Chip, LinearProgress, Box } from '@mui/material';
-import type { EmploymentEntityOverview } from './employmentV2Types';
+import type { EmploymentEntityOverview, EmploymentV2HeaderState } from './employmentV2Types';
+import { employmentHeaderStateLabel } from '../../../../utils/deriveEmploymentHeaderState';
 
-const LIFECYCLE_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
+const HEADER_STATE_COLOR: Record<
+  EmploymentV2HeaderState,
+  'default' | 'warning' | 'success' | 'error' | 'info'
+> = {
   not_started: 'default',
-  onboarding: 'warning',
+  in_progress: 'warning',
+  action_required: 'error',
+  waiting_on_company: 'warning',
   ready: 'success',
-  active: 'success',
+  on_assignment: 'success',
   inactive: 'default',
   terminated: 'error',
-  blocked: 'error',
 };
 
 const READINESS_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error'> = {
@@ -41,8 +46,8 @@ const EmploymentEntitySummaryCard: React.FC<EmploymentEntitySummaryCardProps> = 
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
             <Chip
               size="small"
-              label={`Status: ${overview.lifecycleStatus.replace(/_/g, ' ')}`}
-              color={LIFECYCLE_COLOR[overview.lifecycleStatus] ?? 'default'}
+              label={`Status: ${employmentHeaderStateLabel(overview.employmentHeaderState)}`}
+              color={HEADER_STATE_COLOR[overview.employmentHeaderState] ?? 'default'}
             />
             <Chip
               size="small"

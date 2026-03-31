@@ -321,7 +321,7 @@ export async function sendLegacyAssignmentMessage(args: {
       args.messageTypeId === 'assignment_confirmed'
         ? 'confirmed'
         : args.messageTypeId === 'assignment_active'
-        ? 'active'
+        ? 'in_progress'
         : args.messageTypeId === 'assignment_completed'
         ? 'completed'
         : args.messageTypeId === 'assignment_cancelled'

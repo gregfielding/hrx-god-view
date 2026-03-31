@@ -13,6 +13,7 @@ import {
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import type { EmploymentEntityOverview } from './employmentV2Types';
+import { assignmentRequirementsSystemsLine } from '../../../../utils/assignmentRequirementsViewModel';
 
 export interface EmploymentSystemsSummaryCardProps {
   overview: EmploymentEntityOverview;
@@ -21,12 +22,29 @@ export interface EmploymentSystemsSummaryCardProps {
 const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> = ({ overview }) => {
   const [open, setOpen] = useState(false);
   const { systems } = overview;
+  const historical = !overview.hasOpenOnboardingDemand;
+  const iaLine = assignmentRequirementsSystemsLine(overview.assignmentRequirementsViewModel);
 
   return (
     <Card sx={{ mb: 2, opacity: 0.95 }}>
       <CardHeader
-        title="Systems summary"
-        subheader="Operational detail — not the primary workflow surface"
+        title={historical ? 'Systems record (context)' : 'Systems summary'}
+        subheader={
+          <span>
+            {historical
+              ? 'Historical context — figures may include completed or cancelled assignment activity; not framed as current required work.'
+              : 'Operational detail — not the primary workflow surface.'}
+            {iaLine ? (
+              <>
+                <br />
+                <Typography component="span" variant="caption" color="text.secondary">
+                  {historical ? 'Snapshot (may include history): ' : 'Job / screening snapshot: '}
+                  {iaLine}
+                </Typography>
+              </>
+            ) : null}
+          </span>
+        }
         titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
         action={
           <IconButton aria-label="expand" onClick={() => setOpen((v) => !v)} size="small">
@@ -44,7 +62,11 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   {systems.everify.statusDisplay} · {systems.everify.caseCount} case(s)
-                  {systems.everify.actionNeeded ? ' · Action may be needed' : ''}
+                  {systems.everify.actionNeeded
+                    ? historical
+                      ? ' · Review if a new assignment starts (not framed as open work here)'
+                      : ' · Action may be needed'
+                    : ''}
                 </Typography>
               </Box>
             )}
@@ -56,6 +78,7 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                     Payroll
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
+                    {historical ? 'Context: ' : ''}
                     {systems.payroll.statusDisplay}
                     {systems.payroll.portalUrl ? ` · Portal set` : ''}
                   </Typography>
@@ -70,6 +93,7 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                     Screenings
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
+                    {historical ? 'Record: ' : ''}
                     {systems.screenings.statusDisplay}
                   </Typography>
                 </Box>
@@ -83,7 +107,8 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                     Documents (e-sign)
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    Signed {systems.documents.signedCount} · Pending {systems.documents.pendingCount}
+                    {historical ? 'On file: ' : ''}Signed {systems.documents.signedCount} · Pending{' '}
+                    {systems.documents.pendingCount}
                   </Typography>
                 </Box>
               </>

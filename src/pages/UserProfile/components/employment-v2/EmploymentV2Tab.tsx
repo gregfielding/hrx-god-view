@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, Box, CircularProgress, Accordion, AccordionSummary, AccordionDetails, Typography } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import { useAuth } from '../../../../contexts/AuthContext';
 import { useEntityEmploymentOverview } from '../../../../hooks/useEntityEmploymentOverview';
 import type { EmploymentEntityKey } from './employmentV2Types';
 import EmploymentEntityTabs from './EmploymentEntityTabs';
@@ -14,6 +15,11 @@ export interface EmploymentV2TabProps {
 
 const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId }) => {
   const [entityKey, setEntityKey] = useState<EmploymentEntityKey>('select');
+  const { activeTenant } = useAuth();
+  const tenantSlug =
+    activeTenant && typeof activeTenant.slug === 'string' && activeTenant.slug.trim() !== ''
+      ? activeTenant.slug.trim()
+      : undefined;
   const { byEntityKey, loading, error, refetch } = useEntityEmploymentOverview({ userId: uid, tenantId });
 
   if (!tenantId) {
@@ -41,11 +47,19 @@ const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId }) => {
       )}
 
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Readiness by hiring entity: what is complete, what is blocking, and how assignment-specific requirements differ.
+        Readiness by hiring entity: the relationship path (I-9, forms, payroll, internal readiness) is separate from job
+        package requirements and screening orders in the assignment section below.
       </Typography>
 
       <EmploymentEntityTabs value={entityKey} onChange={setEntityKey} />
-      <EmploymentEntityPanel entityKey={entityKey} overview={byEntityKey[entityKey]} onRefresh={refetch} />
+      <EmploymentEntityPanel
+        entityKey={entityKey}
+        overview={byEntityKey[entityKey]}
+        profileUserId={uid}
+        tenantId={tenantId}
+        tenantSlug={tenantSlug}
+        onRefresh={refetch}
+      />
 
       <Accordion sx={{ mt: 3 }}>
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>

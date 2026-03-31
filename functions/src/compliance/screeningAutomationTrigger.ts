@@ -12,6 +12,8 @@ import { logger } from 'firebase-functions/v2';
 import { createBackgroundCheckInternal } from '../integrations/accusource/createBackgroundCheck';
 import type { CreateBackgroundCheckInput } from '../integrations/accusource/mapper';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
+import { writeOnboardingAutomationDispatchLog } from '../messaging/onboardingAutomationDispatchLog';
+import { resolveHiringEntityId } from '../messaging/payrollInviteContext';
 import { resolveScreeningAutomationConfig } from './screeningAutomationConfig';
 import type { BgLike } from './screeningAutomationShared';
 import {
@@ -22,6 +24,7 @@ import {
   screeningLocationKeyCandidates,
 } from './screeningAutomationShared';
 import { writeWorkerActivityLog } from './workerActivityLog';
+import { writeSimulatedAutomationBackgroundCheck } from './screeningAutomationSimulatedOrder';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -40,6 +43,52 @@ async function writeAudit(tenantId: string, payload: Record<string, unknown>): P
     ...payload,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+}
+
+const SCREENING_DISPATCH_V = 'v1';
+
+function screeningAutomationCorrelationKey(
+  tenantId: string,
+  assignmentId: string,
+  messageTypeId: string,
+  fingerprint: string
+): string {
+  return `screening_auto__${SCREENING_DISPATCH_V}__${tenantId}__${assignmentId}__${messageTypeId}__${fingerprint}`;
+}
+
+async function logScreeningAutomationDispatch(args: {
+  tenantId: string;
+  assignmentId: string;
+  userId: string;
+  hiringEntityId: string | null;
+  messageTypeId: 'screening_auto_ordered' | 'screening_auto_skipped' | 'screening_auto_failed';
+  outcome: 'sent' | 'skipped' | 'failed';
+  fingerprint: string;
+  skipReason?: string;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  const correlationKey = screeningAutomationCorrelationKey(
+    args.tenantId,
+    args.assignmentId,
+    args.messageTypeId,
+    args.fingerprint
+  );
+  await writeOnboardingAutomationDispatchLog({
+    tenantId: args.tenantId,
+    eventType: args.messageTypeId,
+    correlationKey,
+    assignmentId: args.assignmentId,
+    userId: args.userId,
+    outcome: args.outcome,
+    messageTypeId: args.messageTypeId,
+    skipReason: args.skipReason,
+    hiringEntityId: args.hiringEntityId,
+    details: args.details ?? null,
+  });
+}
+
+function packageSummaryFromMerged(merged: { packageName?: string | null; packageId?: string | null }): string {
+  return [merged.packageName, merged.packageId].filter(Boolean).join(' · ').trim() || '—';
 }
 
 export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
@@ -67,6 +116,8 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
       return;
     }
 
+    const hiringEntityIdResolved = await resolveHiringEntityId(tenantId, after, null);
+
     const runRef = db
       .collection('tenants')
       .doc(tenantId)
@@ -86,6 +137,21 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
       }
       if (st === 'processing') {
         logger.warn('[screeningAutomation] concurrent run in progress; skipping', { tenantId, assignmentId });
+        const uid = String(after.candidateId || after.userId || '').trim();
+        const fp = String(existing.data()?.fingerprint || 'concurrent');
+        if (uid) {
+          await logScreeningAutomationDispatch({
+            tenantId,
+            assignmentId,
+            userId: uid,
+            hiringEntityId: hiringEntityIdResolved,
+            messageTypeId: 'screening_auto_skipped',
+            outcome: 'skipped',
+            fingerprint: fp,
+            skipReason: 'concurrent_run',
+            details: { jobOrderId: String(after.jobOrderId || '').trim() || null },
+          });
+        }
         return;
       }
       if (st === 'failed') {
@@ -105,12 +171,34 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         reasonSummary: 'Assignment confirmed but candidateId/userId or jobOrderId is missing; automation cannot resolve packages or order.',
         dryRun: cfg.dryRun,
       });
+      const uid = String(after.candidateId || after.userId || '').trim();
+      if (uid) {
+        await logScreeningAutomationDispatch({
+          tenantId,
+          assignmentId,
+          userId: uid,
+          hiringEntityId: hiringEntityIdResolved,
+          messageTypeId: 'screening_auto_skipped',
+          outcome: 'skipped',
+          fingerprint: 'missing_refs',
+          skipReason: 'missing_candidate_or_job_order',
+          details: {
+            candidateId: candidateId || null,
+            jobOrderId: jobOrderId || null,
+          },
+        });
+      }
       return;
     }
 
     const joRef = db.collection('tenants').doc(tenantId).collection('job_orders').doc(jobOrderId);
     const joSnap = await joRef.get();
     const jobOrder = joSnap.exists ? (joSnap.data() as Record<string, unknown>) : undefined;
+
+    /** Prefer assignment resolution; fall back to job order so dispatch + client filters are rarely null. */
+    const hiringEntityIdForDispatch =
+      hiringEntityIdResolved ||
+      (jobOrder ? String(jobOrder.hiringEntityId || jobOrder.entityId || '').trim() || null : null);
 
     const accountIdForPath =
       String(
@@ -183,6 +271,21 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         },
         { merge: true }
       );
+      await logScreeningAutomationDispatch({
+        tenantId,
+        assignmentId,
+        userId: candidateId,
+        hiringEntityId: hiringEntityIdForDispatch,
+        messageTypeId: 'screening_auto_skipped',
+        outcome: 'skipped',
+        fingerprint: fp,
+        skipReason: 'no_package',
+        details: {
+          jobOrderId,
+          resolvedPackageKey: requestedKey,
+          packageSummary: packageSummaryFromMerged(merged),
+        },
+      });
       return;
     }
 
@@ -270,6 +373,22 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
           matchedBackgroundCheckId: satisfiedDocId,
         },
       });
+      await logScreeningAutomationDispatch({
+        tenantId,
+        assignmentId,
+        userId: candidateId,
+        hiringEntityId: hiringEntityIdForDispatch,
+        messageTypeId: 'screening_auto_skipped',
+        outcome: 'skipped',
+        fingerprint: fp,
+        skipReason: 'already_satisfied',
+        details: {
+          jobOrderId,
+          backgroundCheckId: satisfiedDocId,
+          resolvedPackageKey: requestedKey,
+          packageSummary: packageSummaryFromMerged(merged),
+        },
+      });
       return;
     }
 
@@ -303,6 +422,7 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
       candidateId,
       jobOrderId,
       dryRun: cfg.dryRun,
+      enableScreeningOrder: cfg.enableScreeningOrder,
       resolvedPackage: merged,
       fingerprint: fp,
       resolvedPackageKey: requestedKey,
@@ -326,6 +446,7 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         startedAt: admin.firestore.FieldValue.serverTimestamp(),
         fingerprint: fp,
         dryRun: cfg.dryRun,
+        enableScreeningOrder: cfg.enableScreeningOrder,
         candidateId,
         jobOrderId,
       });
@@ -371,29 +492,56 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         },
       });
       logger.info('[screeningAutomation] dry run complete — no provider call', { tenantId, assignmentId });
+      await logScreeningAutomationDispatch({
+        tenantId,
+        assignmentId,
+        userId: candidateId,
+        hiringEntityId: hiringEntityIdForDispatch,
+        messageTypeId: 'screening_auto_skipped',
+        outcome: 'skipped',
+        fingerprint: fp,
+        skipReason: 'dry_run',
+        details: {
+          jobOrderId,
+          dryRun: true,
+          packageSummary: packageSummaryFromMerged(merged),
+          resolvedPackageKey: requestedKey,
+        },
+      });
       return;
     }
 
     try {
-      const result = await createBackgroundCheckInternal(
-        { ...orderPayload, candidate: orderPayload.candidate },
-        AUTOMATION_ACTOR_UID,
-        { type: 'automation' },
-      );
+      const simulated = !cfg.enableScreeningOrder;
+      const result = simulated
+        ? await writeSimulatedAutomationBackgroundCheck({
+            orderPayload: { ...orderPayload, candidate: orderPayload.candidate },
+            assignmentId,
+            tenantId,
+            fingerprint: fp,
+            actorUid: AUTOMATION_ACTOR_UID,
+          })
+        : await createBackgroundCheckInternal(
+            { ...orderPayload, candidate: orderPayload.candidate },
+            AUTOMATION_ACTOR_UID,
+            { type: 'automation' },
+          );
 
-      await db
-        .collection('backgroundChecks')
-        .doc(result.backgroundCheckId)
-        .set(
-          {
-            automationSource: 'assignment_confirmed',
-            automationAssignmentId: assignmentId,
-            automationTenantId: tenantId,
-            automationFingerprint: fp,
-            automationOrderedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true }
-        );
+      if (!simulated) {
+        await db
+          .collection('backgroundChecks')
+          .doc(result.backgroundCheckId)
+          .set(
+            {
+              automationSource: 'assignment_confirmed',
+              automationAssignmentId: assignmentId,
+              automationTenantId: tenantId,
+              automationFingerprint: fp,
+              automationOrderedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true }
+          );
+      }
 
       await runRef.set(
         {
@@ -402,14 +550,18 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
           backgroundCheckId: result.backgroundCheckId,
           fingerprint: fp,
           dryRun: false,
+          simulatedOrder: simulated,
+          enableScreeningOrder: cfg.enableScreeningOrder,
         },
         { merge: true }
       );
 
       await writeWorkerActivityLog({
         userId: candidateId,
-        action: 'Screening ordered',
-        description: `A background screening was ordered automatically when your assignment was confirmed (package: ${merged.packageName || merged.packageId || 'see order'}).`,
+        action: simulated ? 'Screening ordered (simulated)' : 'Screening ordered',
+        description: simulated
+          ? `SIMULATED: A background screening record was created automatically when your assignment was confirmed (AccuSource not called; package: ${merged.packageName || merged.packageId || 'see order'}).`
+          : `A background screening was ordered automatically when your assignment was confirmed (package: ${merged.packageName || merged.packageId || 'see order'}).`,
         severity: 'medium',
         metadata: {
           tenantId,
@@ -417,6 +569,7 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
           jobOrderId,
           backgroundCheckId: result.backgroundCheckId,
           automation: true,
+          screeningOrderSimulated: simulated,
         },
       });
 
@@ -434,6 +587,7 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
           jobOrderId,
           backgroundCheckId: result.backgroundCheckId,
           kind: 'screening_auto_ordered',
+          screeningOrderSimulated: simulated,
         },
       });
 
@@ -441,13 +595,35 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         tenantId,
         assignmentId,
         backgroundCheckId: result.backgroundCheckId,
+        simulated,
+        enableScreeningOrder: cfg.enableScreeningOrder,
       });
 
       await writeAudit(tenantId, {
         ...wouldLog,
-        outcome: 'ordered_live',
-        reasonSummary: 'AccuSource order created via automation; worker notified.',
+        outcome: simulated ? 'ordered_simulated' : 'ordered_live',
+        reasonSummary: simulated
+          ? 'Simulated automation: backgroundChecks doc created; no AccuSource API; worker notified.'
+          : 'AccuSource order created via automation; worker notified.',
         newBackgroundCheckId: result.backgroundCheckId,
+        screeningOrderSimulated: simulated,
+      });
+
+      await logScreeningAutomationDispatch({
+        tenantId,
+        assignmentId,
+        userId: candidateId,
+        hiringEntityId: hiringEntityIdForDispatch,
+        messageTypeId: 'screening_auto_ordered',
+        outcome: 'sent',
+        fingerprint: fp,
+        details: {
+          jobOrderId,
+          backgroundCheckId: result.backgroundCheckId,
+          packageSummary: packageSummaryFromMerged(merged),
+          resolvedPackageKey: requestedKey,
+          simulated,
+        },
       });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -471,6 +647,22 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         priorScreeningEvaluations,
         error: message,
         dryRun: false,
+      });
+
+      await logScreeningAutomationDispatch({
+        tenantId,
+        assignmentId,
+        userId: candidateId,
+        hiringEntityId: hiringEntityIdForDispatch,
+        messageTypeId: 'screening_auto_failed',
+        outcome: 'failed',
+        fingerprint: fp,
+        details: {
+          jobOrderId,
+          error: message,
+          packageSummary: packageSummaryFromMerged(merged),
+          resolvedPackageKey: requestedKey,
+        },
       });
     }
   }

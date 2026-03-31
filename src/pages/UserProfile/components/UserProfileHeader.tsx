@@ -781,7 +781,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             )}
           </Box>
 
-          {/* Role Chip and Start Onboarding Button - Mobile */}
+          {/* Role Chip and Cancel Onboarding (mobile, when in progress) */}
           {canViewAdminContent && (
             <Stack direction="column" spacing={0.5} alignItems="flex-end">
               {securityLevel && getSecurityLabel(securityLevel) && (
@@ -797,51 +797,26 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   }}
                 />
               )}
-              {isAdminView && (
-                onboardingInProgress ? (
-                  <Button
-                    variant="contained"
-                    size="small"
-                    onClick={() => setShowCancelOnboardingDialog(true)}
-                    sx={{
-                      fontSize: '0.75rem',
-                      py: 0.5,
-                      px: 1.5,
-                      backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
-                      color: '#ffffff', // White text
-                      fontWeight: 600,
-                      '&:hover': {
-                        backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
-                      },
-                    }}
-                  >
-                    Cancel Onboarding
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outlined"
-                    size="small"
-                    sx={{
-                      borderColor: 'success.main',
-                      color: 'success.main',
-                      fontSize: '0.75rem',
-                      py: 0.5,
-                      px: 1.5,
-                      '&:hover': {
-                        borderColor: 'success.dark',
-                        backgroundColor: 'success.light',
-                        color: 'success.dark',
-                      },
-                    }}
-                    onClick={() => {
-                      console.log('Start Onboarding clicked - tenantId:', tenantId || authTenantId || activeTenant?.id);
-                      setShowStartOnboardingDialog(true);
-                    }}
-                  >
-                    Start Onboarding
-                  </Button>
-                )
-              )}
+              {isAdminView && onboardingInProgress ? (
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={() => setShowCancelOnboardingDialog(true)}
+                  sx={{
+                    fontSize: '0.75rem',
+                    py: 0.5,
+                    px: 1.5,
+                    backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
+                    color: '#ffffff', // White text
+                    fontWeight: 600,
+                    '&:hover': {
+                      backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
+                    },
+                  }}
+                >
+                  Cancel Onboarding
+                </Button>
+              ) : null}
             </Stack>
           )}
         </Box>
@@ -1902,42 +1877,23 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               }}
             />
           )}
-          {isAdminView && (
-            onboardingInProgress ? (
-              <Button
-                variant="contained"
-                onClick={() => setShowCancelOnboardingDialog(true)}
-                sx={{
-                  px: 2,
-                  backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
-                  color: '#ffffff', // White text
-                  fontWeight: 600,
-                  '&:hover': {
-                    backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
-                  },
-                }}
-              >
-                Cancel Onboarding
-              </Button>
-            ) : (
-              <Button
-                variant="outlined"
-                sx={{
-                  borderColor: 'success.main',
-                  color: 'success.main',
-                  '&:hover': {
-                    borderColor: 'success.dark',
-                    backgroundColor: 'success.light',
-                    color: 'success.dark',
-                  },
-                  px: 2,
-                }}
-                onClick={() => setShowStartOnboardingDialog(true)}
-              >
-                Start Onboarding
-              </Button>
-            )
-          )}
+          {isAdminView && onboardingInProgress ? (
+            <Button
+              variant="contained"
+              onClick={() => setShowCancelOnboardingDialog(true)}
+              sx={{
+                px: 2,
+                backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
+                color: '#ffffff', // White text
+                fontWeight: 600,
+                '&:hover': {
+                  backgroundImage: 'linear-gradient(90deg, #FB8C00 0%, #FFA000 100%)',
+                },
+              }}
+            >
+              Cancel Onboarding
+            </Button>
+          ) : null}
         </Box>
         
       </Box>

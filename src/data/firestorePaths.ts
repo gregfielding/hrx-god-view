@@ -122,6 +122,8 @@ export const p = {
   requirementPackage: (tid: string, id: string) => `tenants/${tid}/requirement_packages/${id}`,
   onboardingInstances: (tid: string) => `tenants/${tid}/onboarding_instances`,
   onboardingInstance: (tid: string, id: string) => `tenants/${tid}/onboarding_instances/${id}`,
+  /** Cloud Functions audit: assignment-confirmed automation and related dispatches (read-only for clients). */
+  onboardingAutomationDispatch: (tid: string) => `tenants/${tid}/onboarding_automation_dispatch`,
 
   /**
    * Onboarding Library (Phase 1B)

@@ -306,6 +306,21 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     description: 'Sent when assignment is completed.',
     enabled: true,
   },
+  {
+    id: 'payroll_onboarding_invite_needed',
+    label: 'Payroll Onboarding Invite Needed',
+    category: 'transactional',
+    defaultChannels: ['sms', 'email'],
+    critical: true,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: false,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Sent when an assignment is confirmed and the worker needs the entity payroll onboarding URL (entities.payrollSettings.onboardingUrl). Body supplied in variables.message.',
+    enabled: true,
+  },
   
   // Compliance Messages
   {

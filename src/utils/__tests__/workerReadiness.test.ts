@@ -193,6 +193,28 @@ describe('workerReadiness', () => {
       expect(result.reasons.some((r) => r.includes('incomplete'))).toBe(true);
     });
 
+    it('canonicalPathRows without blockers clears onboarding gate even when pipeline counts incomplete', () => {
+      const result = getWorkerReadiness({
+        employments: [{ id: 'e1', status: 'onboarding', entityKey: 'workforce', onboardingPipelineId: 'p1' }],
+        complianceItems: [],
+        payrollByKey: {},
+        pipelineStepCounts: { p1: { complete: 1, total: 6 } },
+        canonicalPathRows: [{ rowId: 'x', required: false, blocking: false, status: 'completed' } as any],
+      });
+      expect(result.status).not.toBe('onboarding');
+    });
+
+    it('canonicalPathRows with blocker keeps onboarding even when pipeline counts complete', () => {
+      const result = getWorkerReadiness({
+        employments: [{ id: 'e1', status: 'onboarding', entityKey: 'workforce', onboardingPipelineId: 'p1' }],
+        complianceItems: [],
+        payrollByKey: {},
+        pipelineStepCounts: { p1: { complete: 6, total: 6 } },
+        canonicalPathRows: [{ rowId: 'x', required: true, blocking: true, status: 'not_started' } as any],
+      });
+      expect(result.status).toBe('onboarding');
+    });
+
     it('Manual payroll provider does not force not_ready for incomplete', () => {
       const result = getWorkerReadiness({
         employments: [{ id: 'e1', status: 'active', entityKey: 'workforce' }],

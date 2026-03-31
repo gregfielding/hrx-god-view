@@ -25,7 +25,14 @@ export type PayrollCompletionSource = (typeof PAYROLL_COMPLETION_SOURCE)[number]
 export const PAYROLL_INVITE_METHOD = ['manual', 'email_link', 'api'] as const;
 export type PayrollInviteMethod = (typeof PAYROLL_INVITE_METHOD)[number];
 
-/** Entity-level payroll configuration (TempWorks-first; supports Everee later). */
+export const PAYROLL_INVITE_AUTOMATION_STATUS = ['none', 'sent'] as const;
+export type PayrollInviteAutomationStatus = (typeof PAYROLL_INVITE_AUTOMATION_STATUS)[number];
+
+/**
+ * Entity-level payroll configuration (TempWorks-first; supports Everee later).
+ * Canonical worker-facing onboarding entry: `onboardingUrl` on `tenants/{tid}/entities/{entityId}`.
+ * `portalUrl` is an optional fallback when no dedicated onboarding link exists.
+ */
 export interface PayrollSettings {
   provider: PayrollProvider;
   mode: PayrollMode;
@@ -53,6 +60,14 @@ export interface WorkerPayrollAccount {
   payrollAccountLink?: string | null;
   externalWorkerId?: string | null;
   payrollInviteSentAt?: unknown;
+  /** Timestamp of the most recent successful payroll onboarding invite send (automation or resend). */
+  inviteSentAt?: unknown;
+  /** First successful invite only (optional mirror of payrollInviteSentAt for new writes). */
+  inviteFirstSentAt?: unknown;
+  /** Automation-facing invite flag; use with `inviteSentAt` / `lastInviteChannel`. */
+  inviteStatus?: PayrollInviteAutomationStatus | string | null;
+  /** Primary channel that succeeded for the last invite (`sms` | `email` | `push`). */
+  lastInviteChannel?: string | null;
   payrollAccountCreatedAt?: unknown;
   payrollSetupCompletedAt?: unknown;
   completionSource?: PayrollCompletionSource | null;

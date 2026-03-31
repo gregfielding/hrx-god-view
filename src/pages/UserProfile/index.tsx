@@ -899,6 +899,18 @@ const UserProfilePage = () => {
       setTabValue(availableTabLabels[0]);
     }
   }, [availableTabLabels, tabValue]);
+
+  /** Employment V2 path actions: open a profile tab without remounting the page. */
+  useEffect(() => {
+    const focus = searchParams.get('employmentFocus');
+    if (!focus || availableTabLabels.length === 0) return;
+    if (!availableTabLabels.includes(focus)) return;
+    setTabValue(focus);
+    const next = new URLSearchParams(searchParams);
+    next.delete('employmentFocus');
+    const q = next.toString();
+    navigate(`${location.pathname}${q ? `?${q}` : ''}`, { replace: true });
+  }, [searchParams, availableTabLabels, location.pathname, navigate]);
   
   useEffect(() => {
     // Removed Certs tab handling
@@ -2066,58 +2078,33 @@ const UserProfilePage = () => {
                     Back
                   </Button>
 
-                  {canViewAdminContent && isAdminView && (
-                    onboardingInProgress ? (
-                      <Button
-                        variant="contained"
-                        disabled
-                        sx={{
-                          textTransform: 'none',
-                          borderRadius: '999px',
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          px: 1.5,
-                          py: 0.75,
-                          whiteSpace: 'nowrap',
-                          '&.Mui-disabled': {
-                            backgroundImage: onboardingAccentGradient,
-                            color: '#FFFFFF',
-                            opacity: 1,
-                          },
-                          '&.Mui-disabled:hover': {
-                            backgroundImage: onboardingAccentGradientHover,
-                            color: '#FFFFFF',
-                            opacity: 1,
-                          },
-                        }}
-                      >
-                        Onboarding
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="outlined"
-                        onClick={() => setShowStartOnboardingDialog(true)}
-                        sx={{
-                          borderColor: 'success.main',
-                          color: 'success.main',
-                          textTransform: 'none',
-                          borderRadius: '999px',
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          px: 1.5,
-                          py: 0.75,
-                          whiteSpace: 'nowrap',
-                          '&:hover': {
-                            borderColor: 'success.dark',
-                            backgroundColor: 'success.light',
-                            color: 'success.dark',
-                          },
-                        }}
-                      >
-                        Start Onboarding
-                      </Button>
-                    )
-                  )}
+                  {canViewAdminContent && isAdminView && onboardingInProgress ? (
+                    <Button
+                      variant="contained"
+                      disabled
+                      sx={{
+                        textTransform: 'none',
+                        borderRadius: '999px',
+                        fontSize: '14px',
+                        fontWeight: 500,
+                        px: 1.5,
+                        py: 0.75,
+                        whiteSpace: 'nowrap',
+                        '&.Mui-disabled': {
+                          backgroundImage: onboardingAccentGradient,
+                          color: '#FFFFFF',
+                          opacity: 1,
+                        },
+                        '&.Mui-disabled:hover': {
+                          backgroundImage: onboardingAccentGradientHover,
+                          color: '#FFFFFF',
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      Onboarding
+                    </Button>
+                  ) : null}
                 </Box>
               ) : (
                 <Button

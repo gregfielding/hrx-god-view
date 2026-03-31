@@ -1,6 +1,7 @@
 /**
  * Explicit mapping: Settings workflow step keys → runtime status sources for Employment V2.
- * Inspectable single source of truth; no backend schema changes.
+ * Inspectable single source of truth. Optional field `worker_onboarding.externalOnboardingSteps`
+ * is read when present (TempWorks / HRIS); coarse `steps[]` remains for legacy pipeline flow.
  *
  * Status priority (per row): subsystem signal → pipeline step → settings-only (not_started / not_required).
  */
@@ -10,15 +11,27 @@ import type {
   EmploymentEntityKey,
   EmploymentOnboardingArtifactScope,
   EmploymentOnboardingArtifactSourceType,
+  EmploymentOnboardingRowActionableBy,
+  EmploymentOnboardingRowAudience,
+  EmploymentOnboardingPathRowOwner,
   EmploymentOnboardingRowStatus,
   EmploymentOnboardingSourceType,
   PipelineStepRow,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
+import type { ExternalOnboardingStepsState } from '../types/externalOnboardingSteps';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { WorkflowUiGroupId } from './onboardingWorkflowStepCatalog';
 import { ONBOARDING_WORKFLOW_STEPS } from './onboardingWorkflowStepCatalog';
 import { evaluateSelectEverifyReuse, findPortableBackgroundArtifact } from './employmentOnboardingArtifactPolicy';
+import {
+  externalStepAppliesToWorkerType,
+  externalStepKeyForWorkflowStep,
+  externalStepLabel,
+  lastUpdatedIsoForExternalStep,
+  type ExternalOnboardingWorkerTypeNorm,
+} from './externalOnboardingSteps';
+import { labelsForExternalOnboardingRecord } from './employmentOnboardingPathAudienceLabels';
 
 /** Whether this row’s status is row-specific or backed by a coarse/shared signal. */
 export type StepStatusFidelity = 'dedicated' | 'shared_pipeline' | 'subsystem_preferred';
@@ -27,7 +40,9 @@ export interface WorkflowStepRuntimeDefinition {
   stepKey: string;
   groupId: WorkflowUiGroupId;
   label: string;
-  owner: 'worker' | 'admin' | 'system' | 'vendor';
+  owner: EmploymentOnboardingPathRowOwner;
+  audience: EmploymentOnboardingRowAudience;
+  actionableBy: EmploymentOnboardingRowActionableBy;
   /** When no pipeline step exists yet: treat row as required (catalog default). Overridden by pipeline `applicability === not_required`. */
   defaultRequired: boolean;
   /** Catalog heuristic (`isWorkflowStepBlocking`); overridden to true when derived row status is `error`. */
@@ -66,6 +81,8 @@ function def(
     label: partial.label ?? LABEL_BY_KEY[stepKey] ?? stepKey,
     groupId: partial.groupId,
     owner: partial.owner,
+    audience: partial.audience,
+    actionableBy: partial.actionableBy,
     defaultRequired: partial.defaultRequired,
     defaultBlocking: partial.defaultBlocking,
     pipelineStepId: partial.pipelineStepId,
@@ -82,7 +99,9 @@ function def(
 export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefinition> = {
   ic_agreement_sent: def('ic_agreement_sent', {
     groupId: 'forms_and_policies',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'onboarding_forms',
@@ -94,6 +113,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   ic_agreement_signed: def('ic_agreement_signed', {
     groupId: 'forms_and_policies',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'onboarding_forms',
@@ -104,7 +125,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   '1099_sent': def('1099_sent', {
     groupId: 'forms_and_policies',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'onboarding_forms',
@@ -116,6 +139,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   '1099_completed': def('1099_completed', {
     groupId: 'forms_and_policies',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'onboarding_forms',
@@ -126,7 +151,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   payroll_invite_sent: def('payroll_invite_sent', {
     groupId: 'payroll',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'everee',
@@ -139,6 +166,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   payroll_setup_complete: def('payroll_setup_complete', {
     groupId: 'payroll',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'everee',
@@ -151,6 +180,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   w9_received: def('w9_received', {
     groupId: 'forms_and_policies',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'onboarding_forms',
@@ -162,6 +193,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   direct_deposit_contractor: def('direct_deposit_contractor', {
     groupId: 'payroll',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'everee',
@@ -173,7 +206,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   handbook_sent: def('handbook_sent', {
     groupId: 'forms_and_policies',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'onboarding_forms',
@@ -185,6 +220,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   handbook_signed: def('handbook_signed', {
     groupId: 'forms_and_policies',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'onboarding_forms',
@@ -195,7 +232,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   i9_sent: def('i9_sent', {
     groupId: 'work_authorization',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'i9',
@@ -207,6 +246,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   i9_completed: def('i9_completed', {
     groupId: 'work_authorization',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'i9',
@@ -217,7 +258,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   everify_sent: def('everify_sent', {
     groupId: 'work_authorization',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'e_verify',
@@ -230,6 +273,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   everify_completed: def('everify_completed', {
     groupId: 'work_authorization',
     owner: 'system',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'e_verify',
@@ -241,7 +286,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   w4_sent: def('w4_sent', {
     groupId: 'forms_and_policies',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'onboarding_forms',
@@ -253,6 +300,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   w4_completed: def('w4_completed', {
     groupId: 'forms_and_policies',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'onboarding_forms',
@@ -264,6 +313,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   direct_deposit_w2: def('direct_deposit_w2', {
     groupId: 'payroll',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'everee',
@@ -276,6 +327,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   policy_acknowledgments: def('policy_acknowledgments', {
     groupId: 'forms_and_policies',
     owner: 'worker',
+    audience: 'both',
+    actionableBy: 'worker',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'onboarding_forms',
@@ -286,7 +339,9 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   }),
   background_initiated: def('background_initiated', {
     groupId: 'screenings',
-    owner: 'admin',
+    owner: 'recruiter',
+    audience: 'both',
+    actionableBy: 'recruiter',
     defaultRequired: true,
     defaultBlocking: false,
     pipelineStepId: 'background_check',
@@ -299,6 +354,8 @@ export const WORKFLOW_STEP_RUNTIME_MAP: Record<string, WorkflowStepRuntimeDefini
   background_completed: def('background_completed', {
     groupId: 'screenings',
     owner: 'vendor',
+    audience: 'both',
+    actionableBy: 'none',
     defaultRequired: true,
     defaultBlocking: true,
     pipelineStepId: 'background_check',
@@ -560,6 +617,16 @@ export interface DeriveWorkflowStepStatusArgs {
   entityLinkedJobOrderIds: Set<string>;
   /** All background checks for this worker in the tenant (for reuse heuristics). */
   allTenantWorkerChecks: BackgroundCheckRecord[];
+  /**
+   * Parsed `worker_onboarding.externalOnboardingSteps` (TempWorks / HRIS milestones).
+   * When present for a mapped workflow step, pipeline resolution prefers this over coarse `steps[]`.
+   */
+  externalOnboardingSteps?: ExternalOnboardingStepsState;
+  /**
+   * Normalized worker type for TempWorks overlay only (`normalizeWorkerTypeForExternalSteps`:
+   * entity worker type → employment fallback → `unknown`). Does not add path rows.
+   */
+  externalOnboardingWorkerType: ExternalOnboardingWorkerTypeNorm;
 }
 
 export interface DerivedWorkflowStepStatus {
@@ -571,6 +638,7 @@ export interface DerivedWorkflowStepStatus {
     pipelineStepId?: string;
     caseId?: string;
     backgroundCheckId?: string;
+    externalStepKey?: string;
   };
   helperText: string;
   lastUpdatedAt: string | null;
@@ -594,6 +662,9 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
     entityKey,
     entityLinkedJobOrderIds,
     allTenantWorkerChecks,
+    externalOnboardingSteps,
+    externalOnboardingWorkerType,
+    labelAudience = 'admin',
   } = args;
   const pipeId = definition.pipelineStepId;
   const pStep = getPipelineStep(pipelineSteps, pipeId);
@@ -742,6 +813,45 @@ export function deriveWorkflowStepStatus(args: DeriveWorkflowStepStatusArgs): De
       }
     }
     if (source === 'pipeline') {
+      const extKey = externalStepKeyForWorkflowStep(definition.stepKey);
+      const extRow = extKey && externalOnboardingSteps?.[extKey];
+      if (
+        extKey &&
+        extRow &&
+        extRow.externalSource === 'tempworks' &&
+        !externalStepAppliesToWorkerType(extKey, externalOnboardingWorkerType)
+      ) {
+        helperParts.push('External onboarding row ignored due to worker-type mismatch.');
+      }
+      if (
+        extKey &&
+        extRow &&
+        extRow.externalSource === 'tempworks' &&
+        externalStepAppliesToWorkerType(extKey, externalOnboardingWorkerType)
+      ) {
+        const mapped = labelsForExternalOnboardingRecord(extRow, labelAudience);
+        pushFidelity();
+        const extTs = lastUpdatedIsoForExternalStep(extRow);
+        const isSettingsOnly = mapped.status === 'not_started' && !pStep;
+        return {
+          status: mapped.status,
+          statusLabel: mapped.statusLabel,
+          effectiveSourceType: isSettingsOnly ? 'settings_only' : 'external_onboarding',
+          sourceRef: {
+            ...(pipeId ? { pipelineStepId: pipeId } : {}),
+            externalStepKey: extKey,
+          },
+          helperText: isSettingsOnly
+            ? `No TempWorks activity yet for “${externalStepLabel(extKey)}”. ${definition.fidelityExplanation}`.trim()
+            : `TempWorks / worker_onboarding.externalOnboardingSteps (“${externalStepLabel(extKey)}”). ${helperParts.join(
+                ' '
+              )}`.trim(),
+          lastUpdatedAt: extTs ?? pipelineTs,
+          satisfiedByArtifact: false,
+          artifactCompletedAt: null,
+        };
+      }
+
       const pipe = mapPipelineStepToRowStatus(pStep);
       pushFidelity();
       const isSettingsOnly = !pStep && pipe.status === 'not_started';

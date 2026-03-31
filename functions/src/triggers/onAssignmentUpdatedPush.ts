@@ -9,6 +9,7 @@ import { logger } from 'firebase-functions/v2';
 import * as admin from 'firebase-admin';
 import { sendNotificationAndPush } from '../messaging/unifiedWorkerNotifications';
 import { markLifecycleEventIfFirst } from '../messaging/lifecycleDedupe';
+import { normalizeAssignmentStatus } from '../utils/assignmentStatusNormalize';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -17,11 +18,8 @@ const db = admin.firestore();
 
 const ASSIGNMENTS_PATH = '/c1/workers/assignments';
 
-const NOTIFY_STATUSES = new Set(['proposed', 'confirmed', 'active', 'canceled', 'cancelled']);
-
-function normalizeStatus(s: unknown): string {
-  return String(s ?? '').trim().toLowerCase();
-}
+/** Notify on canonical transitions; legacy raw strings normalized first in handler. */
+const NOTIFY_CANONICAL = new Set(['pending', 'confirmed', 'in_progress', 'cancelled']);
 
 export const onAssignmentUpdatedPush = onDocumentUpdated(
   'tenants/{tenantId}/assignments/{assignmentId}',
@@ -31,16 +29,24 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
     const after = event.data?.after.data();
     if (!before || !after) return;
 
-    const beforeStatus = normalizeStatus(before.status);
-    const afterStatus = normalizeStatus(after.status);
+    const afterRaw = String(after.status ?? '').trim();
+    const afterCanon = normalizeAssignmentStatus(after.status);
+    const beforeCanon = normalizeAssignmentStatus(before.status);
 
-    if (beforeStatus === afterStatus) {
-      logger.info('[PUSH][assignment_updated] skipped: status unchanged', { assignmentId, status: afterStatus });
+    if (beforeCanon === afterCanon) {
+      logger.info('[PUSH][assignment_updated] skipped: status unchanged (canonical)', {
+        assignmentId,
+        status: afterCanon,
+      });
       return;
     }
 
-    if (!NOTIFY_STATUSES.has(afterStatus)) {
-      logger.info('[PUSH][assignment_updated] skipped: status not notify-worthy', { assignmentId, afterStatus });
+    if (!NOTIFY_CANONICAL.has(afterCanon)) {
+      logger.info('[PUSH][assignment_updated] skipped: status not notify-worthy', {
+        assignmentId,
+        afterCanon,
+        afterRaw,
+      });
       return;
     }
 
@@ -51,8 +57,8 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
     }
 
     // Idempotency: already sent push for this status (e.g. trigger retry)
-    if (after.lastPushSentForStatus === afterStatus) {
-      logger.info('[PUSH][assignment_updated] skipped: already sent for status', { assignmentId, afterStatus });
+    if (after.lastPushSentForStatus === afterRaw) {
+      logger.info('[PUSH][assignment_updated] skipped: already sent for status', { assignmentId, afterRaw });
       return;
     }
     const updatedAtToken =
@@ -63,9 +69,9 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
           : 'na';
     const canProcessPushEvent = await markLifecycleEventIfFirst({
       tenantId,
-      dedupeKey: `assignment_push_status__${assignmentId}__${beforeStatus}__${afterStatus}__${updatedAtToken}`,
+      dedupeKey: `assignment_push_status__${assignmentId}__${beforeCanon}__${afterCanon}__${updatedAtToken}`,
       eventType: 'assignment_status_push',
-      context: { assignmentId, userId, beforeStatus, afterStatus },
+      context: { assignmentId, userId, beforeStatus: beforeCanon, afterStatus: afterCanon },
     });
     if (!canProcessPushEvent) {
       return;
@@ -74,7 +80,16 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
     const jobOrderName = after.jobOrderName || after.jobTitle || 'your shift';
     const startTime = after.startTime || after.startDate || '';
     const locationName = after.locationName || after.location || '';
-    const statusLabel = afterStatus === 'canceled' || afterStatus === 'cancelled' ? 'Cancelled' : afterStatus === 'proposed' ? 'Scheduled' : afterStatus === 'confirmed' ? 'Confirmed' : afterStatus === 'active' ? 'Active' : 'Updated';
+    const statusLabel =
+      afterCanon === 'cancelled'
+        ? 'Cancelled'
+        : afterCanon === 'pending'
+          ? 'Scheduled'
+          : afterCanon === 'confirmed'
+            ? 'Confirmed'
+            : afterCanon === 'in_progress'
+              ? 'Active'
+              : 'Updated';
     const title = `Shift ${statusLabel}`;
     let body = jobOrderName;
     if (startTime) body += ` — ${startTime}`;
@@ -104,11 +119,18 @@ export const onAssignmentUpdatedPush = onDocumentUpdated(
       });
 
       await event.data.after.ref.update({
-        lastPushSentForStatus: afterStatus,
+        lastPushSentForStatus: afterRaw,
         lastPushSentAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      logger.info('[PUSH][assignment_updated] uid=%s status=%s->%s deepLink=%s tokens=%d', userId, beforeStatus, afterStatus, deepLink, tokenCount);
+      logger.info(
+        '[PUSH][assignment_updated] uid=%s status=%s->%s deepLink=%s tokens=%d',
+        userId,
+        beforeCanon,
+        afterCanon,
+        deepLink,
+        tokenCount
+      );
     } catch (err: any) {
       logger.error('[PUSH][assignment_updated] failed', { uid: userId, assignmentId, error: err?.message || String(err) });
       // Do not throw — avoid blocking the assignment write

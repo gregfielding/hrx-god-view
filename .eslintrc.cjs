@@ -57,7 +57,22 @@ module.exports = {
     'react/no-danger': 'warn',
     'react/forbid-component-props': ['warn', { forbid: [{ propName: 'style', message: 'Use theme tokens and sx prop or styled components' }] }],
     'no-empty': ['warn', { allowEmptyCatch: true }]
-  }
+  },
+  overrides: [
+    {
+      files: ['src/pages/**/*.{ts,tsx}', 'src/hooks/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+      rules: {
+        'no-restricted-syntax': [
+          'warn',
+          {
+            selector: "MemberExpression[property.name='headerEmploymentStatus']",
+            message:
+              'Use employmentHeaderState (EmploymentV2HeaderState) for header or top-level employment chips. headerEmploymentStatus is frozen — see deriveEmploymentHeaderState.ts and employmentV2Types.ts.',
+          },
+        ],
+      },
+    },
+  ],
 };
 
 

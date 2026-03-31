@@ -869,13 +869,17 @@ const EntitiesPage: React.FC = () => {
                       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                         Enable the onboarding steps that apply to this entity. All steps are available for every entity; check the ones you want active (e.g. 1099 steps for C1 Events, W2 steps for C1 Select).
                       </Typography>
-                      {(['1099', 'W2'] as const).map((cat) => {
+                      {(['1099', 'W2', 'both'] as const).map((cat) => {
                         const steps = ONBOARDING_WORKFLOW_STEPS.filter((s) => s.category === cat);
                         if (steps.length === 0) return null;
                         return (
                           <Box key={cat} sx={{ mb: 3 }}>
                             <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>
-                              {cat === '1099' ? 'Independent Contractor (1099)' : 'W2 Employee'}
+                              {cat === '1099'
+                                ? 'Independent Contractor (1099)'
+                                : cat === 'W2'
+                                  ? 'W2 Employee'
+                                  : 'W-2 and 1099 (shared)'}
                             </Typography>
                             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
                               {steps.map((step) => (

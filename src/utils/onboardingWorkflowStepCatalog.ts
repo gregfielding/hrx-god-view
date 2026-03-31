@@ -32,7 +32,12 @@ export const ONBOARDING_WORKFLOW_STEPS: OnboardingWorkflowStepDef[] = [
   { id: 'w4_sent', label: 'W-4 Sent', category: 'W2' },
   { id: 'w4_completed', label: 'W-4 Completed', category: 'W2' },
   { id: 'direct_deposit_w2', label: 'Direct Deposit Setup', category: 'W2' },
-  { id: 'policy_acknowledgments', label: 'Policy Acknowledgments (e.g. harassment, confidentiality)', category: 'W2' },
+  {
+    id: 'policy_acknowledgments',
+    label: 'Policy Acknowledgments (e.g. harassment, confidentiality)',
+    /** Aligns with `EXTERNAL_ONBOARDING_STEP_CATALOG.policies_acknowledgment` (`appliesTo: 'both'`). */
+    category: 'both',
+  },
   { id: 'background_initiated', label: 'Background Check Initiated', category: 'W2' },
   { id: 'background_completed', label: 'Background Check Completed', category: 'W2' },
 ];
@@ -87,7 +92,7 @@ export function workflowStepToPipelineStepId(workflowStepId: string): string | n
   return null;
 }
 
-export type CatalogStepOwner = 'worker' | 'admin' | 'system' | 'vendor';
+export type CatalogStepOwner = 'worker' | 'recruiter' | 'system' | 'vendor';
 
 export function defaultOwnerForWorkflowStep(workflowStepId: string): CatalogStepOwner {
   if (workflowStepId.startsWith('everify_')) return 'system';
@@ -100,7 +105,7 @@ export function defaultOwnerForWorkflowStep(workflowStepId: string): CatalogStep
     workflowStepId === 'ic_agreement_sent' ||
     workflowStepId === '1099_sent'
   ) {
-    return 'admin';
+    return 'recruiter';
   }
   return 'worker';
 }

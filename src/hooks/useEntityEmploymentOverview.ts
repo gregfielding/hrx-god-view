@@ -20,9 +20,14 @@ import type {
   WorkerOnboardingPipeline,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import { EMPLOYMENT_ENTITY_KEYS, resolveEntityFirestoreIdForTab } from '../utils/employmentEntityPresentation';
+import { buildEmploymentEntityOverview } from '../utils/employmentReadiness';
 import {
-  buildEmploymentEntityOverview,
-} from '../utils/employmentReadiness';
+  buildEverifyCaseBriefsForSelectEntity,
+  filterAutomationDispatchBriefsForEntityTab,
+  onboardingAutomationDispatchBriefFromRaw,
+  type EverifyCaseNarrativeBrief,
+  type OnboardingAutomationDispatchBrief,
+} from '../utils/employmentOnboardingNarrative';
 import { deriveC1EntityKeyFromEntityName, resolveC1SelectEntityId } from '../utils/c1EntityWorkAuthorizationUi';
 import { getWorkerPayrollAccount } from '../utils/workerPayrollAccount';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
@@ -128,11 +133,13 @@ export function useEntityEmploymentOverview({
     onboardingByInstanceId: Map<string, OnboardingInstanceSnapshot>;
     envelopesByAssignmentId: Map<string, Map<string, SignatureEnvelopeStatus>>;
     everifySummary: EmploymentEverifySummary | null;
+    everifyCaseBriefs: EverifyCaseNarrativeBrief[];
     payrollByKey: Record<EmploymentEntityKey, Awaited<ReturnType<typeof getWorkerPayrollAccount>>>;
     backgroundByKey: Record<EmploymentEntityKey, BackgroundCheckRecord[]>;
     /** Full tenant list for this worker (cross–job-order reuse heuristics). */
     allWorkerBackgroundChecks: BackgroundCheckRecord[];
     entitySettingsByKey: Record<EmploymentEntityKey, EntityTabSettingsSnapshot | null>;
+    automationDispatchAll: OnboardingAutomationDispatchBrief[];
   } | null>(null);
 
   const refetch = useCallback(() => setTick((t) => t + 1), []);
@@ -162,7 +169,7 @@ export function useEntityEmploymentOverview({
 
         const selectEntityId = resolveC1SelectEntityId(entityBrief);
 
-        const [eeSnap, woSnap, assignUserSnap, assignCandSnap, casesSnap, bgSnap] = await Promise.all([
+        const [eeSnap, woSnap, assignUserSnap, assignCandSnap, casesSnap, bgSnap, dispatchSnap] = await Promise.all([
           getDocs(query(collection(db, p.entityEmployments(tenantId)), where('userId', '==', userId))),
           getDocs(query(collection(db, p.workerOnboarding(tenantId)), where('userId', '==', userId))),
           getDocs(query(collection(db, p.assignments(tenantId)), where('userId', '==', userId))),
@@ -170,7 +177,18 @@ export function useEntityEmploymentOverview({
           // Recruiter/admin: read private everify_cases (rules allow tenant role); linkage fields are authoritative.
           getDocs(query(collection(db, p.everifyCases(tenantId)), where('userId', '==', userId), limit(80))),
           getDocs(query(collection(db, 'backgroundChecks'), where('candidateId', '==', userId), limit(120))),
+          getDocs(
+            query(
+              collection(db, p.onboardingAutomationDispatch(tenantId)),
+              where('userId', '==', userId),
+              limit(120)
+            )
+          ),
         ]);
+
+        const automationDispatchAll = dispatchSnap.docs.map((d) =>
+          onboardingAutomationDispatchBriefFromRaw(d.id, d.data() as Record<string, unknown>)
+        );
 
         const assignmentsMap = new Map<string, Record<string, unknown>>();
         assignUserSnap.docs.forEach((d) => assignmentsMap.set(d.id, d.data() as Record<string, unknown>));
@@ -315,10 +333,12 @@ export function useEntityEmploymentOverview({
           if (ek) pipelinesByKey[ek] = pipe;
         });
 
-        const everifySummary = buildEverifySummary(
-          casesSnap.docs.map((d) => ({ id: d.id, data: () => d.data() as Record<string, unknown> })),
-          selectEntityId
-        );
+        const everifyCaseDocRefs = casesSnap.docs.map((d) => ({
+          id: d.id,
+          data: () => d.data() as Record<string, unknown>,
+        }));
+        const everifySummary = buildEverifySummary(everifyCaseDocRefs, selectEntityId);
+        const everifyCaseBriefs = buildEverifyCaseBriefsForSelectEntity(everifyCaseDocRefs, selectEntityId);
 
         const payrollByKey: Record<EmploymentEntityKey, Awaited<ReturnType<typeof getWorkerPayrollAccount>>> = {
           select: null,
@@ -399,10 +419,12 @@ export function useEntityEmploymentOverview({
             onboardingByInstanceId,
             envelopesByAssignmentId,
             everifySummary,
+            everifyCaseBriefs,
             payrollByKey,
             backgroundByKey,
             allWorkerBackgroundChecks: bgList,
             entitySettingsByKey,
+            automationDispatchAll,
           });
         }
       } catch (e: unknown) {
@@ -424,6 +446,13 @@ export function useEntityEmploymentOverview({
   const byEntityKey = useMemo(() => {
     const result = {} as Record<EmploymentEntityKey, EmploymentEntityOverview>;
     EMPLOYMENT_ENTITY_KEYS.forEach((entityKey) => {
+      const eid = payload?.entitySettingsByKey[entityKey]?.entityFirestoreId;
+      const assignmentIdsForTab = (payload?.assignmentsByKey[entityKey] ?? []).map((a) => a.assignmentId);
+      const automationDispatchBriefs = filterAutomationDispatchBriefsForEntityTab(
+        payload?.automationDispatchAll,
+        eid,
+        assignmentIdsForTab
+      );
       result[entityKey] = buildEmploymentEntityOverview({
         entityKey,
         entityEmployment: payload?.employmentsByKey[entityKey] ?? null,
@@ -436,6 +465,8 @@ export function useEntityEmploymentOverview({
         payrollAccount: payload?.payrollByKey[entityKey] ?? null,
         backgroundChecksForEntity: payload?.backgroundByKey[entityKey] ?? [],
         allTenantWorkerBackgroundChecks: payload?.allWorkerBackgroundChecks ?? [],
+        everifyCaseBriefs: payload?.everifyCaseBriefs ?? [],
+        automationDispatchBriefs,
       });
     });
     return result;

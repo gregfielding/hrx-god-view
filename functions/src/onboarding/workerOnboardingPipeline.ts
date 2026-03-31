@@ -75,7 +75,7 @@ function canManageOnboardingFromClaims(auth: any, tenantId: string): boolean {
   return false;
 }
 
-async function canManageOnboarding(auth: any, tenantId: string, uid: string): Promise<boolean> {
+export async function canManageOnboarding(auth: any, tenantId: string, uid: string): Promise<boolean> {
   if (canManageOnboardingFromClaims(auth, tenantId)) return true;
   const userSnap = await db.doc(`users/${uid}`).get();
   if (!userSnap.exists) return false;
@@ -294,6 +294,18 @@ export async function syncEverifyStatusToPipelineAndEmployment(args: {
   );
 }
 
+/**
+ * Audit identity for Firestore-triggered pipeline ensure (not a Firebase Auth uid).
+ * Stored on `worker_onboarding.triggeredBy` / `lastTrigger` when the assignment-confirmed slice runs.
+ */
+export const SYSTEM_ASSIGNMENT_CONFIRMED_ACTOR = "system:assignment_confirmed";
+
+export type WorkerOnboardingPipelineTriggerSource =
+  | "worker_confirmation"
+  | "recruiter_confirmation"
+  | "manual"
+  | "assignment_confirmed";
+
 export async function ensureWorkerOnboardingPipeline(args: {
   tenantId: string;
   userId: string;
@@ -301,7 +313,7 @@ export async function ensureWorkerOnboardingPipeline(args: {
   jobOrderId?: string | null;
   entityId?: string | null;
   triggeredByUid: string;
-  triggerSource: "worker_confirmation" | "recruiter_confirmation" | "manual";
+  triggerSource: WorkerOnboardingPipelineTriggerSource;
 }): Promise<{ pipelineId: string; created: boolean }> {
   const { tenantId, userId, assignmentId, jobOrderId, entityId, triggeredByUid, triggerSource } = args;
   const entityContext = await resolveEntityContext({ tenantId, entityId, jobOrderId });
@@ -413,6 +425,34 @@ export async function ensureWorkerOnboardingPipeline(args: {
   });
 
   return { pipelineId, created };
+}
+
+/**
+ * Server-only: ensure `worker_onboarding` + `entity_employments` exist when an assignment hits `confirmed`
+ * via the Firestore automation path. Idempotent with callable `ensureWorkerOnboardingPipeline` (same pipeline doc).
+ * Does not set employment `active: true` — `ensureWorkerOnboardingPipeline` always merges `active: false` and
+ * `status: "onboarding"` unless later workflows change them.
+ */
+export async function ensureWorkerOnboardingPipelineForAssignmentConfirmed(args: {
+  tenantId: string;
+  userId: string;
+  assignmentId: string;
+  assignment: Record<string, unknown>;
+}): Promise<{ pipelineId: string; created: boolean } | null> {
+  const { tenantId, userId, assignmentId, assignment } = args;
+  const trimmed = String(userId || "").trim();
+  if (!trimmed) return null;
+  const jobOrderId = (assignment.jobOrderId as string) || null;
+  const entityId = (assignment.entityId as string) || null;
+  return ensureWorkerOnboardingPipeline({
+    tenantId,
+    userId: trimmed,
+    assignmentId,
+    jobOrderId,
+    entityId,
+    triggeredByUid: SYSTEM_ASSIGNMENT_CONFIRMED_ACTOR,
+    triggerSource: "assignment_confirmed",
+  });
 }
 
 export const triggerWorkerOnboardingPipeline = onCall({ cors: true }, async (request) => {

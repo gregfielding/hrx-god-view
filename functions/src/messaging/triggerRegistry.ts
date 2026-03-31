@@ -1,3 +1,5 @@
+import { normalizeAssignmentStatus } from '../utils/assignmentStatusNormalize';
+
 export const SYSTEM_TRIGGER_KEYS = {
   accountCreated: 'account_created',
   applicationReceived: 'application_received',
@@ -113,10 +115,10 @@ export function mapApplicationStatusToTriggerKey(status: string): SystemTriggerK
 }
 
 export function mapAssignmentStatusToTriggerKey(status: string): SystemTriggerKey | null {
-  const normalized = (status || '').toLowerCase();
-  if (normalized === 'confirmed') return SYSTEM_TRIGGER_KEYS.assignmentStatusConfirmed;
-  if (normalized === 'active') return SYSTEM_TRIGGER_KEYS.assignmentStatusActive;
-  if (normalized === 'completed') return SYSTEM_TRIGGER_KEYS.assignmentStatusCompleted;
-  if (normalized === 'cancelled' || normalized === 'canceled') return SYSTEM_TRIGGER_KEYS.assignmentStatusCancelled;
+  const n = normalizeAssignmentStatus(status);
+  if (n === 'confirmed') return SYSTEM_TRIGGER_KEYS.assignmentStatusConfirmed;
+  if (n === 'in_progress') return SYSTEM_TRIGGER_KEYS.assignmentStatusActive;
+  if (n === 'completed') return SYSTEM_TRIGGER_KEYS.assignmentStatusCompleted;
+  if (n === 'cancelled') return SYSTEM_TRIGGER_KEYS.assignmentStatusCancelled;
   return null;
 }

@@ -63,6 +63,14 @@ export interface BackgroundCheckRecord {
   updatedAt?: Timestamp | null;
   lastWebhookAt?: Timestamp | null;
   createdBy?: string | null;
+  /** Assignment-confirmed automation (AccuSource or simulated). */
+  automationSource?: string | null;
+  automationAssignmentId?: string | null;
+  automationTenantId?: string | null;
+  automationFingerprint?: string | null;
+  automationOrderedAt?: Timestamp | null;
+  /** True when `ENABLE_SCREENING_ORDER` was false — no provider API call. */
+  screeningOrderSimulated?: boolean;
   /** Latest per-service line item from `service_status_change` webhooks. */
   lastServiceComponent?: LastServiceComponent | null;
   /** Keyed by SourceDirect service id (string). */

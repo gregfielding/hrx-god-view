@@ -153,9 +153,9 @@ service cloud.firestore {
           (request.auth.token.roles != null && 
            tenantId in request.auth.token.roles && 
            request.auth.token.roles[tenantId].role in ['Recruiter', 'Manager', 'Admin']) ||
-          // Workers can only update status and notes on their own assignments when active
+          // Workers can only update status and notes on their own assignments when in a worker-actionable state
           (resource.data.userId == request.auth.uid &&
-           resource.data.status == 'active' &&
+           resource.data.status in ['pending', 'proposed', 'confirmed', 'in_progress', 'active'] &&
            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'notes', 'updatedAt', 'updatedBy']))
         ) &&
         // Always enforce tenantId cannot be changed
@@ -187,7 +187,13 @@ service cloud.firestore {
 
       // Onboarding (Phase 1A): entities, requirement_packages, onboarding_instances
       match /entities/{entityId} {
-        allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
+        // Employment V2 / user profile: same tenant staff access as entity_employments (claims OR assignment OR level 5+)
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
+        );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
         match /private/{privateDoc} {
           allow read, write: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -234,6 +240,8 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -242,6 +250,8 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -254,17 +264,21 @@ service cloud.firestore {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
-      // E-Verify cases (HRX E-Verify Master Plan) - admin/HRX/recruiters only; workers use everify_cases_public.
+      // E-Verify cases (HRX E-Verify Master Plan) - tenant staff same as Employment tab; workers use everify_cases_public.
       match /everify_cases/{caseId} {
         allow read: if request.auth != null && (
           isHRX() ||
-          hasTenantRole(tenantId, request.auth.token.roles)
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
         match /events/{eventId} {
           allow read: if request.auth != null && (
             isHRX() ||
-            hasTenantRole(tenantId, request.auth.token.roles)
+            hasTenantRole(tenantId, request.auth.token.roles) ||
+            isAssignedToTenant(tenantId) ||
+            hasSecurityLevel(tenantId, 5)
           );
           allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
         }
@@ -361,6 +375,18 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
+      // Onboarding automation audit (Cloud Functions write); workers read own rows for Employment V2 narrative
+      match /onboarding_automation_dispatch/{dispatchId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        allow create, update, delete: if false;
+      }
+
       // HRX Signatures Spec: document templates + bundles (read tenant roles; write admin/HRX)
       match /document_templates/{docTemplateId} {
         allow read: if request.auth != null && (isHRX() || hasTenantRole(tenantId, request.auth.token.roles));
@@ -373,10 +399,12 @@ service cloud.firestore {
 
       // Phase 1C: Signature envelopes (write via Cloud Functions only)
       match /signature_envelopes/{envelopeId} {
-        // Read: admins + envelope owner (signer)
+        // Read: tenant staff (Employment tab / assignment packages) + envelope owner (signer)
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         // Write: Cloud Functions only (Admin SDK bypasses rules)
@@ -385,6 +413,8 @@ service cloud.firestore {
           allow read: if request.auth != null && (
             isHRX() ||
             hasTenantRole(tenantId, request.auth.token.roles) ||
+            isAssignedToTenant(tenantId) ||
+            hasSecurityLevel(tenantId, 5) ||
             get(/databases/$(database)/documents/tenants/$(tenantId)/signature_envelopes/$(envelopeId)).data.userId == request.auth.uid
           );
           allow create, update, delete: if false;
@@ -2044,8 +2074,11 @@ service cloud.firestore {
         isHRX() ||
         (
           resource.data.tenantId != null &&
-          isAssignedToTenant(resource.data.tenantId) &&
-          hasSecurityLevel(resource.data.tenantId, 5)
+          (
+            hasTenantRole(resource.data.tenantId, request.auth.token.roles) ||
+            isAssignedToTenant(resource.data.tenantId) ||
+            hasSecurityLevel(resource.data.tenantId, 5)
+          )
         )
       );
       allow create, update, delete: if false;
@@ -2054,8 +2087,14 @@ service cloud.firestore {
           isHRX() ||
           (
             get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId != null &&
-            isAssignedToTenant(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId) &&
-            hasSecurityLevel(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId, 5)
+            (
+              hasTenantRole(
+                get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId,
+                request.auth.token.roles
+              ) ||
+              isAssignedToTenant(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId) ||
+              hasSecurityLevel(get(/databases/$(database)/documents/backgroundChecks/$(checkId)).data.tenantId, 5)
+            )
           )
         );
         allow create, update, delete: if false;

@@ -109,7 +109,16 @@ export interface ApplicationSortOptions {
 // PHASE 2.2 - ASSIGNMENTS & SCHEDULING TYPES
 // ============================================================================
 
-export type AssignmentStatus = 'proposed' | 'confirmed' | 'declined' | 'active' | 'completed' | 'ended' | 'canceled';
+/** Canonical values written by new code; legacy strings may still exist in Firestore until backfilled. */
+export type AssignmentStatusCanonical = 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+
+export type AssignmentStatus =
+  | AssignmentStatusCanonical
+  | 'proposed'
+  | 'declined'
+  | 'active'
+  | 'ended'
+  | 'canceled';
 
 export type TimesheetMode = 'mobile' | 'kiosk' | 'paper';
 

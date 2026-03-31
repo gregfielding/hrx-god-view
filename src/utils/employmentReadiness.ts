@@ -1,5 +1,9 @@
 /**
  * Entity-first employment readiness: blockers, lifecycle, and progress from live records.
+ *
+ * **Header UX:** `employmentHeaderState` (`EmploymentV2HeaderState`) is the only supported model for headers and
+ * top-level employment chips. `lifecycleStatus` is a **deprecated derived alias** of `employmentHeaderState`.
+ * `readinessChip` and `headerEmploymentStatus` remain legacy summary-card fields.
  */
 
 import { everifyUiAppliesToEntityKey, workAuthUiModeFromEntityKey } from './c1EntityWorkAuthorizationUi';
@@ -13,13 +17,11 @@ import type {
   EmploymentEverifySummary,
   EmploymentEntityKey,
   EmploymentEntityOverview,
-  EmploymentLifecycleStatus,
   EmploymentPayrollSummary,
   EmploymentReadinessChip,
   EmploymentScreeningSummary,
   EntityEmploymentRecord,
   EntityTabSettingsSnapshot,
-  HeaderEmploymentStatus,
   OnboardingInstanceSnapshot,
   PipelineStepRow,
   PipelineTaskRow,
@@ -27,13 +29,32 @@ import type {
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import {
   buildOnboardingPathFromSettings,
+  filterEntityRelationshipOnboardingPathGroups,
   isOnboardingPathRowBlocker,
   isOnboardingPathRowDone,
 } from './employmentOnboardingPath';
+import {
+  computeHasOpenOnboardingDemand,
+  deriveDominantActionableForHeader,
+  deriveEmploymentHeaderState,
+  employmentBlockerItemFromPathRow,
+  employmentHeaderStateExplanation,
+  headerEmploymentStatusFromEmploymentHeaderState,
+  lifecycleStatusFromEmploymentHeaderState,
+  primaryAssignmentRowForHeader,
+} from './deriveEmploymentHeaderState';
+import { buildAssignmentRequirementsViewModel } from './assignmentRequirementsViewModel';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import { entityLabelForKey, defaultWorkerTypeForEntity } from './employmentEntityPresentation';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import type {
+  EverifyCaseNarrativeBrief,
+  OnboardingAutomationDispatchBrief,
+} from './employmentOnboardingNarrative';
+import { enrichOnboardingPathWithNarrativesFromOverviewDeps } from './employmentOnboardingNarrative';
+import { resolveEffectiveEmploymentWorkerType } from './employmentWorkerTypeResolution';
+import type { ExternalOnboardingWorkerTypeNorm } from './externalOnboardingSteps';
 
 export function stepIdToGroupId(stepId: string): EmploymentBlockerGroupId {
   const id = String(stepId || '').toLowerCase();
@@ -85,7 +106,7 @@ function blockerStatusForStep(s: PipelineStepLike): EmploymentBlockerItem['statu
   return 'pending';
 }
 
-function buildBlockersFromPipeline(
+export function buildBlockersFromPipeline(
   steps: PipelineStepRow[] | undefined,
   tasks: PipelineTaskRow[] | undefined,
   entityKey: EmploymentEntityKey
@@ -134,51 +155,6 @@ function buildBlockersFromPipeline(
   return blockers;
 }
 
-/**
- * Entity lifecycle: employment record status wins for active/term/inactive/blocked.
- * For onboarding-ish states, `ready` requires no blockers (path ∪ pipeline) and both
- * pipeline applicable steps complete and onboarding path rows all done (or no path rows).
- */
-function deriveLifecycleStatus(
-  ee: EntityEmploymentRecord | null,
-  pipeline: WorkerOnboardingPipeline | null,
-  completedCount: number,
-  requiredCount: number,
-  hasAnyBlockers: boolean,
-  pathRowCount: number,
-  pathDoneCount: number
-): EmploymentLifecycleStatus {
-  const pathAllDone = pathRowCount === 0 || pathDoneCount === pathRowCount;
-  const pipelineAllComplete = requiredCount === 0 || completedCount === requiredCount;
-  const readyCandidate = !hasAnyBlockers && pathAllDone && pipelineAllComplete;
-
-  if (!ee && !pipeline) return 'not_started';
-  if (!ee && pipeline) {
-    if (hasAnyBlockers) return 'blocked';
-    if (readyCandidate) return 'ready';
-    return 'onboarding';
-  }
-
-  const s = String(ee?.status || '').toLowerCase();
-  if (s === 'active') return 'active';
-  if (s === 'terminated') return 'terminated';
-  if (s === 'inactive') return 'inactive';
-  if (s === 'blocked') return 'blocked';
-
-  if (s === 'onboarding') {
-    if (hasAnyBlockers) return 'blocked';
-    if (readyCandidate) return 'ready';
-    return 'onboarding';
-  }
-
-  if (ee) {
-    if (hasAnyBlockers) return 'blocked';
-    if (readyCandidate) return 'ready';
-    return 'onboarding';
-  }
-  return 'not_started';
-}
-
 function deriveReadinessChip(
   notStarted: boolean,
   hasAnyBlockers: boolean,
@@ -193,52 +169,6 @@ function deriveReadinessChip(
   const pipelineAllComplete = requiredCount === 0 || completedCount === requiredCount;
   if (pathAllDone && pipelineAllComplete) return 'ready';
   return 'in_progress';
-}
-
-function deriveHeaderReadinessExplanation(args: {
-  headerStatus: HeaderEmploymentStatus;
-  pathBlockerCount: number;
-  pathRowCount: number;
-  pathDoneCount: number;
-  pipelineBlockerCount: number;
-}): string {
-  const { headerStatus, pathBlockerCount, pathRowCount, pathDoneCount, pipelineBlockerCount } = args;
-  const openPathSteps = Math.max(0, pathRowCount - pathDoneCount);
-
-  if (headerStatus === 'none') {
-    return 'Onboarding not started for this entity.';
-  }
-  if (headerStatus === 'active') {
-    return 'Active employee for this entity.';
-  }
-  if (headerStatus === 'inactive') {
-    return 'Employment inactive for this entity.';
-  }
-  if (headerStatus === 'terminated') {
-    return 'Employment terminated for this entity.';
-  }
-  if (headerStatus === 'blocked') {
-    if (pathBlockerCount > 0) {
-      return `${pathBlockerCount} blocking item${pathBlockerCount === 1 ? '' : 's'} remain on the onboarding path.`;
-    }
-    if (pipelineBlockerCount > 0) {
-      return 'Blocked by payroll, pipeline, or compliance (see blockers list).';
-    }
-    return 'Blocked by compliance or setup issues.';
-  }
-  if (headerStatus === 'ready') {
-    return 'All onboarding path and pipeline requirements are satisfied — ready to proceed.';
-  }
-  if (headerStatus === 'onboarding') {
-    if (pathBlockerCount > 0) {
-      return `${pathBlockerCount} blocking item${pathBlockerCount === 1 ? '' : 's'} remain.`;
-    }
-    if (openPathSteps > 0) {
-      return `Onboarding in progress (${openPathSteps} open path step${openPathSteps === 1 ? '' : 's'}).`;
-    }
-    return 'Onboarding in progress.';
-  }
-  return '';
 }
 
 function countResolvedRequirements(
@@ -273,25 +203,26 @@ function openBackgroundCount(checks: BackgroundCheckRecord[]): number {
   return checks.filter((c) => !terminal.has(String(c.hrxStatus || '').toLowerCase())).length;
 }
 
-function deriveHeaderEmploymentStatus(lifecycleStatus: EmploymentLifecycleStatus): HeaderEmploymentStatus {
-  if (lifecycleStatus === 'not_started') return 'none';
-  return lifecycleStatus as HeaderEmploymentStatus;
-}
-
-function formatHeaderWorkerType(
-  entitySettings: EntityTabSettingsSnapshot | null,
-  workerType: 'w2' | '1099' | null,
+function headerWorkerTypeDisplayFromEffective(
+  effective: ReturnType<typeof resolveEffectiveEmploymentWorkerType>,
   entityKey: EmploymentEntityKey
 ): string {
-  if (entitySettings?.workerType) {
-    const w = String(entitySettings.workerType).toUpperCase().replace(/-/g, '');
-    if (w === 'BOTH') return 'W-2 / 1099';
-    if (w === '1099') return '1099';
-    return 'W-2';
+  if (!effective.rawEffective) {
+    return defaultWorkerTypeForEntity(entityKey) === '1099' ? '1099' : 'W-2';
   }
-  if (workerType === '1099') return '1099';
-  if (workerType === 'w2') return 'W-2';
-  return defaultWorkerTypeForEntity(entityKey) === '1099' ? '1099' : 'W-2';
+  const w = effective.forSettingsCatalog.toUpperCase().replace(/-/g, '');
+  if (w === 'BOTH') return 'W-2 / 1099';
+  if (w === '1099') return '1099';
+  return 'W-2';
+}
+
+function overviewWorkerTypeCoarse(
+  normalizedExternal: ExternalOnboardingWorkerTypeNorm,
+  entityKey: EmploymentEntityKey
+): 'w2' | '1099' | null {
+  if (normalizedExternal === '1099') return '1099';
+  if (normalizedExternal === 'w2') return 'w2';
+  return defaultWorkerTypeForEntity(entityKey);
 }
 
 export interface BuildOverviewContext {
@@ -316,6 +247,10 @@ export interface BuildOverviewContext {
   backgroundChecksForEntity: BackgroundCheckRecord[];
   /** All tenant background checks for this worker (artifact reuse heuristics). */
   allTenantWorkerBackgroundChecks: BackgroundCheckRecord[];
+  /** E-Verify case timestamps for path narrative (Select). */
+  everifyCaseBriefs?: EverifyCaseNarrativeBrief[];
+  /** Filtered to this entity’s `hiringEntityId` (payroll automation audit lines). */
+  automationDispatchBriefs?: OnboardingAutomationDispatchBrief[];
 }
 
 export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): EmploymentEntityOverview {
@@ -348,16 +283,12 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
 
   const pipelineBlockerCount = blockers.length;
 
-  let workerType: 'w2' | '1099' | null = null;
   const notStarted = !ee && !pipeline;
-  if (ee?.workerType) {
-    const w = String(ee.workerType).toLowerCase();
-    workerType = w === '1099' ? '1099' : 'w2';
-  } else if (!notStarted) {
-    workerType = defaultWorkerTypeForEntity(entityKey);
-  } else {
-    workerType = defaultWorkerTypeForEntity(entityKey);
-  }
+  const effectiveWorkerType = resolveEffectiveEmploymentWorkerType({
+    entityWorkerType: ctx.entitySettings?.workerType,
+    employmentWorkerType: ee?.workerType ?? null,
+  });
+  const workerType = overviewWorkerTypeCoarse(effectiveWorkerType.normalizedExternal, entityKey);
 
   const assignments: EmploymentAssignmentSummary[] = ctx.assignmentsRows.map((row) => {
     const inst = row.onboardingInstanceId
@@ -377,7 +308,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     };
   });
 
-  const onboardingPath = buildOnboardingPathFromSettings({
+  let fullOnboardingPath = buildOnboardingPathFromSettings({
     entityKey,
     entitySettings: ctx.entitySettings,
     pipeline,
@@ -388,23 +319,46 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     payrollAccount: ctx.payrollAccount,
     backgroundChecksForEntity: ctx.backgroundChecksForEntity,
     allTenantWorkerBackgroundChecks: ctx.allTenantWorkerBackgroundChecks,
+    everifyCaseBriefs: entityKey === 'select' ? ctx.everifyCaseBriefs : undefined,
+    employmentRecordWorkerType: ee?.workerType ?? null,
   });
+
+  fullOnboardingPath = enrichOnboardingPathWithNarrativesFromOverviewDeps(fullOnboardingPath, {
+    workerOnboarding: pipeline,
+    payrollAccount: ctx.payrollAccount,
+    backgroundChecksForEntity: ctx.backgroundChecksForEntity,
+    allTenantWorkerBackgroundChecks: ctx.allTenantWorkerBackgroundChecks,
+    envelopesByAssignmentId: ctx.envelopesByAssignmentId,
+    onboardingByInstanceId: ctx.onboardingByInstanceId,
+    assignments,
+    everifyCaseBriefs: entityKey === 'select' ? ctx.everifyCaseBriefs : undefined,
+    narrativeAudience: 'admin',
+    automationDispatchBriefs: ctx.automationDispatchBriefs,
+  });
+
+  const assignmentRequirementsViewModel = buildAssignmentRequirementsViewModel({
+    fullOnboardingPathGroups: fullOnboardingPath,
+    assignments,
+    onboardingByInstanceId: ctx.onboardingByInstanceId,
+    envelopesByAssignmentId: ctx.envelopesByAssignmentId,
+    backgroundChecksForEntity: ctx.backgroundChecksForEntity,
+    entityKey,
+    automationDispatchBriefs: ctx.automationDispatchBriefs,
+  });
+
+  const onboardingPath = filterEntityRelationshipOnboardingPathGroups(fullOnboardingPath);
 
   const allPathRows = onboardingPath.flatMap((g) => g.rows);
   const pathRowCount = allPathRows.length;
   const pathDoneCount = allPathRows.filter((r) => isOnboardingPathRowDone(r.status)).length;
   const pathBlockerCount = allPathRows.filter(isOnboardingPathRowBlocker).length;
 
-  const hasAnyBlockers = pathBlockerCount > 0 || pipelineBlockerCount > 0;
-  const lifecycleStatus = deriveLifecycleStatus(
-    ee,
-    pipeline,
-    completedCount,
-    requiredCount,
-    hasAnyBlockers,
-    pathRowCount,
-    pathDoneCount
-  );
+  const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
+    assignments,
+    entityEmploymentStatus: ee?.status ?? null,
+  });
+  const hasAnyBlockers =
+    hasOpenOnboardingDemand && (pathBlockerCount > 0 || pipelineBlockerCount > 0);
   const readinessChip = deriveReadinessChip(
     notStarted,
     hasAnyBlockers,
@@ -472,15 +426,37 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
   }
 
   const headerEntityName = ctx.entitySettings?.entityName?.trim() || label;
-  const headerEmploymentStatus = deriveHeaderEmploymentStatus(lifecycleStatus);
-  const headerWorkerTypeDisplay = formatHeaderWorkerType(ctx.entitySettings, workerType, entityKey);
-  const headerReadinessExplanation = deriveHeaderReadinessExplanation({
-    headerStatus: headerEmploymentStatus,
-    pathBlockerCount,
-    pathRowCount,
-    pathDoneCount,
-    pipelineBlockerCount,
+  const headerWorkerTypeDisplay = headerWorkerTypeDisplayFromEffective(effectiveWorkerType, entityKey);
+
+  const pathBlockingRows = allPathRows.filter(isOnboardingPathRowBlocker);
+  const headerMergedBlockers = hasOpenOnboardingDemand
+    ? [...blockers, ...pathBlockingRows.map(employmentBlockerItemFromPathRow)]
+    : [];
+  const headerActionable = hasOpenOnboardingDemand
+    ? deriveDominantActionableForHeader(pathBlockingRows, blockers)
+    : 'none';
+  const primaryAssignmentRow = primaryAssignmentRowForHeader(assignments);
+  const employmentHeaderState = deriveEmploymentHeaderState({
+    onboardingPhase: ee?.onboardingPhase ?? null,
+    blockers: headerMergedBlockers,
+    actionableBy: headerActionable,
+    assignmentStatus: primaryAssignmentRow?.status ?? null,
+    entityEmploymentStatus: ee?.status ?? null,
+    hasOpenOnboardingDemand,
   });
+  const headerReadinessExplanation = employmentHeaderStateExplanation(
+    employmentHeaderState,
+    {
+      pathBlockerCount: hasOpenOnboardingDemand ? pathBlockerCount : 0,
+      pathRowCount,
+      pathDoneCount,
+      pipelineBlockerCount: hasOpenOnboardingDemand ? pipelineBlockerCount : 0,
+    },
+    { noOpenOnboardingDemand: !hasOpenOnboardingDemand }
+  );
+
+  const lifecycleStatus = lifecycleStatusFromEmploymentHeaderState(employmentHeaderState);
+  const headerEmploymentStatus = headerEmploymentStatusFromEmploymentHeaderState(employmentHeaderState);
 
   return {
     entityKey,
@@ -492,16 +468,19 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     readinessChip,
     headerEntityName,
     headerEmploymentStatus,
+    employmentHeaderState,
+    hasOpenOnboardingDemand,
     headerReadinessExplanation,
     headerWorkerTypeDisplay,
     workerType,
     percentComplete,
     requiredCount,
     completedCount,
-    blockerCount: pathBlockerCount,
+    blockerCount: hasOpenOnboardingDemand ? pathBlockerCount : 0,
     blockers,
     assignments,
     onboardingPath,
+    assignmentRequirementsViewModel,
     systems,
   };
 }

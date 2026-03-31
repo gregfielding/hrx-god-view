@@ -3,11 +3,17 @@
  * Aggregated from existing Firestore — no new collections.
  */
 
+import type { ExternalOnboardingStepsState } from '../../../../types/externalOnboardingSteps';
 import type { SignatureEnvelopeStatus } from '../../../../types/phase1cOnboarding';
 
 export type EmploymentEntityKey = 'select' | 'workforce' | 'events';
 
-/** Mirrors entity_employments fields used in UI (see EmploymentTab). */
+/**
+ * Mirrors entity_employments fields used in UI (see EmploymentTab).
+ * Keep relationship/summary fields here; do not store TempWorks/external onboarding rows
+ * as primary columns — use `worker_onboarding.externalOnboardingSteps` (optional derived
+ * mirrors only if a consumer cannot load the pipeline doc).
+ */
 export interface EntityEmploymentRecord {
   id: string;
   tenantId: string;
@@ -29,6 +35,8 @@ export interface EntityEmploymentRecord {
   everifyStatus?: string;
   backgroundStatus?: string;
   drugScreenStatus?: string;
+  /** Onboarding lifecycle phase on the employment record (not the same as `status`). */
+  onboardingPhase?: string | null;
   updatedAt?: { toDate: () => Date } | null;
 }
 
@@ -40,6 +48,11 @@ export interface WorkerOnboardingPipeline {
   status?: string;
   steps?: PipelineStepRow[];
   tasks?: PipelineTaskRow[];
+  /**
+   * TempWorks / external HRIS milestones (one field object per business stepKey).
+   * Canonical runtime store; parse with `parseExternalOnboardingSteps` before logic.
+   */
+  externalOnboardingSteps?: ExternalOnboardingStepsState | Record<string, unknown>;
   updatedAt?: unknown;
 }
 
@@ -157,7 +170,12 @@ export interface EmploymentDocumentsSummary {
   pendingCount: number;
 }
 
-/** Shown in entity header (distinct from internal lifecycle for empty state). */
+/**
+ * Legacy header mapping from `EmploymentLifecycleStatus` (internal onboarding graph).
+ * @deprecated For **header or top-level employment status chips**, use `EmploymentV2HeaderState` /
+ * `overview.employmentHeaderState` only. Kept for `EmploymentEntitySummaryCard` / API compatibility until
+ * convergence; do not reference in new UI (ESLint warns in pages/components/hooks).
+ */
 export type HeaderEmploymentStatus =
   | 'none'
   | 'onboarding'
@@ -166,6 +184,22 @@ export type HeaderEmploymentStatus =
   | 'inactive'
   | 'terminated'
   | 'blocked';
+
+/**
+ * **Canonical UX model for Employment V2 primary header** (admin entity panel + worker My Employment).
+ * Derived by `deriveEmploymentHeaderState` — not stored on Firestore. See module doc in
+ * `deriveEmploymentHeaderState.ts` for legacy bridges (e.g. `entity_employments.status === 'active'` → `on_assignment`).
+ */
+export type EmploymentV2HeaderState =
+  | 'not_started'
+  | 'in_progress'
+  | 'action_required'
+  | 'waiting_on_company'
+  | 'ready'
+  | 'on_assignment'
+  /** Terminal employment row states (from `entity_employments.status`). */
+  | 'terminated'
+  | 'inactive';
 
 /** Snapshot of tenants/{tid}/entities/{id} fields used for Settings-driven path. */
 export interface EntityTabSettingsSnapshot {
@@ -202,7 +236,23 @@ export type EmploymentOnboardingArtifactSourceType =
 /** How broadly the artifact applies (policy / data model). */
 export type EmploymentOnboardingArtifactScope = 'worker_global' | 'entity_scoped' | 'assignment_scoped';
 
-export type OnboardingPathOwnerDisplay = 'worker' | 'admin' | 'system' | 'vendor';
+/** Who is accountable for completing / driving this milestone (normalized; use `recruiter` not legacy `admin`). */
+export type EmploymentOnboardingPathRowOwner = 'worker' | 'recruiter' | 'system' | 'vendor';
+
+/**
+ * Who should see this row in a given UI surface.
+ * - `both`: worker + admin paths (default for most Settings-driven milestones).
+ * - `worker`: worker-only slice (rare; admin full path still may choose to show).
+ * - `admin`: recruiter/admin-only (e.g. purely internal ops rows if modeled separately).
+ * - `internal`: staff queue / ops visibility only — hide from worker onboarding path.
+ */
+export type EmploymentOnboardingRowAudience = 'worker' | 'admin' | 'both' | 'internal';
+
+/**
+ * Who can take the primary in-app next step for this row (CTAs, deep links, callables).
+ * `either` = both parties have a meaningful action (e.g. assignment package).
+ */
+export type EmploymentOnboardingRowActionableBy = 'worker' | 'recruiter' | 'none' | 'either';
 
 export type EmploymentOnboardingSourceType =
   | 'settings_only'
@@ -212,7 +262,32 @@ export type EmploymentOnboardingSourceType =
   | 'background_check'
   | 'payroll'
   | 'assignment_requirement'
-  | 'derived';
+  | 'derived'
+  | 'external_onboarding';
+
+/**
+ * Who drove an activity line (normalized for copy + UI).
+ * Legacy values `recruiter` / `vendor` may still appear from older clients; map in UI helpers.
+ */
+export type EmploymentOnboardingNarrativeActor =
+  | 'worker'
+  | 'hiring_team'
+  | 'screening_partner'
+  | 'verification_service'
+  | 'system'
+  | 'recruiter'
+  | 'vendor';
+
+export interface EmploymentOnboardingNarrativeEvent {
+  message: string;
+  timestamp?: Date;
+  type?: EmploymentOnboardingNarrativeActor;
+}
+
+export interface EmploymentOnboardingNarrative {
+  summary: string;
+  events?: EmploymentOnboardingNarrativeEvent[];
+}
 
 export interface EmploymentOnboardingRow {
   rowId: string;
@@ -233,8 +308,12 @@ export interface EmploymentOnboardingRow {
     caseId?: string;
     backgroundCheckId?: string;
     assignmentId?: string;
+    /** worker_onboarding.externalOnboardingSteps key when row is driven by TempWorks/HRIS state. */
+    externalStepKey?: string;
   };
-  owner: OnboardingPathOwnerDisplay;
+  owner: EmploymentOnboardingPathRowOwner;
+  audience: EmploymentOnboardingRowAudience;
+  actionableBy: EmploymentOnboardingRowActionableBy;
   required: boolean;
   blocking: boolean;
   status: EmploymentOnboardingRowStatus;
@@ -247,6 +326,65 @@ export interface EmploymentOnboardingRow {
   artifactScope?: EmploymentOnboardingArtifactScope | null;
   helperText?: string;
   lastUpdatedAt?: string | null;
+
+  /**
+   * Present after `enrichOnboardingPathGroupsWithNarratives` — `summary` is always non-empty.
+   */
+  narrative?: EmploymentOnboardingNarrative;
+
+  /**
+   * Worker My Employment: grouping key (same as collapse key — e.g. `pipe:i9` or `assign:<rowId>`).
+   * Set when rows are built or grouped for the worker path.
+   */
+  workerGroupKey?: string;
+  /** Worker UI: source rows collapsed into this line (omit when not merged); debug expandable only. */
+  workerGroupDetailRows?: EmploymentOnboardingRow[];
+  /** Worker UI: coarse `sourceRef.pipelineStepId` when group is pipeline-based. */
+  workerGroupPipelineStepId?: string | null;
+}
+
+/** Active Assignment Requirements + entity screening milestones (IA: job-specific vs relationship path). */
+export type AssignmentRequirementVmCategory =
+  | 'entity_screening_milestone'
+  | 'check'
+  | 'certification'
+  | 'upload'
+  | 'document'
+  | 'admin_step'
+  | 'screening_order';
+
+export interface AssignmentRequirementItemVm {
+  id: string;
+  category: AssignmentRequirementVmCategory;
+  title: string;
+  statusLabel: string;
+  blocking: boolean;
+  /** Present for rows derived from the onboarding path (actions, narrative). */
+  pathRow?: EmploymentOnboardingRow;
+  /** Synthetic line (e.g. screening automation dispatch) when there is no path row narrative. */
+  inlineExplainer?: string;
+}
+
+export interface AssignmentRequirementsViewModel {
+  entityKey: EmploymentEntityKey;
+  hasPrimaryAssignment: boolean;
+  primaryAssignmentId: string | null;
+  primaryJobTitle: string | null;
+  primaryJobOrderId: string | null;
+  primaryAssignmentStatus: string | null;
+  onboardingInstanceId: string | null;
+  onboardingPackageStatus: string | null;
+  onboardingPercentComplete: number | null;
+  /** Settings-driven screening milestones (relationship policy), moved out of entity path UI. */
+  entityScreeningMilestones: AssignmentRequirementItemVm[];
+  requiredChecks: AssignmentRequirementItemVm[];
+  requiredCertifications: AssignmentRequirementItemVm[];
+  requiredUploads: AssignmentRequirementItemVm[];
+  assignmentDocuments: AssignmentRequirementItemVm[];
+  adminSteps: AssignmentRequirementItemVm[];
+  /** AccuSource / tenant screening orders tied to this entity’s job orders. */
+  backgroundOrdersLinked: AssignmentRequirementItemVm[];
+  openBlockerCount: number;
 }
 
 export interface OnboardingPathGroup {
@@ -269,12 +407,23 @@ export interface EmploymentEntityOverview {
   /** Resolved entity doc for this tab (Settings), if any. */
   entitySettings: EntityTabSettingsSnapshot | null;
 
+  /**
+   * @deprecated Derived only from `employmentHeaderState` (`lifecycleStatusFromEmploymentHeaderState`).
+   * Do not use for headers or chips — use `employmentHeaderState` + `employmentHeaderStateLabel`.
+   */
   lifecycleStatus: EmploymentLifecycleStatus;
   readinessChip: EmploymentReadinessChip;
 
   /** Header: prefer Settings entity name, else C1 label. */
   headerEntityName: string;
   headerEmploymentStatus: HeaderEmploymentStatus;
+  /** Canonical header chip state (preferred over `headerEmploymentStatus` for header UX). */
+  employmentHeaderState: EmploymentV2HeaderState;
+  /**
+   * True when there is a non-terminal assignment for the entity or employment `active`/`blocked`.
+   * When false, stale `worker_onboarding` / path rows are treated as historical for header and blocker UX.
+   */
+  hasOpenOnboardingDemand: boolean;
   /** One-line operational summary (blockers, progress, lifecycle). */
   headerReadinessExplanation: string;
   headerWorkerTypeDisplay: string;
@@ -294,8 +443,14 @@ export interface EmploymentEntityOverview {
 
   assignments: EmploymentAssignmentSummary[];
 
-  /** Settings-driven onboarding path (primary UI). */
+  /**
+   * Relationship onboarding path only (work auth, forms, payroll, internal readiness).
+   * Screenings + assignment package rows live in `assignmentRequirementsViewModel`.
+   */
   onboardingPath: OnboardingPathGroup[];
+
+  /** Primary assignment package + entity screening milestones + linked screening orders. */
+  assignmentRequirementsViewModel: AssignmentRequirementsViewModel;
 
   systems: {
     everify?: EmploymentEverifySummary | null;

@@ -2,7 +2,7 @@
  * Canonical Employment V2 blocker → primary action mapping.
  * Use with `isOnboardingPathRowBlocker` from `employmentOnboardingPath.ts` so only true blockers get actions.
  *
- * Owner vocabulary matches `EmploymentBlockerItem.owner` (`recruiter` includes onboarding-path `admin`).
+ * Owner vocabulary matches `EmploymentBlockerItem.owner` and path row `owner` (`EmploymentOnboardingPathRowOwner`).
  */
 
 import type {
@@ -207,36 +207,61 @@ export const EMPLOYMENT_V2_BLOCKER_ACTION_SCENARIOS: readonly EmploymentV2Blocke
     target: { routeTemplate: '/c1/workers/my-employment/:employmentId' },
     notes: 'Worker-owned internal tasks are rare; align with employment hub.',
   },
+  {
+    actionKey: 'path.worker_fallback_my_employment',
+    actionLabel: 'Open My Employment',
+    actionKind: 'navigate',
+    legacyActionKind: 'open_system',
+    owner: 'worker',
+    target: { routeTemplate: '/c1/workers/my-employment/:employmentId', componentHint: 'C1WorkerMyEmploymentDetail' },
+    notes: 'Last-resort CTA when no finer-grained blocker mapping exists.',
+  },
+  {
+    actionKey: 'path.recruiter_fallback_profile',
+    actionLabel: 'Review onboarding in profile',
+    actionKind: 'review_panel',
+    legacyActionKind: 'review',
+    owner: 'recruiter',
+    target: { routeTemplate: '/users/:uid', componentHint: 'UserProfile → Employment tab' },
+    notes: 'Last-resort CTA for blocking rows without a dedicated scenario.',
+  },
 ];
 
 export interface EmploymentV2ActionResolutionContext {
   userId: string;
+  tenantId: string;
   tenantSlug?: string;
+  /**
+   * UserProfile / worker context: assignment rows use worker vs recruiter routes.
+   * Employment V2 on the admin profile should pass `recruiter`.
+   */
+  viewer: 'recruiter' | 'worker';
   /** `entity_employments` document id for C1 my-employment detail route. */
   entityEmploymentFirestoreId?: string | null;
   payrollPortalUrl?: string | null;
+  /** C1 Select E-Verify check/create: optional assignment link (mirrors EverifyComplianceCard). */
+  everifyAssignmentId?: string | null;
 }
 
+/** Map path row owner to blocker action owner; tolerate legacy `'admin'` if present at runtime. */
 function ownerFromRow(row: EmploymentOnboardingRow): EmploymentV2ActionOwner {
-  return row.owner === 'admin' ? 'recruiter' : row.owner;
+  const o = row.owner as EmploymentV2ActionOwner | 'admin';
+  return o === 'admin' ? 'recruiter' : o;
 }
 
 /**
- * Primary action for a path row when it is a blocker; otherwise `null`.
- * Heuristics use `stepKey`, `groupId`, `sourceType`, `status`, and `entityKey`.
+ * Scenario-specific mapping only (no last-resort fallbacks). For diagnostics / gap detection.
  */
-export function resolveEmploymentV2PrimaryAction(
+function resolveEmploymentV2DedicatedPrimaryAction(
   row: EmploymentOnboardingRow,
   ctx: EmploymentV2ActionResolutionContext
 ): EmploymentV2BlockerAction | null {
-  if (!isOnboardingPathRowBlocker(row)) return null;
-
   const owner = ownerFromRow(row);
   const { status, entityKey, groupId, stepKey, sourceType } = row;
   const assignmentId = row.sourceRef?.assignmentId;
 
   if (groupId === 'assignment_requirements' && assignmentId) {
-    if (owner === 'worker') {
+    if (ctx.viewer === 'worker') {
       return {
         actionKey: 'assignment.open_worker_package',
         actionLabel: 'Open assignment onboarding',
@@ -424,6 +449,66 @@ export function resolveEmploymentV2PrimaryAction(
   }
 
   return null;
+}
+
+/**
+ * Primary action for a path row when it is a blocker; otherwise `null`.
+ * Heuristics use `stepKey`, `groupId`, `sourceType`, `status`, and `entityKey`.
+ * Last-resort fallbacks ensure every blocking row still has a navigable CTA.
+ */
+export function resolveEmploymentV2PrimaryAction(
+  row: EmploymentOnboardingRow,
+  ctx: EmploymentV2ActionResolutionContext
+): EmploymentV2BlockerAction | null {
+  if (!isOnboardingPathRowBlocker(row)) return null;
+  const dedicated = resolveEmploymentV2DedicatedPrimaryAction(row, ctx);
+  if (dedicated) return dedicated;
+  if (ctx.viewer === 'worker') {
+    return {
+      actionKey: 'path.worker_fallback_my_employment',
+      actionLabel: 'Open My Employment',
+      actionKind: 'navigate',
+      legacyActionKind: 'open_system',
+      owner: 'worker',
+      target: {
+        routeTemplate: '/c1/workers/my-employment/:employmentId',
+        componentHint: 'C1WorkerMyEmploymentDetail',
+      },
+    };
+  }
+  return {
+    actionKey: 'path.recruiter_fallback_profile',
+    actionLabel: 'Review onboarding in profile',
+    actionKind: 'review_panel',
+    legacyActionKind: 'review',
+    owner: 'recruiter',
+    target: { routeTemplate: '/users/:uid', componentHint: 'UserProfile → Employment tab' },
+  };
+}
+
+/** Blocking rows with no dedicated scenario mapping (still receive fallback CTAs). Dev diagnostics. */
+export function findBlockingRowsMissingDedicatedAction(
+  rows: EmploymentOnboardingRow[],
+  ctx: EmploymentV2ActionResolutionContext
+): EmploymentOnboardingRow[] {
+  return rows.filter(
+    (r) => isOnboardingPathRowBlocker(r) && resolveEmploymentV2DedicatedPrimaryAction(r, ctx) == null
+  );
+}
+
+export function warnBlockingPathRowsMissingDedicatedActions(
+  rows: EmploymentOnboardingRow[],
+  ctx: EmploymentV2ActionResolutionContext,
+  contextLabel?: string
+): void {
+  if (process.env.NODE_ENV === 'production') return;
+  const missing = findBlockingRowsMissingDedicatedAction(rows, ctx);
+  if (missing.length === 0) return;
+  const sigs = missing.map((r) => `${r.groupId}/${r.sourceType}/${r.stepKey}`);
+  console.warn(
+    `[Employment V2] Blocking path rows using fallback primary action (${contextLabel ?? 'path'}):`,
+    sigs
+  );
 }
 
 /**

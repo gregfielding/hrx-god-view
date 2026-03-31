@@ -2,16 +2,20 @@
  * Worker readiness: derived status from employment, onboarding, compliance, payroll.
  * Consumes compliance expiration facts; does not change onboarding/employment/compliance data.
  * Modular: readiness consumes facts; no assignment gating in this module.
+ *
+ * When `canonicalPathRows` is provided (worker My Employment path loaded), onboarding completion
+ * matches `employmentOnboardingPath.isOnboardingPathRowBlocker` — same truth as path rows.
+ *
+ * **Convergence note:** `ReadinessStatus` here is parallel to `EmploymentV2HeaderState` on the admin/overview side.
+ * Next cleanup: optionally pass the same header-derived state (or shared inputs) so worker banners and chips do not
+ * contradict `employmentHeaderState`; keep this module as the place for **compliance + payroll hard gates** even
+ * after header convergence.
  */
-import {
-  hasExpiredCompliance,
-  hasExpiringSoonCompliance,
-  isExpired,
-  isExpiringSoon,
-  DEFAULT_EXPIRING_SOON_DAYS,
-} from './complianceExpiration';
+import { isExpired, isExpiringSoon, DEFAULT_EXPIRING_SOON_DAYS } from './complianceExpiration';
+import { isOnboardingPathRowBlocker } from './employmentOnboardingPath';
 import { getComplianceTypeLabel, getComplianceTypeConfig } from '../types/compliance';
 import type { WorkerComplianceItem } from '../types/compliance';
+import type { EmploymentOnboardingRow } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 
 export const READINESS_STATUS = ['not_ready', 'onboarding', 'ready', 'at_risk', 'blocked'] as const;
 export type ReadinessStatus = (typeof READINESS_STATUS)[number];
@@ -52,6 +56,11 @@ export interface WorkerReadinessInput {
   payrollByKey?: Record<string, PayrollAccountForReadiness>;
   /** For each pipeline id: { complete, total }. If total > 0 and complete === total, onboarding steps complete. */
   pipelineStepCounts?: Record<string, { complete: number; total: number }>;
+  /**
+   * When defined (including `[]`), single onboarding employment uses path blocker logic instead of
+   * `pipelineStepCounts`. Same deduped rows as the worker canonical path UI.
+   */
+  canonicalPathRows?: EmploymentOnboardingRow[];
   /** Default 30 */
   expiringSoonDays?: number;
 }
@@ -66,6 +75,7 @@ export function getWorkerReadiness(input: WorkerReadinessInput): WorkerReadiness
     complianceItems,
     payrollByKey = {},
     pipelineStepCounts = {},
+    canonicalPathRows,
     expiringSoonDays = DEFAULT_EXPIRING_SOON_DAYS,
   } = input;
 
@@ -112,10 +122,18 @@ export function getWorkerReadiness(input: WorkerReadinessInput): WorkerReadiness
     return { status: 'at_risk', reasons };
   }
 
-  // 5. Onboarding: any employment still onboarding (required steps incomplete)
+  // 5. Onboarding: any employment still onboarding (path blockers or coarse pipeline progress)
   const onboardingEmployments = activeOrOnboarding.filter((e) => e.status === 'onboarding');
   if (onboardingEmployments.length > 0) {
+    const pathOnboardingComplete =
+      canonicalPathRows !== undefined && onboardingEmployments.length === 1
+        ? canonicalPathRows.length > 0 && !canonicalPathRows.some(isOnboardingPathRowBlocker)
+        : null;
+
     const allOnboardingComplete = onboardingEmployments.every((e) => {
+      if (pathOnboardingComplete !== null) {
+        return pathOnboardingComplete;
+      }
       const counts = e.onboardingPipelineId ? pipelineStepCounts[e.onboardingPipelineId] : null;
       if (!counts || counts.total === 0) return false;
       return counts.complete >= counts.total;

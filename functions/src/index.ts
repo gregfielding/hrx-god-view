@@ -213,6 +213,7 @@ export {
   processApplyWizardReminders,
 } from './applyWizardReminder';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
+export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {
   everifyCreateCase,
   everifyCheckEligibility,
@@ -8661,8 +8662,10 @@ export const logAssignmentCreated = onDocumentCreated(
     if (assignment.suppressInitialNotification) {
       return { success: true };
     }
-    // Send worker notification if assignment was newly proposed/confirmed (SMS + email with full assignment details)
-    if (assignment.userId && (assignment.status === 'proposed' || assignment.status === 'confirmed')) {
+    const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
+    const createNorm = normalizeAssignmentStatus(assignment.status as string);
+    // Send worker notification if assignment was newly pending/proposed or confirmed (SMS + email with full assignment details)
+    if (assignment.userId && (createNorm === 'pending' || createNorm === 'confirmed')) {
       try {
         const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
         const assignedAtToken =
@@ -8813,6 +8816,9 @@ export const logAssignmentUpdated = onDocumentUpdated(
     
     if (statusChanged && after.userId) {
       try {
+        const { normalizeAssignmentStatus } = await import('./utils/assignmentStatusNormalize');
+        const beforeN = normalizeAssignmentStatus(before.status as string);
+        const afterN = normalizeAssignmentStatus(after.status as string);
         const { markLifecycleEventIfFirst } = await import('./messaging/lifecycleDedupe');
         const statusChangedAtToken =
           typeof (after.updatedAt as any)?.toMillis === 'function'
@@ -8830,6 +8836,22 @@ export const logAssignmentUpdated = onDocumentUpdated(
           return { success: true, deduped: true };
         }
 
+        if (afterN === 'confirmed' && beforeN !== 'confirmed') {
+          try {
+            const { runAssignmentConfirmedOnboardingSlice } = await import(
+              './messaging/assignmentConfirmedOnboardingSlice'
+            );
+            await runAssignmentConfirmedOnboardingSlice({
+              tenantId,
+              assignmentId,
+              assignment: after as Record<string, unknown>,
+              userId: String(after.userId || after.candidateId || '').trim(),
+            });
+          } catch (onbErr: any) {
+            logger.error(`logAssignmentUpdated: onboarding automation slice failed for ${assignmentId}`, onbErr);
+          }
+        }
+
         // Fetch user data (needed for template resolution and fallback message)
         const userDoc = await admin.firestore().doc(`users/${after.userId}`).get();
         const userData = userDoc.data();
@@ -8839,7 +8861,7 @@ export const logAssignmentUpdated = onDocumentUpdated(
         // Full assignment-details HTML for confirmation (matches preview + worker Assignment Details page)
         let emailSubject: string | undefined;
         let emailBody: string | undefined;
-        if (after.status === 'confirmed') {
+        if (afterN === 'confirmed') {
           try {
             const { buildAssignmentDetailsEmail } = await import('./messaging/assignmentDetailsEmail');
             const emailResult = await buildAssignmentDetailsEmail(tenantId, assignmentId);
@@ -8857,10 +8879,10 @@ export const logAssignmentUpdated = onDocumentUpdated(
 
         // SMS requires a phone; email can deliver full instructions when status is confirmed.
         const canNotify =
-          !!phoneE164 || (after.status === 'confirmed' && !!userEmail && !!emailBody);
+          !!phoneE164 || (afterN === 'confirmed' && !!userEmail && !!emailBody);
 
         if (!canNotify) {
-          if (after.status === 'confirmed') {
+          if (afterN === 'confirmed') {
             logger.warn(
               `logAssignmentUpdated: confirmed assignment ${assignmentId} skipped — no phone on file and no email/HTML to send`,
             );
@@ -8871,7 +8893,7 @@ export const logAssignmentUpdated = onDocumentUpdated(
 
           // For cancellation: fetch job order first so fallback message and template variables use worksite (not user address)
           let jobOrderData: admin.firestore.DocumentData | undefined;
-          if ((after.status === 'cancelled' || after.status === 'canceled') && after.jobOrderId) {
+          if (afterN === 'cancelled' && after.jobOrderId) {
             try {
               const jobOrderSnap = await admin.firestore().doc(`tenants/${tenantId}/job_orders/${after.jobOrderId}`).get();
               if (jobOrderSnap.exists) jobOrderData = jobOrderSnap.data();
@@ -8880,41 +8902,45 @@ export const logAssignmentUpdated = onDocumentUpdated(
             }
           }
 
-          switch (after.status) {
-            case 'confirmed':
-              message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
-              break;
-            case 'active':
-              message = `Hi ${firstName}, your assignment is now active. Thank you!`;
-              break;
-            case 'completed':
-              message = `Hi ${firstName}, your assignment has been marked as completed. Thank you for your work!`;
-              break;
-            case 'declined':
-              message = `Hi ${firstName}, we received your decline for this assignment. Thank you for letting us know.`;
-              break;
-            case 'cancelled':
-            case 'canceled': {
-              const jobTitle = after.jobTitle || (jobOrderData as any)?.jobTitle;
-              const worksiteCity = after.worksiteAddress?.city || (jobOrderData as any)?.worksiteAddress?.city || (jobOrderData as any)?.worksiteAddress?.address?.city || '';
-              const locationPhrase = worksiteCity ? ` in ${worksiteCity}` : '';
-              const rolePhrase = jobTitle ? ` to work as a ${jobTitle}` : ' for this position';
-              message = `Hi ${firstName}, your assignment${rolePhrase}${locationPhrase} has been cancelled. We are working on trying to get you a spot and will update you if we can get you reassigned.`;
-              break;
+          const rawAfterStatus = String(after.status || '').toLowerCase();
+          if (rawAfterStatus === 'declined') {
+            message = `Hi ${firstName}, we received your decline for this assignment. Thank you for letting us know.`;
+          } else {
+            switch (afterN) {
+              case 'confirmed':
+                message = `Hi ${firstName}, your assignment is confirmed. Review your first-day details and check-in instructions in your account.`;
+                break;
+              case 'in_progress':
+                message = `Hi ${firstName}, your assignment is now active. Thank you!`;
+                break;
+              case 'completed':
+                message = `Hi ${firstName}, your assignment has been marked as completed. Thank you for your work!`;
+                break;
+              case 'cancelled': {
+                const jobTitle = after.jobTitle || (jobOrderData as any)?.jobTitle;
+                const worksiteCity =
+                  after.worksiteAddress?.city ||
+                  (jobOrderData as any)?.worksiteAddress?.city ||
+                  (jobOrderData as any)?.worksiteAddress?.address?.city ||
+                  '';
+                const locationPhrase = worksiteCity ? ` in ${worksiteCity}` : '';
+                const rolePhrase = jobTitle ? ` to work as a ${jobTitle}` : ' for this position';
+                message = `Hi ${firstName}, your assignment${rolePhrase}${locationPhrase} has been cancelled. We are working on trying to get you a spot and will update you if we can get you reassigned.`;
+                break;
+              }
+              default:
+                break;
             }
-            default:
-              // Don't send for other status changes
-              break;
           }
 
           if (message) {
             const { sendLegacyAssignmentMessage } = await import('./messaging/legacyMessageHelpers');
             let messageTypeId = 'assignment_status_update';
-            if (after.status === 'confirmed') messageTypeId = 'assignment_confirmed';
-            else if (after.status === 'active') messageTypeId = 'assignment_active';
-            else if (after.status === 'completed') messageTypeId = 'assignment_completed';
-            else if (after.status === 'declined') messageTypeId = 'assignment_status_change';
-            else if (after.status === 'cancelled' || after.status === 'canceled') messageTypeId = 'assignment_cancelled';
+            if (afterN === 'confirmed') messageTypeId = 'assignment_confirmed';
+            else if (afterN === 'in_progress') messageTypeId = 'assignment_active';
+            else if (afterN === 'completed') messageTypeId = 'assignment_completed';
+            else if (rawAfterStatus === 'declined') messageTypeId = 'assignment_status_change';
+            else if (afterN === 'cancelled') messageTypeId = 'assignment_cancelled';
 
             const result = await sendLegacyAssignmentMessage({
               tenantId,
@@ -8926,7 +8952,7 @@ export const logAssignmentUpdated = onDocumentUpdated(
               sourceId: assignmentId,
               assignmentId,
               ...(emailSubject && emailBody ? { emailSubject, emailBody } : {}),
-              ...((after.status === 'cancelled' || after.status === 'canceled')
+              ...(afterN === 'cancelled' && rawAfterStatus !== 'declined'
                 ? {
                     assignmentData: after,
                     jobOrderId: after.jobOrderId,
