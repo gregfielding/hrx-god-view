@@ -22,6 +22,8 @@ export interface EmploymentEntityHeaderCardProps {
 }
 
 const EmploymentEntityHeaderCard: React.FC<EmploymentEntityHeaderCardProps> = ({ overview }) => {
+  const onCallPool =
+    String(overview.entityEmployment?.employmentEntryMode || '').toLowerCase() === 'on_call_pool';
   const chipLabel = employmentHeaderStateLabel(overview.employmentHeaderState);
   const baseChipColor: 'default' | 'warning' | 'success' | 'error' | 'info' =
     HEADER_STATE_COLOR[overview.employmentHeaderState] ?? 'default';
@@ -48,6 +50,12 @@ const EmploymentEntityHeaderCard: React.FC<EmploymentEntityHeaderCardProps> = ({
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
               Worker type: {overview.headerWorkerTypeDisplay}
             </Typography>
+            {onCallPool && overview.hasOpenOnboardingDemand ? (
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block', lineHeight: 1.5 }}>
+                On-call / labor pool hire: onboarding for this entity does not require a job assignment yet. Assignments
+                will appear here when you are placed on work.
+              </Typography>
+            ) : null}
             {noOpenDemand ? (
               <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block', lineHeight: 1.5 }}>
                 No open assignment onboarding for this entity — status reflects the employment record and retained

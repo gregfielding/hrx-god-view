@@ -65,6 +65,11 @@ describe('triggerRegistry', () => {
     expect(isSystemTriggerKey(SYSTEM_TRIGGER_KEYS.assignmentCreated)).to.equal(
       true
     );
+    expect(isSystemTriggerKey(SYSTEM_TRIGGER_KEYS.workerOnboardingPipelineStarted)).to.equal(
+      true
+    );
+    expect(isSystemTriggerKey(SYSTEM_TRIGGER_KEYS.onCallEmploymentStarted)).to.equal(true);
+    expect(isSystemTriggerKey(SYSTEM_TRIGGER_KEYS.payrollOnboardingInviteNeeded)).to.equal(true);
     expect(isSystemTriggerKey('not_real_trigger')).to.equal(false);
   });
 });

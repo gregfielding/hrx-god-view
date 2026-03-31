@@ -314,6 +314,22 @@ async function shouldUseChannel(
       return { allowed: true };
     }
 
+    if (context.messageTypeId === 'worker_onboarding_pipeline_started') {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      return { allowed: true };
+    }
+
+    if (context.messageTypeId === 'on_call_employment_started') {
+      const phone = userData.phoneE164 || userData.phone;
+      if (!phone) {
+        return { allowed: false, reason: 'Recipient has no phone number' };
+      }
+      return { allowed: true };
+    }
+
     // Application status messages: attempt SMS if user has phone (relax verification to reach applicants)
     const isApplicationMessage =
       context.messageTypeId?.startsWith('application_') ||

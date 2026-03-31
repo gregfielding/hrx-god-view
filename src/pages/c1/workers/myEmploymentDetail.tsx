@@ -96,6 +96,7 @@ interface EmploymentRecord {
   everifyStatus?: string;
   backgroundRequired?: boolean;
   drugScreenRequired?: boolean;
+  employmentEntryMode?: string | null;
 }
 
 const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]> = {
@@ -103,6 +104,67 @@ const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]>
   waiting_team: [],
   behind_scenes: [],
   completed: [],
+};
+
+/** Entity-level TempWorks URLs: setup (`onboardingUrl`) vs login portal (`portalUrl`). */
+const WorkerEntityPayrollLinkButtons: React.FC<{
+  payrollSignupUrl: string | null;
+  payrollPortalLoginUrl: string | null;
+  payrollComplete: boolean;
+}> = ({ payrollSignupUrl, payrollPortalLoginUrl, payrollComplete }) => {
+  const signup = payrollSignupUrl?.trim() || null;
+  const portal = payrollPortalLoginUrl?.trim() || null;
+  const same = Boolean(signup && portal && signup === portal);
+
+  const setupHref = !payrollComplete ? signup || portal || null : null;
+  const loginWhileOnboardingHref = !payrollComplete && portal && signup && !same ? portal : null;
+  const portalAfterCompleteHref = payrollComplete ? portal || signup || null : null;
+
+  if (!setupHref && !loginWhileOnboardingHref && !portalAfterCompleteHref) return null;
+
+  return (
+    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
+      {setupHref ? (
+        <Button
+          variant="contained"
+          size="small"
+          startIcon={<OpenInNewIcon />}
+          href={setupHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          component="a"
+        >
+          Open payroll setup
+        </Button>
+      ) : null}
+      {loginWhileOnboardingHref ? (
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<OpenInNewIcon />}
+          href={loginWhileOnboardingHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          component="a"
+        >
+          Payroll login (existing account)
+        </Button>
+      ) : null}
+      {portalAfterCompleteHref ? (
+        <Button
+          variant={setupHref || loginWhileOnboardingHref ? 'outlined' : 'contained'}
+          size="small"
+          startIcon={<OpenInNewIcon />}
+          href={portalAfterCompleteHref}
+          target="_blank"
+          rel="noopener noreferrer"
+          component="a"
+        >
+          Open payroll portal
+        </Button>
+      ) : null}
+    </Stack>
+  );
 };
 
 /** Matches `employmentPathDebugEnv` / admin path card — inlined so worker bundle always resolves. */
@@ -344,7 +406,10 @@ const MyEmploymentDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [employment, setEmployment] = useState<EmploymentRecord | null>(null);
   const [payrollAccount, setPayrollAccount] = useState<{ status: string; id: string } | null>(null);
-  const [payrollPortalUrl, setPayrollPortalUrl] = useState<string | null>(null);
+  /** Entity TempWorks first-time setup URL (`payrollSettings.onboardingUrl`). */
+  const [payrollSignupUrl, setPayrollSignupUrl] = useState<string | null>(null);
+  /** Entity login / pay history URL (`payrollSettings.portalUrl`). */
+  const [payrollPortalLoginUrl, setPayrollPortalLoginUrl] = useState<string | null>(null);
   const [complianceItems, setComplianceItems] = useState<(WorkerComplianceItem & { id: string })[]>([]);
   const [workerBuckets, setWorkerBuckets] = useState<Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]> | null>(
     null
@@ -372,7 +437,8 @@ const MyEmploymentDetailPage: React.FC = () => {
         if (!empSnap.exists()) {
           setEmployment(null);
           setPayrollAccount(null);
-          setPayrollPortalUrl(null);
+          setPayrollSignupUrl(null);
+          setPayrollPortalLoginUrl(null);
           setLoading(false);
           return;
         }
@@ -380,7 +446,8 @@ const MyEmploymentDetailPage: React.FC = () => {
         if (data?.userId !== uid) {
           setEmployment(null);
           setPayrollAccount(null);
-          setPayrollPortalUrl(null);
+          setPayrollSignupUrl(null);
+          setPayrollPortalLoginUrl(null);
           setLoading(false);
           return;
         }
@@ -393,14 +460,20 @@ const MyEmploymentDetailPage: React.FC = () => {
           try {
             const entityRef = doc(db, p.entity(tenantId, entityId));
             const entitySnap = await getDoc(entityRef);
-            const payrollSettings = entitySnap.data()?.payrollSettings;
-            const url = payrollSettings?.onboardingUrl || payrollSettings?.portalUrl || null;
-            setPayrollPortalUrl(url || null);
+            const payrollSettings = entitySnap.data()?.payrollSettings as
+              | { onboardingUrl?: string | null; portalUrl?: string | null }
+              | undefined;
+            const su = String(payrollSettings?.onboardingUrl || '').trim() || null;
+            const pl = String(payrollSettings?.portalUrl || '').trim() || null;
+            setPayrollSignupUrl(su);
+            setPayrollPortalLoginUrl(pl);
           } catch {
-            setPayrollPortalUrl(null);
+            setPayrollSignupUrl(null);
+            setPayrollPortalLoginUrl(null);
           }
         } else {
-          setPayrollPortalUrl(null);
+          setPayrollSignupUrl(null);
+          setPayrollPortalLoginUrl(null);
         }
         if (entityKey) {
           try {
@@ -425,7 +498,8 @@ const MyEmploymentDetailPage: React.FC = () => {
       } catch {
         setEmployment(null);
         setPayrollAccount(null);
-        setPayrollPortalUrl(null);
+        setPayrollSignupUrl(null);
+        setPayrollPortalLoginUrl(null);
         setComplianceItems([]);
       } finally {
         setLoading(false);
@@ -540,6 +614,7 @@ const MyEmploymentDetailPage: React.FC = () => {
     const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
       assignments: headerPathCtx?.assignments,
       entityEmploymentStatus: employment.status,
+      employmentEntryMode: employment.employmentEntryMode ?? null,
     });
     if (headerPathCtx) {
       const pipelineBl = buildBlockersFromPipeline(
@@ -561,16 +636,24 @@ const MyEmploymentDetailPage: React.FC = () => {
         assignmentStatus: primary?.status ?? null,
         entityEmploymentStatus: employment.status,
         hasOpenOnboardingDemand,
+        employmentEntryMode: employment.employmentEntryMode ?? null,
+        hasNonTerminalAssignment: primary != null,
       });
     }
     const openBuckets =
       workerBuckets &&
       workerBuckets.your_tasks.length + workerBuckets.waiting_team.length + workerBuckets.behind_scenes.length > 0;
+    const primary =
+      headerPathCtx?.assignments != null
+        ? primaryAssignmentRowForHeader(headerPathCtx.assignments)
+        : null;
     return deriveEmploymentHeaderStateWorkerListFallback({
       onboardingPhase: employment.onboardingPhase ?? null,
       entityEmploymentStatus: employment.status,
       pipelineIncomplete: Boolean(openBuckets),
       hasOpenOnboardingDemand,
+      employmentEntryMode: employment.employmentEntryMode ?? null,
+      hasNonTerminalAssignment: primary != null,
     });
   }, [employment, headerPathCtx, workerBuckets]);
 
@@ -579,11 +662,15 @@ const MyEmploymentDetailPage: React.FC = () => {
     return !computeHasOpenOnboardingDemand({
       assignments: headerPathCtx?.assignments,
       entityEmploymentStatus: employment.status,
+      employmentEntryMode: employment.employmentEntryMode ?? null,
     });
   }, [employment, headerPathCtx]);
 
   const pathCoversPayroll = workerPathCoversPayrollRow(allPathRows);
   const pathCoversWorkAuth = workerPathCoversWorkAuthRows(allPathRows);
+
+  const payrollComplete = payrollAccount?.status === 'complete';
+  const hasEntityPayrollLinks = Boolean(payrollSignupUrl?.trim() || payrollPortalLoginUrl?.trim());
 
   if (!uid || !tenantId) {
     return (
@@ -767,7 +854,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                   {pathRelationshipHistorical ? 'Completed & resources (record)' : 'Completed & resources'}
                 </Typography>
                 {workerBuckets.completed.length > 0 ? (
-                  <Stack spacing={1.25} divider={<Divider flexItem />} sx={{ mb: payrollPortalUrl ? 2 : 0 }}>
+                  <Stack spacing={1.25} divider={<Divider flexItem />} sx={{ mb: hasEntityPayrollLinks ? 2 : 0 }}>
                     {workerBuckets.completed.map((row) => (
                       <WorkerOnboardingPathRowItem
                         key={row.rowId}
@@ -778,7 +865,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                     ))}
                   </Stack>
                 ) : null}
-                {(payrollAccount || payrollPortalUrl) && (
+                {(payrollAccount || hasEntityPayrollLinks) && (
                   <Box sx={{ mt: workerBuckets.completed.length > 0 ? 0 : 0 }}>
                     <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 1 }}>
                       Payroll
@@ -795,29 +882,21 @@ const MyEmploymentDetailPage: React.FC = () => {
                     )}
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                       {payrollAccount?.status === 'complete'
-                        ? 'Payroll setup is complete.'
+                        ? 'Payroll setup is complete. Use the portal link to view pay history and tax documents when available.'
                         : payrollAccount?.status === 'invite_sent' ||
                             payrollAccount?.status === 'account_created' ||
                             payrollAccount?.status === 'in_progress'
                           ? 'Finish payroll and banking with our payroll partner.'
                           : 'Set up payroll and banking so you can get paid.'}
                     </Typography>
-                    {payrollPortalUrl && (
-                      <Button
-                        variant="contained"
-                        size="small"
-                        startIcon={<OpenInNewIcon />}
-                        href={payrollPortalUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        component="a"
-                      >
-                        {payrollAccount?.status === 'complete' ? 'Open payroll portal' : 'Open payroll setup'}
-                      </Button>
-                    )}
+                    <WorkerEntityPayrollLinkButtons
+                      payrollSignupUrl={payrollSignupUrl}
+                      payrollPortalLoginUrl={payrollPortalLoginUrl}
+                      payrollComplete={payrollComplete}
+                    />
                   </Box>
                 )}
-                {workerBuckets.completed.length === 0 && !payrollAccount && !payrollPortalUrl ? (
+                {workerBuckets.completed.length === 0 && !payrollAccount && !hasEntityPayrollLinks ? (
                   <Typography variant="body2" color="text.secondary">
                     Nothing completed yet. Finished items will show up here.
                   </Typography>
@@ -827,7 +906,7 @@ const MyEmploymentDetailPage: React.FC = () => {
           </>
         )}
 
-        {!(showOnboardingPath && workerBuckets) && (payrollAccount || payrollPortalUrl) && (
+        {!(showOnboardingPath && workerBuckets) && (payrollAccount || hasEntityPayrollLinks) && (
           <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
             <CardContent>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
@@ -845,26 +924,18 @@ const MyEmploymentDetailPage: React.FC = () => {
               )}
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                 {payrollAccount?.status === 'complete'
-                  ? 'Payroll setup is complete.'
+                  ? 'Payroll setup is complete. Use the portal link to view pay history and tax documents when available.'
                   : payrollAccount?.status === 'invite_sent' ||
                       payrollAccount?.status === 'account_created' ||
                       payrollAccount?.status === 'in_progress'
                     ? 'Complete your payroll setup using the link below.'
                     : 'Set up payroll and banking so you can get paid.'}
               </Typography>
-              {payrollPortalUrl && (
-                <Button
-                  variant="contained"
-                  size="small"
-                  startIcon={<OpenInNewIcon />}
-                  href={payrollPortalUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  component="a"
-                >
-                  {payrollAccount?.status === 'complete' ? 'Open payroll portal' : 'Open payroll setup'}
-                </Button>
-              )}
+              <WorkerEntityPayrollLinkButtons
+                payrollSignupUrl={payrollSignupUrl}
+                payrollPortalLoginUrl={payrollPortalLoginUrl}
+                payrollComplete={payrollComplete}
+              />
             </CardContent>
           </Card>
         )}

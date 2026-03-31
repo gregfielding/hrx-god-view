@@ -27,6 +27,7 @@ import {
   computeHasOpenOnboardingDemand,
   deriveEmploymentHeaderStateWorkerListFallback,
   employmentHeaderStateLabel,
+  primaryAssignmentRowForHeader,
 } from '../../../utils/deriveEmploymentHeaderState';
 import { loadWorkerAssignmentsByEntityKey } from '../../../utils/loadWorkerAssignmentsByEntityKey';
 import { countPipelineProgressForEntity } from '../../../utils/onboardingPipelineProgress';
@@ -41,6 +42,7 @@ interface EntityEmploymentRecord {
   onboardingPipelineId: string;
   onboardingPhase?: string | null;
   onboardingCompletedAt?: { toDate: () => Date } | null;
+  employmentEntryMode?: string | null;
 }
 
 const HEADER_LIST_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
@@ -174,7 +176,9 @@ const MyEmploymentPage: React.FC = () => {
               const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
                 assignments: rowAssignments,
                 entityEmploymentStatus: rec.status,
+                employmentEntryMode: rec.employmentEntryMode ?? null,
               });
+              const primaryAssign = primaryAssignmentRowForHeader(rowAssignments);
               const pipelineIncomplete = Boolean(counts && counts.total > 0 && counts.complete < counts.total);
               const progressText = (() => {
                 if (isComplete) return 'Onboarding complete';
@@ -192,6 +196,8 @@ const MyEmploymentPage: React.FC = () => {
                 entityEmploymentStatus: rec.status,
                 pipelineIncomplete,
                 hasOpenOnboardingDemand,
+                employmentEntryMode: rec.employmentEntryMode ?? null,
+                hasNonTerminalAssignment: primaryAssign != null,
               });
               const statusLabel = employmentHeaderStateLabel(headerState);
               const terminalList = headerState === 'terminated' || headerState === 'inactive';

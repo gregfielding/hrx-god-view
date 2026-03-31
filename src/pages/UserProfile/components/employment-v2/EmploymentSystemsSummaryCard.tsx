@@ -80,8 +80,24 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                   <Typography variant="body2" color="text.secondary">
                     {historical ? 'Context: ' : ''}
                     {systems.payroll.statusDisplay}
-                    {systems.payroll.portalUrl ? ` · Portal set` : ''}
+                    {systems.payroll.entityOnboardingUrl || systems.payroll.entityPortalUrl || systems.payroll.portalUrl
+                      ? ' · Links configured'
+                      : ''}
                   </Typography>
+                  {(systems.payroll.entityOnboardingUrl || systems.payroll.entityPortalUrl) && (
+                    <Stack component="ul" sx={{ m: 0, pl: 2, mt: 0.5 }} spacing={0.25}>
+                      {systems.payroll.entityOnboardingUrl ? (
+                        <Typography component="li" variant="caption" color="text.secondary">
+                          Onboarding URL set (first-time setup)
+                        </Typography>
+                      ) : null}
+                      {systems.payroll.entityPortalUrl ? (
+                        <Typography component="li" variant="caption" color="text.secondary">
+                          Portal URL set (login / pay history)
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                  )}
                 </Box>
               </>
             )}

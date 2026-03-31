@@ -13,7 +13,14 @@ import { logger } from 'firebase-functions/v2';
 const db = admin.firestore();
 
 export type Channel = 'sms' | 'email' | 'push';
-export type MessageCategory = 'system' | 'transactional' | 'compliance' | 'engagement' | 'chat' | 'marketing';
+export type MessageCategory =
+  | 'system'
+  | 'onboarding'
+  | 'transactional'
+  | 'compliance'
+  | 'engagement'
+  | 'chat'
+  | 'marketing';
 
 export interface MessageTypeConfig {
   id: string;                     // e.g. "shift_confirmation"
@@ -52,6 +59,39 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     description: 'Welcome message sent after user signup',
     enabled: true,
   },
+
+  // Onboarding (hiring entity / compliance pipeline — not account signup)
+  {
+    id: 'worker_onboarding_pipeline_started',
+    label: 'Worker onboarding pipeline started',
+    category: 'onboarding',
+    defaultChannels: ['sms', 'email', 'push'],
+    critical: true,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: true,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'First time a worker onboarding pipeline exists for a hiring entity. Use automation trigger worker_onboarding_pipeline_started. Variables include {{firstName}}, {{hiringEntityName}}, {{onboardingPipelineId}}, {{hiringEntityId}}, {{entityKey}}, and optionally {{assignmentId}}, {{jobOrderId}}, {{onboardingTriggerSource}}.',
+    enabled: true,
+  },
+  {
+    id: 'on_call_employment_started',
+    label: 'On-call employment started',
+    category: 'onboarding',
+    defaultChannels: ['sms', 'email', 'push'],
+    critical: true,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: true,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Sent when on-call / labor-pool employment is opened (no assignment). Trigger: on_call_employment_started. Variables: {{firstName}}, {{hiringEntityName}}, {{onboardingPipelineId}}, {{hiringEntityId}}, {{entityKey}}, {{onCallEmployment}}.',
+    enabled: true,
+  },
+
   {
     id: 'system_alert',
     label: 'System Alert',
@@ -318,7 +358,7 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     aiAllowedToDraft: false,
     aiAllowedToAutoSend: true,
     description:
-      'Sent when an assignment is confirmed and the worker needs the entity payroll onboarding URL (entities.payrollSettings.onboardingUrl). Body supplied in variables.message.',
+      'Sent when an assignment is confirmed or on-call employment starts and payroll setup is needed. Template variables: {{payrollOnboardingUrl}} (onboarding URL, else portal — legacy single link), {{payrollSignupUrl}}, {{payrollPortalLoginUrl}}, {{payrollProvider}}, {{entityName}}, {{hiringEntityId}}, {{jobTitle}}, {{firstName}}, {{message}}, {{_message}}, {{_subject}}.',
     enabled: true,
   },
   

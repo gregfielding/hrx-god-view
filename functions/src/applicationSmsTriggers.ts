@@ -12,6 +12,7 @@ import { shouldSendNotification } from './utils/notificationSettings';
 import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } from './utils/templateVariableResolver';
 import { sendApplicationStatusChangedNotification } from './messaging/unifiedWorkerNotifications';
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
+import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -165,6 +166,9 @@ export const onApplicationCreated = onDocumentCreated(
         if (!phoneE164) {
           logger.info(`User ${userId} has no phone number, skipping SMS for application ${applicationId}`);
           return { success: true };
+        }
+        if (shouldSkipStaleApplicationReceivedSms(applicationId, applicationData)) {
+          return { success: true, skipped: 'stale_application_received' };
         }
         const canProcessCreateEvent = await markLifecycleEventIfFirst({
           tenantId,
@@ -649,6 +653,13 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         const phoneE164 = (userData.phoneE164 || userData.phone || '').trim();
         if (!phoneE164) {
           logger.info(`User ${userId} has no phone number, skipping SMS for application ${applicationId}`);
+          return { success: true };
+        }
+
+        if (newStatus === 'submitted' && shouldSkipStaleApplicationReceivedSms(applicationId, after)) {
+          logger.info(
+            `Application ${applicationId}: skipping status→submitted notifications (stale submit anchor)`
+          );
           return { success: true };
         }
 

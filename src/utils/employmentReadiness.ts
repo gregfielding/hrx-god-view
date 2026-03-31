@@ -353,9 +353,11 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
   const pathDoneCount = allPathRows.filter((r) => isOnboardingPathRowDone(r.status)).length;
   const pathBlockerCount = allPathRows.filter(isOnboardingPathRowBlocker).length;
 
+  const liveAssignmentRow = primaryAssignmentRowForHeader(assignments);
   const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
     assignments,
     entityEmploymentStatus: ee?.status ?? null,
+    employmentEntryMode: ee?.employmentEntryMode ?? null,
   });
   const hasAnyBlockers =
     hasOpenOnboardingDemand && (pathBlockerCount > 0 || pipelineBlockerCount > 0);
@@ -368,12 +370,16 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     pathDoneCount
   );
 
+  const entityOb = String(ctx.entitySettings?.payrollOnboardingUrl || '').trim() || null;
+  const entityPo = String(ctx.entitySettings?.payrollPortalUrl || '').trim() || null;
   const payrollSummary: EmploymentPayrollSummary = {
     applicable: Boolean(ee || ctx.payrollAccount),
     statusDisplay: ctx.payrollAccount
       ? getPayrollStatusLabel(ctx.payrollAccount.payrollStatus)
       : 'No payroll account',
     portalUrl: ctx.payrollAccount?.payrollAccountLink ?? null,
+    entityOnboardingUrl: entityOb,
+    entityPortalUrl: entityPo,
     actionNeeded: Boolean(
       ctx.payrollAccount &&
         !['complete', 'inactive'].includes(String(ctx.payrollAccount.payrollStatus || ''))
@@ -435,7 +441,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
   const headerActionable = hasOpenOnboardingDemand
     ? deriveDominantActionableForHeader(pathBlockingRows, blockers)
     : 'none';
-  const primaryAssignmentRow = primaryAssignmentRowForHeader(assignments);
+  const primaryAssignmentRow = liveAssignmentRow;
   const employmentHeaderState = deriveEmploymentHeaderState({
     onboardingPhase: ee?.onboardingPhase ?? null,
     blockers: headerMergedBlockers,
@@ -443,6 +449,8 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     assignmentStatus: primaryAssignmentRow?.status ?? null,
     entityEmploymentStatus: ee?.status ?? null,
     hasOpenOnboardingDemand,
+    employmentEntryMode: ee?.employmentEntryMode ?? null,
+    hasNonTerminalAssignment: liveAssignmentRow != null,
   });
   const headerReadinessExplanation = employmentHeaderStateExplanation(
     employmentHeaderState,

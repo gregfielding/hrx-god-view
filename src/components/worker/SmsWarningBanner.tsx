@@ -1,10 +1,17 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, AlertTitle, Box, Button, Stack } from '@mui/material';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+
+/** Same rule as worker profile app-language / PrivacySettings: SMS is on unless explicitly opted out or system-blocked (STOP). */
+function isWorkerSmsEffectivelyEnabled(data: Record<string, unknown>): boolean {
+  const smsOptIn = data.smsOptIn;
+  const blocked = data.smsBlockedSystem === true;
+  return smsOptIn !== false && !blocked;
+}
 
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 
@@ -22,6 +29,8 @@ const SmsWarningBanner: React.FC = () => {
   const [hasPhone, setHasPhone] = useState(false);
   const [smsSystemAvailable, setSmsSystemAvailable] = useState(true);
   const [dismissUntil, setDismissUntil] = useState(0);
+  const [enabling, setEnabling] = useState(false);
+  const [enableError, setEnableError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!uid) return;
@@ -48,15 +57,13 @@ const SmsWarningBanner: React.FC = () => {
           setLoading(false);
           return;
         }
-        const data = snap.data() as Record<string, any>;
-        const notifications = (data.notificationSettings || {}) as Record<string, any>;
-        const smsPreference = notifications.smsNotifications;
+        const data = snap.data() as Record<string, unknown>;
+        const notifications = (data.notificationSettings || {}) as Record<string, unknown>;
         const phone = String(data.phone || '').trim();
         const unavailable =
-          data?.smsSystemUnavailable === true ||
-          notifications?.smsUnavailable === true;
+          data.smsSystemUnavailable === true || notifications.smsUnavailable === true;
 
-        setSmsDisabled(smsPreference === false);
+        setSmsDisabled(!isWorkerSmsEffectivelyEnabled(data));
         setHasPhone(phone.length > 0);
         setSmsSystemAvailable(!unavailable);
       } finally {
@@ -84,6 +91,25 @@ const SmsWarningBanner: React.FC = () => {
     }
   };
 
+  const enableSmsHere = useCallback(async () => {
+    if (!uid || enabling) return;
+    setEnableError(null);
+    setEnabling(true);
+    try {
+      await updateDoc(doc(db, 'users', uid), {
+        'notificationSettings.smsNotifications': true,
+        smsOptIn: true,
+        smsBlockedSystem: false,
+        updatedAt: serverTimestamp(),
+      });
+      setSmsDisabled(false);
+    } catch (e: unknown) {
+      setEnableError(e instanceof Error ? e.message : 'Could not turn on SMS. Try again.');
+    } finally {
+      setEnabling(false);
+    }
+  }, [uid, enabling]);
+
   if (!showBanner) return null;
 
   return (
@@ -95,15 +121,16 @@ const SmsWarningBanner: React.FC = () => {
         borderColor: 'warning.light',
       }}
       action={
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" spacing={1} alignItems="center">
           {hasPhone ? (
             <Button
               variant="contained"
               color="warning"
               size="small"
-              onClick={() => navigate('/c1/workers/profile/app-language?focus=sms')}
+              disabled={enabling}
+              onClick={() => void enableSmsHere()}
             >
-              Turn On SMS
+              {enabling ? 'Saving…' : 'Turn On SMS'}
             </Button>
           ) : (
             <Button
@@ -122,7 +149,14 @@ const SmsWarningBanner: React.FC = () => {
       }
     >
       <AlertTitle>Turn on text alerts</AlertTitle>
-      <Box>Turn on text alerts to receive important job and shift updates.</Box>
+      <Box>
+        Turn on text alerts to receive important job and shift updates.
+        {enableError ? (
+          <Box component="span" sx={{ display: 'block', mt: 1, fontWeight: 600 }}>
+            {enableError}
+          </Box>
+        ) : null}
+      </Box>
     </Alert>
   );
 };

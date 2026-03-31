@@ -2223,7 +2223,11 @@ const UserProfilePage = () => {
                 return <OnboardingTab uid={uid} tenantId={tenantId || ''} />;
               case 'Employment':
                 return (
-                  <EmploymentV2Tab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />
+                  <EmploymentV2Tab
+                    uid={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                    allowStartOnCallEmployment={viewerSecurityLevel >= 4}
+                  />
                 );
               case 'Compliance':
                 return <ComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;

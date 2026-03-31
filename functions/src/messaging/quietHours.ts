@@ -58,6 +58,9 @@ const DEFAULT_QUIET_HOURS: QuietHoursConfig = {
     'assignment_active',
     'assignment_completed',
     'assignment_cancelled',
+    'worker_onboarding_pipeline_started',
+    'on_call_employment_started',
+    'payroll_onboarding_invite_needed',
   ],
 };
 

@@ -28,7 +28,14 @@ export interface UnifiedMessageTemplate {
 export interface MessageTypeConfig {
   id: string;
   label: string;
-  category: 'system' | 'transactional' | 'compliance' | 'engagement' | 'chat' | 'marketing';
+  category:
+    | 'system'
+    | 'onboarding'
+    | 'transactional'
+    | 'compliance'
+    | 'engagement'
+    | 'chat'
+    | 'marketing';
   defaultChannels: Channel[];
   critical: boolean;
   allowReply: boolean;

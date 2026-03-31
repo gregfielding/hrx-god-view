@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
-import { Alert, Box, CircularProgress, Accordion, AccordionSummary, AccordionDetails, Typography } from '@mui/material';
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Typography,
+} from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { useEntityEmploymentOverview } from '../../../../hooks/useEntityEmploymentOverview';
 import type { EmploymentEntityKey } from './employmentV2Types';
@@ -11,9 +21,11 @@ import EmploymentTab from '../EmploymentTab';
 export interface EmploymentV2TabProps {
   uid: string;
   tenantId: string | null;
+  /** Security level ≥ 4 / recruiter tooling — enables on-call labor pool hire. */
+  allowStartOnCallEmployment?: boolean;
 }
 
-const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId }) => {
+const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId, allowStartOnCallEmployment }) => {
   const [entityKey, setEntityKey] = useState<EmploymentEntityKey>('select');
   const { activeTenant } = useAuth();
   const tenantSlug =
@@ -51,7 +63,15 @@ const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId }) => {
         package requirements and screening orders in the assignment section below.
       </Typography>
 
-      <EmploymentEntityTabs value={entityKey} onChange={setEntityKey} />
+      <EmploymentEntityTabs
+        value={entityKey}
+        onChange={setEntityKey}
+        trailingAction={
+          <Button size="small" startIcon={<RefreshIcon />} onClick={() => void refetch()}>
+            Refresh
+          </Button>
+        }
+      />
       <EmploymentEntityPanel
         entityKey={entityKey}
         overview={byEntityKey[entityKey]}
@@ -59,6 +79,7 @@ const EmploymentV2Tab: React.FC<EmploymentV2TabProps> = ({ uid, tenantId }) => {
         tenantId={tenantId}
         tenantSlug={tenantSlug}
         onRefresh={refetch}
+        allowStartOnCallEmployment={allowStartOnCallEmployment}
       />
 
       <Accordion sx={{ mt: 3 }}>

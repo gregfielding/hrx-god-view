@@ -658,6 +658,13 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
     return type?.label || messageTypeId;
   };
 
+  /** Parsed from API message type `description` (expects {{varName}} in text) for copy/paste in the template dialog. */
+  const suggestedVariablesForSelectedMessageType = useMemo(() => {
+    const t = messageTypes.find((x) => x.id === templateForm.messageTypeId);
+    if (!t?.description) return [];
+    return extractVariables(t.description);
+  }, [messageTypes, templateForm.messageTypeId]);
+
   const sortedTemplates = useMemo(() => {
     const getTriggerKey = (t: UnifiedMessageTemplate) =>
       automationRules.find((r) => r.templateId === t.id)?.triggerKey ?? '';
@@ -1201,6 +1208,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
 
                   const categoryOrder = [
                     'system',
+                    'onboarding',
                     'transactional',
                     'compliance',
                     'engagement',
@@ -1209,6 +1217,7 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                   ];
                   const categoryLabels: Record<string, string> = {
                     system: 'System',
+                    onboarding: 'Onboarding',
                     transactional: 'Transactional',
                     compliance: 'Compliance',
                     engagement: 'Engagement',
@@ -1248,6 +1257,38 @@ const MessagingTab: React.FC<MessagingTabProps> = ({ tenantId }) => {
                 })()}
               </Select>
             </FormControl>
+
+            {suggestedVariablesForSelectedMessageType.length > 0 ? (
+              <Box>
+                <Typography variant="subtitle2" gutterBottom>
+                  Variables for this message type
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  Click a chip to copy <code>{'{{name}}'}</code> to the clipboard. Availability at send time depends on the
+                  trigger; see the type description in the dropdown for details.
+                </Typography>
+                <Stack direction="row" flexWrap="wrap" gap={0.75}>
+                  {suggestedVariablesForSelectedMessageType.map((v) => (
+                    <Chip
+                      key={v}
+                      label={`{{${v}}}`}
+                      size="small"
+                      variant="outlined"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(`{{${v}}}`).then(() => setSuccess(true));
+                      }}
+                      sx={{ cursor: 'pointer' }}
+                    />
+                  ))}
+                </Stack>
+              </Box>
+            ) : templateForm.messageTypeId ? (
+              <Typography variant="caption" color="text.secondary">
+                No <code>{'{{variables}}'}</code> are listed in this message type&apos;s description yet. Use{' '}
+                <strong>Detected variables</strong> below after typing placeholders, or check{' '}
+                <code>functions/src/messaging/messageTypesRegistry.ts</code> in the repo.
+              </Typography>
+            ) : null}
 
             <Grid container spacing={2}>
               <Grid item xs={12}>

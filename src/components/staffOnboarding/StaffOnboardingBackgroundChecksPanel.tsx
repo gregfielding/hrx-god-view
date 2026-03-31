@@ -45,7 +45,7 @@ import type {
   ServiceOrderStatusEntry,
 } from '../../types/backgroundCheck';
 
-const PAGE_LIMIT = 150;
+const PAGE_LIMIT = 200;
 const EVENTS_LIMIT = 40;
 
 const getAccusourcePdf = httpsCallable(functions, 'getAccusourceBackgroundCheckPdf');

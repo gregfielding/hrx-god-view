@@ -1,5 +1,6 @@
 import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
+import { logger } from "firebase-functions/v2";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -152,7 +153,8 @@ async function resolveEntityContext(args: {
     const jobOrderSnap = await db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get();
     if (jobOrderSnap.exists) {
       const jo = jobOrderSnap.data() || {};
-      resolvedEntityId = (jo.entityId as string) || null;
+      resolvedEntityId =
+        (jo.hiringEntityId as string) || (jo.entityId as string) || null;
     }
   }
 
@@ -304,6 +306,8 @@ export type WorkerOnboardingPipelineTriggerSource =
   | "worker_confirmation"
   | "recruiter_confirmation"
   | "manual"
+  /** Recruiter-initiated hire without an assignment yet (on-call / bench). */
+  | "on_call"
   | "assignment_confirmed";
 
 export async function ensureWorkerOnboardingPipeline(args: {
@@ -314,8 +318,31 @@ export async function ensureWorkerOnboardingPipeline(args: {
   entityId?: string | null;
   triggeredByUid: string;
   triggerSource: WorkerOnboardingPipelineTriggerSource;
+  /** When set, merged onto `entity_employments` (on-call pool hire). */
+  employmentEntryMode?: "assignment_based" | "on_call_pool";
+  onCallNote?: string | null;
+  onCallScreeningPackageId?: string | null;
+  onCallScreeningPackageName?: string | null;
+  /** Override entity worker type for employment row (`w2` | `1099`). */
+  workerTypeOverride?: "w2" | "1099" | null;
+  /** When true, skip `worker_onboarding_pipeline_started` automation (caller uses on-call-specific triggers). */
+  suppressPipelineStartedAutomation?: boolean;
 }): Promise<{ pipelineId: string; created: boolean }> {
-  const { tenantId, userId, assignmentId, jobOrderId, entityId, triggeredByUid, triggerSource } = args;
+  const {
+    tenantId,
+    userId,
+    assignmentId,
+    jobOrderId,
+    entityId,
+    triggeredByUid,
+    triggerSource,
+    employmentEntryMode,
+    onCallNote,
+    onCallScreeningPackageId,
+    onCallScreeningPackageName,
+    workerTypeOverride,
+    suppressPipelineStartedAutomation,
+  } = args;
   const entityContext = await resolveEntityContext({ tenantId, entityId, jobOrderId });
   const pipelineId = `${userId}__${entityContext.entityKey}`;
   const ref = db.doc(`tenants/${tenantId}/worker_onboarding/${pipelineId}`);
@@ -331,7 +358,15 @@ export async function ensureWorkerOnboardingPipeline(args: {
       userId
   );
 
-  const workerTypeForEmployment = (entityContext.entityData?.workerType === "1099" ? "1099" : "w2") as "w2" | "1099";
+  const workerTypeForEmployment = (
+    workerTypeOverride === "1099"
+      ? "1099"
+      : workerTypeOverride === "w2"
+        ? "w2"
+        : entityContext.entityData?.workerType === "1099"
+          ? "1099"
+          : "w2"
+  ) as "w2" | "1099";
   const everifyRequired = entityContext.entityData?.everifyRequired ?? false;
   const bgRequired = computeStepApplicability(entityContext.entityData, "background_check") === "required";
   const drugRequired = computeStepApplicability(entityContext.entityData, "drug_screen") !== "not_required";
@@ -342,20 +377,21 @@ export async function ensureWorkerOnboardingPipeline(args: {
     const isFirstEmployment = !employmentSnap.exists;
 
     if (!snap.exists) {
+      // Firestore rejects explicit `undefined` field values — omit `milestones` when a step has none (e.g. e_verify, drug_screen).
       const steps: PipelineStep[] = PIPELINE_STEPS.map((step) => {
         const defs = STEP_MILESTONES[step.id];
-        const milestones: StepMilestone[] = defs
+        const milestones: StepMilestone[] | undefined = defs
           ? defs.map((m) => ({ id: m.id, label: m.label, completed: false }))
-          : undefined as any;
-        return {
+          : undefined;
+        const base = {
           id: step.id,
           title: step.title,
-          status: "not_started",
+          status: "not_started" as const,
           applicability: computeStepApplicability(entityContext.entityData, step.id),
-          milestones: milestones?.length ? milestones : undefined,
           updatedAt: now,
           updatedBy: triggeredByUid,
         };
+        return milestones?.length ? { ...base, milestones } : { ...base };
       });
       const tasks = buildInitialTasks();
       tx.set(ref, {
@@ -419,10 +455,55 @@ export async function ensureWorkerOnboardingPipeline(args: {
       employmentPayload.onboardingStartedAt = now;
       employmentPayload.createdAt = now;
     }
+    if (employmentEntryMode) {
+      employmentPayload.employmentEntryMode = employmentEntryMode;
+    } else if (isFirstEmployment) {
+      employmentPayload.employmentEntryMode = "assignment_based";
+    }
+    if (onCallNote != null && String(onCallNote).trim()) {
+      employmentPayload.onCallNote = String(onCallNote).trim();
+    }
+    if (onCallScreeningPackageId != null && String(onCallScreeningPackageId).trim()) {
+      employmentPayload.onCallScreeningPackageId = String(onCallScreeningPackageId).trim();
+      employmentPayload.onCallScreeningPackageName =
+        onCallScreeningPackageName != null && String(onCallScreeningPackageName).trim()
+          ? String(onCallScreeningPackageName).trim()
+          : null;
+    }
+    if (employmentEntryMode === "on_call_pool") {
+      employmentPayload.onCallStartedAt = now;
+    }
     tx.set(employmentRef, employmentPayload, { merge: true });
 
     return !snap.exists;
   });
+
+  if (created && !suppressPipelineStartedAutomation) {
+    try {
+      const { dispatchWorkerOnboardingPipelineStarted } = await import(
+        "../messaging/workerOnboardingPipelineStartedDispatch"
+      );
+      await dispatchWorkerOnboardingPipelineStarted({
+        tenantId,
+        userId,
+        pipelineId,
+        entityId: entityContext.entityId,
+        entityName: entityContext.entityName,
+        entityKey: entityContext.entityKey,
+        assignmentId: assignmentId ?? null,
+        jobOrderId: jobOrderId ?? null,
+        triggerSource,
+      });
+    } catch (e: unknown) {
+      // Do not fail pipeline creation if messaging fails
+      logger.warn("dispatchWorkerOnboardingPipelineStarted failed", {
+        tenantId,
+        userId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
 
   return { pipelineId, created };
 }

@@ -1,6 +1,6 @@
-import React, { useMemo } from 'react';
-import { Stack, Button } from '@mui/material';
-import RefreshIcon from '@mui/icons-material/Refresh';
+import React, { useMemo, useState } from 'react';
+import { Button, Stack } from '@mui/material';
+import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
 import type { EmploymentEntityKey, EmploymentEntityOverview } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
 import EmploymentEntityHeaderCard from './EmploymentEntityHeaderCard';
@@ -10,6 +10,7 @@ import EmploymentBlockersCard from './EmploymentBlockersCard';
 import EmploymentAssignmentsCard from './EmploymentAssignmentsCard';
 import EmploymentSystemsSummaryCard from './EmploymentSystemsSummaryCard';
 import EmploymentEmptyStateCard from './EmploymentEmptyStateCard';
+import StartOnCallEmploymentDialog from './StartOnCallEmploymentDialog';
 
 export interface EmploymentEntityPanelProps {
   entityKey: EmploymentEntityKey;
@@ -18,6 +19,8 @@ export interface EmploymentEntityPanelProps {
   tenantId: string;
   tenantSlug?: string;
   onRefresh?: () => void;
+  /** Recruiter/admin: show “Start on-call employment” for the active entity tab. */
+  allowStartOnCallEmployment?: boolean;
   /** Forwarded to onboarding path card; see `resolveEmploymentOnboardingPathDebugMode`. */
   onboardingPathDebugMode?: boolean;
 }
@@ -30,7 +33,9 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   tenantSlug,
   onRefresh,
   onboardingPathDebugMode,
+  allowStartOnCallEmployment,
 }) => {
+  const [onCallOpen, setOnCallOpen] = useState(false);
   const showEmptyExplainer = !overview.entityEmployment && !overview.workerOnboarding;
 
   const actionContext: EmploymentV2ActionResolutionContext = useMemo(() => {
@@ -41,20 +46,39 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
       tenantSlug,
       viewer: 'recruiter',
       entityEmploymentFirestoreId: overview.entityEmployment?.id ?? null,
-      payrollPortalUrl: overview.systems.payroll?.portalUrl ?? null,
+      payrollPortalUrl:
+        overview.systems.payroll?.entityOnboardingUrl ||
+        overview.systems.payroll?.entityPortalUrl ||
+        overview.systems.payroll?.portalUrl ||
+        null,
       everifyAssignmentId: firstAssign,
     };
   }, [profileUserId, tenantId, tenantSlug, overview]);
 
   return (
     <Stack spacing={0}>
-      {onRefresh && (
-        <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
-          <Button size="small" startIcon={<RefreshIcon />} onClick={onRefresh}>
-            Refresh
-          </Button>
-        </Stack>
-      )}
+      {allowStartOnCallEmployment ? (
+        <>
+          <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              startIcon={<PersonAddAlt1OutlinedIcon />}
+              onClick={() => setOnCallOpen(true)}
+            >
+              Start on-call employment
+            </Button>
+          </Stack>
+          <StartOnCallEmploymentDialog
+            open={onCallOpen}
+            onClose={() => setOnCallOpen(false)}
+            tenantId={tenantId}
+            profileUserId={profileUserId}
+            entityKey={entityKey}
+            onSuccess={() => onRefresh?.()}
+          />
+        </>
+      ) : null}
       <EmploymentEntityHeaderCard overview={overview} />
       <EmploymentOnboardingPathCard
         groups={overview.onboardingPath}

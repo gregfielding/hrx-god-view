@@ -1,6 +1,15 @@
 import { normalizeAssignmentStatus } from '../utils/assignmentStatusNormalize';
 
 export const SYSTEM_TRIGGER_KEYS = {
+  /** Labor pool / pre-assignment hire started via `startOnCallEmployment` or `startOnCallOnboarding`. */
+  onCallEmploymentStarted: 'on_call_employment_started',
+  /** First creation of `worker_onboarding` for worker + entity (any source: manual, on-call, assignment, etc.). */
+  workerOnboardingPipelineStarted: 'worker_onboarding_pipeline_started',
+  /**
+   * Payroll portal / onboarding invite (TempWorks, etc.). Fired from on-call payroll automation and
+   * assignment-confirmed payroll slice. Pair with message type `payroll_onboarding_invite_needed`.
+   */
+  payrollOnboardingInviteNeeded: 'payroll_onboarding_invite_needed',
   accountCreated: 'account_created',
   applicationReceived: 'application_received',
   applicationStatusScreened: 'application_status_screened',
@@ -26,6 +35,24 @@ export interface TriggerCatalogEntry {
 }
 
 export const SYSTEM_TRIGGER_CATALOG: TriggerCatalogEntry[] = [
+  {
+    key: SYSTEM_TRIGGER_KEYS.onCallEmploymentStarted,
+    label: 'On-call employment started',
+    description:
+      'Runs when a recruiter starts on-call / labor-pool employment for a worker and hiring entity (no assignment). Pair with message type on_call_employment_started.',
+  },
+  {
+    key: SYSTEM_TRIGGER_KEYS.payrollOnboardingInviteNeeded,
+    label: 'Payroll onboarding invite needed',
+    description:
+      'Runs when the system sends a payroll signup / portal invite (on-call hire or assignment confirmed). Pair with message type payroll_onboarding_invite_needed. If no active rule exists, a default body is sent.',
+  },
+  {
+    key: SYSTEM_TRIGGER_KEYS.workerOnboardingPipelineStarted,
+    label: 'Worker onboarding pipeline started',
+    description:
+      'Runs the first time a worker onboarding pipeline is created for a hiring entity (recruiter manual/on-call, worker/recruiter assignment confirmation, or assignment-confirmed automation). Optional assignment/job fields are filled when available.',
+  },
   {
     key: SYSTEM_TRIGGER_KEYS.accountCreated,
     label: 'Account Created',
@@ -98,8 +125,13 @@ export const SYSTEM_TRIGGER_CATALOG: TriggerCatalogEntry[] = [
   },
 ];
 
+const SYSTEM_TRIGGER_KEY_VALUES = new Set<string>(
+  Object.values(SYSTEM_TRIGGER_KEYS) as string[],
+);
+
+/** Allow any key declared on {@link SYSTEM_TRIGGER_KEYS} (not only catalog rows) so API validation cannot drift from dispatch code. */
 export function isSystemTriggerKey(value: string): value is SystemTriggerKey {
-  return SYSTEM_TRIGGER_CATALOG.some((entry) => entry.key === value);
+  return SYSTEM_TRIGGER_KEY_VALUES.has(value);
 }
 
 export function mapApplicationStatusToTriggerKey(status: string): SystemTriggerKey | null {

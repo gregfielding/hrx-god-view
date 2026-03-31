@@ -8,12 +8,13 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
-import { sendMessage } from './routingOrchestrator';
+import { sendPayrollOnboardingInviteWithAutomationFallback } from './payrollInviteAutomation';
 import { writeOnboardingAutomationDispatchLog } from './onboardingAutomationDispatchLog';
 import {
   isPayrollAutomationApplicable,
-  isWorkerPayrollSatisfied,
+  shouldSkipAutomatedPayrollInvite,
   loadEntityPayrollInviteContext,
+  payrollEntityUrls,
   resolveEntityKeyForWorkerPayroll,
   resolveHiringEntityId,
 } from './payrollInviteContext';
@@ -162,6 +163,7 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
 
   const { entityName, mergedSettings, onboardingUrl, provider, entityKey, entity } =
     await loadEntityPayrollInviteContext(tenantId, hiringEntityId, workerId);
+  const { signupUrl, portalLoginUrl } = payrollEntityUrls(mergedSettings);
 
   if (!isPayrollAutomationApplicable(mergedSettings, onboardingUrl)) {
     await writeOnboardingAutomationDispatchLog({
@@ -181,7 +183,7 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
 
   const payrollDocId = `${workerId}__${entityKey}`;
   const payrollSnap = await db.doc(`tenants/${tenantId}/worker_payroll_accounts/${payrollDocId}`).get();
-  if (isWorkerPayrollSatisfied(payrollSnap.exists ? payrollSnap.data() : undefined)) {
+  if (shouldSkipAutomatedPayrollInvite(payrollSnap.exists ? payrollSnap.data() : undefined)) {
     await writeOnboardingAutomationDispatchLog({
       tenantId,
       eventType: 'payroll_onboarding_invite_needed',
@@ -189,7 +191,7 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
       assignmentId,
       userId: workerId,
       outcome: 'skipped',
-      skipReason: 'payroll_already_satisfied',
+      skipReason: 'payroll_already_satisfied_or_invite_pending',
       hiringEntityId,
       payrollProvider: provider,
       details: { workerPayrollAccountId: payrollDocId, payrollStatus: payrollSnap.data()?.payrollStatus },
@@ -209,31 +211,25 @@ export async function runAssignmentConfirmedOnboardingSlice(args: {
     String(entity.workerType || 'W2').toUpperCase() === '1099' ? '1099' : 'w2';
 
   try {
-    const result = await sendMessage({
-      userId: workerId,
+    const result = await sendPayrollOnboardingInviteWithAutomationFallback({
       tenantId,
-      messageTypeId: 'payroll_onboarding_invite_needed',
-      variables: {
-        message: messageText,
-        _message: messageText,
-        _subject: emailSubject,
-        firstName,
-        entityName,
-        hiringEntityId,
-        payrollOnboardingUrl: onboardingUrl,
-        payrollProvider: provider || '',
-        assignmentId,
-        jobTitle,
-        correlationKey: ckPayroll,
-      },
-      metadata: {
-        source: 'assignment_confirmed_onboarding',
-        sourceId: assignmentId,
-        correlationKey: ckPayroll,
-        hiringEntityId,
-      },
-      source: 'assignment_confirmed_onboarding',
-      sourceId: assignmentId,
+      userId: workerId,
+      firstName,
+      hiringEntityId,
+      entityName,
+      onboardingUrl,
+      signupUrl,
+      portalLoginUrl,
+      provider,
+      assignmentId,
+      jobTitle,
+      messageText,
+      emailSubject,
+      correlationKey: ckPayroll,
+      payrollDocId,
+      sendSource: 'assignment_confirmed_onboarding',
+      sendSourceId: assignmentId,
+      dispatchSource: 'assignment_confirmed_onboarding',
     });
 
     const succeededChannels = (result.deliveryResults || [])

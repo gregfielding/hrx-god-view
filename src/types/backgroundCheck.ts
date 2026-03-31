@@ -66,6 +66,10 @@ export interface BackgroundCheckRecord {
   /** Assignment-confirmed automation (AccuSource or simulated). */
   automationSource?: string | null;
   automationAssignmentId?: string | null;
+  /** Hiring entity Firestore id when ordered outside an assignment (on-call employment). */
+  automationHiringEntityId?: string | null;
+  /** C1 tab key for Employment V2 linkage when no `jobOrderId`. */
+  relationshipEntityKey?: 'select' | 'workforce' | 'events' | string | null;
   automationTenantId?: string | null;
   automationFingerprint?: string | null;
   automationOrderedAt?: Timestamp | null;

@@ -83,6 +83,9 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'assignment_completed',
   'assignment_reminder_24h',
   'assignment_reminder_2h',
+  'worker_onboarding_pipeline_started',
+  'on_call_employment_started',
+  'payroll_onboarding_invite_needed',
 ]);
 
 /**

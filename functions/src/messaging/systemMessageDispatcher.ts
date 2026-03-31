@@ -1,6 +1,6 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
-import { sendMessage } from './routingOrchestrator';
+import { sendMessage, type SendMessageResult } from './routingOrchestrator';
 import { MessageTemplate, renderTemplate, renderStringWithVariables } from './templateEngine';
 import { resolveTemplateVariables, TemplateVariableContext } from '../utils/templateVariableResolver';
 import {
@@ -27,6 +27,8 @@ export interface DispatchSystemMessageResult {
   sent: boolean;
   ruleIds: string[];
   errors: string[];
+  /** Set when a rule successfully invoked `sendMessage` (for callers that need message log id / delivery details). */
+  sendMessageResult?: SendMessageResult;
 }
 
 function isPassiveModeEnabled(): boolean {
@@ -121,6 +123,7 @@ export async function dispatchSystemMessage(args: DispatchSystemMessageArgs): Pr
 
   const passiveMode = isPassiveModeEnabled();
   let sent = false;
+  let sendMessageResult: SendMessageResult | undefined;
   const attemptedRuleIds: string[] = [];
   const userDoc = await db.doc(`users/${args.userId}`).get();
   const userData = (userDoc.exists ? userDoc.data() : {}) || {};
@@ -209,6 +212,7 @@ export async function dispatchSystemMessage(args: DispatchSystemMessageArgs): Pr
         errors.push(`Rule ${rule.ruleId} send failed${errDetail}`);
         continue;
       }
+      sendMessageResult = result;
       // Send only one message per trigger event.
       break;
     } catch (error: any) {
@@ -227,5 +231,6 @@ export async function dispatchSystemMessage(args: DispatchSystemMessageArgs): Pr
     sent,
     ruleIds: attemptedRuleIds,
     errors,
+    sendMessageResult,
   };
 }

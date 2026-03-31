@@ -373,9 +373,12 @@ export function useEntityEmploymentOverview({
         };
         EMPLOYMENT_ENTITY_KEYS.forEach((ek) => {
           const jset = jobOrdersByEntity[ek];
+          const eidForEk = resolveEntityFirestoreIdForTab(ek, entityBrief, employmentsByKey[ek]);
           backgroundByKey[ek] = bgList.filter((b) => {
-            if (!b.jobOrderId) return false;
-            return jset.has(b.jobOrderId);
+            if (b.jobOrderId && jset.has(b.jobOrderId)) return true;
+            if (eidForEk && b.automationHiringEntityId === eidForEk) return true;
+            if (b.relationshipEntityKey === ek) return true;
+            return false;
           });
         });
 
@@ -395,7 +398,11 @@ export function useEntityEmploymentOverview({
                 name?: string;
                 workerType?: string;
                 onboardingWorkflowSteps?: Record<string, boolean>;
+                payrollSettings?: { onboardingUrl?: string | null; portalUrl?: string | null };
               };
+              const ps = d.payrollSettings;
+              const ob = String(ps?.onboardingUrl || '').trim() || null;
+              const pu = String(ps?.portalUrl || '').trim() || null;
               entitySettingsByKey[ek] = {
                 entityFirestoreId: eid,
                 entityName: String(d.name || eid),
@@ -404,6 +411,8 @@ export function useEntityEmploymentOverview({
                     ? d.onboardingWorkflowSteps
                     : {},
                 workerType: String(d.workerType || 'W2'),
+                payrollOnboardingUrl: ob,
+                payrollPortalUrl: pu,
               };
             } catch {
               /* ignore */

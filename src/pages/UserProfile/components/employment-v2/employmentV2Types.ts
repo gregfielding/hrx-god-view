@@ -37,6 +37,16 @@ export interface EntityEmploymentRecord {
   drugScreenStatus?: string;
   /** Onboarding lifecycle phase on the employment record (not the same as `status`). */
   onboardingPhase?: string | null;
+  /**
+   * How this entity employment was opened. `on_call_pool` = pre-assignment / labor-pool hire (no assignment required).
+   * Omitted or `assignment_based` = legacy / assignment-driven path.
+   */
+  employmentEntryMode?: 'assignment_based' | 'on_call_pool' | string | null;
+  /** Admin note when starting on-call employment. */
+  onCallNote?: string | null;
+  onCallScreeningPackageId?: string | null;
+  onCallScreeningPackageName?: string | null;
+  onCallStartedAt?: { toDate: () => Date } | null;
   updatedAt?: { toDate: () => Date } | null;
 }
 
@@ -153,7 +163,12 @@ export interface EmploymentEverifySummary {
 export interface EmploymentPayrollSummary {
   applicable: boolean;
   statusDisplay: string;
+  /** Worker-specific link from `worker_payroll_accounts.payrollAccountLink` when present. */
   portalUrl?: string | null;
+  /** Entity `payrollSettings.onboardingUrl` — first-time TempWorks (etc.) setup. */
+  entityOnboardingUrl?: string | null;
+  /** Entity `payrollSettings.portalUrl` — login / pay history for workers already on payroll. */
+  entityPortalUrl?: string | null;
   actionNeeded?: boolean;
 }
 
@@ -207,6 +222,9 @@ export interface EntityTabSettingsSnapshot {
   entityName: string;
   onboardingWorkflowSteps: Record<string, boolean>;
   workerType: string;
+  /** From `entities.payrollSettings` when TempWorks (or similar) is configured. */
+  payrollOnboardingUrl?: string | null;
+  payrollPortalUrl?: string | null;
 }
 
 /**
@@ -420,7 +438,9 @@ export interface EmploymentEntityOverview {
   /** Canonical header chip state (preferred over `headerEmploymentStatus` for header UX). */
   employmentHeaderState: EmploymentV2HeaderState;
   /**
-   * True when there is a non-terminal assignment for the entity or employment `active`/`blocked`.
+   * True when there is a non-terminal assignment, employment `blocked`, on-call onboarding in progress
+   * (`status === onboarding` + `employmentEntryMode === on_call_pool`), or legacy `active` that is not
+   * “pool-ready only” (`active` + `on_call_pool` + no live assignment → false so the relationship path is not urgent).
    * When false, stale `worker_onboarding` / path rows are treated as historical for header and blocker UX.
    */
   hasOpenOnboardingDemand: boolean;

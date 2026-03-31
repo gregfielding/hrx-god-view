@@ -258,6 +258,7 @@ export {
   updateWorkerOnboardingStepMilestone,
   updateEntityEmploymentStatus,
 } from './onboarding/workerOnboardingPipeline';
+export { startOnCallEmployment, startOnCallOnboarding } from './onboarding/startOnCallEmployment';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

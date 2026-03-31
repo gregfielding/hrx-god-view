@@ -76,6 +76,17 @@ export function resolvePayrollOnboardingUrl(ps: PayrollSettingsShape | null | un
   return u || null;
 }
 
+/** Distinct entity URLs for messaging and UIs (TempWorks onboarding vs login portal). */
+export function payrollEntityUrls(ps: PayrollSettingsShape | null | undefined): {
+  signupUrl: string | null;
+  portalLoginUrl: string | null;
+} {
+  if (!ps) return { signupUrl: null, portalLoginUrl: null };
+  const signupUrl = String(ps.onboardingUrl || '').trim() || null;
+  const portalLoginUrl = String(ps.portalUrl || '').trim() || null;
+  return { signupUrl, portalLoginUrl };
+}
+
 export function isPayrollAutomationApplicable(ps: PayrollSettingsShape | null | undefined, url: string | null): boolean {
   if (!url) return false;
   if (!ps) return false;
@@ -92,6 +103,14 @@ export function isWorkerPayrollSatisfied(data: admin.firestore.DocumentData | un
   if (status === 'complete') return true;
   if (data.payrollSetupCompletedAt) return true;
   if (status === 'account_created') return true;
+  return false;
+}
+
+/** True when we should not send another automated payroll invite (complete or invite already in flight). */
+export function shouldSkipAutomatedPayrollInvite(data: admin.firestore.DocumentData | undefined): boolean {
+  if (isWorkerPayrollSatisfied(data)) return true;
+  const status = String(data?.payrollStatus || '').toLowerCase();
+  if (status === 'invite_sent' || status === 'in_progress') return true;
   return false;
 }
 

@@ -82,6 +82,10 @@ export interface DeriveEmploymentHeaderStateArgs {
    * Set from `computeHasOpenOnboardingDemand`.
    */
   hasOpenOnboardingDemand: boolean;
+  /** From `entity_employments.employmentEntryMode` — drives on-call pool header when `status === active` without assignments. */
+  employmentEntryMode?: 'assignment_based' | 'on_call_pool' | string | null;
+  /** True when there is at least one non-terminal assignment for this entity (pending / confirmed / in_progress). */
+  hasNonTerminalAssignment?: boolean;
 }
 
 function normalizeOnboardingPhase(raw: string | null | undefined): 'not_started' | 'in_progress' | 'complete' | 'unknown' {
@@ -134,22 +138,35 @@ export function primaryAssignmentStatusForHeader(
  *
  * **true** when:
  * - `entity_employments.status` is **`active`** or **`blocked`**, or
+ * - `entity_employments.status` is **`onboarding`** and `employmentEntryMode === 'on_call_pool'` (labor pool / pre-assignment hire), or
  * - `assignments` is a non-empty array with at least one **non-terminal** row (`pending` / `confirmed` / `in_progress`).
  *
- * **false** when assignments are missing, empty, or all terminal — unless employment is `active`/`blocked`.
- * (`assignments === undefined` → no live-assignment proof → **false** for that leg.)
+ * **false** when assignments are missing, empty, or all terminal — unless employment is `active`/`blocked` or on-call onboarding.
+ * (`assignments === undefined` → no live-assignment proof → **false** for that leg unless on-call onboarding.)
  */
 export function computeHasOpenOnboardingDemand(args: {
   assignments: EmploymentAssignmentSummary[] | undefined;
   entityEmploymentStatus?: string | null;
+  /** Pre-assignment / on-call pool hire — relationship onboarding without a live assignment. */
+  employmentEntryMode?: 'assignment_based' | 'on_call_pool' | string | null;
 }): boolean {
   const ee = String(args.entityEmploymentStatus || '')
     .trim()
     .toLowerCase();
-  if (ee === 'active' || ee === 'blocked') return true;
   const list = args.assignments;
+  const hasLiveAssignment = list?.length ? primaryAssignmentRowForHeader(list) != null : false;
+  const mode = String(args.employmentEntryMode || '').trim().toLowerCase();
+
+  if (ee === 'active' || ee === 'blocked') {
+    // Labor pool: `active` without a live assignment means ready in pool, not assignment-driven onboarding demand.
+    if (ee === 'active' && mode === 'on_call_pool' && !hasLiveAssignment) {
+      return false;
+    }
+    return true;
+  }
+  if (ee === 'onboarding' && mode === 'on_call_pool') return true;
   if (!list?.length) return false;
-  return primaryAssignmentRowForHeader(list) != null;
+  return hasLiveAssignment;
 }
 
 export function employmentBlockerItemFromPathRow(row: EmploymentOnboardingRow): EmploymentBlockerItem {
@@ -213,7 +230,12 @@ export function deriveEmploymentHeaderState(args: DeriveEmploymentHeaderStateArg
   }
 
   // Bridge: legacy employment row "active" → header "on_assignment" (distinct from assignment `confirmed`).
+  // On-call pool: `active` with no live assignment means ready in the labor pool, not on a job.
   if (ee === 'active') {
+    const mode = String(args.employmentEntryMode || '').trim().toLowerCase();
+    if (mode === 'on_call_pool' && !args.hasNonTerminalAssignment) {
+      return 'ready';
+    }
     return 'on_assignment';
   }
 
@@ -380,6 +402,9 @@ export function deriveEmploymentHeaderStateWorkerListFallback(args: {
    * When omitted, treated as true.
    */
   hasOpenOnboardingDemand?: boolean;
+  employmentEntryMode?: string | null;
+  /** When false and `employmentEntryMode === on_call_pool`, `active` maps to ready (labor pool), not on a job. */
+  hasNonTerminalAssignment?: boolean;
 }): EmploymentV2HeaderState {
   const phase = normalizeOnboardingPhase(args.onboardingPhase);
   const ee = String(args.entityEmploymentStatus || '')
@@ -389,7 +414,11 @@ export function deriveEmploymentHeaderStateWorkerListFallback(args: {
 
   if (ee === 'terminated') return 'terminated';
   if (ee === 'inactive') return 'inactive';
-  if (ee === 'active') return 'on_assignment';
+  if (ee === 'active') {
+    const mode = String(args.employmentEntryMode || '').toLowerCase();
+    if (mode === 'on_call_pool' && args.hasNonTerminalAssignment === false) return 'ready';
+    return 'on_assignment';
+  }
   if (demand && phase === 'complete' && !args.pipelineIncomplete) return 'ready';
   if (demand && (phase === 'in_progress' || ee === 'onboarding' || args.pipelineIncomplete)) return 'in_progress';
   return 'not_started';

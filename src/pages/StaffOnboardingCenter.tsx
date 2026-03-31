@@ -4,7 +4,8 @@
  * @see docs/ONBOARDING_CENTER_IMPLEMENTATION_PLAN.md
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Box, Tab, Tabs, Typography } from '@mui/material';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../contexts/AuthContext';
@@ -20,8 +21,15 @@ function TabPanel(props: { children?: React.ReactNode; index: number; value: num
 }
 
 const StaffOnboardingCenter: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(0);
   const { activeTenant } = useAuth();
+
+  useEffect(() => {
+    if (searchParams.get('tab') === 'background') {
+      setTab(2);
+    }
+  }, [searchParams]);
   const tenantId = activeTenant?.id;
 
   return (

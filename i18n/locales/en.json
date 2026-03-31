@@ -12,7 +12,8 @@
     "no": "No",
     "startDate": "Start Date",
     "ok": "OK",
-    "close": "Close"
+    "close": "Close",
+    "notifications": "Notifications"
   },
   "nav": {
     "dashboard": "Dashboard",
