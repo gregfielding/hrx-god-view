@@ -7,6 +7,11 @@
 import * as admin from 'firebase-admin';
 import type { I9CaseFlat } from './everifySchemas';
 import { assertEverifyEnvUrlConsistency } from './everifyConfig';
+import { normalizeAlienNumberForApi } from './everifyAlienNumber';
+import {
+  deriveEverifyI551MaskFromAlienNumber,
+  normalizeI551NumberForEverifyApi,
+} from './everifyI551DocumentNumber';
 
 const REQUIRED_FIELDS = [
   'first_name',
@@ -128,10 +133,77 @@ function normalizeCitizenshipStatusCodeInI9Payload(data: Record<string, unknown>
 
 /**
  * Final pass immediately before POST /cases. Idempotent; covers any code path that skipped resolveI9Payload*.
+ * Also maps legacy document_a_type_code values to USCIS REST enums.
  */
+const DOCUMENT_A_TYPE_CODE_ALIASES: Record<string, string> = {
+  PERMANENT_RESIDENT_CARD: "FORM_I551",
+  US_PASSPORT_CARD: "US_PASSPORT",
+  EMPLOYMENT_AUTHORIZATION_DOCUMENT: "FORM_I766",
+};
+
+function normalizeDocumentATypeCodeForEverifyRest(data: Record<string, unknown>): void {
+  const v = data.document_a_type_code;
+  if (typeof v !== 'string') return;
+  const t = v.trim();
+  const mapped = DOCUMENT_A_TYPE_CODE_ALIASES[t];
+  if (mapped) data.document_a_type_code = mapped;
+}
+
+/** E-Verify REST: `i551_number` = card document number (3 letters + 10 digits or *+9 digits). */
+function normalizeI551NumberInI9Payload(data: Record<string, unknown>): void {
+  const v = data.i551_number;
+  if (typeof v !== 'string') return;
+  const norm = normalizeI551NumberForEverifyApi(v);
+  if (norm) data.i551_number = norm;
+}
+
+function normalizeAlienNumberInI9Payload(data: Record<string, unknown>): void {
+  const v = data.alien_number;
+  if (typeof v !== 'string') return;
+  const norm = normalizeAlienNumberForApi(v);
+  if (norm) data.alien_number = norm;
+}
+
+/** E-Verify returns ATTRIBUTE_EXTRANEOUS_FIELD for no_expiration_date on FORM_I551 cases. */
+function omitNoExpirationDateForFormI551(data: Record<string, unknown>): void {
+  const docA = data.document_a_type_code;
+  if (typeof docA !== 'string' || docA.trim() !== 'FORM_I551') return;
+  delete data.no_expiration_date;
+}
+
+/**
+ * FORM_I551: API requires `i551_number`. When only `alien_number` is collected, derive the ICA mask
+ * `UNK*#########` (see deriveEverifyI551MaskFromAlienNumber). Preserve an explicit valid `i551_number`.
+ */
+function ensureI551NumberForFormI551(data: Record<string, unknown>): void {
+  const docA = data.document_a_type_code;
+  if (typeof docA !== 'string' || docA.trim() !== 'FORM_I551') return;
+
+  const alienNorm =
+    typeof data.alien_number === 'string' ? normalizeAlienNumberForApi(data.alien_number) : null;
+  if (!alienNorm || !/^A\d{9}$/.test(alienNorm)) return;
+
+  const raw = data.i551_number;
+  if (typeof raw === 'string' && raw.trim() !== '') {
+    const n = normalizeI551NumberForEverifyApi(raw);
+    if (n) {
+      data.i551_number = n;
+      return;
+    }
+  }
+
+  const derived = deriveEverifyI551MaskFromAlienNumber(alienNorm);
+  if (derived) data.i551_number = derived;
+}
+
 export function applyRestDraftPayloadNormalization(data: Record<string, unknown>): void {
   normalizeSsnInI9Payload(data);
   normalizeCitizenshipStatusCodeInI9Payload(data);
+  normalizeDocumentATypeCodeForEverifyRest(data);
+  normalizeAlienNumberInI9Payload(data);
+  ensureI551NumberForFormI551(data);
+  normalizeI551NumberInI9Payload(data);
+  omitNoExpirationDateForFormI551(data);
 }
 
 function parseEnvI9FixtureJson(): Record<string, unknown> | null {

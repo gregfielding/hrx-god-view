@@ -3117,6 +3117,8 @@ const RecruiterAccountDetails: React.FC = () => {
   const displayEVerify = displayEntity ? displayEntity.everifyRequired : (isChildAccount && parentDefaults ? parentDefaults.eVerifyRequired : defaultEVerify.eVerifyRequired);
   const displayHiringEntityId = isChildAccount && parentDefaults != null ? parentDefaults.hiringEntityId : (account.hiringEntityId ?? null);
   const displayHiringEntityName = displayHiringEntityId ? (entityOptions.find((e) => e.id === displayHiringEntityId)?.name ?? '—') : '—';
+  /** Child accounts often have no hiringEntityId on the doc; payroll tax columns use the same entity as the header. */
+  const showSutaFutaOnPricingPositions = /C1 Workforce|C1 Select/i.test(displayHiringEntityName || '');
 
   const hasHeaderAssociations =
     associatedCompanies.length > 0 ||
@@ -5423,6 +5425,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                             workersCompRate: null,
                             sutaRate: null,
                             futaRate: null,
+                            jobDescriptionFromClient: '',
                           },
                         ])
                       }
@@ -5432,7 +5435,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   }
                 />
                 <CardContent sx={{ pt: 0 }}>
-                  {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                  {showSutaFutaOnPricingPositions && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
                       <FormControl size="small" sx={{ minWidth: 140 }}>
                         <InputLabel>Worksite state</InputLabel>
@@ -5487,7 +5490,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           <TableCell sx={{ fontWeight: 600 }} align="right">Bill rate</TableCell>
                           <TableCell sx={{ fontWeight: 600 }}>WC Code</TableCell>
                           <TableCell sx={{ fontWeight: 600 }} align="right">WC Rate %</TableCell>
-                          {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                          {showSutaFutaOnPricingPositions && (
                             <>
                               <TableCell sx={{ fontWeight: 600 }} align="right">SUTA %</TableCell>
                               <TableCell sx={{ fontWeight: 600 }} align="right">FUTA %</TableCell>
@@ -5513,28 +5516,48 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                           const margin = bill - pay - pay * wc - pay * suta - pay * futa;
                           return (
                             <TableRow key={row.id || idx}>
-                              <TableCell>
-                                <Autocomplete
-                                  freeSolo
-                                  size="small"
-                                  options={jobTitlesData as string[]}
-                                  value={row.jobTitle}
-                                  onInputChange={(_, v) => {
-                                    const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
-                                    const lookup = stateCode && v ? wcRatesByStateAndJobTitle[`${stateCode}_${String(v).trim().toLowerCase()}`] : undefined;
-                                    setPricingPositions((prev) => {
-                                      const next = [...prev];
-                                      next[idx] = { ...next[idx], jobTitle: v };
-                                      if (lookup) {
-                                        next[idx].workersCompCode = lookup.code;
-                                        next[idx].workersCompRate = lookup.rate;
-                                      }
-                                      return next;
-                                    });
-                                  }}
-                                  renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
-                                  sx={{ minWidth: 200 }}
-                                />
+                              <TableCell sx={{ minWidth: 260, maxWidth: 360, verticalAlign: 'top' }}>
+                                <Stack spacing={1}>
+                                  <Autocomplete
+                                    freeSolo
+                                    size="small"
+                                    options={jobTitlesData as string[]}
+                                    value={row.jobTitle}
+                                    onInputChange={(_, v) => {
+                                      const stateCode = (pricingSutaFutaState || normalizeStateCode(worksiteDetails?.state) || '').trim().toUpperCase();
+                                      const lookup = stateCode && v ? wcRatesByStateAndJobTitle[`${stateCode}_${String(v).trim().toLowerCase()}`] : undefined;
+                                      setPricingPositions((prev) => {
+                                        const next = [...prev];
+                                        next[idx] = { ...next[idx], jobTitle: v };
+                                        if (lookup) {
+                                          next[idx].workersCompCode = lookup.code;
+                                          next[idx].workersCompRate = lookup.rate;
+                                        }
+                                        return next;
+                                      });
+                                    }}
+                                    renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
+                                    sx={{ minWidth: 200 }}
+                                  />
+                                  <TextField
+                                    size="small"
+                                    fullWidth
+                                    multiline
+                                    minRows={2}
+                                    maxRows={6}
+                                    label="Client job description"
+                                    placeholder="Customer’s official JD or notes for AI job description / postings"
+                                    value={row.jobDescriptionFromClient ?? ''}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      setPricingPositions((prev) => {
+                                        const next = [...prev];
+                                        next[idx] = { ...next[idx], jobDescriptionFromClient: v || '' };
+                                        return next;
+                                      });
+                                    }}
+                                  />
+                                </Stack>
                               </TableCell>
                               <TableCell align="right">
                                 <TextField
@@ -5642,7 +5665,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                                   helperText="Auto from Workers Comp or enter manually"
                                 />
                               </TableCell>
-                              {(entityOptions.find((e) => e.id === account.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                              {showSutaFutaOnPricingPositions && (
                                 <>
                                   <TableCell align="right">
                                     <TextField
@@ -5816,7 +5839,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
                     <CircularProgress />
                   </Box>
-                ) : !account?.associations?.companyIds?.length ? (
+                ) : !jobOrdersTabCompanyIds.length ? (
                   <Box sx={{ textAlign: 'center', py: 8 }}>
                     <WorkIcon sx={{ fontSize: 64, color: 'text.secondary', mb: 2 }} />
                     <Typography variant="h6" color="text.secondary" gutterBottom>

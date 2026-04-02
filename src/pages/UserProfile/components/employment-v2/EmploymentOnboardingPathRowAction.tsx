@@ -1,10 +1,9 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Button, CircularProgress, Typography } from '@mui/material';
-import { httpsCallable } from 'firebase/functions';
+import { Button, Typography } from '@mui/material';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { functions } from '../../../../firebase';
 import { useAuth } from '../../../../contexts/AuthContext';
 import { canManageEverifyFromClaims } from '../backgroundsComplianceModel';
+import { StartEverifySelectDialog } from '../StartEverifySelectDialog';
 import {
   resolveEmploymentV2PrimaryAction,
   interpolateEmploymentV2Route,
@@ -26,10 +25,6 @@ const PHASE_1_ACTION_KEYS = new Set([
   'background.error_recruiter',
 ]);
 
-const everifyCheckEligibility = httpsCallable(functions, 'everifyCheckEligibility');
-const everifyCreateCase = httpsCallable(functions, 'everifyCreateCase');
-const everifyRetryCase = httpsCallable(functions, 'everifyRetryCase');
-
 export interface EmploymentOnboardingPathRowActionProps {
   row: EmploymentOnboardingRow;
   entityKey: EmploymentEntityKey;
@@ -49,8 +44,8 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
   const navigate = useNavigate();
   const location = useLocation();
   const { isHRX, claimsRoles } = useAuth();
-  const [loading, setLoading] = useState(false);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [startEverifyDialogOpen, setStartEverifyDialogOpen] = useState(false);
 
   const resolved = useMemo(() => resolveEmploymentV2PrimaryAction(row, ctx), [row, ctx]);
   const phase1 = Boolean(resolved && PHASE_1_ACTION_KEYS.has(resolved.actionKey));
@@ -69,11 +64,22 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
     [navigate]
   );
 
-  const openBackgroundsTab = useCallback(() => {
-    const params = new URLSearchParams(location.search);
-    params.set('employmentFocus', 'Backgrounds');
-    navigate({ pathname: location.pathname, search: params.toString() }, { replace: false });
-  }, [navigate, location.pathname, location.search]);
+  const openBackgroundsTab = useCallback(
+    (backgroundCheckId?: string | null) => {
+      const params = new URLSearchParams(location.search);
+      params.set('employmentFocus', 'Backgrounds');
+      const id = typeof backgroundCheckId === 'string' ? backgroundCheckId.trim() : '';
+      if (id) {
+        params.set('employmentScrollTo', 'background_check');
+        params.set('employmentBackgroundCheckId', id);
+      } else {
+        params.delete('employmentScrollTo');
+        params.delete('employmentBackgroundCheckId');
+      }
+      navigate({ pathname: location.pathname, search: params.toString() }, { replace: false });
+    },
+    [navigate, location.pathname, location.search]
+  );
 
   const handleClick = useCallback(async () => {
     if (!resolved || !phase1) return;
@@ -84,13 +90,17 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
       resolved.actionKey === 'background.vendor_in_progress' ||
       resolved.actionKey === 'background.error_recruiter'
     ) {
-      openBackgroundsTab();
+      openBackgroundsTab(row.sourceRef?.backgroundCheckId ?? null);
       return;
     }
 
     if (resolved.actionKey === 'everify.select.in_progress' || resolved.actionKey === 'payroll.recruiter_review') {
       const empParams = new URLSearchParams(location.search);
       empParams.set('employmentFocus', 'Employment');
+      if (resolved.actionKey === 'everify.select.in_progress') {
+        empParams.set('employmentScrollTo', 'e_verify');
+        empParams.set('employmentEntityKey', entityKey);
+      }
       navigate({ pathname: location.pathname, search: empParams.toString() }, { replace: false });
       return;
     }
@@ -106,85 +116,19 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
       return;
     }
 
-    if (resolved.actionKind === 'callable' && resolved.actionKey.startsWith('everify.')) {
-      if (!canEverify || entityKey !== 'select') return;
+  }, [resolved, phase1, row.sourceRef, ctx, entityKey, openBackgroundsTab, location.pathname, location.search, navigate, runNavigate]);
 
-      const tid = ctx.tenantId;
-      const eid = ctx.entityEmploymentFirestoreId || undefined;
-
-      if (resolved.actionKey === 'everify.select.error_retry') {
-        const caseId = row.sourceRef?.caseId;
-        if (!caseId) {
-          setInlineError('No E-Verify case id on this row. Open the Backgrounds tab.');
-          return;
-        }
-        setLoading(true);
-        try {
-          await everifyRetryCase({ tenantId: tid, caseId, userEmploymentId: eid || undefined });
-          onComplete?.();
-        } catch (e: unknown) {
-          const det =
-            e && typeof e === 'object' && 'details' in e
-              ? (e as { details?: { message?: string } }).details
-              : undefined;
-          setInlineError(det?.message || (e instanceof Error ? e.message : 'Retry failed'));
-        } finally {
-          setLoading(false);
-        }
-        return;
-      }
-
-      if (resolved.actionKey === 'everify.select.check_eligibility') {
-        if (!eid) {
-          setInlineError(
-            ctx.everifyOnCallLaborPool
-              ? 'Add or open a Select employment record for this worker before running E-Verify.'
-              : 'Link a Select employment record before E-Verify.'
-          );
-          return;
-        }
-        setLoading(true);
-        try {
-          const check = (await everifyCheckEligibility({
-            tenantId: tid,
-            userEmploymentId: eid,
-          })) as { data: { eligible?: boolean; blockingReasons?: string[] } };
-          if (!check.data?.eligible) {
-            setInlineError((check.data?.blockingReasons || ['Not eligible']).join('. '));
-            return;
-          }
-          await everifyCreateCase({
-            tenantId: tid,
-            userEmploymentId: eid,
-          });
-          onComplete?.();
-        } catch (e: unknown) {
-          const det =
-            e && typeof e === 'object' && 'details' in e
-              ? (e as { details?: { blockingReasons?: string[] } }).details
-              : undefined;
-          setInlineError(
-            (det?.blockingReasons || [e instanceof Error ? e.message : 'E-Verify failed']).join('. ')
-          );
-        } finally {
-          setLoading(false);
-        }
-      }
+  const onRowClick = useCallback(() => {
+    if (
+      resolved?.actionKey === 'everify.select.check_eligibility' ||
+      resolved?.actionKey === 'everify.select.error_retry'
+    ) {
+      setInlineError(null);
+      setStartEverifyDialogOpen(true);
+      return;
     }
-  }, [
-    resolved,
-    phase1,
-    row.sourceRef,
-    ctx,
-    entityKey,
-    canEverify,
-    openBackgroundsTab,
-    location.pathname,
-    location.search,
-    navigate,
-    runNavigate,
-    onComplete,
-  ]);
+    void handleClick();
+  }, [resolved, handleClick]);
 
   if (!resolved || !phase1) {
     return null;
@@ -207,9 +151,7 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
 
   const label =
     resolved.actionKey === 'everify.select.check_eligibility'
-      ? ctx.everifyOnCallLaborPool
-        ? 'Run E-Verify for employment'
-        : 'Run E-Verify'
+      ? 'Start E-Verify (Select)'
       : resolved.actionKey === 'everify.select.error_retry'
         ? 'Retry E-Verify'
         : resolved.actionKey === 'everify.select.in_progress'
@@ -224,31 +166,50 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
               : 'View screening'
           : resolved.actionLabel;
 
-  const evDisabled =
-    resolved.actionKey === 'everify.select.check_eligibility' && !ctx.entityEmploymentFirestoreId;
   const evRetryDisabled = resolved.actionKey === 'everify.select.error_retry' && !row.sourceRef?.caseId;
 
   return (
-    <BoxActionFooter
-      label={label}
-      loading={loading}
-      disabled={loading || evDisabled || evRetryDisabled}
-      onClick={handleClick}
-      inlineError={inlineError}
-      primaryCta={primaryCta}
-    />
+    <>
+      <BoxActionFooter
+        label={label}
+        disabled={evRetryDisabled}
+        onClick={onRowClick}
+        inlineError={inlineError}
+        primaryCta={primaryCta}
+      />
+      {(resolved.actionKey === 'everify.select.check_eligibility' || resolved.actionKey === 'everify.select.error_retry') &&
+      ctx.tenantId ? (
+        <StartEverifySelectDialog
+          open={startEverifyDialogOpen}
+          onClose={() => setStartEverifyDialogOpen(false)}
+          uid={ctx.userId}
+          tenantId={ctx.tenantId}
+          dialogTitle={
+            resolved.actionKey === 'everify.select.error_retry'
+              ? 'Complete E-Verify (fix documents)'
+              : undefined
+          }
+          prefillEverifyCaseId={
+            resolved.actionKey === 'everify.select.error_retry' ? row.sourceRef?.caseId ?? null : null
+          }
+          onSuccess={() => {
+            setStartEverifyDialogOpen(false);
+            onComplete?.();
+          }}
+        />
+      ) : null}
+    </>
   );
 };
 
 function BoxActionFooter(props: {
   label: string;
-  loading: boolean;
   disabled: boolean;
   onClick: () => void;
   inlineError: string | null;
   primaryCta: boolean;
 }) {
-  const { label, loading, disabled, onClick, inlineError, primaryCta } = props;
+  const { label, disabled, onClick, inlineError, primaryCta } = props;
   return (
     <div>
       <Button
@@ -265,7 +226,7 @@ function BoxActionFooter(props: {
           px: primaryCta ? 1.5 : 0.5,
         }}
       >
-        {loading ? <CircularProgress size={primaryCta ? 18 : 14} color="inherit" /> : label}
+        {label}
       </Button>
       {inlineError && (
         <Typography variant="caption" color="error" display="block" sx={{ mt: 0.25, maxWidth: 320 }}>

@@ -45,6 +45,8 @@ import {
   type RecruiterConsolidatedPathItem,
 } from '../../../../utils/employmentOnboardingPathRecruiterConsolidation';
 import {
+  employmentOnboardingEverifyRowElementId,
+  isEverifyOnboardingPathScrollRow,
   isOnboardingPathRowBlocker,
   isOnboardingPathRowDone,
   RECRUITER_PAYROLL_ROW_HINT,
@@ -430,8 +432,13 @@ function StepRow({
     (row.actionableBy === 'worker' || row.actionableBy === 'either') &&
     !isOnboardingPathRowDone(row.status);
 
+  const everifyScrollAnchorId = isEverifyOnboardingPathScrollRow(row, entityKey)
+    ? employmentOnboardingEverifyRowElementId(entityKey)
+    : undefined;
+
   return (
     <Box
+      id={everifyScrollAnchorId}
       sx={{
         py: verifiedQuiet ? 0.75 : 1.15,
         px: 1.25,

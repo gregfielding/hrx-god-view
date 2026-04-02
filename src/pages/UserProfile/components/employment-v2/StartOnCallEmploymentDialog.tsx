@@ -116,7 +116,6 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
         screeningPackageName: packageName.trim() || null,
         note: note.trim() || null,
       });
-      onSuccess();
       onClose();
     } catch (e: unknown) {
       const fe = e as { message?: string; code?: string };
@@ -129,6 +128,9 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             : 'Request failed';
       setError(msg);
     } finally {
+      // Always reload employment overview after a round-trip: server may have written (messages sent) even if
+      // the client sees an error (timeout / flaky HTTPS). Also heals teammates blocked on a single restricted read during refetch.
+      void onSuccess();
       setSubmitting(false);
     }
   };

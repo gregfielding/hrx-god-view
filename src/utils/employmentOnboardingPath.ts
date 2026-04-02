@@ -524,3 +524,21 @@ export function buildOnboardingPathFromSettings(args: BuildOnboardingPathArgs): 
     };
   }).filter((g) => g.rows.length > 0);
 }
+
+/** DOM id for scrolling to the Select E-Verify checklist row (`employmentScrollTo=e_verify` + `employmentEntityKey`). */
+export function employmentOnboardingEverifyRowElementId(entityKey: string): string {
+  return `employment-onboarding-e-verify-${entityKey}`;
+}
+
+/** DOM id for scrolling to a screening row on Backgrounds (`employmentScrollTo=background_check` + `employmentBackgroundCheckId`). */
+export function backgroundComplianceScreeningRowElementId(backgroundCheckId: string): string {
+  return `background-compliance-screening-${backgroundCheckId}`;
+}
+
+/** True when this row is the Select-entity E-Verify line (same scope as `isSelectEverifyPathRow` in blocker map). */
+export function isEverifyOnboardingPathScrollRow(row: EmploymentOnboardingRow, entityKey: EmploymentEntityKey): boolean {
+  if (entityKey !== 'select') return false;
+  if (row.sourceRef?.requirementKey === 'e_verify') return true;
+  if (row.stepKey.startsWith('everify_')) return true;
+  return Boolean(row.sourceRef?.mergedFromStepKeys?.some((k) => k.startsWith('everify_')));
+}

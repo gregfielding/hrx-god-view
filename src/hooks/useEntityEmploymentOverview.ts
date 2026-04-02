@@ -176,7 +176,15 @@ export function useEntityEmploymentOverview({
           getDocs(query(collection(db, p.assignments(tenantId)), where('candidateId', '==', userId))),
           // Recruiter/admin: read private everify_cases (rules allow tenant role); linkage fields are authoritative.
           getDocs(query(collection(db, p.everifyCases(tenantId)), where('userId', '==', userId), limit(80))),
-          getDocs(query(collection(db, 'backgroundChecks'), where('candidateId', '==', userId), limit(120))),
+          // Must filter by tenantId so rules can prove every match is readable (candidateId-only queries fail for level-5 staff).
+          getDocs(
+            query(
+              collection(db, 'backgroundChecks'),
+              where('candidateId', '==', userId),
+              where('tenantId', '==', tenantId),
+              limit(120)
+            )
+          ),
           getDocs(
             query(
               collection(db, p.onboardingAutomationDispatch(tenantId)),
@@ -202,7 +210,32 @@ export function useEntityEmploymentOverview({
           if (jo) jobOrderIds.add(jo);
         });
 
-        const jobOrderById = new Map<string, { hiringEntityId?: string | null; jobTitle?: string; jobOrderName?: string }>();
+        const jobOrderById = new Map<
+          string,
+          {
+            hiringEntityId?: string | null;
+            effectiveHiringEntityId?: string | null;
+            jobTitle?: string;
+            jobOrderName?: string;
+          }
+        >();
+        const accountHiringCache: Record<string, string | null> = {};
+        const hiringEntityFromRecruiterAccount = async (recruiterAccountId: string): Promise<string | null> => {
+          if (Object.prototype.hasOwnProperty.call(accountHiringCache, recruiterAccountId)) {
+            return accountHiringCache[recruiterAccountId];
+          }
+          try {
+            const accSnap = await getDoc(doc(db, p.recruiterAccount(tenantId, recruiterAccountId)));
+            const hid = accSnap.exists()
+              ? String((accSnap.data() as { hiringEntityId?: string }).hiringEntityId || '').trim() || null
+              : null;
+            accountHiringCache[recruiterAccountId] = hid;
+            return hid;
+          } catch {
+            accountHiringCache[recruiterAccountId] = null;
+            return null;
+          }
+        };
         await Promise.all(
           Array.from(jobOrderIds).map(async (jid) => {
             try {
@@ -212,8 +245,15 @@ export function useEntityEmploymentOverview({
               }
               if (joSnap.exists()) {
                 const jd = joSnap.data() as Record<string, unknown>;
+                const joHiring = (jd.hiringEntityId as string | null | undefined) ?? null;
+                const recAcc = String(jd.recruiterAccountId || '').trim() || null;
+                let effective = joHiring;
+                if (!effective && recAcc) {
+                  effective = await hiringEntityFromRecruiterAccount(recAcc);
+                }
                 jobOrderById.set(jid, {
-                  hiringEntityId: (jd.hiringEntityId as string | null | undefined) ?? null,
+                  hiringEntityId: joHiring,
+                  effectiveHiringEntityId: effective,
                   jobTitle: jd.jobTitle as string | undefined,
                   jobOrderName: (jd.jobOrderName || jd.title) as string | undefined,
                 });
@@ -227,7 +267,7 @@ export function useEntityEmploymentOverview({
         const assignmentEntityKey = (jobOrderId: string | undefined | null): EmploymentEntityKey | null => {
           if (!jobOrderId) return null;
           const jo = jobOrderById.get(jobOrderId);
-          const hid = jo?.hiringEntityId;
+          const hid = String(jo?.effectiveHiringEntityId || jo?.hiringEntityId || '').trim() || null;
           if (!hid) return null;
           return entityIdToKey.get(hid) ?? null;
         };

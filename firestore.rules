@@ -115,7 +115,8 @@ service cloud.firestore {
           resource.data.candidateId == request.auth.uid ||
           isHRX() ||
           (request.auth.token.roles != null && hasTenantRole(tenantId, request.auth.token.roles)) ||
-          isAssignedToTenant(tenantId)
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5)
         );
         
         // CREATE Rules: Only recruiters/managers/admins can create assignments
@@ -283,11 +284,14 @@ service cloud.firestore {
           allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
         }
       }
-      // E-Verify public mirror: worker-safe (tenantId, userId, caseId, public, updatedAt). Workers read own.
+      // E-Verify public mirror: worker-safe (tenantId, userId, caseId, public, updatedAt). Workers read own;
+      // tenant staff same read path as everify_cases (JWT role OR assignment OR securityLevel 5+).
       match /everify_cases_public/{caseId} {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
@@ -327,6 +331,8 @@ service cloud.firestore {
         allow read: if request.auth != null && (
           isHRX() ||
           hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
           resource.data.userId == request.auth.uid
         );
         allow create, update: if request.auth != null && (
@@ -1035,7 +1041,8 @@ service cloud.firestore {
       match /recruiter_jobOrders/{jobOrderId} {
         allow read, write: if isHRX() || isTenantAdmin(tenantId);
         allow read, write: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
-        allow read: if isAssignedToTenant(tenantId);
+        // Same internal staff path as assignments / entity_employments (security 5+ without full tenantIds map)
+        allow read: if request.auth != null && (isAssignedToTenant(tenantId) || hasSecurityLevel(tenantId, 5));
       }
       
       // --- RECRUITER CANDIDATES ---

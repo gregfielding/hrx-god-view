@@ -23,13 +23,20 @@ function getWorkerUrl(): string | null {
   return `https://${LOCATION}-${PROJECT}.cloudfunctions.net/processEverifyCaseFromEmployment`;
 }
 
-/** Enqueue Cloud Task to create E-Verify case (shared by trigger and retry callable) */
-export async function enqueueEverifyTask(tenantId: string, userEmploymentId: string): Promise<void> {
+/**
+ * Enqueue Cloud Task to create E-Verify case (shared by trigger and retry callable).
+ * @returns true if a task was created; false if project/worker URL missing (caller may fall back).
+ */
+export async function enqueueEverifyTask(tenantId: string, userEmploymentId: string): Promise<boolean> {
   const queueName = getEverifyQueueName();
   const workerUrl = getWorkerUrl();
+  if (!PROJECT) {
+    logger.warn('GCLOUD_PROJECT/GCP_PROJECT not set, skipping E-Verify enqueue');
+    return false;
+  }
   if (!workerUrl) {
     logger.warn('E-Verify worker URL not configured, skipping enqueue');
-    return;
+    return false;
   }
   const parent = tasksClient.queuePath(PROJECT, LOCATION, queueName);
   const taskName = `${parent}/tasks/everify-${tenantId}-${userEmploymentId}-${Date.now()}`;
@@ -47,6 +54,7 @@ export async function enqueueEverifyTask(tenantId: string, userEmploymentId: str
   };
   await tasksClient.createTask({ parent, task });
   logger.info('E-Verify task enqueued', { tenantId, userEmploymentId, queue: queueName });
+  return true;
 }
 
 export const onUserEmploymentUpdatedEverify = onDocumentUpdated(

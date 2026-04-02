@@ -359,6 +359,13 @@ export const gmailOAuthCallback = onRequest(async (req, res) => {
   }
 });
 
+/** Parse addresses from RFC5322-style headers (e.g. `Name <user@domain.com>`). */
+function extractEmailAddresses(text: string): string[] {
+  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
+  const matches = text.match(emailRegex) || [];
+  return matches.map((email) => email.toLowerCase());
+}
+
 /**
  * Sync emails from Gmail for a user
  */
@@ -398,11 +405,14 @@ export const syncGmailEmails = onCall({
     // Set up Gmail API client
     oauth2Client.setCredentials(gmailTokens);
     const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
-    
+    /** Connected mailbox address (lowercase); used for outbound vs inbound and must match Gmail "me". */
+    let gmailConnectedEmail = '';
+
     // Test Gmail API access and verify which account we're querying
     try {
       const profile = await gmail.users.getProfile({ userId: 'me' });
       const connectedEmail = profile.data.emailAddress;
+      gmailConnectedEmail = (connectedEmail || '').toLowerCase();
       logger.info(`Gmail API access confirmed for ${connectedEmail}`);
       logger.info(`User's email in database: ${userData?.email || 'not set'}`);
       
@@ -499,6 +509,33 @@ export const syncGmailEmails = onCall({
       } while (nextPageToken && totalFetched < maxTotalResults);
     }
 
+    // Sent mail lives in Sent, not Inbox — required for "emailed from normal Gmail" to reach CRM email_logs.
+    if (totalFetched < maxTotalResults) {
+      logger.info(
+        `Fetching sent messages to reach ${maxTotalResults} total (already have ${totalFetched} from unread+inbox)...`
+      );
+      nextPageToken = undefined;
+      do {
+        const query = 'in:sent';
+        logger.info(`Gmail API query: "${query}", pageToken: ${nextPageToken ? 'present' : 'none'}`);
+        const messagesResponse = await gmail.users.messages.list({
+          userId: 'me',
+          maxResults: Math.min(500, maxTotalResults - totalFetched),
+          q: query,
+          pageToken: nextPageToken,
+        });
+        const batchMessages = messagesResponse.data.messages || [];
+        const existingIds = new Set(allMessages.map((m) => m.id));
+        const newMessages = batchMessages.filter((m) => !existingIds.has(m.id));
+        allMessages.push(...newMessages);
+        totalFetched += newMessages.length;
+        nextPageToken = messagesResponse.data.nextPageToken;
+        if (totalFetched >= maxTotalResults || !nextPageToken) {
+          break;
+        }
+      } while (nextPageToken && totalFetched < maxTotalResults);
+    }
+
     // Cap processing to avoid long runtimes
     const processingLimit = Math.min(allMessages.length, maxTotalResults);
     const messages = allMessages.slice(0, processingLimit);
@@ -569,9 +606,14 @@ export const syncGmailEmails = onCall({
         const { bodyHtml, bodyPlain } = extractBodiesFromPayload(messageData);
         const bodySnippet = bodyPlain || String(messageData.snippet || '');
 
-        // Determine direction
-        const userEmail = userData?.email || '';
-        const direction = from.includes(userEmail) ? 'outbound' : 'inbound';
+        const fromAddrs = extractEmailAddresses(from);
+        const fromPrimary = (fromAddrs[0] || '').toLowerCase();
+        const accountEmail =
+          gmailConnectedEmail ||
+          (typeof userData?.email === 'string' ? userData.email.toLowerCase() : '') ||
+          (typeof userData?.gmailTokens?.email === 'string' ? String(userData.gmailTokens.email).toLowerCase() : '');
+        const direction =
+          fromPrimary && accountEmail && fromPrimary === accountEmail ? 'outbound' : 'inbound';
 
         // Determine read state from Gmail labels.
         // Gmail uses the UNREAD label on messages; absence means read.
@@ -579,22 +621,28 @@ export const syncGmailEmails = onCall({
         const isUnreadInGmail = gmailLabelIds.includes('UNREAD');
         const effectiveRead = direction === 'outbound' ? true : !isUnreadInGmail;
 
-        // Find associated contacts
-        const allEmails = [from, to, cc, bcc].flat().filter(Boolean);
-        const contactMap = new Map();
+        const parsedAddresses = new Set<string>();
+        for (const raw of [from, to, cc, bcc].filter(Boolean)) {
+          for (const addr of extractEmailAddresses(raw)) {
+            parsedAddresses.add(addr);
+          }
+        }
+        const contactMap = new Map<string, { id: string; [k: string]: any }>();
 
-        for (const email of allEmails) {
-          const contactQuery = await db.collection('tenants').doc(tenantId)
+        for (const emailAddr of parsedAddresses) {
+          const contactQuery = await db
+            .collection('tenants')
+            .doc(tenantId)
             .collection('crm_contacts')
-            .where('email', '==', email)
+            .where('email', '==', emailAddr)
             .limit(1)
             .get();
 
           if (!contactQuery.empty) {
             const contact = contactQuery.docs[0];
-            contactMap.set(email, {
+            contactMap.set(emailAddr, {
               id: contact.id,
-              ...contact.data()
+              ...contact.data(),
             });
           }
         }
@@ -813,10 +861,11 @@ export const syncGmailEmails = onCall({
     return {
       success: true,
       syncedCount,
+      emailsSynced: syncedCount,
       skippedCount,
       errorCount,
       totalProcessed: messages.length,
-      newEmails: newEmails.length
+      newEmails: newEmails.length,
     };
 
   } catch (error) {
@@ -2101,15 +2150,6 @@ export const backfillGmailEmails = onCall({
 });
 
 /**
- * Helper function to extract email addresses from a string
- */
-function extractEmailAddresses(text: string): string[] {
-  const emailRegex = /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g;
-  const matches = text.match(emailRegex) || [];
-  return matches.map(email => email.toLowerCase());
-}
-
-/**
  * Internal function for monitoring Gmail (used by scheduled function)
  */
 async function monitorGmailForContactEmailsInternal(userId: string, tenantId: string, maxResults: number = 100, opts?: { deepScanHours?: number }) {
@@ -2894,16 +2934,20 @@ export const scheduledGmailMonitoring = onSchedule({
     console.info('scheduledGmailMonitoring: disabled by ENABLE_GMAIL_MONITORING');
     return;
   }
-  
-  // Idempotency: process this run only once
-  const runId = `gmail_monitoring_${new Date().toISOString().split('T')[0]}`;
+
+  // One run per scheduler invocation (daily date-based idempotency skipped all but the first run each day).
+  const scheduleKey = String((context as { scheduleTime?: string }).scheduleTime || new Date().toISOString()).replace(
+    /:/g,
+    '-'
+  );
+  const runId = `gmail_monitoring_${scheduleKey}`;
   const db = admin.firestore();
   const runRef = db.collection('function_runs').doc(runId);
-  
+
   try {
     await runRef.create({ createdAt: admin.firestore.FieldValue.serverTimestamp() });
   } catch {
-    console.info('scheduledGmailMonitoring: already processed today, skipping');
+    console.info('scheduledGmailMonitoring: duplicate schedule invocation, skipping');
     return;
   }
   

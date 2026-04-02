@@ -1,9 +1,10 @@
 /**
- * Shared "Start E-Verify (C1 Select)" dialog — Backgrounds tab and Employment tab.
+ * Shared "Start E-Verify (C1 Select)" dialog — Employment tab (C1 Select entity) and other call sites.
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Box,
   Button,
   Checkbox,
   CircularProgress,
@@ -56,6 +57,11 @@ import {
 import { useAuth } from '../../../contexts/AuthContext';
 import { canManageEverifyFromClaims } from './backgroundsComplianceModel';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
+import { isValidAlienNumber, normalizeAlienNumberForApi } from '../../../utils/everifyAlienNumber';
+import {
+  isValidI551NumberForEverifyApi,
+  normalizeI551NumberForEverifyApi,
+} from '../../../utils/everifyI551DocumentNumber';
 
 const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenantId, 'user_employments');
 
@@ -167,6 +173,10 @@ export interface StartEverifySelectDialogProps {
   /** Called after a successful case create (reload parent lists). */
   onSuccess?: () => void | Promise<void>;
   dialogTitle?: string;
+  /**
+   * Retry / fix flow: load `everify_cases/{id}` and pre-select matching `user_employments` when present.
+   */
+  prefillEverifyCaseId?: string | null;
 }
 
 export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> = ({
@@ -176,6 +186,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   tenantId,
   onSuccess,
   dialogTitle,
+  prefillEverifyCaseId,
 }) => {
   const { isHRX, claimsRoles } = useAuth();
 
@@ -212,7 +223,6 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   const [evDocCSelection, setEvDocCSelection] = useState('');
   const [evDocCCustomCode, setEvDocCCustomCode] = useState('');
   const [evDocCNumber, setEvDocCNumber] = useState('');
-
   /** Loading tenants/…/entities to resolve C1 Select LLC for E-Verify. */
   const [tenantEntitiesLoading, setTenantEntitiesLoading] = useState(false);
   /** Resolved Firestore entity for EVERIFY_HIRING_ENTITY_LABEL; required to create employment from this modal. */
@@ -245,7 +255,19 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     if (!evCitizenshipCode.trim()) return false;
     if (evDocMode === 'list_a') {
       if (!evDocASelection) return false;
-      if (evDocASelection === EVERIFY_DOC_CUSTOM) return evDocACustomCode.trim() !== '';
+      if (evDocASelection === EVERIFY_DOC_CUSTOM) {
+        if (!evDocACustomCode.trim()) return false;
+        if (evDocANumberField === 'i551_number') return isValidI551NumberForEverifyApi(evDocANumberValue);
+        if (evDocANumberField === 'alien_number') return isValidAlienNumber(evDocANumberValue);
+        if (evDocANumberField) return evDocANumberValue.trim() !== '';
+        return true;
+      }
+      if (evDocASelection === 'FORM_I551') {
+        return isValidAlienNumber(evDocANumberValue);
+      }
+      const preset = EVERIFY_LIST_A_PRESETS.find((x) => x.code === evDocASelection);
+      if (preset?.numberField === 'i551_number') return isValidI551NumberForEverifyApi(evDocANumberValue);
+      if (preset?.numberField) return evDocANumberValue.trim() !== '';
       return true;
     }
     const bOk =
@@ -262,11 +284,32 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     evDocMode,
     evDocASelection,
     evDocACustomCode,
+    evDocANumberField,
     evDocBSelection,
     evDocBCustomCode,
     evDocCSelection,
     evDocCCustomCode,
+    evDocANumberValue,
   ]);
+
+  /** `i551_number` invalid while non-empty (custom List A only; Green Card preset uses Alien # only). */
+  const showI551FormatError = useMemo(() => {
+    if (evDocMode !== 'list_a') return false;
+    if (evDocASelection === EVERIFY_DOC_CUSTOM && evDocANumberField === 'i551_number') {
+      const v = evDocANumberValue.trim();
+      return v.length > 0 && !isValidI551NumberForEverifyApi(evDocANumberValue);
+    }
+    return false;
+  }, [evDocMode, evDocASelection, evDocANumberField, evDocANumberValue]);
+
+  const showAlienFormatError = useMemo(() => {
+    if (evDocMode !== 'list_a') return false;
+    if (evDocASelection === 'FORM_I551' || (evDocASelection === EVERIFY_DOC_CUSTOM && evDocANumberField === 'alien_number')) {
+      const v = evDocANumberValue.trim();
+      return v.length > 0 && !isValidAlienNumber(evDocANumberValue);
+    }
+    return false;
+  }, [evDocMode, evDocASelection, evDocANumberField, evDocANumberValue]);
 
   useEffect(() => {
     if (!evDocASelection || evDocASelection === EVERIFY_DOC_CUSTOM) return;
@@ -402,6 +445,65 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   const i9StatusIsKnown = (USER_EMPLOYMENT_I9_STATUS_VALUES as readonly string[]).includes(currentI9Normalized);
   const i9SystemCompleted = currentI9Normalized === 'completed';
 
+  const submitBlockingMessages = useMemo((): string[] => {
+    const msgs: string[] = [];
+    if (!canManageEverify) msgs.push(EVERIFY_SELECT_PERM_HINT);
+    if (!selectedEmpId) msgs.push('Select a user employment record.');
+    if (!i9SystemCompleted) {
+      msgs.push(
+        'Set I-9 status to “Completed” on the employment record (dropdown above). E-Verify eligibility requires this in Firestore—not only the checkbox below.'
+      );
+    }
+    if (!i9Confirmed) msgs.push('Check “I confirm I-9 is complete for this employment.”');
+    if (!everifyDocFormValid) {
+      if (!evCitizenshipCode.trim()) {
+        msgs.push('Select citizenship / work authorization.');
+      } else if (evDocMode === 'list_a') {
+        if (evDocASelection === 'FORM_I551') {
+          if (!isValidAlienNumber(evDocANumberValue)) {
+            msgs.push(
+              evDocANumberValue.trim() === ''
+                ? 'Enter the 9-digit USCIS / Alien number from the Green Card (with or without a leading A).'
+                : 'USCIS / Alien number must be 9 digits (optional A prefix).'
+            );
+          }
+        } else if (
+          evDocASelection === EVERIFY_DOC_CUSTOM &&
+          evDocANumberField === 'i551_number' &&
+          !isValidI551NumberForEverifyApi(evDocANumberValue)
+        ) {
+          msgs.push(
+            evDocANumberValue.trim() === ''
+              ? 'Enter i551_number in the 13-character format required by E-Verify.'
+              : 'i551_number must match E-Verify format (3 letters + 10 digits or * variant).'
+          );
+        } else if (
+          evDocASelection === EVERIFY_DOC_CUSTOM &&
+          evDocANumberField === 'alien_number' &&
+          !isValidAlienNumber(evDocANumberValue)
+        ) {
+          msgs.push('Alien number must be 9 digits (optional A). E-Verify expects A#########.');
+        } else {
+          msgs.push('Complete the I-9 document section (List A type, numbers, and expiration rules).');
+        }
+      } else {
+        msgs.push('Complete List B and List C document types (and numbers if required).');
+      }
+    }
+    return msgs;
+  }, [
+    canManageEverify,
+    selectedEmpId,
+    i9SystemCompleted,
+    i9Confirmed,
+    everifyDocFormValid,
+    evCitizenshipCode,
+    evDocMode,
+    evDocASelection,
+    evDocANumberField,
+    evDocANumberValue,
+  ]);
+
   const handleUserEmploymentI9StatusChange = async (next: string) => {
     if (!tenantId || !selectedEmpId || !canManageEverify) return;
     setI9StatusSaving(true);
@@ -471,9 +573,19 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
         setEvCitizenshipCode('');
         setEverifyHiringEntityResolved(resolveEverifyHiringEntity(entities));
         setUserEmploymentIds(opts);
-        if (opts.length === 1) {
-          setSelectedEmpId(opts[0].id);
-          applyEmploymentSelection(opts[0]);
+        let pickEmpId = '';
+        if (prefillEverifyCaseId) {
+          const cs = await getDoc(doc(db, 'tenants', tenantId, 'everify_cases', prefillEverifyCaseId));
+          if (cs.exists()) {
+            const ueid = String((cs.data() as { userEmploymentId?: string }).userEmploymentId || '').trim();
+            if (ueid && opts.some((o) => o.id === ueid)) pickEmpId = ueid;
+          }
+        }
+        if (!pickEmpId && opts.length === 1) pickEmpId = opts[0].id;
+        if (pickEmpId) {
+          setSelectedEmpId(pickEmpId);
+          const opt = opts.find((o) => o.id === pickEmpId);
+          if (opt) applyEmploymentSelection(opt);
         }
       } catch {
         if (cancelled) return;
@@ -488,7 +600,15 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     return () => {
       cancelled = true;
     };
-  }, [open, tenantId, uid, loadTenantEntitiesForTenant, loadEmploymentOptionsForUser, applyEmploymentSelection]);
+  }, [
+    open,
+    tenantId,
+    uid,
+    prefillEverifyCaseId,
+    loadTenantEntitiesForTenant,
+    loadEmploymentOptionsForUser,
+    applyEmploymentSelection,
+  ]);
 
   const submitEverify = async () => {
     if (!canManageEverify) {
@@ -538,13 +658,49 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
         }
         docFields.expiration_date = evDocExpiration.trim();
       }
-      if (evDocNoExpiration) docFields.no_expiration_date = true;
-      const aNumKey: EverifyListANumberField | '' =
-        evDocASelection === EVERIFY_DOC_CUSTOM
-          ? evDocANumberField
-          : EVERIFY_LIST_A_PRESETS.find((x) => x.code === evDocASelection)?.numberField ?? '';
-      if (aNumKey && evDocANumberValue.trim()) {
-        docFields[aNumKey] = evDocANumberValue.trim();
+      // E-Verify rejects no_expiration_date for FORM_I551 (ATTRIBUTE_EXTRANEOUS_FIELD).
+      if (evDocNoExpiration && evDocASelection !== 'FORM_I551') {
+        docFields.no_expiration_date = true;
+      }
+      if (evDocASelection === 'FORM_I551') {
+        const alienNorm = normalizeAlienNumberForApi(evDocANumberValue.trim());
+        if (!alienNorm) {
+          setEvMessage('USCIS / Alien number must be 9 digits (optional A). E-Verify format: A + 9 digits.');
+          return;
+        }
+        docFields.alien_number = alienNorm;
+        // `i551_number` is filled server-side (ICA mask from Alien #) in applyRestDraftPayloadNormalization.
+      } else {
+        const aNumKey: EverifyListANumberField | '' =
+          evDocASelection === EVERIFY_DOC_CUSTOM
+            ? evDocANumberField
+            : EVERIFY_LIST_A_PRESETS.find((x) => x.code === evDocASelection)?.numberField ?? '';
+        if (aNumKey) {
+          const numTrim = evDocANumberValue.trim();
+          if (!numTrim) {
+            setEvMessage('Enter the document number for the selected List A document.');
+            return;
+          }
+          if (aNumKey === 'i551_number') {
+            const norm = normalizeI551NumberForEverifyApi(numTrim);
+            if (!norm) {
+              setEvMessage(
+                'E-Verify requires i551_number as 3 letters + 10 digits (or * + 9 digits), not the 9-digit Alien # alone.'
+              );
+              return;
+            }
+            docFields[aNumKey] = norm;
+          } else if (aNumKey === 'alien_number') {
+            const norm = normalizeAlienNumberForApi(numTrim);
+            if (!norm) {
+              setEvMessage('Alien number must be 9 digits (optional A). Sent as A######### to E-Verify.');
+              return;
+            }
+            docFields.alien_number = norm;
+          } else {
+            docFields[aNumKey] = numTrim;
+          }
+        }
       }
     } else {
       const bCode = resolveIcaDocCode(evDocBSelection, evDocBCustomCode);
@@ -620,6 +776,12 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     <DialogTitle>{dialogTitle ?? 'Start E-Verify (C1 Select)'}</DialogTitle>
     <DialogContent>
       <Stack spacing={2} sx={{ mt: 1 }}>
+        {prefillEverifyCaseId ? (
+          <Alert severity="info">
+            Enter the correct List A document (or List B and List C) ICA codes and numbers, confirm I-9 complete, then submit. This runs the same
+            create flow as Start E-Verify and replaces a failed attempt when eligibility allows a new case.
+          </Alert>
+        ) : null}
         <Typography variant="body2" color="text.secondary">
           Eligibility uses <code>user_employments</code> (entity, start date, I-9) plus assignment/entity rules on the server. For E-Verify, hiring
           entity is always <strong>{EVERIFY_HIRING_ENTITY_LABEL}</strong> (resolved from Settings → Entities).
@@ -883,6 +1045,10 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                             onChange={(e) => {
                               const v = e.target.value as string;
                               setEvDocASelection(v);
+                              setEvDocANumberValue('');
+                              if (v === 'FORM_I551') {
+                                setEvDocNoExpiration(false);
+                              }
                               if (v === EVERIFY_DOC_CUSTOM) {
                                 setEvDocANumberField('');
                               } else {
@@ -943,7 +1109,23 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                             onChange={(e) => setEvDocANumberValue(e.target.value)}
                             fullWidth
                             autoComplete="off"
-                            helperText="Must match the physical document shown for Section 2."
+                            error={
+                              (evDocANumberField === 'i551_number' && showI551FormatError) ||
+                              (evDocANumberField === 'alien_number' && showAlienFormatError)
+                            }
+                            helperText={
+                              evDocANumberField === 'alien_number'
+                                ? showAlienFormatError
+                                  ? 'Enter 9 digits (optional A).'
+                                  : evDocASelection === 'FORM_I551'
+                                    ? 'USCIS / Alien # (9 digits; optional leading A). Cloud Functions add the separate E-Verify card-number field from this value so you only enter it once.'
+                                    : '9-digit Alien #; we normalize to A######### for E-Verify.'
+                                : evDocANumberField === 'i551_number'
+                                  ? showI551FormatError
+                                    ? 'Use the format your ICA specifies for i551_number.'
+                                    : 'E-Verify i551_number: 3 letters + 10 digits (e.g. SRC1234567890), or * + 9 digits after letters.'
+                                  : 'Must match the physical document shown for Section 2.'
+                            }
                           />
                         ) : null}
                         {evDocASelection === EVERIFY_DOC_CUSTOM && evDocANumberField ? (
@@ -954,6 +1136,21 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                             onChange={(e) => setEvDocANumberValue(e.target.value)}
                             fullWidth
                             autoComplete="off"
+                            error={
+                              (evDocANumberField === 'i551_number' && showI551FormatError) ||
+                              (evDocANumberField === 'alien_number' && showAlienFormatError)
+                            }
+                            helperText={
+                              evDocANumberField === 'i551_number'
+                                ? showI551FormatError
+                                  ? 'Use the 13-character i551_number format.'
+                                  : '3 letters + 10 digits (or * + 9 digits after letters).'
+                                : evDocANumberField === 'alien_number'
+                                  ? showAlienFormatError
+                                    ? '9 digits (optional A).'
+                                    : 'E-Verify pattern A + 9 digits; we add A if you enter digits only.'
+                                  : undefined
+                            }
                           />
                         ) : null}
                         <TextField
@@ -964,14 +1161,27 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                           onChange={(e) => setEvDocExpiration(e.target.value)}
                           fullWidth
                           InputLabelProps={{ shrink: true }}
-                          helperText="YYYY-MM-DD. Leave blank if not applicable or use “no expiration” below per ICA."
+                          helperText={
+                            evDocASelection === 'FORM_I551'
+                              ? 'YYYY-MM-DD if the card shows an expiration. E-Verify does not accept “no expiration” for Green Card—leave date blank only if the card has no expiry.'
+                              : 'YYYY-MM-DD. Leave blank if not applicable or use “no expiration” below per ICA.'
+                          }
                         />
                         <FormControlLabel
                           control={
-                            <Checkbox checked={evDocNoExpiration} onChange={(_, v) => setEvDocNoExpiration(v)} />
+                            <Checkbox
+                              checked={evDocNoExpiration}
+                              disabled={evDocASelection === 'FORM_I551'}
+                              onChange={(_, v) => setEvDocNoExpiration(v)}
+                            />
                           }
                           label="Document has no expiration (no_expiration_date)"
                         />
+                        {evDocASelection === 'FORM_I551' ? (
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: -0.5 }}>
+                            Not used for Permanent Resident Card — E-Verify returns an error if this is sent for FORM_I551.
+                          </Typography>
+                        ) : null}
                       </Stack>
                     ) : (
                       <Stack spacing={1.5}>
@@ -1067,22 +1277,38 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                 {evMessage && <Alert severity="warning">{evMessage}</Alert>}
               </Stack>
             </DialogContent>
-            <DialogActions>
-              <Button onClick={onClose}>Cancel</Button>
-              <Button
-                variant="contained"
-                onClick={submitEverify}
-                disabled={
-                  evSubmitting ||
-                  !canManageEverify ||
-                  !selectedEmpId ||
-                  !i9SystemCompleted ||
-                  !i9Confirmed ||
-                  !everifyDocFormValid
-                }
-              >
-                {evSubmitting ? <CircularProgress size={22} /> : 'Submit'}
-              </Button>
+            <DialogActions sx={{ flexDirection: 'column', alignItems: 'stretch', px: 3, pb: 2, pt: 0, gap: 1.5 }}>
+              {!evSubmitting && submitBlockingMessages.length > 0 ? (
+                <Alert severity="warning" sx={{ mb: 0 }}>
+                  <Typography variant="body2" fontWeight={600} gutterBottom>
+                    Submit is disabled until:
+                  </Typography>
+                  <Box component="ul" sx={{ m: 0, pl: 2.25, mb: 0 }}>
+                    {submitBlockingMessages.map((m, i) => (
+                      <Typography key={`submit-block-${i}`} component="li" variant="body2" sx={{ mb: 0.25 }}>
+                        {m}
+                      </Typography>
+                    ))}
+                  </Box>
+                </Alert>
+              ) : null}
+              <Stack direction="row" justifyContent="flex-end" gap={1} width="100%">
+                <Button onClick={onClose}>Cancel</Button>
+                <Button
+                  variant="contained"
+                  onClick={submitEverify}
+                  disabled={
+                    evSubmitting ||
+                    !canManageEverify ||
+                    !selectedEmpId ||
+                    !i9SystemCompleted ||
+                    !i9Confirmed ||
+                    !everifyDocFormValid
+                  }
+                >
+                  {evSubmitting ? <CircularProgress size={22} /> : 'Submit'}
+                </Button>
+              </Stack>
             </DialogActions>
           </Dialog>
   );

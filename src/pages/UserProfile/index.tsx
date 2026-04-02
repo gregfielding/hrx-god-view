@@ -71,6 +71,10 @@ import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryF
 import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 import { useUserProfileEntityEmploymentChips } from '../../hooks/useUserProfileEntityEmploymentChips';
 import UserEntityOnboardingStatusCell from '../../components/tables/UserEntityOnboardingStatusCell';
+import {
+  backgroundComplianceScreeningRowElementId,
+  employmentOnboardingEverifyRowElementId,
+} from '../../utils/employmentOnboardingPath';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -131,6 +135,8 @@ const UserProfilePage = () => {
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
   const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
   const [notesCount, setNotesCount] = useState<number>(0);
+  /** Staff onboarding queue deep-link: highlight a screening row on Backgrounds. */
+  const [backgroundComplianceHighlightId, setBackgroundComplianceHighlightId] = useState<string | null>(null);
   const [interviewsCount, setInterviewsCount] = useState<number>(0);
   /** Latest interview from subcollection (used for header when scoreSummary is not yet updated) */
   const [latestInterviewFromSubcollection, setLatestInterviewFromSubcollection] = useState<{ lastAt: Date; lastScore10: number } | null>(null);
@@ -905,14 +911,47 @@ const UserProfilePage = () => {
   /** Employment V2 path actions: open a profile tab without remounting the page. */
   useEffect(() => {
     const focus = searchParams.get('employmentFocus');
+    const scrollTo = searchParams.get('employmentScrollTo');
+    const scrollEntityKey = searchParams.get('employmentEntityKey');
+    const backgroundCheckId = searchParams.get('employmentBackgroundCheckId');
     if (!focus || availableTabLabels.length === 0) return;
     if (!availableTabLabels.includes(focus)) return;
     setTabValue(focus);
     const next = new URLSearchParams(searchParams);
     next.delete('employmentFocus');
+    next.delete('employmentScrollTo');
+    next.delete('employmentEntityKey');
+    next.delete('employmentBackgroundCheckId');
     const q = next.toString();
     navigate(`${location.pathname}${q ? `?${q}` : ''}`, { replace: true });
+
+    if (scrollTo === 'e_verify' && scrollEntityKey) {
+      const anchorId = employmentOnboardingEverifyRowElementId(scrollEntityKey);
+      const runScroll = (): void => {
+        document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      };
+      requestAnimationFrame(() => {
+        window.setTimeout(runScroll, 200);
+      });
+    }
+
+    if (scrollTo === 'background_check' && backgroundCheckId) {
+      setBackgroundComplianceHighlightId(backgroundCheckId);
+      const anchorId = backgroundComplianceScreeningRowElementId(backgroundCheckId);
+      const runScroll = (): void => {
+        document.getElementById(anchorId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      };
+      requestAnimationFrame(() => {
+        window.setTimeout(runScroll, 280);
+      });
+    }
   }, [searchParams, availableTabLabels, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!backgroundComplianceHighlightId) return;
+    const t = window.setTimeout(() => setBackgroundComplianceHighlightId(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [backgroundComplianceHighlightId]);
   
   useEffect(() => {
     // Removed Certs tab handling
@@ -2258,7 +2297,12 @@ const UserProfilePage = () => {
               case 'Applications':
                 return <UserApplicationsTab userId={uid} />;
               case 'Assignments':
-                return <UserAssignmentsTab userId={uid} />;
+                return (
+                  <UserAssignmentsTab
+                    userId={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                  />
+                );
               case 'User Groups':
                 return <UserGroupsTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || undefined} />;
               case 'Onboarding':
@@ -2278,7 +2322,11 @@ const UserProfilePage = () => {
                 return <ComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
               case 'Backgrounds':
                 return (
-                  <BackgroundsComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />
+                  <BackgroundsComplianceTab
+                    uid={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                    highlightScreeningRowId={backgroundComplianceHighlightId}
+                  />
                 );
               case 'Reports & Insights':
                 return <ReportsAndInsightsTab uid={uid} />;

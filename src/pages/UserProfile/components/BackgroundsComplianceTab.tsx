@@ -1,6 +1,6 @@
 /**
- * User Details → Backgrounds: compliance operations (AccuSource + C1 Select work authorization).
- * E-Verify UI is scoped to C1 Select only; Workforce I-9 is shown without E-Verify; Events omit USCIS work auth.
+ * User Details → Backgrounds: compliance operations (AccuSource + C1 Select work authorization summary).
+ * Start E-Verify lives on Employment → C1 Select. E-Verify rows in the table remain C1 Select–scoped; Workforce I-9 is shown without E-Verify.
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
@@ -54,6 +54,7 @@ import {
   filterEverifyCasesForSelectUi,
   resolveC1SelectEntityId,
 } from '../../../utils/c1EntityWorkAuthorizationUi';
+import { backgroundComplianceScreeningRowElementId } from '../../../utils/employmentOnboardingPath';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
 import {
   buildComplianceSummary,
@@ -65,7 +66,7 @@ import {
   statusToneFromStatusString,
   type ScreeningPackageMergeResult,
 } from './backgroundsComplianceModel';
-import { StartEverifySelectDialog, EVERIFY_SELECT_PERM_HINT } from './StartEverifySelectDialog';
+import { EVERIFY_SELECT_PERM_HINT } from './StartEverifySelectDialog';
 
 const PAGE_LIMIT = 100;
 
@@ -95,12 +96,18 @@ function formatTime(value: unknown): string {
 export interface BackgroundsComplianceTabProps {
   uid: string;
   tenantId: string | null;
+  /** When set (e.g. from staff onboarding queue deep link), row scrolls into view and is highlighted briefly. */
+  highlightScreeningRowId?: string | null;
 }
 
 const ACCUSOURCE_PERM_HINT =
   'AccuSource requires security level ≥ 5 or admin/manager role for this tenant (same as System Access tab).';
 
-const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid, tenantId }) => {
+const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
+  uid,
+  tenantId,
+  highlightScreeningRowId = null,
+}) => {
   const { user, isHRX, claimsRoles } = useAuth();
   const [viewerUserDoc, setViewerUserDoc] = useState<Record<string, unknown> | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
@@ -118,7 +125,6 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     Array<{ id: string; entityId: string; i9Status: string }>
   >([]);
 
-  const [evModalOpen, setEvModalOpen] = useState(false);
   const [bgModalOpen, setBgModalOpen] = useState(false);
 
   const [profileUser, setProfileUser] = useState<Record<string, unknown> | null>(null);
@@ -200,7 +206,14 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
     try {
       const [evSnap, bgSnap, empSnap, entSnap] = await Promise.all([
         getDocs(query(everifyCasesCol(tenantId), where('userId', '==', uid))),
-        getDocs(query(collection(db, 'backgroundChecks'), where('candidateId', '==', uid), limit(PAGE_LIMIT))),
+        getDocs(
+          query(
+            collection(db, 'backgroundChecks'),
+            where('candidateId', '==', uid),
+            where('tenantId', '==', tenantId),
+            limit(PAGE_LIMIT)
+          )
+        ),
         getDocs(query(userEmploymentsCol(tenantId), where('userId', '==', uid))),
         getDocs(collection(db, 'tenants', tenantId, 'entities')),
       ]);
@@ -581,26 +594,6 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
           <Chip size="small" label={`Additional: ${summary.additionalSummaryLabel}`} variant="outlined" />
         </Stack>
         <Stack direction="row" flexWrap="wrap" gap={1}>
-          <Tooltip
-            title={
-              !canManageEverify
-                ? EVERIFY_SELECT_PERM_HINT
-                : !selectEntityIdResolved
-                  ? 'Add or resolve C1 Select LLC under Settings → Entities before starting E-Verify.'
-                  : ''
-            }
-          >
-            <span>
-              <Button
-                variant="contained"
-                size="small"
-                onClick={() => setEvModalOpen(true)}
-                disabled={!canManageEverify || !selectEntityIdResolved}
-              >
-                Start E-Verify (Select)
-              </Button>
-            </span>
-          </Tooltip>
           <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : ''}>
             <span>
               <Button variant="outlined" size="small" onClick={openScreeningModal} disabled={!canAccusourceAdmin}>
@@ -734,8 +727,24 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
                   );
                 }
                 const r = row.screening!;
+                const rowDomId = backgroundComplianceScreeningRowElementId(r.id);
+                const rowHighlighted = Boolean(highlightScreeningRowId && highlightScreeningRowId === r.id);
                 return (
-                  <TableRow key={row.key}>
+                  <TableRow
+                    key={row.key}
+                    id={rowDomId}
+                    sx={
+                      rowHighlighted
+                        ? {
+                            outline: '2px solid',
+                            outlineColor: 'primary.main',
+                            outlineOffset: -2,
+                            bgcolor: 'action.selected',
+                            transition: 'background-color 0.2s ease',
+                          }
+                        : undefined
+                    }
+                  >
                     <TableCell>
                       Background
                       {row.drugReportReady && (
@@ -796,14 +805,6 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({ uid
           </Table>
         </TableContainer>
       </Paper>
-
-      <StartEverifySelectDialog
-        open={evModalOpen}
-        onClose={() => setEvModalOpen(false)}
-        uid={uid}
-        tenantId={tenantId}
-        onSuccess={() => void loadAll()}
-      />
 
       {/* 3B Screening modal */}
       <Dialog open={bgModalOpen} onClose={() => setBgModalOpen(false)} maxWidth="sm" fullWidth>

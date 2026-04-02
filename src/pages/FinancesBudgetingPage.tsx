@@ -1,6 +1,6 @@
 /**
  * Finances and Budgeting – security levels 5, 6, and 7 (internal team).
- * Gig job orders grouped by calendar week (Mon–Sun) using estimated event dates.
+ * Gig and Career job orders grouped by calendar week (Mon–Sun) using estimated dates / shift span.
  * Shows job-order estimates vs. shift-calculated values for that week (refines as shifts are added).
  */
 
@@ -27,6 +27,7 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import {
   addWeeks,
+  addYears,
   differenceInCalendarDays,
   endOfWeek,
   format,
@@ -156,6 +157,7 @@ interface GigJobOrderRow {
   id: string;
   jobOrderName: string;
   companyName: string;
+  jobType?: string;
   gigEstimatedStartDate?: unknown;
   gigEstimatedEndDate?: unknown;
   /** Job order header dates (fallback when gig Financials dates not set) */
@@ -163,9 +165,28 @@ interface GigJobOrderRow {
   endDate?: unknown;
   gigEstimatedValue?: number;
   gigAverageMarkup?: number;
+  /** Gig: Firestore gigPositions. Career: synthetic row from payRate/markup/bill for shift finance math. */
   gigPositions?: any[];
   poNumber?: string;
   status?: string;
+}
+
+/** Career jobs store pay/bill on the job order root; shift finance helpers expect gigPositions-shaped entries. */
+function buildGigPositionsForFinance(data: Record<string, unknown>): any[] {
+  const raw = Array.isArray(data.gigPositions) ? (data.gigPositions as any[]) : [];
+  if (raw.length > 0) return raw;
+  if (String(data.jobType || '').toLowerCase() !== 'career') return [];
+  const payRate = parseFloat(String(data.payRate ?? ''));
+  if (!Number.isFinite(payRate) || payRate < 0) return [];
+  const jobTitle = String(data.jobTitle || data.jobOrderName || '').trim();
+  const pos: Record<string, unknown> = { jobTitle, payRate: String(payRate) };
+  const markup = parseFloat(String(data.markup ?? ''));
+  if (Number.isFinite(markup)) pos.markup = String(markup);
+  const bill = parseFloat(String(data.calculatedBillRate ?? data.billRate ?? ''));
+  if (Number.isFinite(bill) && bill >= 0) pos.billRate = String(bill);
+  const wc = data.workersCompRate;
+  if (wc != null && wc !== '') pos.workersCompRate = String(wc);
+  return [pos];
 }
 
 /** Min/max calendar days from all shift occurrences (gig shifts). */
@@ -187,6 +208,7 @@ function dateRangeFromShifts(shifts: any[]): { start: Date | null; end: Date | n
  * 3) min–max dates from scheduled shifts
  */
 function getBudgetingEventRange(jo: GigJobOrderRow, shifts: any[]): { start: Date | null; end: Date | null } {
+  const jobType = String(jo.jobType || '').toLowerCase();
   const gStart = parseYmd(jo.gigEstimatedStartDate);
   const gEnd = parseYmd(jo.gigEstimatedEndDate);
   if (gStart && gEnd) return { start: gStart, end: gEnd };
@@ -194,9 +216,25 @@ function getBudgetingEventRange(jo: GigJobOrderRow, shifts: any[]): { start: Dat
   const jdStart = parseYmd(jo.startDate);
   const jdEnd = parseYmd(jo.endDate);
   if (jdStart && jdEnd) return { start: jdStart, end: jdEnd };
-  if (jdStart && !jdEnd) return { start: jdStart, end: jdStart };
+  if (jdStart && !jdEnd) {
+    if (jobType === 'career') {
+      return { start: jdStart, end: addYears(jdStart, 2) };
+    }
+    return { start: jdStart, end: jdStart };
+  }
 
-  return dateRangeFromShifts(shifts);
+  const fromShifts = dateRangeFromShifts(shifts);
+  if (fromShifts.start && fromShifts.end) {
+    if (jobType === 'career') {
+      const horizonEnd = addYears(fromShifts.start, 2);
+      return {
+        start: fromShifts.start,
+        end: fromShifts.end > horizonEnd ? fromShifts.end : horizonEnd,
+      };
+    }
+    return fromShifts;
+  }
+  return fromShifts;
 }
 
 /**
@@ -233,6 +271,29 @@ function weekFinancialTotals(
   return { sumBill, sumGross };
 }
 
+function isJobOrderCancelledForBudget(status: string | undefined): boolean {
+  const s = String(status || '').trim().toLowerCase();
+  return s === 'cancelled' || s === 'canceled';
+}
+
+/** True when this week shows at least one non-empty money cell (prorated estimate or shift-based bill/gross). */
+function jobOrderHasBudgetFiguresForWeek(jo: GigJobOrderRow, weekMonday: Date, shifts: any[]): boolean {
+  const { start: eventStart, end: eventEnd } = getBudgetingEventRange(jo, shifts);
+  const evWeek = proratedEstimateForWeek(jo.gigEstimatedValue, weekMonday, eventStart, eventEnd);
+  const estGross = grossProfitFromEvMarkup(evWeek ?? undefined, jo.gigAverageMarkup);
+  const calc = computeJobOrderWeekShiftFinance(
+    { gigPositions: jo.gigPositions },
+    shifts,
+    weekMonday,
+    DEFAULT_FUTA_RATE_ON_PAY,
+    DEFAULT_SUTA_RATE_ON_PAY
+  );
+  if (calc.occurrenceCount > 0) return true;
+  if (evWeek != null && Number(evWeek) > 0) return true;
+  if (estGross != null && Number(estGross) > 0) return true;
+  return false;
+}
+
 const FinancesBudgetingPage: React.FC = () => {
   const { tenantId } = useAuth();
   const navigate = useNavigate();
@@ -263,25 +324,28 @@ const FinancesBudgetingPage: React.FC = () => {
     setError(null);
     try {
       const ref = collection(db, p.jobOrders(tenantId));
-      const q = query(ref, where('jobType', '==', 'gig'));
+      const q = query(ref, where('jobType', 'in', ['gig', 'career']));
       const snap = await getDocs(q);
-      const rows: GigJobOrderRow[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          jobOrderName: data.jobOrderName || data.jobTitle || '(Untitled)',
-          companyName: companyDisplayFromJobOrderDoc(data as Record<string, unknown>),
-          gigEstimatedStartDate: data.gigEstimatedStartDate,
-          gigEstimatedEndDate: data.gigEstimatedEndDate,
-          startDate: data.startDate,
-          endDate: data.endDate,
-          gigEstimatedValue: data.gigEstimatedValue,
-          gigAverageMarkup: data.gigAverageMarkup,
-          gigPositions: Array.isArray(data.gigPositions) ? data.gigPositions : [],
-          poNumber: data.poNumber,
-          status: data.status,
-        };
-      });
+      const rows: GigJobOrderRow[] = snap.docs
+        .map((d) => {
+          const data = d.data() as Record<string, unknown>;
+          return {
+            id: d.id,
+            jobOrderName: (data.jobOrderName || data.jobTitle || '(Untitled)') as string,
+            companyName: companyDisplayFromJobOrderDoc(data),
+            jobType: typeof data.jobType === 'string' ? data.jobType : undefined,
+            gigEstimatedStartDate: data.gigEstimatedStartDate,
+            gigEstimatedEndDate: data.gigEstimatedEndDate,
+            startDate: data.startDate,
+            endDate: data.endDate,
+            gigEstimatedValue: data.gigEstimatedValue as number | undefined,
+            gigAverageMarkup: data.gigAverageMarkup as number | undefined,
+            gigPositions: buildGigPositionsForFinance(data),
+            poNumber: data.poNumber as string | undefined,
+            status: data.status as string | undefined,
+          };
+        })
+        .filter((jo) => !isJobOrderCancelledForBudget(jo.status));
 
       const shiftMap: Record<string, any[]> = {};
       await Promise.all(
@@ -355,7 +419,10 @@ const FinancesBudgetingPage: React.FC = () => {
   );
 
   const renderWeekTable = (weekMonday: Date) => {
-    const rows = jobsForWeek(weekMonday);
+    const overlapping = jobsForWeek(weekMonday);
+    const rows = overlapping.filter((jo) =>
+      jobOrderHasBudgetFiguresForWeek(jo, weekMonday, shiftsByJobOrderId[jo.id] || [])
+    );
     const weekTotals = weekFinancialTotals(rows, weekMonday, shiftsByJobOrderId);
     return (
       <Box key={weekMonday.toISOString()} sx={{ mb: 4 }}>
@@ -459,8 +526,9 @@ const FinancesBudgetingPage: React.FC = () => {
                 <TableRow>
                   <TableCell colSpan={11}>
                     <Typography variant="body2" color="text.secondary" sx={{ py: 2 }}>
-                      No gig job orders with a resolvable date range (Financials, job dates, or shifts) overlap this
-                      week.
+                      {overlapping.length === 0
+                        ? 'No gig or career job orders with a resolvable date range (Financials, job dates, or shifts) overlap this week.'
+                        : 'Job orders overlap this week, but none have a prorated budget estimate or scheduled shift hours here — add Financials (value + dates) or shifts to see rows.'}
                     </Typography>
                   </TableCell>
                 </TableRow>
@@ -542,17 +610,19 @@ const FinancesBudgetingPage: React.FC = () => {
             </Box>
           </Box>
         }
-        subtitle="Gig job orders by week (Mon–Sun). Compare early budget estimates to shift-based calculations as you add detail. Example week: Mon Mar 23 – Sun Mar 29, 2026."
+        subtitle="Gig and career job orders by week (Mon–Sun). Compare budget estimates to shift-based calculations as you add shifts."
       />
 
       <Box sx={{ px: { xs: 2, md: 3 }, pb: 2 }}>
         <Alert severity="info" sx={{ mb: 2 }} icon={false}>
           <Typography variant="body2">
-            A gig appears in a week when its date range overlaps Mon–Sun. We use <strong>Financials estimated start/end</strong>{' '}
-            first; if those aren&apos;t set, <strong>job start/end</strong>; if still missing, the <strong>min–max dates
-            from shifts</strong>. <strong>Est. value / est. gross</strong> spread the Financials total across calendar
-            days in that range (multi-week events don&apos;t double-count). <strong>Shift columns</strong> use hours in
-            this week only.
+            <strong>Gig</strong> and <strong>career</strong> job orders appear when their date range overlaps Mon–Sun. We
+            use <strong>Financials estimated start/end</strong> first; then <strong>job start/end</strong>; then{' '}
+            <strong>shift dates</strong>. Open-ended career jobs (no end date) are treated as running forward for two
+            years for forecasting so they can appear in each overlapping week. <strong>Est. value / est. gross</strong>{' '}
+            use the Financials total spread across that range (career rows often show — until Financials are filled).{' '}
+            <strong>Shift columns</strong> use scheduled hours in this week only. Rows with no prorated estimate and no
+            shift hours in that week are hidden so the table stays scannable.
           </Typography>
         </Alert>
 

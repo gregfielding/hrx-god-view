@@ -31,7 +31,18 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, query, where, orderBy } from 'firebase/firestore';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  doc,
+  getDoc,
+  updateDoc,
+  query,
+  where,
+  orderBy,
+  deleteField,
+} from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
@@ -55,6 +66,38 @@ import {
   buildPricingByJobTitle,
 } from '../utils/accountPricingForJobOrder';
 import type { AccountPositionPricing } from '../types/recruiter/account';
+
+/** Apply account Pricing row (exact job title match) to career job order form fields. */
+function mergeCareerFormWithPricingPreset(
+  prev: Record<string, unknown>,
+  title: string,
+  map: Map<string, AccountPositionPricing>
+): Record<string, unknown> {
+  const trimmed = String(title).trim();
+  const preset = trimmed ? map.get(trimmed) : undefined;
+  const next: Record<string, unknown> = { ...prev, jobTitle: title };
+  if (!preset) return next;
+  if (preset.payRate != null && Number.isFinite(Number(preset.payRate))) {
+    next.payRate = String(preset.payRate);
+  }
+  if (preset.markupPercent != null && Number.isFinite(Number(preset.markupPercent))) {
+    next.markup = String(preset.markupPercent);
+    const pay = parseFloat(String(next.payRate)) || 0;
+    const m = Number(preset.markupPercent);
+    if (!Number.isNaN(m) && m > 0 && pay > 0) {
+      const br = Number((pay * (1 + m / 100)).toFixed(2));
+      next.billRate = String(br);
+      next.calculatedBillRate = String(br);
+    }
+  } else if (preset.billRate != null && Number.isFinite(Number(preset.billRate))) {
+    next.billRate = String(preset.billRate);
+  }
+  if (preset.workersCompCode) next.workersCompClassCode = String(preset.workersCompCode);
+  if (preset.workersCompRate != null) next.workersCompRate = String(preset.workersCompRate);
+  const jd = (preset.jobDescriptionFromClient || '').trim();
+  if (jd) next.jobDescriptionFromClient = jd;
+  return next;
+}
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
 const removeUndefinedValues = (obj: any): any => {
@@ -176,6 +219,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     [resolvedAccountPositions]
   );
 
+  /** Detect when pricing rows (titles + client JD text) change, not only row count. */
+  const pricingPositionsSyncKey = useMemo(
+    () =>
+      resolvedAccountPositions
+        .map((p) => `${String(p.jobTitle ?? '').trim()}\t${String(p.jobDescriptionFromClient ?? '').trim()}`)
+        .join('\n'),
+    [resolvedAccountPositions]
+  );
+
   const jobTitleOptions = useMemo(() => {
     if (propJobTitles && propJobTitles.length > 0) return propJobTitles;
     if (resolvedAccountPositions.length > 0) {
@@ -189,7 +241,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const [saving, setSaving] = useState(false);
   const [loadedJobOrderData, setLoadedJobOrderData] = useState<any>(null); // Store loaded job order for preserving associations
 
-  type PickerAccount = { id: string; name: string; companyIds: string[]; hiringEntityId: string | null };
+  type PickerAccount = {
+    id: string;
+    name: string;
+    /** Display line in dropdown (e.g. sub-account + parent). */
+    label: string;
+    companyIds: string[];
+    hiringEntityId: string | null;
+    parentAccountId: string | null;
+  };
   const [recruiterAccountsForPicker, setRecruiterAccountsForPicker] = useState<PickerAccount[]>([]);
   const [pickedRecruiterAccountId, setPickedRecruiterAccountId] = useState<string | null>(null);
 
@@ -203,21 +263,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     [pickedRecruiterAccountId, propRecruiterAccountId, loadedJobOrderData, jobOrder]
   );
 
-  const pickerAccountHiringEntityId = useMemo(() => {
-    if (!pickedRecruiterAccountId) return null;
-    const acc = recruiterAccountsForPicker.find((a) => a.id === pickedRecruiterAccountId);
+  /** Hiring entity from the job order's linked recruiter account (fixes stale job orders created before the account had hiringEntityId). */
+  const recruiterAccountHiringEntityId = useMemo(() => {
+    const accId = effectiveRecruiterAccountId;
+    if (!accId) return null;
+    const acc = recruiterAccountsForPicker.find((a) => a.id === accId);
     return acc?.hiringEntityId ? String(acc.hiringEntityId) : null;
-  }, [pickedRecruiterAccountId, recruiterAccountsForPicker]);
+  }, [effectiveRecruiterAccountId, recruiterAccountsForPicker]);
 
   /** Hiring Entity (Employer of Record): E-Verify comes from here (read-only downstream). */
   const hiringEntityIdForForm = useMemo(
     () =>
-      pickerAccountHiringEntityId ??
+      recruiterAccountHiringEntityId ??
       initialData?.hiringEntityId ??
       jobOrder?.hiringEntityId ??
       (loadedJobOrderData as any)?.hiringEntityId ??
       null,
-    [pickerAccountHiringEntityId, initialData?.hiringEntityId, jobOrder?.hiringEntityId, loadedJobOrderData]
+    [recruiterAccountHiringEntityId, initialData?.hiringEntityId, jobOrder?.hiringEntityId, loadedJobOrderData]
   );
   const { entity: formEntity } = useEntity(tenantId ?? null, hiringEntityIdForForm);
   const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string; workersCompClassCode?: string; workersCompRate?: string}>>([
@@ -406,31 +468,50 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     };
   }, [tenantId, effectiveRecruiterAccountId, formData.companyId]);
 
-  // Recruiter accounts list (Jobs hub / full-page create: pick account before company)
+  // Recruiter accounts: required picker (new job, Jobs hub) OR optional linker (edit / account-scoped create)
   useEffect(() => {
-    if (!tenantId || !requireAccountSelection || isEditing) return;
+    if (!tenantId) return;
     let cancelled = false;
     (async () => {
       try {
         const ref = collection(db, p.recruiterAccounts(tenantId));
         const snap = await getDocs(query(ref, orderBy('name', 'asc')));
         if (cancelled) return;
+        const byId = new Map(snap.docs.map((d) => [d.id, d]));
+
         const list: PickerAccount[] = snap.docs
           .map((d) => {
-          const data = d.data() as Record<string, unknown>;
-          if (data.active === false) return null;
-          const assoc = data.associations as { companyIds?: string[] } | undefined;
-          const companyIds = Array.isArray(assoc?.companyIds)
-            ? assoc!.companyIds!.filter((x): x is string => typeof x === 'string' && !!x.trim())
-            : [];
-          const he = data.hiringEntityId;
-          return {
-            id: d.id,
-            name: String(data.name ?? '').trim() || 'Unnamed account',
-            companyIds,
-            hiringEntityId: he != null && String(he).trim() ? String(he) : null,
-          };
-        })
+            const data = d.data() as Record<string, unknown>;
+            if (data.active === false) return null;
+            const assoc = data.associations as { companyIds?: string[] } | undefined;
+            let companyIds = Array.isArray(assoc?.companyIds)
+              ? assoc!.companyIds!.filter((x): x is string => typeof x === 'string' && !!x.trim())
+              : [];
+            const parentIdRaw = data.parentAccountId;
+            const parentAccountId =
+              typeof parentIdRaw === 'string' && parentIdRaw.trim() ? parentIdRaw.trim() : null;
+            if (!companyIds.length && parentAccountId) {
+              const parentDoc = byId.get(parentAccountId);
+              const pa = parentDoc?.data()?.associations as { companyIds?: string[] } | undefined;
+              if (Array.isArray(pa?.companyIds)) {
+                companyIds = pa!.companyIds!.filter((x): x is string => typeof x === 'string' && !!x.trim());
+              }
+            }
+            const he = data.hiringEntityId;
+            const name = String(data.name ?? '').trim() || 'Unnamed account';
+            const parentName = parentAccountId
+              ? String(byId.get(parentAccountId)?.data()?.name ?? '').trim()
+              : '';
+            const label = parentName ? `${name} — ${parentName}` : name;
+            return {
+              id: d.id,
+              name,
+              label,
+              companyIds,
+              hiringEntityId: he != null && String(he).trim() ? String(he) : null,
+              parentAccountId,
+            };
+          })
           .filter((x): x is PickerAccount => x != null);
         setRecruiterAccountsForPicker(list);
       } catch (e) {
@@ -441,7 +522,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [tenantId, requireAccountSelection, isEditing]);
+  }, [tenantId]);
+
+  const showOptionalRecruiterAccountLink = isEditing || !requireAccountSelection;
 
   // Load companies (only when not provided, e.g. from account-scoped modal) and company defaults
   useEffect(() => {
@@ -1108,6 +1191,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           gigEstimatedStartDate: toISODate((data as any).gigEstimatedStartDate) || '',
           gigEstimatedEndDate: toISODate((data as any).gigEstimatedEndDate) || '',
         });
+
+        const rid = (data as any).recruiterAccountId;
+        setPickedRecruiterAccountId(
+          typeof rid === 'string' && rid.trim() ? rid.trim() : null
+        );
         
         // Load gig positions if job type is gig
         if ((data as any).jobType === 'gig' && (data as any).gigPositions) {
@@ -1443,6 +1531,34 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       // Don't show error to user for auto-save failures
     }
   };
+
+  // When account Pricing loads or updates, backfill Job description from client for career orders that still have it empty.
+  useEffect(() => {
+    if (!isEditing || !jobOrderId || formData.jobType !== 'career') return;
+    if (String(formData.jobDescriptionFromClient || '').trim()) return;
+    const t = String(formData.jobTitle || '').trim();
+    if (!t) return;
+    const preset = pricingByJobTitle.get(t);
+    const jd = (preset?.jobDescriptionFromClient || '').trim();
+    if (!jd) return;
+    let mergedSnapshot: Record<string, unknown> | null = null;
+    setFormData((prev) => {
+      if (String(prev.jobDescriptionFromClient || '').trim()) return prev;
+      mergedSnapshot = mergeCareerFormWithPricingPreset(prev as any, t, pricingByJobTitle) as any;
+      return mergedSnapshot as any;
+    });
+    if (mergedSnapshot) {
+      void saveFieldToFirestore('jobDescriptionFromClient', jd, mergedSnapshot);
+    }
+  }, [
+    pricingPositionsSyncKey,
+    formData.jobTitle,
+    formData.jobType,
+    formData.jobDescriptionFromClient,
+    isEditing,
+    jobOrderId,
+    pricingByJobTitle,
+  ]);
 
   const handleSave = async () => {
     if (!tenantId || !user) return;
@@ -1958,7 +2074,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                   <Autocomplete
                     fullWidth
                     options={recruiterAccountsForPicker}
-                    getOptionLabel={(option) => option.name}
+                    getOptionLabel={(option) => option.label || option.name}
                     isOptionEqualToValue={(a, b) => a.id === b.id}
                     value={recruiterAccountsForPicker.find((a) => a.id === pickedRecruiterAccountId) || null}
                     onChange={(_, newValue) => {
@@ -2049,6 +2165,57 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 />
               </Grid>
 
+              {showOptionalRecruiterAccountLink && (
+                <Grid item xs={12}>
+                  <Autocomplete
+                    fullWidth
+                    options={recruiterAccountsForPicker}
+                    getOptionLabel={(option) => option.label || option.name}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    value={
+                      recruiterAccountsForPicker.find(
+                        (a) => a.id === (pickedRecruiterAccountId || propRecruiterAccountId || null)
+                      ) || null
+                    }
+                    onChange={async (_, newValue) => {
+                      const nextId = newValue?.id ?? null;
+                      setPickedRecruiterAccountId(nextId);
+                      if (!isEditing || !jobOrderId || !tenantId || !user?.uid) return;
+                      try {
+                        const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+                        const patch: Record<string, unknown> = {
+                          updatedAt: new Date(),
+                          updatedBy: user.uid,
+                          recruiterAccountId: nextId ? nextId : deleteField(),
+                        };
+                        await updateDoc(jobOrderRef, patch as any);
+                        setLoadedJobOrderData((prev: any) =>
+                          prev
+                            ? {
+                                ...prev,
+                                recruiterAccountId: nextId || undefined,
+                              }
+                            : prev
+                        );
+                        setSuccess('Linked recruiter account updated.');
+                        setTimeout(() => setSuccess(null), 3000);
+                      } catch (e) {
+                        console.error('JobOrderForm: link recruiter account', e);
+                        setError('Could not save linked account. Try again.');
+                        setTimeout(() => setError(null), 5000);
+                      }
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Linked recruiter account"
+                        helperText="Optional. Tie this job to a client account (e.g. Maryland Warehouse under CORT) so it appears on Account → Job Orders. Clear to remove the link."
+                      />
+                    )}
+                  />
+                </Grid>
+              )}
+
               {/* Gig: estimated event window (below Company / Worksite) */}
               {formData.jobType === 'gig' && (
                 <>
@@ -2115,15 +2282,41 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       freeSolo
                       options={jobTitleOptions}
                       value={formData.jobTitle}
-                      onChange={(event, newValue) => {
-                        handleInputChange('jobTitle', newValue || '');
+                      onChange={(_event, newValue) => {
+                        const title = String(newValue ?? '');
+                        let mergedSnapshot: Record<string, unknown> | null = null;
+                        setFormData((prev) => {
+                          mergedSnapshot = mergeCareerFormWithPricingPreset(
+                            prev as any,
+                            title,
+                            pricingByJobTitle
+                          ) as any;
+                          return mergedSnapshot as any;
+                        });
+                        if (isEditing && jobOrderId && mergedSnapshot) {
+                          void saveFieldToFirestore('jobTitle', title, mergedSnapshot);
+                        }
                       }}
                       renderInput={(params) => (
                         <TextField
                           {...params}
                           label={getFieldDef('jobTitle')?.label || 'Job Title'}
                           required
-                          onBlur={(e) => handleFieldBlur('jobTitle', e.target.value)}
+                          onBlur={(e) => {
+                            const title = String(e.target.value ?? '');
+                            let mergedSnapshot: Record<string, unknown> | null = null;
+                            setFormData((prev) => {
+                              mergedSnapshot = mergeCareerFormWithPricingPreset(
+                                prev as any,
+                                title,
+                                pricingByJobTitle
+                              ) as any;
+                              return mergedSnapshot as any;
+                            });
+                            if (isEditing && jobOrderId && mergedSnapshot) {
+                              void saveFieldToFirestore('jobTitle', title, mergedSnapshot);
+                            }
+                          }}
                         />
                       )}
                     />
@@ -2232,14 +2425,15 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                 freeSolo
                                 options={jobTitleOptions}
                                 value={position.jobTitle}
-                                onChange={(event, newValue) => {
+                                onChange={(_event, newValue) => {
                                   const title = newValue ?? '';
+                                  const preset = String(title).trim()
+                                    ? pricingByJobTitle.get(String(title).trim())
+                                    : undefined;
+                                  const jdFromPreset = (preset?.jobDescriptionFromClient || '').trim();
                                   setGigPositions((prev) => {
                                     const updated = [...prev];
                                     const row: any = { ...updated[index], jobTitle: title };
-                                    const preset = String(title).trim()
-                                      ? pricingByJobTitle.get(String(title).trim())
-                                      : undefined;
                                     if (preset) {
                                       row.payRate =
                                         preset.payRate != null ? String(preset.payRate) : row.payRate;
@@ -2263,6 +2457,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                     updated[index] = row;
                                     return updated;
                                   });
+                                  if (index === 0 && jdFromPreset) {
+                                    setFormData((fd) => {
+                                      const next = { ...fd, jobDescriptionFromClient: jdFromPreset };
+                                      if (isEditing && jobOrderId) {
+                                        void saveFieldToFirestore(
+                                          'jobDescriptionFromClient',
+                                          jdFromPreset,
+                                          next
+                                        );
+                                      }
+                                      return next;
+                                    });
+                                  }
                                 }}
                                 renderInput={(params) => (
                                   <TextField
@@ -2275,6 +2482,56 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                         ? 'From account Pricing; type any title if yours is not listed.'
                                         : undefined
                                     }
+                                    onBlur={(e) => {
+                                      const title = String(e.target.value ?? '');
+                                      const preset = String(title).trim()
+                                        ? pricingByJobTitle.get(String(title).trim())
+                                        : undefined;
+                                      const jdFromPreset = (preset?.jobDescriptionFromClient || '').trim();
+                                      setGigPositions((prev) => {
+                                        const updated = [...prev];
+                                        const row: any = { ...updated[index], jobTitle: title };
+                                        if (preset) {
+                                          row.payRate =
+                                            preset.payRate != null ? String(preset.payRate) : row.payRate;
+                                          const m = preset.markupPercent;
+                                          row.markup =
+                                            m != null && !Number.isNaN(Number(m))
+                                              ? String(m)
+                                              : row.markup;
+                                          const payNum = parseFloat(row.payRate) || 0;
+                                          const mNum = parseFloat(String(row.markup || '')) || 0;
+                                          if (mNum > 0 && payNum > 0) {
+                                            row.billRate = String(
+                                              Number((payNum * (1 + mNum / 100)).toFixed(2))
+                                            );
+                                          } else if (preset.billRate != null) {
+                                            row.billRate = String(preset.billRate);
+                                          }
+                                          if (preset.workersCompCode) {
+                                            row.workersCompClassCode = String(preset.workersCompCode);
+                                          }
+                                          if (preset.workersCompRate != null) {
+                                            row.workersCompRate = String(preset.workersCompRate);
+                                          }
+                                        }
+                                        updated[index] = row;
+                                        return updated;
+                                      });
+                                      if (index === 0 && jdFromPreset) {
+                                        setFormData((fd) => {
+                                          const next = { ...fd, jobDescriptionFromClient: jdFromPreset };
+                                          if (isEditing && jobOrderId) {
+                                            void saveFieldToFirestore(
+                                              'jobDescriptionFromClient',
+                                              jdFromPreset,
+                                              next
+                                            );
+                                          }
+                                          return next;
+                                        });
+                                      }
+                                    }}
                                   />
                                 )}
                               />

@@ -42,6 +42,11 @@ export interface AccountPositionPricing {
   sutaRate?: number | null;
   /** FUTA rate as percentage */
   futaRate?: number | null;
+  /**
+   * Customer-provided job description for this title (e.g. client’s official JD).
+   * When this position is chosen on a job order, flows to job order `jobDescriptionFromClient` for AI / postings.
+   */
+  jobDescriptionFromClient?: string | null;
 }
 
 /** Pricing config stored on the account. */

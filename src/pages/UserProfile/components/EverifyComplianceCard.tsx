@@ -26,8 +26,8 @@ interface EverifyComplianceCardProps {
 }
 
 /**
- * Overview quick card: **C1 Select** work authorization (I-9 + E-Verify) only.
- * Hidden when the tenant has no resolved C1 Select entity.
+ * **C1 Select** work authorization (I-9 + E-Verify) quick card — not shown on Profile Overview
+ * (use Employment / Backgrounds). Kept for reuse or embedded views. Hidden when the tenant has no resolved C1 Select entity.
  */
 export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
   tenantId,

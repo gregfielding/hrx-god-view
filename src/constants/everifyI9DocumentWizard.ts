@@ -1,8 +1,8 @@
 /**
  * Start E-Verify modal — List A / List B+C presets for `i9_case_flat` document fields.
  *
- * **These `code` values must match your signed E-Verify ICA.** Stage/prod return
- * `ATTRIBUTE_INVALID_ENUM` if a code is wrong — update this file when USCIS confirms enums.
+ * **These `code` values are USCIS REST create-draft enums** (ICA v31–style). Wrong values return
+ * `ATTRIBUTE_INVALID_ENUM` (e.g. use `FORM_I551`, not `PERMANENT_RESIDENT_CARD`).
  */
 
 export type EverifyCitizenshipApiValue =
@@ -14,6 +14,7 @@ export type EverifyCitizenshipApiValue =
 
 export type EverifyListANumberField =
   | 'us_passport_number'
+  | 'alien_number'
   | 'i551_number'
   | 'i766_number'
   | 'foreign_passport_number';
@@ -28,26 +29,21 @@ export interface EverifyListAPresetRow {
 
 export const EVERIFY_LIST_A_PRESETS: EverifyListAPresetRow[] = [
   {
-    label: 'U.S. Passport',
+    label: 'U.S. Passport or U.S. Passport Card',
+    /** ICA REST enum: US_PASSPORT (receipt variant: US_PASSPORT_RECEIPT). */
     code: 'US_PASSPORT',
     forCitizenship: ['US_CITIZEN', 'NONCITIZEN'],
     numberField: 'us_passport_number',
   },
   {
-    label: 'U.S. Passport Card',
-    code: 'US_PASSPORT_CARD',
-    forCitizenship: ['US_CITIZEN', 'NONCITIZEN'],
-    numberField: 'us_passport_number',
-  },
-  {
     label: 'Permanent Resident Card (Form I-551)',
-    code: 'PERMANENT_RESIDENT_CARD',
+    code: 'FORM_I551',
     forCitizenship: ['LAWFUL_PERMANENT_RESIDENT'],
-    numberField: 'i551_number',
+    numberField: 'alien_number',
   },
   {
     label: 'Employment Authorization Document (Form I-766)',
-    code: 'EMPLOYMENT_AUTHORIZATION_DOCUMENT',
+    code: 'FORM_I766',
     forCitizenship: ['ALIEN_AUTHORIZED_TO_WORK', 'NONCITIZEN_AUTHORIZED_TO_WORK'],
     numberField: 'i766_number',
   },
@@ -89,7 +85,9 @@ export const EVERIFY_DOC_CUSTOM = 'CUSTOM';
 
 export const EVERIFY_LIST_A_NUMBER_FIELD_LABELS: Record<EverifyListANumberField, string> = {
   us_passport_number: 'U.S. / passport card number',
-  i551_number: 'Permanent Resident Card (I-551) number',
+  alien_number: 'USCIS / Alien number (9 digits on card; E-Verify uses A + those digits)',
+  i551_number:
+    'Card document # (i551_number) — 3 letters + 10 digits, or 3 letters + * + 9 digits',
   i766_number: 'EAD / I-766 number',
   foreign_passport_number: 'Foreign passport number',
 };

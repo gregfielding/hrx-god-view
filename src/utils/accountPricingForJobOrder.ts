@@ -18,6 +18,10 @@ export function extractAccountPricingPositions(data: any): AccountPositionPricin
     .map((row: any) => ({
       ...row,
       jobTitle: String(row.jobTitle).trim(),
+      jobDescriptionFromClient:
+        row.jobDescriptionFromClient != null && String(row.jobDescriptionFromClient).trim()
+          ? String(row.jobDescriptionFromClient).trim()
+          : undefined,
     }));
 }
 

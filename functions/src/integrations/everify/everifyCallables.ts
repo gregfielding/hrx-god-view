@@ -354,9 +354,24 @@ export const everifyListCases = onCall(
   }
 );
 
-/** Admin: retry creating E-Verify case (enqueue Cloud Task) */
+function sanitizeEnqueueError(err: unknown): string {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (/NOT_FOUND|Queue/i.test(msg) && /queue/i.test(msg)) {
+    return 'E-Verify task queue is missing or misconfigured in Cloud Tasks. Retry ran inline instead, or create the everify queue in us-central1.';
+  }
+  if (/PERMISSION_DENIED|permission/i.test(msg)) {
+    return 'Cloud Tasks permission denied for this project. Retry ran inline if possible, or grant cloudtasks.tasks.create to the functions service account.';
+  }
+  return msg.length > 280 ? `${msg.slice(0, 277)}…` : msg;
+}
+
+/** Admin: retry creating E-Verify case (enqueue Cloud Task; falls back to synchronous create if enqueue skips or fails) */
 export const everifyRetryCase = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  {
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
+    secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+  },
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
@@ -372,11 +387,58 @@ export const everifyRetryCase = onCall(
     const caseRef = db.collection('tenants').doc(tenantId).collection('everify_cases').doc(caseId);
     const caseSnap = await caseRef.get();
     if (!caseSnap.exists) throw new HttpsError('not-found', 'Case not found');
-    const empId = userEmploymentId || (caseSnap.data()?.userEmploymentId as string);
-    if (!empId) throw new HttpsError('invalid-argument', 'userEmploymentId required');
+    const caseData = caseSnap.data() || {};
+    // Case doc is authoritative (user_employments id). Clients sometimes send entity_employments id ({uid}__select).
+    const empId =
+      (caseData.userEmploymentId as string | undefined) || userEmploymentId || undefined;
+    if (!empId) throw new HttpsError('invalid-argument', 'userEmploymentId required (missing on case and request)');
+
     const { enqueueEverifyTask } = await import('./everifyTriggers');
-    await enqueueEverifyTask(tenantId, empId);
-    return { ok: true, message: 'Retry enqueued' };
+    const { processEverifyCaseFromEmploymentPayload } = await import('./everifyEmploymentProcessor');
+
+    let enqueued = false;
+    let enqueueNote: string | undefined;
+    try {
+      enqueued = await enqueueEverifyTask(tenantId, empId);
+    } catch (err: unknown) {
+      enqueueNote = sanitizeEnqueueError(err);
+      logger.warn('everifyRetryCase: Cloud Tasks enqueue failed, using synchronous retry', {
+        tenantId,
+        userEmploymentId: empId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    if (enqueued) {
+      return { ok: true, message: 'Retry enqueued', via: 'cloud_task' as const };
+    }
+
+    try {
+      const sync = await processEverifyCaseFromEmploymentPayload({ tenantId, userEmploymentId: empId });
+      if (sync.ok === false) {
+        throw new HttpsError('failed-precondition', sync.reason);
+      }
+      return {
+        ok: true,
+        message: enqueueNote
+          ? `Case created (inline retry). Task queue issue: ${enqueueNote}`
+          : 'Case created (inline retry; task queue unavailable or not configured)',
+        via: 'inline' as const,
+        caseId: sync.caseId,
+        everifyCaseNumber: sync.everifyCaseNumber,
+        status: sync.status,
+      };
+    } catch (err: unknown) {
+      if (err instanceof HttpsError) throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      logger.error('everifyRetryCase: synchronous retry failed', { tenantId, empId, detail });
+      throw new HttpsError(
+        'internal',
+        enqueueNote
+          ? `E-Verify retry failed: ${detail}. (Enqueue error: ${enqueueNote})`
+          : `E-Verify retry failed: ${detail}`
+      );
+    }
   }
 );
 

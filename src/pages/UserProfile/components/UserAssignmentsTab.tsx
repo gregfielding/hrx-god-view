@@ -15,6 +15,7 @@ import {
 import { collection, query, where, getDocs, orderBy, doc, getDoc } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
+import { p } from '../../../data/firestorePaths';
 import AssignmentsTable from '../../../componentBlocks/AssignmentsTable';
 
 interface UserAssignmentsTableProps {
@@ -207,7 +208,10 @@ export const UserAssignmentsTable: React.FC<UserAssignmentsTableProps> = ({
   );
 };
 
-const UserAssignmentsTab: React.FC<{ userId: string }> = ({ userId }) => {
+const UserAssignmentsTab: React.FC<{ userId: string; tenantId?: string | null }> = ({
+  userId,
+  tenantId,
+}) => {
   const [assignments, setAssignments] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -215,35 +219,51 @@ const UserAssignmentsTab: React.FC<{ userId: string }> = ({ userId }) => {
   useEffect(() => {
     fetchAssignments();
     // eslint-disable-next-line
-  }, [userId]);
+  }, [userId, tenantId]);
 
   const fetchAssignments = async () => {
     setLoading(true);
+    setError('');
+    if (!tenantId) {
+      setAssignments([]);
+      setLoading(false);
+      setError('Select a tenant context to load assignments.');
+      return;
+    }
     try {
-      const q = query(
-        collection(db, 'assignments'),
-        where('userId', '==', userId),
-        orderBy('startDate', 'desc'),
-      );
-      const snapshot = await getDocs(q);
-      // Optionally, fetch tenant and worksite names if not present
+      const col = collection(db, p.assignments(tenantId));
+      const [byUser, byCandidate] = await Promise.all([
+        getDocs(query(col, where('userId', '==', userId), orderBy('startDate', 'desc'))),
+        getDocs(query(col, where('candidateId', '==', userId))),
+      ]);
+      const byId = new Map<string, { id: string; data: () => Record<string, unknown> }>();
+      byUser.docs.forEach((d) => byId.set(d.id, d));
+      byCandidate.docs.forEach((d) => {
+        if (!byId.has(d.id)) byId.set(d.id, d);
+      });
+      const merged = Array.from(byId.values()).sort((a, b) => {
+        const sa = String((a.data() as { startDate?: string }).startDate || '');
+        const sb = String((b.data() as { startDate?: string }).startDate || '');
+        return sb.localeCompare(sa);
+      });
       const assignmentsWithNames = await Promise.all(
-        snapshot.docs.map(async (docSnap) => {
-          const data = docSnap.data();
-          let tenantName = data.tenantName;
-          let worksiteName = data.worksiteName || data.worksiteNickname || data.worksiteTitle;
-          if (!tenantName && data.tenantId) {
-            const tenantSnap = await getDoc(doc(db, 'tenants', data.tenantId));
-            tenantName = tenantSnap.exists() ? tenantSnap.data().name : data.tenantId;
+        merged.map(async (docSnap) => {
+          const data = docSnap.data() as Record<string, unknown>;
+          let tenantName = data.tenantName as string | undefined;
+          let worksiteName =
+            (data.worksiteName as string) ||
+            (data.worksiteNickname as string) ||
+            (data.worksiteTitle as string);
+          if (!tenantName) {
+            const tenantSnap = await getDoc(doc(db, 'tenants', tenantId));
+            tenantName = tenantSnap.exists() ? (tenantSnap.data().name as string) : tenantId;
           }
-          // Fetch worksite nickname for the first locationId if available
-          if (!worksiteName && data.tenantId && data.locationIds && data.locationIds.length > 0) {
-            const worksiteSnap = await getDoc(
-              doc(db, 'tenants', data.tenantId, 'locations', data.locationIds[0]),
-            );
+          const locIds = data.locationIds as string[] | undefined;
+          if (!worksiteName && locIds && locIds.length > 0) {
+            const worksiteSnap = await getDoc(doc(db, 'tenants', tenantId, 'locations', locIds[0]));
             worksiteName = worksiteSnap.exists()
-              ? worksiteSnap.data().nickname || worksiteSnap.data().title
-              : data.locationIds[0];
+              ? ((worksiteSnap.data().nickname || worksiteSnap.data().title) as string)
+              : locIds[0];
           }
           return { id: docSnap.id, ...data, tenantName, worksiteName };
         }),
@@ -255,7 +275,6 @@ const UserAssignmentsTab: React.FC<{ userId: string }> = ({ userId }) => {
     setLoading(false);
   };
 
-  // Determine if any assignment has a tenant
   const showTenant = assignments.some((a) => a.tenantId);
 
   return (

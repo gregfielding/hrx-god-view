@@ -187,6 +187,8 @@ export default function AccountLocationDetail() {
   const [invoicingSubView, setInvoicingSubView] = useState<'invoices' | 'ar' | 'payments' | 'mapping'>('invoices');
   const [orderDefaultsSubView, setOrderDefaultsSubView] = useState<'staffInstructions' | 'orderDetails'>('staffInstructions');
   const [entityOptions, setEntityOptions] = useState<EntityOption[]>([]);
+  /** Child account docs may omit hiringEntityId; inherit from parent for pricing / payroll tax UI. */
+  const [inheritedAccountHiringEntityId, setInheritedAccountHiringEntityId] = useState<string | null>(null);
   const [locationDefaultRules, setLocationDefaultRules] = useState({
     replacingExistingAgency: false,
     rolloverExistingStaff: false,
@@ -330,6 +332,35 @@ export default function AccountLocationDetail() {
       }
     })();
   }, [tenantId, accountId, locationId, companyIdFromQuery]);
+
+  useEffect(() => {
+    if (!tenantId || !account) {
+      setInheritedAccountHiringEntityId(null);
+      return;
+    }
+    if (account.hiringEntityId) {
+      setInheritedAccountHiringEntityId(null);
+      return;
+    }
+    const pid = account.parentAccountId;
+    if (!pid || typeof pid !== 'string' || !pid.trim()) {
+      setInheritedAccountHiringEntityId(null);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(db, p.recruiterAccount(tenantId, pid.trim())))
+      .then((snap) => {
+        if (cancelled || !isMounted.current) return;
+        const hid = snap.exists() ? (snap.data() as { hiringEntityId?: string | null })?.hiringEntityId : null;
+        setInheritedAccountHiringEntityId(typeof hid === 'string' && hid.trim() ? hid.trim() : null);
+      })
+      .catch(() => {
+        if (!cancelled && isMounted.current) setInheritedAccountHiringEntityId(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, account?.id, account?.hiringEntityId, account?.parentAccountId]);
 
   const locationKey = resolvedCompanyId && locationId ? `${resolvedCompanyId}_${locationId}`.replace(/\//g, '_') : '';
 
@@ -1044,13 +1075,18 @@ export default function AccountLocationDetail() {
     typeof account.defaults.eVerify === 'object' &&
     (account.defaults.eVerify as { eVerifyRequired?: boolean }).eVerifyRequired
   );
-  const accountDefaultHiringEntityId = account?.hiringEntityId ?? null;
+  const accountDefaultHiringEntityId =
+    account?.hiringEntityId ?? (account ? inheritedAccountHiringEntityId : null) ?? null;
   const displayEVerify = (locationDefaults as any)?.eVerifyRequired !== undefined
     ? !!(locationDefaults as any).eVerifyRequired
     : accountDefaultEVerify;
   const displayHiringEntityId = (locationDefaults as any)?.hiringEntityId !== undefined
     ? ((locationDefaults as any).hiringEntityId as string | null) ?? null
     : accountDefaultHiringEntityId;
+  const displayHiringEntityNameForPricing = displayHiringEntityId
+    ? entityOptions.find((e) => e.id === displayHiringEntityId)?.name ?? ''
+    : '';
+  const showSutaFutaOnLocationPricing = /C1 Workforce|C1 Select/i.test(displayHiringEntityNameForPricing);
   const locationActive = locationDoc?.active !== false;
 
   const saveLocationEVerify = async (eVerifyRequired: boolean) => {
@@ -1972,6 +2008,7 @@ export default function AccountLocationDetail() {
                           workersCompRate: null,
                           sutaRate: null,
                           futaRate: null,
+                          jobDescriptionFromClient: '',
                         },
                       ])
                     }
@@ -1981,7 +2018,7 @@ export default function AccountLocationDetail() {
                 }
               />
               <CardContent sx={{ pt: 0 }}>
-                {(entityOptions.find((e) => e.id === account?.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
+                {showSutaFutaOnLocationPricing && (
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
                     <FormControl size="small" sx={{ minWidth: 140 }}>
                       <InputLabel>Worksite state</InputLabel>
@@ -2029,12 +2066,12 @@ export default function AccountLocationDetail() {
                         <TableCell sx={{ fontWeight: 600 }} align="right">Bill rate</TableCell>
                         <TableCell sx={{ fontWeight: 600 }}>WC Code</TableCell>
                         <TableCell sx={{ fontWeight: 600 }} align="right">WC Rate %</TableCell>
-                        {(entityOptions.find((e) => e.id === account?.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
-                          <>
-                            <TableCell sx={{ fontWeight: 600 }} align="right">SUTA %</TableCell>
-                            <TableCell sx={{ fontWeight: 600 }} align="right">FUTA %</TableCell>
-                          </>
-                        )}
+                        {showSutaFutaOnLocationPricing && (
+                            <>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">SUTA %</TableCell>
+                              <TableCell sx={{ fontWeight: 600 }} align="right">FUTA %</TableCell>
+                            </>
+                          )}
                         <TableCell sx={{ fontWeight: 600 }} align="right">Net margin</TableCell>
                         <TableCell sx={{ width: 56 }} />
                       </TableRow>
@@ -2055,28 +2092,48 @@ export default function AccountLocationDetail() {
                         const margin = bill - pay - pay * wc - pay * suta - pay * futa;
                         return (
                           <TableRow key={row.id || idx}>
-                            <TableCell>
-                              <Autocomplete
-                                freeSolo
-                                size="small"
-                                options={jobTitlesData as string[]}
-                                value={row.jobTitle}
-                                onInputChange={(_, v) => {
-                                  const stateCode = (locationPricingSutaFutaState || normalizeStateCode(locationDoc?.state) || '').trim().toUpperCase();
-                                  const lookup = stateCode && v ? wcRatesByStateAndJobTitle[`${stateCode}_${String(v).trim().toLowerCase()}`] : undefined;
-                                  setLocationPricingPositions((prev) => {
-                                    const next = [...prev];
-                                    next[idx] = { ...next[idx], jobTitle: v };
-                                    if (lookup) {
-                                      next[idx].workersCompCode = lookup.code;
-                                      next[idx].workersCompRate = lookup.rate;
-                                    }
-                                    return next;
-                                  });
-                                }}
-                                renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
-                                sx={{ minWidth: 200 }}
-                              />
+                            <TableCell sx={{ minWidth: 260, maxWidth: 360, verticalAlign: 'top' }}>
+                              <Stack spacing={1}>
+                                <Autocomplete
+                                  freeSolo
+                                  size="small"
+                                  options={jobTitlesData as string[]}
+                                  value={row.jobTitle}
+                                  onInputChange={(_, v) => {
+                                    const stateCode = (locationPricingSutaFutaState || normalizeStateCode(locationDoc?.state) || '').trim().toUpperCase();
+                                    const lookup = stateCode && v ? wcRatesByStateAndJobTitle[`${stateCode}_${String(v).trim().toLowerCase()}`] : undefined;
+                                    setLocationPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], jobTitle: v };
+                                      if (lookup) {
+                                        next[idx].workersCompCode = lookup.code;
+                                        next[idx].workersCompRate = lookup.rate;
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  renderInput={(params) => <TextField {...params} placeholder="e.g. Chef" />}
+                                  sx={{ minWidth: 200 }}
+                                />
+                                <TextField
+                                  size="small"
+                                  fullWidth
+                                  multiline
+                                  minRows={2}
+                                  maxRows={6}
+                                  label="Client job description"
+                                  placeholder="Customer’s official JD or notes for AI job description / postings"
+                                  value={row.jobDescriptionFromClient ?? ''}
+                                  onChange={(e) => {
+                                    const v = e.target.value;
+                                    setLocationPricingPositions((prev) => {
+                                      const next = [...prev];
+                                      next[idx] = { ...next[idx], jobDescriptionFromClient: v || '' };
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </Stack>
                             </TableCell>
                             <TableCell align="right">
                               <TextField
@@ -2183,13 +2240,13 @@ export default function AccountLocationDetail() {
                                 helperText="Auto from Workers Comp or enter manually"
                               />
                             </TableCell>
-                            {(entityOptions.find((e) => e.id === account?.hiringEntityId)?.name || '').match(/C1 Workforce|C1 Select/i) && (
-                              <>
-                                <TableCell align="right">
-                                  <TextField
-                                    size="small"
-                                    type="number"
-                                    value={row.sutaRate ?? ''}
+                            {showSutaFutaOnLocationPricing && (
+                                <>
+                                  <TableCell align="right">
+                                    <TextField
+                                      size="small"
+                                      type="number"
+                                      value={row.sutaRate ?? ''}
                                     onChange={(e) => {
                                       const v = e.target.value === '' ? null : Number(e.target.value);
                                       setLocationPricingPositions((prev) => {

@@ -48,7 +48,9 @@ export interface JobOrder {
   parentAccountName?: string | null;
   /** Location display name (quick lookup). */
   locationName?: string;
-  
+  /** Recruiter client account (`tenants/{tid}/accounts/{id}`). Used for Account → Job Orders (especially child/sub-accounts). */
+  recruiterAccountId?: string | null;
+
   // Job Details
   jobTitle: string;
   jobDescription?: string;

@@ -25,6 +25,8 @@ const PARAM_KEYS = [
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
   'GOOGLE_REDIRECT_URI',
+  // scheduledGmailMonitoring (functions/src/gmailIntegration.ts) — must be literal "true"
+  'ENABLE_GMAIL_MONITORING',
   'SMS_PROVIDER',
   // defineSecret (secrets) – set in root .env if you use these
   'SENDGRID_API_KEY',

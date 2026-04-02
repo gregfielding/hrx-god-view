@@ -6,6 +6,9 @@
 import { eachDayOfInterval, endOfWeek } from 'date-fns';
 import { getDateScheduleEntriesWithHours } from './dateSchedule';
 
+/** Max calendar span when projecting open-ended weekly (career) shifts for finance / range discovery. */
+const WEEKLY_RECURRING_FINANCE_HORIZON_DAYS = 800;
+
 /** Default employer payroll tax assumptions (on taxable wages = pay portion). Tune later / load from tenant. */
 export const DEFAULT_FUTA_RATE_ON_PAY = 0.006; // 0.6% federal
 export const DEFAULT_SUTA_RATE_ON_PAY = 0.009; // placeholder state avg; replace with tenant/state rules later
@@ -90,13 +93,97 @@ export function resolveGigPositionRates(gigPositions: any[] | undefined, default
   };
 }
 
+function ymdFromDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+type WeeklyScheduleShape = Record<string, { enabled?: boolean; startTime?: string; endTime?: string }>;
+
+/**
+ * Career open-ended shifts: `weeklySchedule` only (no `dateSchedule`). Expand into occurrences
+ * either for one Mon–Sun week (`weekMonday` set) or across a bounded horizon for range discovery.
+ */
+function expandWeeklyScheduleToOccurrences(
+  shift: any,
+  shiftStartYmd: string,
+  weeklySchedule: WeeklyScheduleShape,
+  weekMonday?: Date
+): ShiftOccurrence[] {
+  const startD = parseYmdLocal(shiftStartYmd);
+  if (!startD) return [];
+
+  const endCap = shift?.endDate ? parseYmdLocal(String(shift.endDate).slice(0, 10)) : null;
+  const horizonEnd = new Date(startD);
+  horizonEnd.setDate(horizonEnd.getDate() + WEEKLY_RECURRING_FINANCE_HORIZON_DAYS);
+  const absoluteEnd = endCap && endCap < horizonEnd ? endCap : horizonEnd;
+
+  const headcount = Math.max(1, Number(shift.totalStaffRequested) || 1);
+
+  const pushIfScheduled = (d: Date, out: ShiftOccurrence[]) => {
+    const dayStart = stripTime(d);
+    if (dayStart < startD) return;
+    if (dayStart > absoluteEnd) return;
+    const dowKey = String(dayStart.getDay());
+    const day = weeklySchedule[dowKey];
+    if (!day?.enabled) return;
+    const st = String(day.startTime || '').trim();
+    const et = String(day.endTime || '').trim();
+    if (!st || !et) return;
+    const hours = hoursBetweenHHmm(st, et);
+    if (hours <= 0) return;
+    out.push({ dateStr: ymdFromDate(dayStart), hours, headcount });
+  };
+
+  const out: ShiftOccurrence[] = [];
+  if (weekMonday) {
+    const ws = stripTime(weekMonday);
+    const we = endOfWeek(weekMonday, { weekStartsOn: 1 });
+    for (const d of eachDayOfInterval({ start: ws, end: we })) {
+      pushIfScheduled(d, out);
+    }
+    return out;
+  }
+
+  for (const d of eachDayOfInterval({ start: startD, end: absoluteEnd })) {
+    pushIfScheduled(d, out);
+  }
+  return out;
+}
+
+export type ExpandGigShiftOptions = {
+  /** When set, only occurrences in this ISO week (Mon–Sun) are returned for weekly recurring shifts. */
+  weekMonday?: Date;
+};
+
 /**
  * Expand a Firestore shift doc + job order into dated occurrences (for gig shifts).
  */
-export function expandGigShiftToOccurrences(shift: any, _jobOrder: any): ShiftOccurrence[] {
+export function expandGigShiftToOccurrences(
+  shift: any,
+  _jobOrder: any,
+  opts?: ExpandGigShiftOptions
+): ShiftOccurrence[] {
   const mode = shift?.shiftMode;
   const shiftDate = String(shift?.shiftDate || '').slice(0, 10);
   if (!shiftDate) return [];
+
+  if (
+    mode === 'multi' &&
+    shift?.weeklySchedule &&
+    typeof shift.weeklySchedule === 'object' &&
+    (!shift.dateSchedule || Object.keys(shift.dateSchedule).length === 0)
+  ) {
+    const ws = shift.weeklySchedule as WeeklyScheduleShape;
+    const hasEnabled = Object.values(ws).some(
+      (d) => d && d.enabled && String(d.startTime || '').trim() && String(d.endTime || '').trim()
+    );
+    if (hasEnabled) {
+      return expandWeeklyScheduleToOccurrences(shift, shiftDate, ws, opts?.weekMonday);
+    }
+  }
 
   if (mode === 'multi' && shift?.dateSchedule && Object.keys(shift.dateSchedule).length > 0) {
     const entries = getDateScheduleEntriesWithHours(shift.dateSchedule, shiftDate, shift.endDate);
@@ -229,7 +316,7 @@ export function computeJobOrderWeekShiftFinance(
   for (const shift of shifts) {
     const title = shift?.defaultJobTitle;
     const rates = resolveGigPositionRates(gigPositions, title);
-    const occ = expandGigShiftToOccurrences(shift, jobOrder);
+    const occ = expandGigShiftToOccurrences(shift, jobOrder, { weekMonday });
     const part = sumWeekFinanceFromOccurrences(occ, rates, weekMonday, futaRate, sutaRate);
     totals.billTotal += part.billTotal;
     totals.payTotal += part.payTotal;
