@@ -98,6 +98,17 @@ Updates to “last used” should be **non-destructive** patches; they do not ch
 | `reviewWorkerI9SupportingDocument` | Staff: `decision: approved \| rejected`; rejection requires `rejectionReason`. Cannot approve if `storagePath` is still empty. Logs `i9_supporting_document.review_*`. |
 | `getI9SupportingDocumentSignedUrl` | Worker self or staff: fails with `failed-precondition` if no file yet. |
 
+### System auto-creation (first `worker_onboarding` per worker + entity key)
+
+When `ensureWorkerOnboardingPipeline` creates the pipeline doc (`created === true`), `ensureWorkerI9SupportingRequestsOnPipelineCreate` (`functions/src/onboarding/ensureWorkerI9SupportingRequestsOnPipelineCreate.ts`) runs **before** `worker_onboarding_pipeline_started` messaging:
+
+| Rule | Detail |
+|------|--------|
+| **Eligibility** | Employment is **W-2** (not 1099), resolved **`entityId`** is non-empty, and pipeline I-9 applicability is **`required` or `pending`** (same semantics as `computeStepApplicability` for step `i9` in `workerOnboardingPipeline.ts`). |
+| **Idempotency** | If **any** row exists in `worker_i9_supporting_documents` for this `userId` with `requestedForEntityId === entityId`, **skip** (staff may have created List A–only or custom rows). |
+| **v1 default shape** | **Two** rows: List B `list_b_drivers_license` + List C `list_c_ssn_card` (aligned with `src/constants/i9SupportingDocumentUi.ts`). Same required fields as the staff callable; `createdByUid`: `system:worker_onboarding_pipeline`. |
+| **Manual UI** | Employment **Request I-9 documents** remains for List A paths, recovery, and extra requests. |
+
 **Worker re-upload after reject:** Client updates `storagePath`, `uploadedAt`, `status: pending_review`, optional `uploadedFileName` / `uploadedContentType`, and sets `rejectionReason`, `reviewedAt`, `reviewedBy` to **null** (Firestore rules allow this only for `rejected` → `pending_review`). Prefer explicit `null` values (not `deleteField`) so rules evaluate consistently.
 
 ### First UI surfaces (v1)

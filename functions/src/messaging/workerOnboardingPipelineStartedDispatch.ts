@@ -4,6 +4,7 @@
  * Independent of assignment confirmation; assignment/job context is included when present.
  */
 import { logger } from 'firebase-functions/v2';
+import { buildWorkerEntityEmploymentUrl } from '../utils/workerUrls';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
@@ -45,6 +46,8 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
     return;
   }
 
+  const workerEntityEmploymentUrl = buildWorkerEntityEmploymentUrl(pipelineId);
+
   const result = await dispatchSystemMessage({
     tenantId,
     userId,
@@ -54,6 +57,7 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
       hiringEntityId: entityId ?? '',
       onboardingPipelineId: pipelineId,
       entityKey,
+      workerEntityEmploymentUrl,
       ...(assignmentId ? { assignmentId } : {}),
       ...(jobOrderId ? { jobOrderId } : {}),
       onboardingTriggerSource: triggerSource,

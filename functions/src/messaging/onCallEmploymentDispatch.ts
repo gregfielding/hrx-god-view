@@ -2,6 +2,7 @@
  * Automation trigger `on_call_employment_started` — labor pool / pre-assignment hire.
  */
 import { logger } from 'firebase-functions/v2';
+import { buildWorkerEntityEmploymentUrl } from '../utils/workerUrls';
 import { markLifecycleEventIfFirst } from './lifecycleDedupe';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import { SYSTEM_TRIGGER_KEYS } from './triggerRegistry';
@@ -32,6 +33,8 @@ export async function dispatchOnCallEmploymentStarted(args: {
     return;
   }
 
+  const workerEntityEmploymentUrl = buildWorkerEntityEmploymentUrl(args.pipelineId);
+
   const result = await dispatchSystemMessage({
     tenantId: args.tenantId,
     userId: args.userId,
@@ -41,6 +44,7 @@ export async function dispatchOnCallEmploymentStarted(args: {
       hiringEntityId: args.hiringEntityId,
       onboardingPipelineId: args.pipelineId,
       entityKey: args.entityKey,
+      workerEntityEmploymentUrl,
       onCallEmployment: 'true',
       initiatedByUid: args.initiatedByUid,
     },

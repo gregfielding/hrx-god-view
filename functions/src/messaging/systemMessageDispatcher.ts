@@ -82,6 +82,8 @@ const AUTOMATION_CONTEXT_TEMPLATE_KEYS = [
   'entityName',
   'hiringEntityId',
   'hiringEntityName',
+  'onboardingPipelineId',
+  'workerEntityEmploymentUrl',
   'payrollOnboardingUrl',
   'payrollSignupUrl',
   'payrollPortalLoginUrl',
@@ -112,6 +114,11 @@ function mergeDispatchContextForTemplateRender(
   if (payrollUrl) {
     if (merged.link == null || merged.link === '') merged.link = payrollUrl;
     if (merged.url == null || merged.url === '') merged.url = payrollUrl;
+  }
+  const hubUrl = String(merged.workerEntityEmploymentUrl || '').trim();
+  if (hubUrl) {
+    if (merged.link == null || merged.link === '') merged.link = hubUrl;
+    if (merged.url == null || merged.url === '') merged.url = hubUrl;
   }
   return merged;
 }

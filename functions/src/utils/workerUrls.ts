@@ -21,6 +21,16 @@ export function buildWorkerProfileUrl(): string {
   return `${getWorkerWebBaseUrl()}/c1/workers/profile`;
 }
 
+/**
+ * Worker entity employment onboarding hub. `employmentRecordId` is the `entity_employments` doc id
+ * (same as `worker_onboarding` / pipeline id: `userId__entityKey`).
+ */
+export function buildWorkerEntityEmploymentUrl(employmentRecordId: string): string {
+  const id = String(employmentRecordId || "").trim();
+  if (!id) return "";
+  return `${getWorkerWebBaseUrl()}/c1/workers/my-employment/${encodeURIComponent(id)}`;
+}
+
 export function buildWorkerFindWorkUrl(): string {
   return `${getWorkerWebBaseUrl()}/c1/jobs-board`;
 }

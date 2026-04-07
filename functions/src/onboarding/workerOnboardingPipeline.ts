@@ -494,6 +494,30 @@ export async function ensureWorkerOnboardingPipeline(args: {
     return !snap.exists;
   });
 
+  if (created) {
+    try {
+      const { ensureWorkerI9SupportingRequestsOnPipelineCreate } = await import(
+        "./ensureWorkerI9SupportingRequestsOnPipelineCreate"
+      );
+      await ensureWorkerI9SupportingRequestsOnPipelineCreate({
+        tenantId,
+        userId,
+        pipelineId,
+        entityId: entityContext.entityId,
+        workerTypeForEmployment,
+        entityData: entityContext.entityData,
+        assignmentId: assignmentId ?? null,
+      });
+    } catch (e: unknown) {
+      logger.warn("ensureWorkerI9SupportingRequestsOnPipelineCreate failed", {
+        tenantId,
+        userId,
+        pipelineId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   if (created && !suppressPipelineStartedAutomation) {
     try {
       const { dispatchWorkerOnboardingPipelineStarted } = await import(
