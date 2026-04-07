@@ -292,6 +292,7 @@ export {
   ensureWorkerI9SlotsForMyEmploymentRecord,
 } from './onboarding/i9SupportingDocumentWorkflowCallables';
 export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
+export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

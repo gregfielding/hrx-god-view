@@ -1,5 +1,6 @@
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { logger } from 'firebase-functions/v2';
 import { ensureWorkerOnboardingPipeline } from './onboarding/workerOnboardingPipeline';
 import { ASSIGNMENT_STATUS_QUERY_LIVE, isAssignmentTerminalNormalized } from './utils/assignmentStatusNormalize';
 import { buildWorkerAssignmentResponseUrl } from './utils/workerUrls';
@@ -20,6 +21,13 @@ function toDateOnly(value: any): string {
   }
   if (value instanceof Date) return value.toISOString().split('T')[0];
   return '';
+}
+
+/** Firestore rejects NaN; location/job data sometimes has non-numeric strings. */
+function safeFiniteNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function parseMinutes(time?: string): number | null {
@@ -358,6 +366,7 @@ export const placementsCreateAssignments = onCall(
   const createdBy = request.auth.uid;
   const uniqueUserIds = Array.from(new Set(userIds.filter(Boolean)));
 
+  try {
   const [jobOrderSnap, shiftSnap] = await Promise.all([
     db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}`).get(),
     db.doc(`tenants/${tenantId}/job_orders/${jobOrderId}/shifts/${shiftId}`).get(),
@@ -390,8 +399,8 @@ export const placementsCreateAssignments = onCall(
     ? await db.doc(`tenants/${tenantId}/locations/${locationId}`).get()
     : null;
   const locationData = locationSnap?.exists ? locationSnap.data() || {} : {};
-  const latitude = locationData.latitude ?? locationData.lat ?? 0;
-  const longitude = locationData.longitude ?? locationData.lng ?? 0;
+  const latitude = safeFiniteNumber(locationData.latitude ?? locationData.lat, 0);
+  const longitude = safeFiniteNumber(locationData.longitude ?? locationData.lng, 0);
   const locationNickname = locationData.nickname || locationData.title || locationData.name || locationData.locationName || jobOrder.worksiteName || '';
 
   const postingSnap = await db
@@ -475,8 +484,8 @@ export const placementsCreateAssignments = onCall(
             endDate: singleDate,
             startTime: shift.startTime || shift.defaultStartTime || '',
             endTime: shift.endTime || shift.defaultEndTime || '',
-            payRate: Number(shift.payRate ?? jobOrder.payRate ?? 0),
-            billRate: Number(shift.billRate ?? jobOrder.billRate ?? 0),
+            payRate: safeFiniteNumber(shift.payRate ?? jobOrder.payRate, 0),
+            billRate: safeFiniteNumber(shift.billRate ?? jobOrder.billRate, 0),
             timesheetMode: jobOrder.timesheetMode || 'mobile',
             firstName,
             lastName,
@@ -503,8 +512,8 @@ export const placementsCreateAssignments = onCall(
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             assignedAt: admin.firestore.FieldValue.serverTimestamp(),
             suppressInitialNotification: true,
-            entityId: onboardingConfig.entityId,
-            requirementPackageId: onboardingConfig.requirementPackageId,
+            entityId: onboardingConfig.entityId ?? null,
+            requirementPackageId: onboardingConfig.requirementPackageId ?? null,
             onboardingInstanceId: assignmentRef.id,
             onboardingStatus: (onboardingConfig.entityId && onboardingConfig.requirementPackageId && onboardingConfig.packageData) ? 'not_started' : 'blocked',
             onboardingPercent: 0,
@@ -755,8 +764,8 @@ export const placementsCreateAssignments = onCall(
           endDate: effectiveEndDate || effectiveStartDate || '',
           startTime: shift.startTime || shift.defaultStartTime || '',
           endTime: shift.endTime || shift.defaultEndTime || '',
-          payRate: Number(shift.payRate ?? jobOrder.payRate ?? 0),
-          billRate: Number(shift.billRate ?? jobOrder.billRate ?? 0),
+          payRate: safeFiniteNumber(shift.payRate ?? jobOrder.payRate, 0),
+          billRate: safeFiniteNumber(shift.billRate ?? jobOrder.billRate, 0),
           timesheetMode: jobOrder.timesheetMode || 'mobile',
           firstName,
           lastName,
@@ -782,8 +791,8 @@ export const placementsCreateAssignments = onCall(
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
           assignedAt: admin.firestore.FieldValue.serverTimestamp(),
-          entityId: onboardingConfig.entityId,
-          requirementPackageId: onboardingConfig.requirementPackageId,
+          entityId: onboardingConfig.entityId ?? null,
+          requirementPackageId: onboardingConfig.requirementPackageId ?? null,
           onboardingInstanceId: assignmentRef.id,
           onboardingStatus:
             onboardingConfig.entityId &&
@@ -839,6 +848,14 @@ export const placementsCreateAssignments = onCall(
     skipped,
     failed,
   };
+  } catch (e: any) {
+    if (e instanceof HttpsError) throw e;
+    logger.error('placementsCreateAssignments_unhandled', {
+      message: e?.message,
+      stack: e?.stack,
+    });
+    throw new HttpsError('internal', e?.message || 'Assignment creation failed');
+  }
   },
 );
 

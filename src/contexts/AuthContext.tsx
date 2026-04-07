@@ -7,6 +7,7 @@ import { doc, getDoc, onSnapshot, setDoc, serverTimestamp } from 'firebase/fires
 import { auth, db } from '../firebase';
 import { Role, SecurityLevel, getAccessRole } from '../utils/AccessRoles';
 import { logLoginActivity, logLogoutActivity } from '../utils/activityLogger';
+import { normalizeC1TenantIdTypo } from '../utils/c1TenantIdNormalize';
 
 // New claims-based types
 export type ClaimsRole = 'Admin' | 'Recruiter' | 'Manager' | 'Worker' | 'Customer' | 'Tenant' | 'HRX';
@@ -661,7 +662,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
             setAvatarUrl(avatar);
             setOrgType(userOrgType === 'HRX' ? 'HRX' : 'Tenant');
-            setTenantId(userData.activeTenantId || primaryTenantId || undefined);
+            setTenantId(
+              normalizeC1TenantIdTypo(userData.activeTenantId || primaryTenantId || undefined) ?? undefined,
+            );
             setTenantIds(userTenantIds);
             setTenantRoles(tenantRolesMap);
 

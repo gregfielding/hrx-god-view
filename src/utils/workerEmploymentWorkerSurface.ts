@@ -67,10 +67,12 @@ export function workerEmploymentHubNextStepLine(args: {
   i9Hint: WorkerI9AttentionHint;
   hasOpenOnboardingDemand: boolean;
   pipelineSummary: string | null;
+  /** When payroll I-9 is verified, supporting-document slots are optional — do not nudge upload here. */
+  i9EmployeeSectionComplete?: boolean;
 }): string | null {
-  const { headerState, i9Hint, hasOpenOnboardingDemand, pipelineSummary } = args;
+  const { headerState, i9Hint, hasOpenOnboardingDemand, pipelineSummary, i9EmployeeSectionComplete } = args;
 
-  if (i9Hint === 'upload') {
+  if (i9Hint === 'upload' && i9EmployeeSectionComplete !== true) {
     return 'Upload I-9 documents';
   }
   if (i9Hint === 'action_needed') {

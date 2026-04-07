@@ -42,7 +42,10 @@ import {
   I9_DIALOG_TITLE_ADD_I9_SLOTS,
   I9_EMPLOYMENT_ADMIN_AUDIT_FOOTNOTE,
   I9_EMPLOYMENT_ADMIN_INTRO,
+  I9_EMPLOYMENT_OPTIONAL_WHEN_I9_VERIFIED,
   I9_EMPLOYMENT_PURPOSE,
+  I9_HELPER_REQUIREMENT_HEADING,
+  I9_HELPER_REQUIREMENT_HEADING_WHEN_I9_PENDING,
   I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY,
   I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY_DEEPLINK,
   I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT,
@@ -76,6 +79,8 @@ export interface EmploymentI9SupportingDocumentsSubsectionProps {
     body: string;
     subject?: string;
   }) => void | Promise<void>;
+  /** Payroll / TempWorks I-9 verified — supporting uploads are not part of completion gates. */
+  i9EmployeeSectionComplete?: boolean;
 }
 
 function substatusChipColor(
@@ -105,6 +110,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
   onRefresh,
   onOpenWorkerNotificationComposer,
   onSendWorkerNotificationDirect,
+  i9EmployeeSectionComplete = false,
 }) => {
   const { user, isHRX, claimsRoles } = useAuth();
   const viewerUid = user?.uid;
@@ -126,7 +132,13 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
     );
   }, [rows, requestedForEntityId, employmentEntityKey]);
 
-  const vm = useMemo(() => buildI9SupportingDocumentsEmploymentViewModel(scopedRows), [scopedRows]);
+  const vm = useMemo(
+    () =>
+      buildI9SupportingDocumentsEmploymentViewModel(scopedRows, {
+        i9EmployeeSectionComplete,
+      }),
+    [scopedRows, i9EmployeeSectionComplete],
+  );
 
   const workerEmploymentAbsoluteUrl = useMemo(() => {
     const id = workerEmploymentRecordId?.trim();
@@ -274,6 +286,13 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.5 }}>
         {staffMode ? I9_EMPLOYMENT_ADMIN_INTRO : I9_EMPLOYMENT_PURPOSE}
       </Typography>
+      {i9EmployeeSectionComplete ? (
+        <Alert severity="info" sx={{ mb: 1.25 }}>
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            {I9_EMPLOYMENT_OPTIONAL_WHEN_I9_VERIFIED}
+          </Typography>
+        </Alert>
+      ) : null}
 
       {loading ? (
         <Typography variant="caption" color="text.secondary">
@@ -314,7 +333,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
           ) : null}
 
           <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.35 }}>
-            Required to complete I-9:
+            {i9EmployeeSectionComplete ? I9_HELPER_REQUIREMENT_HEADING : I9_HELPER_REQUIREMENT_HEADING_WHEN_I9_PENDING}
           </Typography>
           <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
             Upload 1 List A document, or 1 List B document and 1 List C document.

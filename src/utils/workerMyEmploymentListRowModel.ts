@@ -62,6 +62,8 @@ export function buildWorkerMyEmploymentListRowModel(
     /** Scoped I-9 substatus for this entity when rows match `requestedForEntityId` (or single-employment fallback). */
     i9Substatus?: I9EmploymentDocsSubstatus | null;
     totalEmploymentRecords?: number;
+    /** Payroll I-9 verified — supporting uploads are optional for list next-step copy. */
+    i9EmployeeSectionComplete?: boolean;
   },
 ): WorkerMyEmploymentListRowModel {
   const counts = stepCounts[rec.onboardingPipelineId];
@@ -114,6 +116,7 @@ export function buildWorkerMyEmploymentListRowModel(
     i9Hint,
     hasOpenOnboardingDemand,
     pipelineSummary: progressText,
+    i9EmployeeSectionComplete: options?.i9EmployeeSectionComplete === true,
   });
 
   return {

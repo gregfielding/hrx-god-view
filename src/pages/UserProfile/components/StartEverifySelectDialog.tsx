@@ -40,6 +40,7 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../../firebase';
+import { p } from '../../../data/firestorePaths';
 import { logCustomActivity } from '../../../utils/activityLogger';
 import {
   USER_EMPLOYMENT_I9_STATUS_LABELS,
@@ -62,6 +63,10 @@ import {
   isValidI551NumberForEverifyApi,
   normalizeI551NumberForEverifyApi,
 } from '../../../utils/everifyI551DocumentNumber';
+import {
+  i9SupportingApprovedToDialogPrefill,
+  type I9SupportingDocLike,
+} from '../../../utils/i9SupportingToEverifyPrefill';
 
 const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenantId, 'user_employments');
 
@@ -559,18 +564,32 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     setTenantEntitiesLoading(true);
     (async () => {
       try {
-        const [entities, opts, workerSnap] = await Promise.all([
+        const [entities, opts, workerSnap, i9SupportingSnap] = await Promise.all([
           loadTenantEntitiesForTenant(tenantId),
           loadEmploymentOptionsForUser(tenantId, uid),
           getDoc(doc(db, 'users', uid)),
+          getDocs(query(collection(db, p.workerI9SupportingDocuments(tenantId)), where('userId', '==', uid))),
         ]);
         if (cancelled) return;
         const wd = workerSnap.exists() ? (workerSnap.data() as Record<string, unknown>) : {};
-        setEvWorkerFirstName(String(wd.firstName || '').trim());
-        setEvWorkerLastName(String(wd.lastName || '').trim());
-        setEvWorkerDob(toDateInputValue(wd.dob ?? wd.dateOfBirth));
+        const i9Rows: I9SupportingDocLike[] = i9SupportingSnap.docs.map((d) => d.data() as I9SupportingDocLike);
+        const i9Pre = i9SupportingApprovedToDialogPrefill(i9Rows);
+        setEvWorkerFirstName((String(wd.firstName || '').trim() || i9Pre.evWorkerFirstName).trim());
+        setEvWorkerLastName((String(wd.lastName || '').trim() || i9Pre.evWorkerLastName).trim());
+        setEvWorkerDob(toDateInputValue(wd.dob ?? wd.dateOfBirth) || i9Pre.evWorkerDob);
         setEvWorkerSsn('');
         setEvCitizenshipCode('');
+        if (i9Pre.evDocASelection || (i9Pre.evDocBSelection && i9Pre.evDocCSelection)) {
+          setEvDocMode(i9Pre.docMode);
+          if (i9Pre.evDocASelection) setEvDocASelection(i9Pre.evDocASelection);
+          if (i9Pre.evDocANumberField) setEvDocANumberField(i9Pre.evDocANumberField);
+          if (i9Pre.evDocANumberValue) setEvDocANumberValue(i9Pre.evDocANumberValue);
+          if (i9Pre.evDocBSelection) setEvDocBSelection(i9Pre.evDocBSelection);
+          if (i9Pre.evDocCSelection) setEvDocCSelection(i9Pre.evDocCSelection);
+          if (i9Pre.evDocBNumber) setEvDocBNumber(i9Pre.evDocBNumber);
+          if (i9Pre.evDocCNumber) setEvDocCNumber(i9Pre.evDocCNumber);
+          if (i9Pre.evDocExpiration) setEvDocExpiration(i9Pre.evDocExpiration);
+        }
         setEverifyHiringEntityResolved(resolveEverifyHiringEntity(entities));
         setUserEmploymentIds(opts);
         let pickEmpId = '';
@@ -713,6 +732,14 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
       docFields.document_c_type_code = cCode;
       if (evDocBNumber.trim()) docFields.document_bc_number = evDocBNumber.trim();
       if (evDocCNumber.trim()) docFields.document_c_number = evDocCNumber.trim();
+      if (evDocExpiration.trim()) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(evDocExpiration.trim())) {
+          setEvMessage('List B document expiration must be YYYY-MM-DD.');
+          setEvSubmitting(false);
+          return;
+        }
+        docFields.expiration_date = evDocExpiration.trim();
+      }
     }
     setEvSubmitting(true);
     setEvMessage(null);

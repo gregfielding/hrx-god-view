@@ -11,8 +11,7 @@ import { getStorage } from 'firebase-admin/storage';
 import { getStorageBucketName } from '../utils/storageBucket';
 import {
   mapDocumentAiToExtractedFields,
-  resolveProcessorKindForDocumentType,
-  resolveProcessorResourceName,
+  resolveExtractionRouting,
 } from './i9SupportingDocumentExtractionMapper';
 
 if (!admin.apps.length) {
@@ -153,11 +152,11 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
     }
 
     const documentType = String(afterData.documentType || '').trim();
-    const processorKind = resolveProcessorKindForDocumentType(documentType);
+    const routing = resolveExtractionRouting(documentType, process.env);
     const now = admin.firestore.FieldValue.serverTimestamp();
     const docRef = db.doc(`tenants/${tenantId}/worker_i9_supporting_documents/${documentId}`);
 
-    if (!processorKind) {
+    if (routing.type === 'unsupported') {
       await docRef.set(
         {
           documentExtraction: {
@@ -171,7 +170,7 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
             extractedFields: null,
             extractedRawEntities: [],
             extractionWarnings: [
-              'No automated extraction for this document type in v1 (only List B driver license uses Document AI; passport parser unavailable).',
+              'No automated Document AI extractor is configured for this document type (e.g. other_supporting). Use manual review.',
             ],
             confidenceSummary: null,
             documentAiProcessorVersion: null,
@@ -185,8 +184,7 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
       return;
     }
 
-    const processorName = resolveProcessorResourceName(processorKind, process.env);
-    if (!processorName) {
+    if (routing.type === 'missing_env') {
       await docRef.set(
         {
           documentExtraction: {
@@ -195,9 +193,9 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
             completedAt: now,
             error: {
               code: 'missing_processor_config',
-              message: 'DOCUMENT_AI_PROCESSOR_* or DOCUMENT_AI_PROJECT_ID not configured for this environment.',
+              message: routing.message.slice(0, 500),
             },
-            processorType: processorKind,
+            processorType: routing.processorType,
             processorResourceName: null,
             sourceStoragePath: storagePath,
             extractedFields: null,
@@ -211,9 +209,12 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
         },
         { merge: true },
       );
-      logger.error('i9_supporting_extraction.missing_config', { tenantId, documentId, processorKind });
+      logger.error('i9_supporting_extraction.missing_config', { tenantId, documentId, processorType: routing.processorType });
       return;
     }
+
+    const processorKind = routing.kind;
+    const processorName = routing.resourceName;
 
     const pendingPayload = {
       status: 'extraction_pending' as ExtractionStatus,
@@ -249,7 +250,7 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
 
       const [result] = await client.processDocument(request);
 
-      const mapped = mapDocumentAiToExtractedFields(result.document);
+      const mapped = mapDocumentAiToExtractedFields(result.document, processorKind);
       const doneAt = admin.firestore.FieldValue.serverTimestamp();
 
       await docRef.set(

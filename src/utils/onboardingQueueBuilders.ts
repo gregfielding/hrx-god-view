@@ -29,6 +29,12 @@ import type { EmploymentEntityKey } from '../pages/UserProfile/components/employ
 import { normalizeEntityKey } from './employmentEntityPresentation';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { HrxBackgroundCheckStatus } from '../types/backgroundCheck';
+import type { WorkerPayrollAccount } from '../types/payroll';
+import { workerPayrollAccountId } from '../types/payroll';
+import {
+  isDirectDepositCompleteFromExternalAndPayrollAccount,
+  isTaxFormCompleteFromExternalAndEntityEmployment,
+} from './employmentMinimalChecklistModel';
 
 export function entityLabelFromKey(entityKey: string | undefined): string {
   const k = String(entityKey || '').toLowerCase();
@@ -200,6 +206,8 @@ export interface EntityEmploymentLite {
   status?: string;
   updatedAt?: unknown;
   everifyStatus?: string;
+  /** Mirrors W-4/W-9 when recruiter marks tax identity complete on employment (same as Employment checklist). */
+  taxIdentityStatus?: string | null;
 }
 
 /** Loaded from `tenants/{tid}/assignments/{id}` for the tax/payroll queue. */
@@ -501,6 +509,20 @@ function formatEverifyStatusForTaxPayrollQueue(
   return 'Not started';
 }
 
+function externalStepInviteOrNotStarted(r: ExternalOnboardingStepRecord | undefined): boolean {
+  return Boolean(r && (r.status === 'invite_sent' || r.status === 'not_started'));
+}
+
+function payrollAccountDocIdForPipelineUser(
+  pipeline: TaxPayrollPipelineInput,
+  uid: string,
+): string | null {
+  const ek =
+    normalizeEntityKey(pipeline.entityKey) || String(pipeline.entityKey || '').trim().toLowerCase();
+  if (!ek) return null;
+  return workerPayrollAccountId(uid, ek);
+}
+
 export function buildTaxPayrollQueueRows(
   pipelines: TaxPayrollPipelineInput[],
   employmentByPipelineId: Record<string, EntityEmploymentLite | undefined>,
@@ -509,6 +531,7 @@ export function buildTaxPayrollQueueRows(
   jobOrderById: Record<string, JobOrderQueueLite | undefined> = {},
   everifySelectCaseByUserId: Map<string, EverifyCaseInput> | undefined = undefined,
   entityIdToKey: Map<string, EmploymentEntityKey> = new Map(),
+  payrollAccountByDocId: Record<string, WorkerPayrollAccount | undefined> = {},
 ): OnboardingTaxPayrollQueueRow[] {
   const rows: OnboardingTaxPayrollQueueRow[] = [];
 
@@ -541,6 +564,27 @@ export function buildTaxPayrollQueueRows(
     const taxUiW2 = externalStepQueueLabel(extMap?.tax_withholding_forms, taxW2Applies);
     const taxUi1099 = externalStepQueueLabel(extMap?.contractor_tax_form_w9, tax1099Applies);
     const taxFormsUi = wtNorm === '1099' ? taxUi1099 : taxUiW2;
+
+    const payrollAcctDocId = payrollAccountDocIdForPipelineUser(p, uid);
+    const payrollAccount = payrollAcctDocId ? payrollAccountByDocId[payrollAcctDocId] : undefined;
+    const taxRecActive =
+      wtNorm === '1099' ? extMap?.contractor_tax_form_w9 : extMap?.tax_withholding_forms;
+
+    let ddUiFinal = ddUi;
+    if (
+      ddApplies &&
+      isDirectDepositCompleteFromExternalAndPayrollAccount(extMap?.direct_deposit, payrollAccount)
+    ) {
+      ddUiFinal = { label: 'Ready', tier: 60 };
+    }
+
+    let taxFormsUiFinal = taxFormsUi;
+    if (
+      (wtNorm === '1099' ? tax1099Applies : taxW2Applies) &&
+      isTaxFormCompleteFromExternalAndEntityEmployment(taxRecActive, emp ?? null)
+    ) {
+      taxFormsUiFinal = { label: 'Ready', tier: 60 };
+    }
 
     const payrollSetupTier = everee ? worstTier(payrollUi.tier, evereeUi.tier) : payrollUi.tier;
     const payrollSetupLabel = everee
@@ -577,23 +621,32 @@ export function buildTaxPayrollQueueRows(
           r.status === 'worker_completed_external' ||
           (r.status === 'completed' && !isExternalOnboardingStepVerifiedComplete(r))),
     );
-    const extWaitingWorker = [
-      payrollExt,
-      extMap?.direct_deposit,
-      extMap?.tax_withholding_forms,
-      extMap?.contractor_tax_form_w9,
-    ].some((r) => r && (r.status === 'invite_sent' || r.status === 'not_started'));
+    const extWaitingWorker =
+      externalStepInviteOrNotStarted(payrollExt) ||
+      (externalStepInviteOrNotStarted(extMap?.direct_deposit) &&
+        !isDirectDepositCompleteFromExternalAndPayrollAccount(extMap?.direct_deposit, payrollAccount)) ||
+      (wtNorm === '1099'
+        ? externalStepInviteOrNotStarted(extMap?.contractor_tax_form_w9) &&
+          !isTaxFormCompleteFromExternalAndEntityEmployment(
+            extMap?.contractor_tax_form_w9,
+            emp ?? null,
+          )
+        : externalStepInviteOrNotStarted(extMap?.tax_withholding_forms) &&
+          !isTaxFormCompleteFromExternalAndEntityEmployment(
+            extMap?.tax_withholding_forms,
+            emp ?? null,
+          ));
 
     const owner = taxPayrollOwner(extNeedsReview, extWaitingWorker, everee ? evereeUi.tier : 60, [
       payrollUi.tier,
-      ddUi.tier,
-      taxFormsUi.tier,
+      ddUiFinal.tier,
+      taxFormsUiFinal.tier,
     ]);
 
     const sortPriority = worstTier(
       payrollSetupTier,
-      ddUi.tier,
-      taxFormsUi.tier,
+      ddUiFinal.tier,
+      taxFormsUiFinal.tier,
       everee ? evereeUi.tier : 60,
     );
 
@@ -606,8 +659,8 @@ export function buildTaxPayrollQueueRows(
     const allReadyOrNA =
       (payrollUi.label === 'Ready' || payrollUi.label === "Doesn't apply") &&
       (evereeUi.label === 'Ready' || evereeUi.label === "Doesn't apply") &&
-      (ddUi.label === 'Ready' || ddUi.label === "Doesn't apply") &&
-      (taxFormsUi.label === 'Ready' || taxFormsUi.label === "Doesn't apply");
+      (ddUiFinal.label === 'Ready' || ddUiFinal.label === "Doesn't apply") &&
+      (taxFormsUiFinal.label === 'Ready' || taxFormsUiFinal.label === "Doesn't apply");
 
     if (pipelineStatus === 'complete' && allReadyOrNA) continue;
 
@@ -637,8 +690,8 @@ export function buildTaxPayrollQueueRows(
       sortPriority,
       payrollUi,
       evereeUi: everee ? evereeUi : null,
-      ddUi,
-      taxFormsUi,
+      ddUi: ddUiFinal,
+      taxFormsUi: taxFormsUiFinal,
     });
 
     const entityLabel = p.entityName?.trim() || entityLabelFromKey(p.entityKey);
@@ -662,8 +715,8 @@ export function buildTaxPayrollQueueRows(
       workerTypeLabel,
       employmentModeLabel,
       payrollSetupLabel,
-      directDepositLabel: ddUi.label,
-      taxFormsLabel: taxFormsUi.label,
+      directDepositLabel: ddUiFinal.label,
+      taxFormsLabel: taxFormsUiFinal.label,
       whyQueuedLabel,
       lastActivityLabel: lastMs
         ? format(new Date(lastMs), 'MMM d, yyyy p')

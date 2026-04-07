@@ -37,6 +37,19 @@ import {
   type RecruiterConsolidatedPathGroup,
 } from './employmentOnboardingPathRecruiterConsolidation';
 
+/** When TempWorks I-9 is recruiter-verified, path rows merged on this key must not block entity completion. */
+const I9_EMPLOYEE_SECTION_CONSOLIDATION_KEY = 'ext:i9_employee_section';
+
+function itemSatisfiedByVerifiedI9EmployeeSection(
+  item: RecruiterConsolidatedPathItem,
+  ext: ExternalOnboardingStepsState | undefined
+): boolean {
+  const rec = ext?.i9_employee_section;
+  if (!rec || !isExternalOnboardingStepVerifiedComplete(rec)) return false;
+  const pool = [item.row, ...item.mergedSources];
+  return pool.some((r) => recruiterPathRowConsolidationKey(r) === I9_EMPLOYEE_SECTION_CONSOLIDATION_KEY);
+}
+
 /** Sub-sections that participate in the engine (matches recruiter checklist buckets). */
 export const ENTITY_ONBOARDING_COMPLETION_BUCKETS = [
   'tax_and_identity',
@@ -206,7 +219,9 @@ export function evaluateEntityOnboardingEngineFromConsolidatedGroups(
       const r = item.row;
       if (!r.required) continue;
 
-      if (!isOnboardingPathRowDone(r.status)) {
+      const i9ExternallySatisfied = itemSatisfiedByVerifiedI9EmployeeSection(item, ext);
+
+      if (!i9ExternallySatisfied && !isOnboardingPathRowDone(r.status)) {
         pendingRequiredItems.push({
           bucket: g.groupId,
           rowLabel: r.label,
@@ -215,7 +230,9 @@ export function evaluateEntityOnboardingEngineFromConsolidatedGroups(
         });
       }
 
-      sectionPhases[g.groupId].push(classifyOnboardingItemPhase(item, ext));
+      sectionPhases[g.groupId].push(
+        i9ExternallySatisfied ? 'complete' : classifyOnboardingItemPhase(item, ext)
+      );
     }
   }
 

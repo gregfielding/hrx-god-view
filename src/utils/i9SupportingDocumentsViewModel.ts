@@ -61,7 +61,9 @@ function formatTs(value: unknown): string {
 
 export function buildI9SupportingDocumentsEmploymentViewModel(
   rows: Array<{ id: string; data: Record<string, unknown> }>,
+  opts?: { i9EmployeeSectionComplete?: boolean },
 ): I9SupportingDocumentsEmploymentViewModel {
+  const i9DoneElsewhere = opts?.i9EmployeeSectionComplete === true;
   const requestCount = rows.length;
   const docs = i9DocumentsFromFirestoreRows(rows);
   const documentSetComplete = isI9DocumentSetComplete(docs);
@@ -127,6 +129,10 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     stillNeededLines.push('Still needed: one List C document (e.g. Social Security card or birth certificate).');
   } else if (hc && !hb) {
     stillNeededLines.push('Still needed: one List B document (e.g. driver’s license or government ID).');
+  } else if (i9DoneElsewhere) {
+    stillNeededLines.push(
+      'If you use uploads here: one List A document, or one List B and one List C (optional — for HRX review or audit).',
+    );
   } else {
     stillNeededLines.push(
       'Upload one List A document, or one List B document and one List C document.',

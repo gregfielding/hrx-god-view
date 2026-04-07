@@ -16,6 +16,7 @@ import { employmentHeaderStateLabel } from '../../../../utils/deriveEmploymentHe
 import { entityEmploymentStatusForDisplay } from '../../../../utils/entityEmploymentLifecycle';
 import { EMPLOYMENT_I9_SECTION_ELEMENT_ID } from '../../../../utils/workerReadinessBannerModel';
 import { workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments } from '../../../../utils/workerEmploymentWorkerSurface';
+import { buildTaxIdentityChecklistItems } from '../../../../utils/employmentMinimalChecklistModel';
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
 import ProfileTabPointerAlert from '../../../../components/profile/ProfileTabPointerAlert';
 import { workerEmploymentShouldShowScreeningPointerAlert } from '../../../../utils/workerEmploymentBackgroundsCrossLink';
@@ -120,6 +121,7 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
   const showI9 = overview.workerType !== '1099';
   const skipI9Docs = workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(entityKey);
   const hiringEntityId = entityEmployment?.entityId?.trim() || '';
+  const { i9: i9Checklist } = buildTaxIdentityChecklistItems(overview);
 
   const scrollToI9 = () => {
     document.getElementById(EMPLOYMENT_I9_SECTION_ELEMENT_ID)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -192,6 +194,7 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
                       onRefresh={onRefresh}
                       onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}
                       onSendWorkerNotificationDirect={onSendWorkerNotificationDirect}
+                      i9EmployeeSectionComplete={i9Checklist.completed}
                     />
                   </Box>
                 </Stack>

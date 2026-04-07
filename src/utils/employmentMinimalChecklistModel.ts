@@ -156,6 +156,38 @@ export function buildDirectDepositItem(overview: EmploymentEntityOverview): Mini
   return { completed: true, completedAt: coerceDate(a?.payrollSetupCompletedAt) || coerceDate(a?.updatedAt) };
 }
 
+/**
+ * Shared gate for list/queue UIs — same rules as `buildDirectDepositItem` (verified external step or payroll account signals).
+ */
+export function isDirectDepositCompleteFromExternalAndPayrollAccount(
+  ddRec: ExternalOnboardingStepRecord | undefined,
+  account: (WorkerPayrollAccount & { id?: string }) | null | undefined,
+): boolean {
+  const ext = itemFromExternalRecord(ddRec);
+  if (ext.completed) return true;
+  if (!account) return false;
+  const ps = String(account.payrollStatus || '').toLowerCase();
+  const dd = String(account.directDepositStatus || '').toLowerCase();
+  const fromAccount =
+    ps === 'complete' ||
+    dd === 'complete' ||
+    dd === 'completed' ||
+    Boolean(coerceDate(account.payrollSetupCompletedAt));
+  return fromAccount;
+}
+
+/**
+ * Shared gate for W-4 / W-9 — same merge as `buildTaxIdentityChecklistItems` (verified external or entity employment mirror).
+ */
+export function isTaxFormCompleteFromExternalAndEntityEmployment(
+  taxRec: ExternalOnboardingStepRecord | undefined,
+  ee: { taxIdentityStatus?: string | null; updatedAt?: unknown } | null | undefined,
+): boolean {
+  const taxExt = itemFromExternalRecord(taxRec);
+  const eeTaxDone = String(ee?.taxIdentityStatus ?? '').toLowerCase() === 'complete';
+  return mergeExternalWithEeMirror(taxExt, eeTaxDone, ee?.updatedAt).completed;
+}
+
 /** Same signals as Profile Readiness tab / payroll aggregates — scoped to one or more account docs. */
 export function aggregatePayrollFromAccounts(
   accounts: Array<WorkerPayrollAccount & { id?: string }>,

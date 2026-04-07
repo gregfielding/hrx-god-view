@@ -104,14 +104,24 @@ service firebase.storage {
     // I-9 supporting documents (tenant + user canonical; see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md)
     // Production: worker direct read/write only on own prefix + tenant binding; staff use callable signed URLs.
     match /i9_docs/{tenantId}/{userId}/{documentId}/{allPaths=**} {
+      // C1: some user docs / custom claims use BCiP2bQ9CgV0CTfV6MhD (digit 0); canonical tenant id uses letter O.
+      function c1TenantCanonical(tid) {
+        return tid == 'BCiP2bQ9CgV0CTfV6MhD' ? 'BCiP2bQ9CgVOCTfV6MhD' : tid;
+      }
       function i9WorkerTenantOk() {
         return request.auth != null && (
-          (request.auth.token.roles != null && tenantId in request.auth.token.roles) ||
+          (
+            request.auth.token.roles != null && (
+              tenantId in request.auth.token.roles ||
+              (tenantId == 'BCiP2bQ9CgVOCTfV6MhD' && 'BCiP2bQ9CgV0CTfV6MhD' in request.auth.token.roles) ||
+              (tenantId == 'BCiP2bQ9CgV0CTfV6MhD' && 'BCiP2bQ9CgVOCTfV6MhD' in request.auth.token.roles)
+            )
+          ) ||
           (
             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
             (
-              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.activeTenantId == tenantId ||
-              firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.tenantId == tenantId
+              c1TenantCanonical(firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.activeTenantId) == c1TenantCanonical(tenantId) ||
+              c1TenantCanonical(firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.tenantId) == c1TenantCanonical(tenantId)
             )
           )
         );

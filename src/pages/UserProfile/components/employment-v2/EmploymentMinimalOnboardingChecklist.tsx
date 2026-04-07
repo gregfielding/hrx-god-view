@@ -402,6 +402,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
             onRefresh={onRefresh}
             onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}
             onSendWorkerNotificationDirect={onSendWorkerNotificationDirect}
+            i9EmployeeSectionComplete={i9.completed}
           />
         ) : null}
       </Box>

@@ -91,10 +91,34 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefin
           <TableCell sx={headCellSx}>Employment mode</TableCell>
           <TableCell sx={headCellSx}>E-Verify</TableCell>
           <TableCell sx={headCellSx}>Assignment</TableCell>
-          <TableCell sx={headCellSx}>Payroll setup</TableCell>
-          <TableCell sx={headCellSx}>Direct deposit</TableCell>
-          <TableCell sx={headCellSx}>Tax forms</TableCell>
-          <TableCell sx={headCellSx}>Why queued</TableCell>
+          <Tooltip
+            title="HRIS / Everee provider milestone (external payroll_onboarding + Everee step when present). Separate from the Direct deposit column."
+            placement="top"
+            arrow
+          >
+            <TableCell sx={headCellSx}>Payroll setup</TableCell>
+          </Tooltip>
+          <Tooltip
+            title="Same completion rules as User → Employment → Payroll setup: verified TempWorks direct-deposit step or payroll account signals."
+            placement="top"
+            arrow
+          >
+            <TableCell sx={headCellSx}>Direct deposit</TableCell>
+          </Tooltip>
+          <Tooltip
+            title="Same as User → Employment → Tax and identity (W-4 or W-9): verified external step or tax identity marked complete on employment."
+            placement="top"
+            arrow
+          >
+            <TableCell sx={headCellSx}>Tax forms</TableCell>
+          </Tooltip>
+          <Tooltip
+            title="The tightest bottleneck among payroll setup, direct deposit, and tax forms (matches row sort priority)."
+            placement="top"
+            arrow
+          >
+            <TableCell sx={headCellSx}>Why queued</TableCell>
+          </Tooltip>
           <TableCell sx={headCellSx}>Last activity</TableCell>
           <TableCell sx={headCellSx}>Owner</TableCell>
           <TableCell sx={headCellSx} align="right">

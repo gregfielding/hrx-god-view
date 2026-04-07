@@ -28,7 +28,8 @@ const MyEmploymentPage: React.FC = () => {
   const tenantId = authTenantId || activeTenant?.id || null;
   const uid = user?.uid ?? null;
 
-  const { loading, records, assignmentsByEntityKey, stepCounts } = useWorkerMyEmploymentList(tenantId, uid);
+  const { loading, records, assignmentsByEntityKey, stepCounts, i9EmployeeSectionVerifiedByPipelineId } =
+    useWorkerMyEmploymentList(tenantId, uid);
 
   if (!uid) {
     return (
@@ -73,7 +74,11 @@ const MyEmploymentPage: React.FC = () => {
         ) : (
           <Stack spacing={1.5}>
             {records.map((rec) => {
-              const row = buildWorkerMyEmploymentListRowModel(rec, stepCounts, assignmentsByEntityKey);
+              const row = buildWorkerMyEmploymentListRowModel(rec, stepCounts, assignmentsByEntityKey, {
+                i9EmployeeSectionComplete: Boolean(
+                  rec.onboardingPipelineId && i9EmployeeSectionVerifiedByPipelineId[rec.onboardingPipelineId],
+                ),
+              });
 
               return (
                 <Card

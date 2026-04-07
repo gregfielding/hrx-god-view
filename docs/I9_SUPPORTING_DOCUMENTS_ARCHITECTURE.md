@@ -137,27 +137,39 @@ When `ensureWorkerOnboardingPipeline` creates the pipeline doc (`created === tru
 
 **Trigger:** Gen2 Firestore `onDocumentWritten` on `tenants/{tenantId}/worker_i9_supporting_documents/{documentId}` — `onWorkerI9SupportingDocumentExtract` (`functions/src/onboarding/i9SupportingDocumentExtractionTrigger.ts`). Runs when metadata changes such that a file is present (`storagePath` set under the canonical prefix). **Does not** change approval rules; reviewers remain the authority.
 
+**Assistive only:** Extraction populates `documentExtraction` for recruiter context. **Manual approve/reject is authoritative** — never auto-approve from reader output.
+
 **Idempotency / loops:** Skips when the write is only an echo of `documentExtraction` / `updatedAt` (stable fields unchanged), or when extraction for the current `storagePath` is already in a terminal state (`extraction_complete`, `extraction_failed`, `extraction_unsupported`).
 
-**Processor mapping (v1):**
+**Supported `documentType` values (when matching env vars + project/location are set):**
 
-| `documentType` | Document AI |
-|----------------|-------------|
-| `list_b_drivers_license` | US Driver License (pretrained), if `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` is set |
-| `list_a_us_passport` | **No API call** — `extraction_unsupported`. Google’s **US Passport Parser** is **private** (access request) and is being **discontinued**; HRX does not depend on it. Passports are reviewed manually. |
-| *all other types* | **No API call** — `extraction_unsupported` (including `list_b_gov_id`, List C, I-766, etc.) |
+| `documentType` | Processor (conceptual) | Env var(s) |
+|----------------|-------------------------|------------|
+| `list_c_ssn_card` | Custom `ssn_card_extractor` | `DOCUMENT_AI_PROCESSOR_SSN_CARD` |
+| `list_b_drivers_license` | **Prefer** Google **US Driver License** pretrained parser; **else** custom `dl_extractor` | `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` **or** `DOCUMENT_AI_PROCESSOR_DL_CUSTOM` |
+| `list_a_pr_card` | Custom `green_card_extractor` | `DOCUMENT_AI_PROCESSOR_GREEN_CARD` |
+| `list_a_ead` | Custom `ead_extractor` | `DOCUMENT_AI_PROCESSOR_EAD` |
+| `list_a_us_passport` | Custom `passport_extractor` | `DOCUMENT_AI_PROCESSOR_PASSPORT` |
+| `list_b_gov_id` | Custom `state_id_extractor` | `DOCUMENT_AI_PROCESSOR_STATE_ID` |
+| `list_c_birth_certificate` | Custom `birth_certificate_extractor` | `DOCUMENT_AI_PROCESSOR_BIRTH_CERTIFICATE` |
+| `other_supporting` (and any unlisted type) | *None* | `extraction_unsupported` — manual review |
 
-**Configuration (environment / `functions/.env.<project>`):**
+**Routing logic (high level):** `functions/src/onboarding/i9SupportingDocumentExtractionMapper.ts` — `resolveExtractionRouting` picks a processor id / resource name from env; `mapDocumentAiToExtractedFields` normalizes entities into the existing `documentExtraction.extractedFields` shape (same Firestore block as before). Missing env for a **routed** type → `extraction_failed` (`missing_processor_config`), not unsupported.
 
-- `DOCUMENT_AI_PROJECT_ID` — optional; defaults to `GCLOUD_PROJECT` / `GCP_PROJECT` when building processor resource names.
-- `DOCUMENT_AI_LOCATION` — e.g. `us` (must match where the driver-license processor was created).
-- `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` — full processor resource name (`projects/…/locations/…/processors/…`) **or** raw processor id (combined with project + location).
+**Driver’s license:** If `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` is set, that pretrained processor is used. If not, `DOCUMENT_AI_PROCESSOR_DL_CUSTOM` is used when set. If neither is set, extraction fails with a clear config message.
+
+**Configuration (environment / `functions/.env.<project>` + `functions/scripts/copyEnvFromRoot.js`):**
+
+- `DOCUMENT_AI_PROJECT_ID` — optional; defaults to `GCLOUD_PROJECT` / `GCP_PROJECT` when building processor resource names from a **raw** processor id.
+- `DOCUMENT_AI_LOCATION` — e.g. `us` (must match processor region).
+- `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` — full resource name **or** raw processor id.
+- `DOCUMENT_AI_PROCESSOR_DL_CUSTOM`, `DOCUMENT_AI_PROCESSOR_SSN_CARD`, `DOCUMENT_AI_PROCESSOR_GREEN_CARD`, `DOCUMENT_AI_PROCESSOR_EAD`, `DOCUMENT_AI_PROCESSOR_PASSPORT`, `DOCUMENT_AI_PROCESSOR_STATE_ID`, `DOCUMENT_AI_PROCESSOR_BIRTH_CERTIFICATE` — same (full name or id).
 
 **IAM:** Cloud Functions runtime service account needs permission to call Document AI (e.g. `roles/documentai.apiUser`) on the project that owns the processors.
 
 **Firestore field:** Server-written only — `documentExtraction` (see `I9DocumentExtractionBlock` in `src/types/i9SupportingDocumentV1.ts`). Clients do not write this block.
 
-**Admin UI:** `I9SupportingDocumentsWorkspace` shows reader status and assistive extracted fields under the review status column and in the approve confirmation dialog.
+**Admin UI:** `I9SupportingDocumentsWorkspace` shows reader status and assistive extracted fields under the review status column and in the approve confirmation dialog. Staff may optionally save **verified** corrections on the same document (`documentReview.verifiedFields` + audit timestamps) without changing approval rules; approve/reject remains explicit.
 
 ---
 

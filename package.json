@@ -76,6 +76,7 @@
     "check:parity": "ts-node scripts/checkFieldParity.ts",
     "test:mapping": "ts-node scripts/testMapping.ts",
     "test:adapter": "ts-node scripts/testDealStageAdapter.ts",
+    "test:i9-extraction": "cd functions && npx ts-node --project tsconfig.scripts.json scripts/testI9Extraction.ts",
     "seed-smart-groups": "node scripts/seedSmartGroupsFromApplications.js",
     "build:metros": "node scripts/buildMetroMasterUS.js",
     "i18n:copy": "node -e \"const fs=require('fs'); const path=require('path'); const d=path.join('public','i18n','locales'); fs.mkdirSync(d,{recursive:true}); fs.copyFileSync(path.join('i18n','locales','en.json'), path.join(d,'en.json')); fs.copyFileSync(path.join('i18n','locales','es.json'), path.join(d,'es.json'));\"",

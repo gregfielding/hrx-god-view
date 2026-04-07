@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -25,6 +25,8 @@ import {
   Slider,
   IconButton,
   Tooltip,
+  Chip,
+  Stack,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -37,12 +39,17 @@ import { doc, collection, addDoc, getDocs, query, orderBy, serverTimestamp, getD
 import { db } from '../../../firebase';
 import { computeAiScoreFromComponents } from '../../../utils/scoreSummary';
 import { useAuth } from '../../../contexts/AuthContext';
+import { DEFAULT_INTERVIEW_QUESTION_TEMPLATES } from '../../../constants/interviewQuestions';
+import type {
+  WorkerAiPrescreenInterviewKind,
+  WorkerInterviewAiBlock,
+} from '../../../types/workerAiPrescreenInterview';
 
 interface InterviewQuestion {
   id: string;
   question: string;
   answer: string;
-  type: 'text';
+  type: 'text' | 'single_select' | 'multi_select' | string;
 }
 
 interface Interview {
@@ -53,6 +60,51 @@ interface Interview {
   questions: InterviewQuestion[];
   notes?: string;
   score10?: number;
+  interviewKind?: WorkerAiPrescreenInterviewKind;
+  applicationId?: string | null;
+  ai?: WorkerInterviewAiBlock;
+}
+
+function parseInterviewAi(raw: unknown): WorkerInterviewAiBlock | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const overallScore = typeof o.overallScore === 'number' ? o.overallScore : NaN;
+  if (!Number.isFinite(overallScore)) return undefined;
+  const rec = o.recommendation;
+  const recommendation =
+    rec === 'proceed' || rec === 'review' || rec === 'caution' || rec === 'decline' ? rec : 'review';
+  const flags = Array.isArray(o.flags) ? o.flags.map((x) => String(x)) : [];
+  let subScores: WorkerInterviewAiBlock['subScores'];
+  const sub = o.subScores;
+  if (sub && typeof sub === 'object') {
+    const s = sub as Record<string, unknown>;
+    subScores = {
+      experience: typeof s.experience === 'number' ? s.experience : undefined,
+      reliability: typeof s.reliability === 'number' ? s.reliability : undefined,
+      transportation: typeof s.transportation === 'number' ? s.transportation : undefined,
+      risk: typeof s.risk === 'number' ? s.risk : undefined,
+      physical: typeof s.physical === 'number' ? s.physical : undefined,
+      fit: typeof s.fit === 'number' ? s.fit : undefined,
+      compliance: typeof s.compliance === 'number' ? s.compliance : undefined,
+    };
+  }
+  const summary = typeof o.summary === 'string' ? o.summary : undefined;
+  const model = typeof o.model === 'string' ? o.model : undefined;
+  const ct = o.computedAt as { toDate?: () => Date } | undefined;
+  const computedAt = ct && typeof ct.toDate === 'function' ? ct.toDate() : undefined;
+  return { overallScore, recommendation, flags, subScores, summary, model, computedAt };
+}
+
+function interviewSourceLabel(kind: Interview['interviewKind']): string {
+  return kind === 'worker_ai_prescreen' ? 'Worker AI pre-screen' : 'Recruiter (live)';
+}
+
+function recommendationChipColor(
+  r: WorkerInterviewAiBlock['recommendation'],
+): 'success' | 'warning' | 'error' {
+  if (r === 'proceed') return 'success';
+  if (r === 'caution' || r === 'decline') return 'error';
+  return 'warning';
 }
 
 interface InterviewTabProps {
@@ -69,19 +121,15 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
   const [submitterName, setSubmitterName] = useState<string>('');
   const [score, setScore] = useState<number>(5);
 
-  // Default interview questions
-  const defaultQuestions: InterviewQuestion[] = [
-    { id: '1', question: 'Why are you interested in this position?', answer: '', type: 'text' },
-    { id: '2', question: 'What relevant experience do you have?', answer: '', type: 'text' },
-    { id: '3', question: 'What are your greatest strengths?', answer: '', type: 'text' },
-    { id: '4', question: 'Are you able to work the required hours/shift?', answer: '', type: 'text' },
-    { id: '5', question: 'How are you planning on getting to work?', answer: '', type: 'text' },
-    { id: '6', question: 'Are you confident you would pass a drug screening?', answer: '', type: 'text' },
-    { id: '7', question: 'Is there anything in your background that might come up in a background screening?', answer: '', type: 'text' },
-    { id: '8', question: 'Additional Notes', answer: '', type: 'text' },
-  ];
+  const seedQuestionsFromTemplates = (): InterviewQuestion[] =>
+    DEFAULT_INTERVIEW_QUESTION_TEMPLATES.map((q) => ({
+      id: q.id,
+      question: q.question,
+      answer: '',
+      type: q.type,
+    }));
 
-  const [questions, setQuestions] = useState<InterviewQuestion[]>(defaultQuestions.map(q => ({ ...q })));
+  const [questions, setQuestions] = useState<InterviewQuestion[]>(() => seedQuestionsFromTemplates());
 
   useEffect(() => {
     loadInterviews();
@@ -148,6 +196,14 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
             ? data.score
             : undefined;
 
+        const interviewKind =
+          data.interviewKind === 'worker_ai_prescreen' ? 'worker_ai_prescreen' : undefined;
+        const applicationId =
+          typeof data.applicationId === 'string' || data.applicationId === null
+            ? data.applicationId
+            : undefined;
+        const ai = parseInterviewAi(data.ai);
+
         interviewsData.push({
           id: doc.id,
           createdByName,
@@ -156,6 +212,9 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           questions: Array.isArray(data.questions) ? data.questions : [],
           notes: data.notes,
           score10,
+          interviewKind,
+          applicationId: applicationId ?? undefined,
+          ai,
         } as Interview);
       });
       
@@ -277,7 +336,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
       }
 
       // Reset form
-      setQuestions(defaultQuestions.map(q => ({ ...q })));
+      setQuestions(seedQuestionsFromTemplates());
       setScore(5);
 
       // Reload interviews
@@ -360,6 +419,12 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
   };
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const latestWorkerAiPrescreen = useMemo(
+    () => interviews.find((i) => i.interviewKind === 'worker_ai_prescreen') ?? null,
+    [interviews],
+  );
+
   const handleDeleteInterview = async (e: React.MouseEvent, interviewId: string) => {
     e.stopPropagation();
     if (!uid || !window.confirm('Delete this interview? This cannot be undone.')) return;
@@ -382,6 +447,55 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {latestWorkerAiPrescreen?.ai && (
+        <Card variant="outlined" sx={{ borderColor: 'secondary.light' }}>
+          <CardHeader
+            title="Latest worker AI pre-screen"
+            titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
+            subheader={formatDate(latestWorkerAiPrescreen.createdAt)}
+          />
+          <CardContent sx={{ pt: 0 }}>
+            <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                Overall score
+              </Typography>
+              <Typography variant="h6" fontWeight={700} color="primary">
+                {latestWorkerAiPrescreen.ai.overallScore}/100
+              </Typography>
+              {latestWorkerAiPrescreen.score10 !== undefined && (
+                <Chip size="small" label={`${latestWorkerAiPrescreen.score10}/10 (mapped)`} variant="outlined" />
+              )}
+              <Chip
+                size="small"
+                label={latestWorkerAiPrescreen.ai.recommendation}
+                color={recommendationChipColor(latestWorkerAiPrescreen.ai.recommendation)}
+              />
+            </Stack>
+            {latestWorkerAiPrescreen.ai.summary ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, whiteSpace: 'pre-wrap' }}>
+                {latestWorkerAiPrescreen.ai.summary}
+              </Typography>
+            ) : null}
+            {latestWorkerAiPrescreen.ai.flags.length > 0 ? (
+              <Stack direction="row" flexWrap="wrap" gap={0.5}>
+                {latestWorkerAiPrescreen.ai.flags.map((f) => (
+                  <Chip key={f} size="small" label={f.replace(/_/g, ' ')} variant="outlined" />
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="caption" color="text.secondary">
+                No risk flags
+              </Typography>
+            )}
+            {latestWorkerAiPrescreen.applicationId ? (
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                Application ID: {latestWorkerAiPrescreen.applicationId}
+              </Typography>
+            ) : null}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Interview Form Card */}
       <Card variant="outlined">
         <CardHeader 
@@ -394,19 +508,24 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
           </Typography>
           
           <Grid container spacing={3}>
-            {questions.map((question) => (
-              <Grid item xs={12} key={question.id}>
-                <TextField
-                  label={question.question}
-                  multiline
-                  rows={question.id === '8' ? 4 : 3}
-                  fullWidth
-                  value={question.answer}
-                  onChange={(e) => handleQuestionChange(question.id, e.target.value)}
-                  variant="outlined"
-                />
-              </Grid>
-            ))}
+            {questions.map((question) => {
+              const template = DEFAULT_INTERVIEW_QUESTION_TEMPLATES.find((t) => t.id === question.id);
+              const rows = template?.multilineRows ?? 3;
+              return (
+                <Grid item xs={12} key={question.id}>
+                  <TextField
+                    label={question.question}
+                    multiline
+                    rows={rows}
+                    fullWidth
+                    value={question.answer}
+                    onChange={(e) => handleQuestionChange(question.id, e.target.value)}
+                    variant="outlined"
+                    helperText={template?.helperText}
+                  />
+                </Grid>
+              );
+            })}
 
             {/* Applicant Score Slider */}
             <Grid item xs={12}>
@@ -466,6 +585,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                 <TableHead>
                   <TableRow sx={{ bgcolor: 'grey.50' }}>
                     <TableCell sx={{ fontWeight: 600 }}>Date</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Source</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Completed By</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Score</TableCell>
                     <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
@@ -491,6 +611,14 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                             {formatDate(interview.createdAt)}
                           </Typography>
                         </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          size="small"
+                          label={interview.interviewKind === 'worker_ai_prescreen' ? 'Worker AI' : 'Recruiter'}
+                          color={interview.interviewKind === 'worker_ai_prescreen' ? 'secondary' : 'default'}
+                          variant="outlined"
+                        />
                       </TableCell>
                       <TableCell>
                         <Box display="flex" alignItems="center" gap={1}>
@@ -542,7 +670,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
         {viewInterviewDialog.interview && (
           <>
             <DialogTitle>
-              <Box display="flex" justifyContent="space-between" alignItems="center">
+              <Box display="flex" justifyContent="space-between" alignItems="center" flexWrap="wrap" gap={1}>
                 <Typography variant="h6">Interview Details</Typography>
                 <Typography variant="body2" color="text.secondary">
                   {formatDate(viewInterviewDialog.interview.createdAt)}
@@ -551,20 +679,103 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
             </DialogTitle>
             <DialogContent>
               <Box mb={2}>
+                <Stack direction="row" flexWrap="wrap" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                  <Chip
+                    size="small"
+                    label={interviewSourceLabel(viewInterviewDialog.interview.interviewKind)}
+                    color={viewInterviewDialog.interview.interviewKind === 'worker_ai_prescreen' ? 'secondary' : 'default'}
+                    variant="outlined"
+                  />
+                </Stack>
                 <Box display="flex" alignItems="center" gap={1} mb={2}>
                   <PersonIcon fontSize="small" color="action" />
                   <Typography variant="body2" fontWeight="medium">
-                    Conducted by: {viewInterviewDialog.interview.createdByName}
+                    Completed by: {viewInterviewDialog.interview.createdByName}
                   </Typography>
                 </Box>
+                {viewInterviewDialog.interview.applicationId ? (
+                  <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                    Application ID: {viewInterviewDialog.interview.applicationId}
+                  </Typography>
+                ) : null}
                 <Divider />
               </Box>
 
               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                {viewInterviewDialog.interview.ai && (
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                      AI assessment (rules-based)
+                    </Typography>
+                    <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1 }}>
+                      <Typography variant="body2">
+                        Overall: <strong>{viewInterviewDialog.interview.ai.overallScore}/100</strong>
+                      </Typography>
+                      <Chip
+                        size="small"
+                        label={viewInterviewDialog.interview.ai.recommendation}
+                        color={recommendationChipColor(viewInterviewDialog.interview.ai.recommendation)}
+                      />
+                      {viewInterviewDialog.interview.ai.model ? (
+                        <Typography variant="caption" color="text.secondary">
+                          Model: {viewInterviewDialog.interview.ai.model}
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                    {viewInterviewDialog.interview.ai.summary ? (
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 1, whiteSpace: 'pre-wrap' }}>
+                        {viewInterviewDialog.interview.ai.summary}
+                      </Typography>
+                    ) : null}
+                    {viewInterviewDialog.interview.ai.flags.length > 0 ? (
+                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
+                        {viewInterviewDialog.interview.ai.flags.map((f) => (
+                          <Chip key={f} size="small" label={f.replace(/_/g, ' ')} variant="outlined" />
+                        ))}
+                      </Stack>
+                    ) : null}
+                    {viewInterviewDialog.interview.ai.subScores &&
+                    Object.values(viewInterviewDialog.interview.ai.subScores).some((n) => typeof n === 'number') ? (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Sub-scores:{' '}
+                        {[
+                          viewInterviewDialog.interview.ai.subScores.experience != null
+                            ? `experience ${viewInterviewDialog.interview.ai.subScores.experience}`
+                            : null,
+                          viewInterviewDialog.interview.ai.subScores.reliability != null
+                            ? `reliability ${viewInterviewDialog.interview.ai.subScores.reliability}`
+                            : null,
+                          viewInterviewDialog.interview.ai.subScores.transportation != null
+                            ? `transportation ${viewInterviewDialog.interview.ai.subScores.transportation}`
+                            : null,
+                          viewInterviewDialog.interview.ai.subScores.risk != null
+                            ? `risk ${viewInterviewDialog.interview.ai.subScores.risk}`
+                            : null,
+                          viewInterviewDialog.interview.ai.subScores.physical != null
+                            ? `physical ${viewInterviewDialog.interview.ai.subScores.physical}`
+                            : null,
+                          viewInterviewDialog.interview.ai.subScores.fit != null
+                            ? `fit ${viewInterviewDialog.interview.ai.subScores.fit}`
+                            : null,
+                          viewInterviewDialog.interview.ai.subScores.compliance != null
+                            ? `compliance ${viewInterviewDialog.interview.ai.subScores.compliance}`
+                            : null,
+                        ]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </Typography>
+                    ) : null}
+                    <Divider sx={{ mt: 2 }} />
+                  </Box>
+                )}
+
                 {viewInterviewDialog.interview.questions.map((q) => (
                   <Box key={q.id}>
                     <Typography variant="subtitle2" fontWeight={600} gutterBottom>
                       {q.question}
+                      {q.type && q.type !== 'text'
+                        ? ` (${String(q.type).replace(/_/g, '-')})`
+                        : ''}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'pre-wrap' }}>
                       {q.answer || 'No answer provided'}
@@ -581,7 +792,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                     <Divider sx={{ my: 2 }} />
                     <Box>
                       <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                        Applicant Score
+                        Score (0–10 scale)
                       </Typography>
                       <Typography variant="h5" color="primary" fontWeight={700}>
                         {viewInterviewDialog.interview.score10}/10

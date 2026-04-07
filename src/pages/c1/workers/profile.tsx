@@ -46,6 +46,7 @@ const WorkerProfile: React.FC = () => {
     records: employmentRecords,
     assignmentsByEntityKey,
     stepCounts: employmentStepCounts,
+    i9EmployeeSectionVerifiedByPipelineId,
   } = useWorkerMyEmploymentList(tenantId, uid ?? null);
 
   const { rows: allI9Rows } = useWorkerI9SupportingDocumentsRows(tenantId, uid ?? null, Boolean(tenantId && uid));
@@ -300,6 +301,10 @@ const WorkerProfile: React.FC = () => {
                     {
                       i9Substatus: i9Scoped.length ? i9Vm.substatus : null,
                       totalEmploymentRecords: employmentRecords.length,
+                      i9EmployeeSectionComplete: Boolean(
+                        rec.onboardingPipelineId &&
+                          i9EmployeeSectionVerifiedByPipelineId[rec.onboardingPipelineId],
+                      ),
                     },
                   );
                   return (

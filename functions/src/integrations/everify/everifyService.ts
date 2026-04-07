@@ -224,6 +224,7 @@ export async function createAndSubmitCase(params: {
   const ext = params.caseCreator?.phoneExt;
   if (ext != null && ext !== '') overrides.case_creator_phone_number_extension = ext;
   const payload = await resolveI9PayloadForCreateCase({
+    tenantId: params.tenantId,
     userId: params.userId,
     employeeFromClient: params.i9Employee,
     serviceOverrides: overrides,

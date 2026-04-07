@@ -30,6 +30,7 @@ import {
   TableRow,
   TextField,
   Typography,
+  Divider,
 } from '@mui/material';
 import UploadFileIcon from '@mui/icons-material/UploadFile';
 import AddIcon from '@mui/icons-material/Add';
@@ -73,7 +74,25 @@ import {
 } from '../../services/i9SupportingDocumentCallables';
 import { filterI9RowsForEntityEmployment } from '../../utils/workerEmploymentWorkerSurface';
 import { useWorkerI9SupportingDocumentsRows, type I9SupportingDocRow } from '../../hooks/useWorkerI9SupportingDocumentsRows';
-import type { I9DocumentExtractionBlock } from '../../types/i9SupportingDocumentV1';
+import type {
+  I9DocumentExtractionBlock,
+  I9DocumentReviewBlock,
+  I9DocumentReviewVerifiedFields,
+} from '../../types/i9SupportingDocumentV1';
+import type { I9ReviewFieldKey } from '../../utils/i9SupportingDocumentReviewDisplay';
+import {
+  I9_REVIEW_EDITABLE_FIELD_KEYS,
+  allExtractionWarnings,
+  approveDialogSummaryLines,
+  categoryHintsFromWarnings,
+  displayReviewField,
+  hasPartialExtractedUsableFields,
+  initialFormValuesFromRow,
+  isLowConfidenceExtraction,
+  labelForI9ReviewField,
+  shouldShowStaffExtractionPanel,
+  verifiedFieldsSnapshotFromCurrentDisplay,
+} from '../../utils/i9SupportingDocumentReviewDisplay';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_TYPES = /^image\/.+|application\/pdf$/i;
@@ -109,6 +128,29 @@ function extractionChip(
   }
 }
 
+function extractionAssistLines(ext: I9DocumentExtractionBlock | undefined): string[] {
+  if (!ext) return [];
+  const ef = ext.extractedFields;
+  const lines: string[] = [];
+  if (ef?.extractedDocumentTypeLabel) lines.push(`Document: ${ef.extractedDocumentTypeLabel}`);
+  if (ef?.fullName) lines.push(`Name: ${ef.fullName}`);
+  else if (ef?.firstName || ef?.lastName) {
+    lines.push(`Name: ${[ef.firstName, ef.lastName].filter(Boolean).join(' ')}`.trim());
+  }
+  if (ef?.documentNumber) lines.push(`Document #: ${ef.documentNumber}`);
+  if (ef?.expirationDate) lines.push(`Expires: ${ef.expirationDate}`);
+  if (ef?.dateOfBirth) lines.push(`DOB: ${ef.dateOfBirth}`);
+  if (ef?.issueDate) lines.push(`Issued: ${ef.issueDate}`);
+  if (ef?.issuingState) lines.push(`State: ${ef.issuingState}`);
+  if (ef?.issuingCountry) lines.push(`Country: ${ef.issuingCountry}`);
+  const overall = ext.confidenceSummary?.overall;
+  if (typeof overall === 'number' && Number.isFinite(overall)) {
+    const pct = overall <= 1 ? Math.round(overall * 100) : Math.round(overall);
+    lines.push(`Reader confidence (avg): ${pct}%`);
+  }
+  return lines;
+}
+
 function ExtractionReviewAssist({
   ext,
   compact,
@@ -117,31 +159,23 @@ function ExtractionReviewAssist({
   compact?: boolean;
 }) {
   if (!ext || !ext.status) return null;
-  const ef = ext.extractedFields;
-  const lines: string[] = [];
-  if (ef?.fullName) lines.push(`Name: ${ef.fullName}`);
-  else if (ef?.firstName || ef?.lastName) {
-    lines.push(`Name: ${[ef.firstName, ef.lastName].filter(Boolean).join(' ')}`.trim());
-  }
-  if (ef?.documentNumber) lines.push(`Document #: ${ef.documentNumber}`);
-  if (ef?.expirationDate) lines.push(`Expires: ${ef.expirationDate}`);
-  if (ef?.dateOfBirth) lines.push(`DOB: ${ef.dateOfBirth}`);
-  const warn = [...(ext.extractionWarnings || []), ...(ef?.extractionWarnings || [])].filter(Boolean);
+  const lines = extractionAssistLines(ext);
+  const warn = [...(ext.extractionWarnings || []), ...(ext.extractedFields?.extractionWarnings || [])].filter(Boolean);
 
   if (compact) {
     return (
-      <Box sx={{ mt: 0.75, maxWidth: 320 }}>
+      <Box sx={{ mt: 0.75, maxWidth: 360 }}>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ fontWeight: 600 }}>
-          Document reader (assistive)
+          Document reader (assistive — verify on image/PDF)
         </Typography>
-        {lines.slice(0, 4).map((line) => (
-          <Typography key={line} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.4 }}>
+        {lines.slice(0, 8).map((line, i) => (
+          <Typography key={`${i}-${line.slice(0, 40)}`} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.4 }}>
             {line}
           </Typography>
         ))}
         {warn.length > 0 ? (
           <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
-            {warn.slice(0, 3).join(' · ')}
+            {warn.slice(0, 5).join(' · ')}
           </Typography>
         ) : null}
         {ext.status === 'extraction_failed' && ext.error?.message ? (
@@ -154,9 +188,9 @@ function ExtractionReviewAssist({
   }
 
   return (
-    <Box sx={{ mt: 0.75, maxWidth: 360 }}>
-      {lines.map((line) => (
-        <Typography key={line} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
+    <Box sx={{ mt: 0.75, maxWidth: 420 }}>
+      {lines.map((line, i) => (
+        <Typography key={`${i}-${line.slice(0, 40)}`} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
           {line}
         </Typography>
       ))}
@@ -164,6 +198,162 @@ function ExtractionReviewAssist({
         <Alert severity="warning" sx={{ mt: 0.75, py: 0 }}>
           {warn.join(' ')}
         </Alert>
+      ) : null}
+    </Box>
+  );
+}
+
+function StaffAiExtractedDataPanel({
+  ext,
+  review,
+  docId,
+  viewerUid,
+  reviewBusyDocId,
+  onOpenEdit,
+  onConfirmValues,
+}: {
+  ext: I9DocumentExtractionBlock | undefined;
+  review: I9DocumentReviewBlock | undefined;
+  docId: string;
+  viewerUid: string | undefined;
+  reviewBusyDocId: string | null;
+  onOpenEdit: () => void;
+  onConfirmValues: () => void;
+}) {
+  if (!shouldShowStaffExtractionPanel(ext)) return null;
+
+  const st = String(ext?.status || '');
+  const ef = ext?.extractedFields;
+  const warns = allExtractionWarnings(ext);
+  const categoryHints = categoryHintsFromWarnings(warns);
+  const lowConf = isLowConfidenceExtraction(ext);
+  const partial = hasPartialExtractedUsableFields(ext);
+  const busy = reviewBusyDocId === docId;
+
+  return (
+    <Box
+      sx={{
+        mt: 1,
+        p: 1,
+        borderRadius: 1,
+        border: '1px solid',
+        borderColor: 'divider',
+        bgcolor: 'action.hover',
+        maxHeight: 320,
+        overflow: 'auto',
+      }}
+    >
+      <Typography variant="caption" color="text.secondary" fontWeight={700} display="block" sx={{ mb: 0.75 }}>
+        AI extracted data
+      </Typography>
+
+      {st === 'extraction_unsupported' ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
+          AI extraction isn&apos;t available for this document type. Review the file manually.
+        </Typography>
+      ) : null}
+
+      {st === 'extraction_failed' ? (
+        <Alert severity="error" sx={{ py: 0, mb: 0.75 }}>
+          <Typography variant="caption" display="block">
+            {ext?.error?.message || 'Extraction failed — use the document image/PDF for review.'}
+          </Typography>
+        </Alert>
+      ) : null}
+
+      {st === 'extraction_pending' ? (
+        <Typography variant="caption" color="warning.main" display="block" sx={{ mb: 0.75 }}>
+          Reader is still running… refresh in a moment or open the file to review manually.
+        </Typography>
+      ) : null}
+
+      {(st === 'extraction_complete' || partial) && (warns.length > 0 || lowConf) ? (
+        <Alert severity="warning" sx={{ py: 0.25, mb: 0.75, '& .MuiAlert-message': { width: '100%' } }}>
+          <Typography variant="caption" component="div" fontWeight={600}>
+            Check these before relying on extracted text
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2, mb: 0 }}>
+            {warns.slice(0, 8).map((w) => (
+              <Typography key={w} variant="caption" component="li" display="list-item">
+                {w}
+              </Typography>
+            ))}
+            {lowConf ? (
+              <Typography variant="caption" component="li" display="list-item">
+                Average field confidence is low — compare to the document.
+              </Typography>
+            ) : null}
+          </Box>
+        </Alert>
+      ) : null}
+
+      {ef?.extractedDocumentTypeLabel ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
+          <strong>Type (reader)</strong>: {ef.extractedDocumentTypeLabel}
+        </Typography>
+      ) : null}
+
+      {categoryHints.length > 0 ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75 }}>
+          <strong>Category / codes</strong>: {categoryHints.join(' · ')}
+        </Typography>
+      ) : null}
+
+      {typeof ext?.confidenceSummary?.overall === 'number' && Number.isFinite(ext.confidenceSummary.overall) ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75 }}>
+          <strong>Reader confidence (avg)</strong>:{' '}
+          {ext.confidenceSummary.overall <= 1
+            ? `${Math.round(ext.confidenceSummary.overall * 100)}%`
+            : `${Math.round(ext.confidenceSummary.overall)}%`}
+        </Typography>
+      ) : null}
+
+      {st === 'extraction_complete' || partial ? (
+        <>
+          <Divider sx={{ my: 0.75 }} />
+          <Table size="small" sx={{ '& td': { border: 0, py: 0.35, verticalAlign: 'top' } }}>
+            <TableBody>
+              {I9_REVIEW_EDITABLE_FIELD_KEYS.map((key) => {
+                const { text, source } = displayReviewField(key, ext, review);
+                return (
+                  <TableRow key={key}>
+                    <TableCell sx={{ width: '38%', pr: 0.5 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {labelForI9ReviewField(key)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.5}>
+                        <Typography variant="caption" sx={{ wordBreak: 'break-word' }}>
+                          {text}
+                        </Typography>
+                        {source === 'verified' ? (
+                          <Chip size="small" label="Verified" color="success" variant="outlined" sx={{ height: 20 }} />
+                        ) : null}
+                        {source === 'extracted' ? (
+                          <Chip size="small" label="AI" variant="outlined" sx={{ height: 20, fontSize: '0.65rem' }} />
+                        ) : null}
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+          {review?.reviewedExtractionAt ? (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
+              Last verified/edited: {formatTs(review.reviewedExtractionAt)}
+            </Typography>
+          ) : null}
+          <Stack direction="row" spacing={0.75} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
+            <Button size="small" variant="outlined" disabled={busy || !viewerUid} onClick={onOpenEdit}>
+              Edit / verify
+            </Button>
+            <Button size="small" variant="text" disabled={busy || !viewerUid} onClick={onConfirmValues}>
+              Confirm values
+            </Button>
+          </Stack>
+        </>
       ) : null}
     </Box>
   );
@@ -271,6 +461,10 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
   const [previewBusyId, setPreviewBusyId] = useState<string | null>(null);
   const [uploadBusyId, setUploadBusyId] = useState<string | null>(null);
 
+  const [reviewEditDocId, setReviewEditDocId] = useState<string | null>(null);
+  const [reviewForm, setReviewForm] = useState<Record<I9ReviewFieldKey, string> | null>(null);
+  const [reviewBusyDocId, setReviewBusyDocId] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetId, setUploadTargetId] = useState<string | null>(null);
 
@@ -370,6 +564,58 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
       setActionError(formatFirebaseHttpsError(e));
     } finally {
       setRejectBusy(false);
+    }
+  };
+
+  const handleConfirmReviewValues = async (documentId: string) => {
+    if (!tenantId || !viewerUid) return;
+    const row = tableRows.find((r) => r.id === documentId);
+    if (!row) return;
+    const ext = row.data.documentExtraction as I9DocumentExtractionBlock | undefined;
+    const review = row.data.documentReview as I9DocumentReviewBlock | undefined;
+    const vf = verifiedFieldsSnapshotFromCurrentDisplay(ext, review);
+    setReviewBusyDocId(documentId);
+    setActionError(null);
+    try {
+      await updateDoc(doc(db, p.workerI9SupportingDocument(tenantId, documentId)), {
+        documentReview: {
+          verifiedFields: vf,
+          reviewedExtractionAt: serverTimestamp(),
+          reviewedExtractionBy: viewerUid,
+        },
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      setActionError(formatFirebaseHttpsError(e));
+    } finally {
+      setReviewBusyDocId(null);
+    }
+  };
+
+  const submitReviewFieldEdits = async () => {
+    if (!reviewEditDocId || !reviewForm || !tenantId || !viewerUid) return;
+    const vf: I9DocumentReviewVerifiedFields = {};
+    for (const key of I9_REVIEW_EDITABLE_FIELD_KEYS) {
+      const v = reviewForm[key].trim();
+      if (v !== '') vf[key] = v;
+    }
+    setReviewBusyDocId(reviewEditDocId);
+    setActionError(null);
+    try {
+      await updateDoc(doc(db, p.workerI9SupportingDocument(tenantId, reviewEditDocId)), {
+        documentReview: {
+          verifiedFields: vf,
+          reviewedExtractionAt: serverTimestamp(),
+          reviewedExtractionBy: viewerUid,
+        },
+        updatedAt: serverTimestamp(),
+      });
+      setReviewEditDocId(null);
+      setReviewForm(null);
+    } catch (e) {
+      setActionError(formatFirebaseHttpsError(e));
+    } finally {
+      setReviewBusyDocId(null);
     }
   };
 
@@ -733,6 +979,7 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                   workerSelf &&
                   (status === 'awaiting_upload' || status === 'rejected' || status === 'pending_review');
                 const ext = data.documentExtraction as I9DocumentExtractionBlock | undefined;
+                const review = data.documentReview as I9DocumentReviewBlock | undefined;
                 const ec = extractionChip(ext);
 
                 return (
@@ -749,6 +996,18 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                         <Box sx={{ mt: 0.5 }}>
                           <Chip size="small" label={ec.label} color={ec.color} variant="outlined" sx={{ mr: 0.5 }} />
                           <ExtractionReviewAssist ext={ext} compact />
+                          <StaffAiExtractedDataPanel
+                            ext={ext}
+                            review={review}
+                            docId={id}
+                            viewerUid={viewerUid}
+                            reviewBusyDocId={reviewBusyDocId}
+                            onOpenEdit={() => {
+                              setReviewForm(initialFormValuesFromRow(ext, review));
+                              setReviewEditDocId(id);
+                            }}
+                            onConfirmValues={() => void handleConfirmReviewValues(id)}
+                          />
                         </Box>
                       ) : null}
                       {status === 'pending_review' ? (
@@ -892,12 +1151,48 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
           <Typography variant="body2" color="text.secondary">
             {I9_APPROVE_CONFIRM_BODY}
           </Typography>
-          {approveConfirmDocId ? (
-            <ExtractionReviewAssist
-              compact
-              ext={sortedRows.find((r) => r.id === approveConfirmDocId)?.data?.documentExtraction as I9DocumentExtractionBlock | undefined}
-            />
-          ) : null}
+          {approveConfirmDocId ? (() => {
+            const approveRow = sortedRows.find((r) => r.id === approveConfirmDocId);
+            const aext = approveRow?.data?.documentExtraction as I9DocumentExtractionBlock | undefined;
+            const arev = approveRow?.data?.documentReview as I9DocumentReviewBlock | undefined;
+            const sumLines = approveDialogSummaryLines(aext, arev);
+            const sumWarns = allExtractionWarnings(aext);
+            if (!aext) {
+              return (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5 }}>
+                  No reader output for this upload yet — confirm against the file.
+                </Typography>
+              );
+            }
+            return (
+              <Box sx={{ mt: 1.5 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                  Reader summary (assistive)
+                </Typography>
+                {sumLines.length > 0 ? (
+                  sumLines.map((line, i) => (
+                    <Typography key={`${i}-${line.slice(0, 32)}`} variant="caption" color="text.secondary" display="block">
+                      {line}
+                    </Typography>
+                  ))
+                ) : (
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    No name / document # / expiration extracted — open the file to verify.
+                  </Typography>
+                )}
+                {sumWarns.length > 0 ? (
+                  <Alert severity="warning" sx={{ mt: 1, py: 0.25 }}>
+                    <Typography variant="caption" component="div">
+                      {sumWarns.slice(0, 6).join(' · ')}
+                    </Typography>
+                  </Alert>
+                ) : null}
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.25, lineHeight: 1.5 }}>
+                  Please confirm these details match the document before approving.
+                </Typography>
+              </Box>
+            );
+          })() : null}
         </DialogContent>
         <DialogActions>
           <Button
@@ -917,6 +1212,58 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
             ) : (
               'Approve'
             )}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(reviewEditDocId)}
+        onClose={() => {
+          if (reviewBusyDocId) return;
+          setReviewEditDocId(null);
+          setReviewForm(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Verify extracted details</DialogTitle>
+        <DialogContent>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5, lineHeight: 1.45 }}>
+            Optional corrections for staff review only. Clear a field and save to show the reader value again for that field.
+          </Typography>
+          {reviewForm ? (
+            <Stack spacing={1.25} sx={{ mt: 0.5 }}>
+              {I9_REVIEW_EDITABLE_FIELD_KEYS.map((key) => (
+                <TextField
+                  key={key}
+                  size="small"
+                  fullWidth
+                  label={labelForI9ReviewField(key)}
+                  value={reviewForm[key]}
+                  onChange={(ev) =>
+                    setReviewForm((prev) => (prev ? { ...prev, [key]: ev.target.value } : prev))
+                  }
+                />
+              ))}
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => {
+              setReviewEditDocId(null);
+              setReviewForm(null);
+            }}
+            disabled={Boolean(reviewBusyDocId)}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={() => void submitReviewFieldEdits()}
+            disabled={!reviewForm || Boolean(reviewBusyDocId)}
+          >
+            {reviewBusyDocId === reviewEditDocId ? <CircularProgress size={20} /> : 'Save'}
           </Button>
         </DialogActions>
       </Dialog>

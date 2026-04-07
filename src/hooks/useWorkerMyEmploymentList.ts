@@ -6,6 +6,10 @@ import type { EmploymentAssignmentSummary, EmploymentEntityKey } from '../pages/
 import type { EntityEmploymentRecord } from '../utils/workerMyEmploymentListRowModel';
 import { loadWorkerAssignmentsByEntityKey } from '../utils/loadWorkerAssignmentsByEntityKey';
 import { countPipelineProgressForEntity } from '../utils/onboardingPipelineProgress';
+import {
+  isExternalOnboardingStepVerifiedComplete,
+  parseExternalOnboardingSteps,
+} from '../utils/externalOnboardingSteps';
 
 export function useWorkerMyEmploymentList(tenantId: string | null, uid: string | null) {
   const [loading, setLoading] = useState(true);
@@ -15,6 +19,9 @@ export function useWorkerMyEmploymentList(tenantId: string | null, uid: string |
     EmploymentAssignmentSummary[]
   > | null>(null);
   const [stepCounts, setStepCounts] = useState<Record<string, { complete: number; total: number }>>({});
+  const [i9EmployeeSectionVerifiedByPipelineId, setI9EmployeeSectionVerifiedByPipelineId] = useState<
+    Record<string, boolean>
+  >({});
 
   useEffect(() => {
     if (!tenantId || !uid) {
@@ -48,10 +55,12 @@ export function useWorkerMyEmploymentList(tenantId: string | null, uid: string |
   useEffect(() => {
     if (!tenantId || records.length === 0) {
       setStepCounts({});
+      setI9EmployeeSectionVerifiedByPipelineId({});
       return;
     }
     const loadCounts = async () => {
       const counts: Record<string, { complete: number; total: number }> = {};
+      const i9Verified: Record<string, boolean> = {};
       await Promise.all(
         records.map(async (rec) => {
           if (!rec.onboardingPipelineId) return;
@@ -61,15 +70,21 @@ export function useWorkerMyEmploymentList(tenantId: string | null, uid: string |
             const data = snap.data();
             const steps = Array.isArray(data?.steps) ? data.steps : [];
             counts[rec.onboardingPipelineId] = countPipelineProgressForEntity(steps, rec.entityKey);
+            const ext = parseExternalOnboardingSteps(data?.externalOnboardingSteps);
+            const recI9 = ext?.i9_employee_section;
+            i9Verified[rec.onboardingPipelineId] =
+              Boolean(recI9 && isExternalOnboardingStepVerifiedComplete(recI9));
           } catch {
             counts[rec.onboardingPipelineId] = { complete: 0, total: 0 };
+            i9Verified[rec.onboardingPipelineId] = false;
           }
         })
       );
       setStepCounts(counts);
+      setI9EmployeeSectionVerifiedByPipelineId(i9Verified);
     };
     void loadCounts();
   }, [tenantId, records]);
 
-  return { loading, records, assignmentsByEntityKey, stepCounts };
+  return { loading, records, assignmentsByEntityKey, stepCounts, i9EmployeeSectionVerifiedByPipelineId };
 }

@@ -12,6 +12,10 @@ import {
   deriveEverifyI551MaskFromAlienNumber,
   normalizeI551NumberForEverifyApi,
 } from './everifyI551DocumentNumber';
+import {
+  i9SupportingApprovedToI9CaseFlatPartial,
+  type I9SupportingDocLike,
+} from '../../utils/i9SupportingToEverifyMerge';
 
 const REQUIRED_FIELDS = [
   'first_name',
@@ -262,12 +266,46 @@ function assignDefined(target: Record<string, unknown>, source: Record<string, u
   }
 }
 
+const I9_SUPPORTING_IDENTITY_KEYS = ['first_name', 'last_name', 'date_of_birth'] as const;
+
+/** Approved I-9 supporting docs: document fields always merge; identity from extraction only fills blanks. */
+function applyApprovedI9SupportingToMerged(
+  merged: Record<string, unknown>,
+  partial: Record<string, string>,
+): void {
+  for (const [k, v] of Object.entries(partial)) {
+    if ((I9_SUPPORTING_IDENTITY_KEYS as readonly string[]).includes(k)) continue;
+    if (v === undefined) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    merged[k] = v;
+  }
+  for (const k of I9_SUPPORTING_IDENTITY_KEYS) {
+    const v = partial[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v === 'string' && v.trim() === '') continue;
+    const cur = merged[k];
+    if (cur === undefined || cur === null || (typeof cur === 'string' && String(cur).trim() === '')) {
+      merged[k] = v;
+    }
+  }
+}
+
+async function loadApprovedI9SupportingPartial(tenantId: string, userId: string): Promise<Record<string, string>> {
+  const id = String(userId || '').trim();
+  const tid = String(tenantId || '').trim();
+  if (!id || !tid) return {};
+  const snap = await admin.firestore().collection(`tenants/${tid}/worker_i9_supporting_documents`).where('userId', '==', id).get();
+  const rows: I9SupportingDocLike[] = snap.docs.map((d) => d.data() as I9SupportingDocLike);
+  return i9SupportingApprovedToI9CaseFlatPartial(rows);
+}
+
 /**
  * Canonical path for everifyCreateCase: optional env defaults → Firestore user profile hints →
  * explicit employee fields from the client (admin UI) → hire date + case creator overrides.
  * NEVER log merged payload.
  */
 export async function resolveI9PayloadForCreateCase(params: {
+  tenantId: string;
   userId: string;
   employeeFromClient?: Partial<I9CaseFlat> | null;
   serviceOverrides: Partial<I9CaseFlat>;
@@ -281,6 +319,9 @@ export async function resolveI9PayloadForCreateCase(params: {
 
   const hints = await loadUserI9HintsFromFirestore(params.userId);
   assignDefined(merged, hints);
+
+  const fromSupporting = await loadApprovedI9SupportingPartial(params.tenantId, params.userId);
+  applyApprovedI9SupportingToMerged(merged, fromSupporting);
 
   if (params.employeeFromClient && typeof params.employeeFromClient === 'object') {
     assignDefined(merged, params.employeeFromClient as Record<string, unknown>);

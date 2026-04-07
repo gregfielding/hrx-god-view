@@ -1472,8 +1472,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   const showContent = true; // Grid always visible; Workforce selector is in Worker Pool card, Shift selector is in Shift Details card
   // Assignments column: workers placed/assigned for this shift. When a specific day is selected (multi-day gig), show only that day.
   const assignedWorkers = assignmentWorkersList;
-  // Exclude cancelled. For multi-day gig: when a specific day is selected, show placement-only + assigned for that day;
-  // when "All Days" is selected, show only placement-only (day-specific assignments appear only when that day is selected).
+  // Exclude cancelled. For multi-day gig: when a specific day is selected, show placement-only + assigned for that day.
+  // When "All Days" is selected, show everyone on this shift (placed-only or any assignment row). Filtering to
+  // placement-only only here made workers vanish as soon as an assignment was created (Offer / Accept).
   const displayedAssignedWorkers = useMemo(() => {
     const notCancelled = assignedWorkers.filter(
       (w) => w.assignmentStatus !== 'cancelled' && w.assignmentStatus !== 'canceled',
@@ -1484,7 +1485,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       );
     }
     if (isGigMultiDay && !selectedDay) {
-      return notCancelled.filter((w) => w.isPlacementOnly);
+      return notCancelled;
     }
     return notCancelled;
   }, [assignedWorkers, isGigMultiDay, selectedDay]);
@@ -1596,9 +1597,9 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     }
   };
 
-  // --- Single-day selected (no "All Days"): left = placed/assigned for that day only, right = labor pool for that day only ---
+  // --- Multi-day gig: day picker filters assignment maps + displayed rows; "All Days" shows full shift roster. ---
   // Assignment maps are filtered by selectedDay only when isGigMultiDay (so single-day shifts show all rows). displayedAssignedWorkers
-  // shows placement-only + assignments for selected day. poolExcludeIds = placed/assigned for selected day, so availableWorkers
+  // shows placement-only + assignments for selected day, or everyone on shift when All Days. poolExcludeIds = placed/assigned for selected day, so availableWorkers
   // = workforce minus that set. Drag/drop and Offer use selectedDay (applyDate) when set.
   // Worker Pool: exclude anyone placed or assigned for the selected day (so they don't appear for drag-and-drop again).
   // Career: exclude anyone placed/assigned on any shift. Gig/other: exclude only placed/assigned for the selected day.

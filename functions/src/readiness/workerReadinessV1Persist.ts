@@ -86,6 +86,31 @@ function coerceExistingOverallWorkerState(raw: unknown): WorkerState | null {
   return WORKER_STATES.has(s) ? s : null;
 }
 
+/**
+ * Canonical JSON for equality — Firestore may retain extra keys on `profileReadiness` that make
+ * `JSON.stringify(existing) === JSON.stringify(next)` always false, causing persist on every
+ * `users/{uid}` write and a trigger feedback loop (console “flashing” user docs).
+ */
+function stableJsonForProfileReadiness(pr: WorkerProfileReadinessV1 | null): string {
+  if (!pr) return '';
+  try {
+    const sections = Array.isArray(pr.sections)
+      ? pr.sections.map((s) => ({ id: String((s as { id?: string }).id || ''), state: String((s as { state?: string }).state || '') }))
+      : [];
+    const normalized = {
+      status: pr.status,
+      completionPercent: pr.completionPercent,
+      sections,
+      blockingItemIds: [...pr.blockingItemIds].map(String).sort(),
+      importantItemIds: [...pr.importantItemIds].map(String).sort(),
+      recommendedItemIds: [...pr.recommendedItemIds].map(String).sort(),
+    };
+    return JSON.stringify(normalized);
+  } catch {
+    return '';
+  }
+}
+
 export async function recomputeWorkerReadinessV1ForUser(
   db: admin.firestore.Firestore,
   uid: string
@@ -177,11 +202,7 @@ export function workerReadinessV1PayloadEquals(args: {
   if (existingVersion !== WORKER_READINESS_V1_EVALUATOR_VERSION) return false;
   if (existingOverall !== nextOverall) return false;
   if (!existingProfile) return false;
-  try {
-    return JSON.stringify(existingProfile) === JSON.stringify(nextProfile);
-  } catch {
-    return false;
-  }
+  return stableJsonForProfileReadiness(existingProfile) === stableJsonForProfileReadiness(nextProfile);
 }
 
 export function buildWorkerReadinessV1WritePayload(args: {

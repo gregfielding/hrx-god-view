@@ -6,6 +6,14 @@
 export const I9_EMPLOYMENT_PURPOSE =
   'Upload and review List A or List B + C documents needed to complete the employer portion of the I-9.';
 
+/** Shown when payroll I-9 is already verified — supporting-doc workflow is optional. */
+export const I9_EMPLOYMENT_OPTIONAL_WHEN_I9_VERIFIED =
+  'This worker’s I-9 is already verified in payroll. Uploads and review here are optional — useful for HRX records, E-Verify prep, or audits.';
+
+export const I9_HELPER_REQUIREMENT_HEADING = 'If you use this helper:';
+
+export const I9_HELPER_REQUIREMENT_HEADING_WHEN_I9_PENDING = 'Required to complete I-9:';
+
 /** Employment tab — admin-facing (system-driven onboarding). */
 export const I9_EMPLOYMENT_ADMIN_INTRO =
   'Workers upload List A or List B + C from their Employment page as soon as I-9 applies — no separate “request” step. Use Review documents for approvals, or send a reminder below. Manual rows are only for rare recovery.';
@@ -123,6 +131,9 @@ export const I9_APPROVE_CONFIRM_BODY =
 /** Spanish-ready (draft) — same structure for i18n files. */
 export const i9SupportingDocumentsEmploymentStringsEs = {
   purpose: I9_EMPLOYMENT_PURPOSE,
+  optionalWhenI9Verified: I9_EMPLOYMENT_OPTIONAL_WHEN_I9_VERIFIED,
+  helperRequirementHeading: I9_HELPER_REQUIREMENT_HEADING,
+  helperRequirementHeadingWhenPending: I9_HELPER_REQUIREMENT_HEADING_WHEN_I9_PENDING,
   workerUploadHeading: 'Sube tus documentos del I-9',
   pathChoiceTitle: '¿Qué vas a subir?',
   pathListA: 'Un documento de la Lista A (identidad y autorización de trabajo)',

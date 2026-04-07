@@ -17,6 +17,9 @@ import {
 } from '../utils/onboardingQueueBuilders';
 import type { EmploymentEntityKey } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import { deriveC1EntityKeyFromEntityName } from '../utils/c1EntityWorkAuthorizationUi';
+import { normalizeEntityKey } from '../utils/employmentEntityPresentation';
+import type { WorkerPayrollAccount } from '../types/payroll';
+import { workerPayrollAccountId } from '../types/payroll';
 
 const PIPELINE_LIMIT = 400;
 const EV_CASE_LIMIT = 300;
@@ -24,6 +27,7 @@ const EV_CASE_LIMIT = 300;
 const ENTITY_EMPLOYMENT_CHUNK_SIZE = 64;
 /** How many chunks run in parallel; keeps concurrency ~2× chunk size reads at a time. */
 const ENTITY_EMPLOYMENT_PARALLEL_CHUNKS = 2;
+const PAYROLL_ACCOUNT_CHUNK_SIZE = 40;
 
 async function loadAssignmentAndJobOrderMaps(
   tenantId: string,
@@ -114,6 +118,35 @@ async function loadAssignmentAndJobOrderMaps(
   return { assignmentById, jobOrderById };
 }
 
+async function mergeWorkerPayrollAccountChunk(
+  tenantId: string,
+  docIds: string[],
+  out: Record<string, WorkerPayrollAccount | undefined>,
+): Promise<void> {
+  const settled = await Promise.allSettled(
+    docIds.map(async (docId) => {
+      const snap = await getDoc(doc(db, p.workerPayrollAccount(tenantId, docId)));
+      return { docId, snap };
+    }),
+  );
+  for (let j = 0; j < settled.length; j++) {
+    const entry = settled[j];
+    const docId = docIds[j];
+    if (entry.status === 'fulfilled') {
+      const { snap } = entry.value;
+      if (snap.exists()) {
+        out[docId] = snap.data() as WorkerPayrollAccount;
+      }
+    } else {
+      console.error('[useOnboardingTaxPayrollQueue] worker payroll account getDoc failed', {
+        tenantId,
+        docId,
+        reason: entry.reason,
+      });
+    }
+  }
+}
+
 async function mergeEntityEmploymentChunk(
   tenantId: string,
   chunk: string[],
@@ -156,6 +189,9 @@ export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
     Array<{ id: string; name: string; entityCode: string }>
   >([]);
   const [everifyCases, setEverifyCases] = useState<EverifyCaseInput[]>([]);
+  const [payrollAccountByDocId, setPayrollAccountByDocId] = useState<
+    Record<string, WorkerPayrollAccount | undefined>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
@@ -329,6 +365,44 @@ export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
     };
   }, [tenantId, employmentByPipelineId, pipelines]);
 
+  useEffect(() => {
+    if (!tenantId || pipelines.length === 0) {
+      setPayrollAccountByDocId({});
+      return;
+    }
+    const ids = new Set<string>();
+    for (const pipe of pipelines) {
+      const uid = String(pipe.userId || '').trim();
+      const ek =
+        normalizeEntityKey(pipe.entityKey as string | undefined) ||
+        String(pipe.entityKey || '').trim().toLowerCase();
+      if (!uid || !ek) continue;
+      ids.add(workerPayrollAccountId(uid, ek));
+    }
+    const list = Array.from(ids).sort();
+    if (list.length === 0) {
+      setPayrollAccountByDocId({});
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const out: Record<string, WorkerPayrollAccount | undefined> = {};
+      try {
+        for (let i = 0; i < list.length; i += PAYROLL_ACCOUNT_CHUNK_SIZE) {
+          if (cancelled) return;
+          const chunk = list.slice(i, i + PAYROLL_ACCOUNT_CHUNK_SIZE);
+          await mergeWorkerPayrollAccountChunk(tenantId, chunk, out);
+        }
+      } catch (e) {
+        console.error('[useOnboardingTaxPayrollQueue] payroll account batch load failed', e);
+      }
+      if (!cancelled) setPayrollAccountByDocId(out);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, pipelines]);
+
   const userIdsKey = useMemo(() => {
     const u = new Set<string>();
     pipelines.forEach((p) => {
@@ -386,6 +460,7 @@ export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
         jobOrderById,
         everifySelectCaseByUserId,
         entityIdToKey,
+        payrollAccountByDocId,
       ),
     [
       pipelines,
@@ -395,6 +470,7 @@ export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
       jobOrderById,
       everifySelectCaseByUserId,
       entityIdToKey,
+      payrollAccountByDocId,
     ],
   );
 

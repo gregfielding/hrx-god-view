@@ -65,7 +65,17 @@ export interface I9DocumentExtractionBlock {
   requestedAt?: unknown | null;
   completedAt?: unknown | null;
   error?: { code?: string; message?: string; detail?: string } | null;
-  processorType?: 'us_driver_license' | 'us_passport' | null;
+  processorType?:
+    | 'us_driver_license'
+    | 'us_passport'
+    | 'custom_dl'
+    | 'custom_ssn_card'
+    | 'custom_green_card'
+    | 'custom_ead'
+    | 'custom_passport'
+    | 'custom_state_id'
+    | 'custom_birth_certificate'
+    | null;
   processorResourceName?: string | null;
   sourceStoragePath?: string | null;
   extractedFields?: {
@@ -90,8 +100,26 @@ export interface I9DocumentExtractionBlock {
   updatedAt?: unknown;
 }
 
+/** Recruiter-confirmed corrections on top of assistive extraction (optional; never required to approve). */
+export interface I9DocumentReviewVerifiedFields {
+  fullName?: string | null;
+  documentNumber?: string | null;
+  dateOfBirth?: string | null;
+  expirationDate?: string | null;
+  issueDate?: string | null;
+  issuingState?: string | null;
+  issuingCountry?: string | null;
+}
+
+export interface I9DocumentReviewBlock {
+  verifiedFields?: I9DocumentReviewVerifiedFields;
+  reviewedExtractionAt?: unknown | null;
+  reviewedExtractionBy?: string | null;
+}
+
 export type I9SupportingDocumentV1 = I9SupportingDocumentV1Core &
   I9SupportingDocumentV1OptionalContext &
   I9SupportingDocumentV1ExtendedFields & {
     documentExtraction?: I9DocumentExtractionBlock;
+    documentReview?: I9DocumentReviewBlock;
   };
