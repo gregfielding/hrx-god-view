@@ -53,6 +53,45 @@ export interface I9SupportingDocumentV1ExtendedFields {
   uploadedContentType?: string | null;
 }
 
+/** Google Document AI — server-written only; assistive for review (not approval). */
+export type I9DocumentExtractionStatus =
+  | 'extraction_pending'
+  | 'extraction_complete'
+  | 'extraction_failed'
+  | 'extraction_unsupported';
+
+export interface I9DocumentExtractionBlock {
+  status: I9DocumentExtractionStatus;
+  requestedAt?: unknown | null;
+  completedAt?: unknown | null;
+  error?: { code?: string; message?: string; detail?: string } | null;
+  processorType?: 'us_driver_license' | 'us_passport' | null;
+  processorResourceName?: string | null;
+  sourceStoragePath?: string | null;
+  extractedFields?: {
+    documentCategory?: 'passport' | 'driver_license' | 'other';
+    documentNumber?: string | null;
+    firstName?: string | null;
+    lastName?: string | null;
+    fullName?: string | null;
+    dateOfBirth?: string | null;
+    expirationDate?: string | null;
+    issueDate?: string | null;
+    issuingState?: string | null;
+    issuingCountry?: string | null;
+    mrzCode?: string | null;
+    extractedDocumentTypeLabel?: string | null;
+    extractionWarnings?: string[];
+  } | null;
+  extractedRawEntities?: Array<{ type?: string; mentionText?: string; confidence?: number }>;
+  extractionWarnings?: string[];
+  confidenceSummary?: { overall?: number; byField?: Record<string, number> };
+  documentAiProcessorVersion?: string | null;
+  updatedAt?: unknown;
+}
+
 export type I9SupportingDocumentV1 = I9SupportingDocumentV1Core &
   I9SupportingDocumentV1OptionalContext &
-  I9SupportingDocumentV1ExtendedFields;
+  I9SupportingDocumentV1ExtendedFields & {
+    documentExtraction?: I9DocumentExtractionBlock;
+  };

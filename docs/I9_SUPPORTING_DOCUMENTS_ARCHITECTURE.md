@@ -120,6 +120,34 @@ Updates to “last used” should be **non-destructive** patches; they do not ch
 
 ---
 
+## Document reader (Google Document AI) — v1
+
+**Trigger:** Gen2 Firestore `onDocumentWritten` on `tenants/{tenantId}/worker_i9_supporting_documents/{documentId}` — `onWorkerI9SupportingDocumentExtract` (`functions/src/onboarding/i9SupportingDocumentExtractionTrigger.ts`). Runs when metadata changes such that a file is present (`storagePath` set under the canonical prefix). **Does not** change approval rules; reviewers remain the authority.
+
+**Idempotency / loops:** Skips when the write is only an echo of `documentExtraction` / `updatedAt` (stable fields unchanged), or when extraction for the current `storagePath` is already in a terminal state (`extraction_complete`, `extraction_failed`, `extraction_unsupported`).
+
+**Processor mapping (v1):**
+
+| `documentType` | Document AI |
+|----------------|-------------|
+| `list_b_drivers_license` | US Driver License (pretrained), if `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` is set |
+| `list_a_us_passport` | **No API call** — `extraction_unsupported`. Google’s **US Passport Parser** is **private** (access request) and is being **discontinued**; HRX does not depend on it. Passports are reviewed manually. |
+| *all other types* | **No API call** — `extraction_unsupported` (including `list_b_gov_id`, List C, I-766, etc.) |
+
+**Configuration (environment / `functions/.env.<project>`):**
+
+- `DOCUMENT_AI_PROJECT_ID` — optional; defaults to `GCLOUD_PROJECT` / `GCP_PROJECT` when building processor resource names.
+- `DOCUMENT_AI_LOCATION` — e.g. `us` (must match where the driver-license processor was created).
+- `DOCUMENT_AI_PROCESSOR_US_DRIVER_LICENSE` — full processor resource name (`projects/…/locations/…/processors/…`) **or** raw processor id (combined with project + location).
+
+**IAM:** Cloud Functions runtime service account needs permission to call Document AI (e.g. `roles/documentai.apiUser`) on the project that owns the processors.
+
+**Firestore field:** Server-written only — `documentExtraction` (see `I9DocumentExtractionBlock` in `src/types/i9SupportingDocumentV1.ts`). Clients do not write this block.
+
+**Admin UI:** `I9SupportingDocumentsWorkspace` shows reader status and assistive extracted fields under the review status column and in the approve confirmation dialog.
+
+---
+
 ## Production access model (V1)
 
 ### A. Storage Rules (summary)

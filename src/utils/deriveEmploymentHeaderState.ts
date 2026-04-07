@@ -434,6 +434,7 @@ export function deriveEmploymentHeaderStateWorkerListFallback(args: {
 
   if (ee === 'terminated') return 'terminated';
   if (ee === 'inactive') return 'inactive';
+  if (ee === 'blocked') return 'action_required';
   if (ee === 'active') {
     const mode = String(args.employmentEntryMode || '').toLowerCase();
     if (mode === 'on_call_pool' && args.hasNonTerminalAssignment === false) return 'ready';

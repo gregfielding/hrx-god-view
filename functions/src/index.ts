@@ -290,6 +290,7 @@ export {
   createWorkerI9SupportingDocumentRequest,
   reviewWorkerI9SupportingDocument,
 } from './onboarding/i9SupportingDocumentWorkflowCallables';
+export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

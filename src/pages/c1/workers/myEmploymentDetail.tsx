@@ -37,11 +37,16 @@ import {
   deriveEmploymentHeaderState,
   deriveEmploymentHeaderStateWorkerListFallback,
   employmentBlockerItemFromPathRow,
-  employmentHeaderStateLabel,
   primaryAssignmentRowForHeader,
 } from '../../../utils/deriveEmploymentHeaderState';
 import { getWorkerPayrollAccount } from '../../../utils/workerPayrollAccount';
-import { getPayrollStatusLabel } from '../../../types/payroll';
+import WorkerEntityI9Section from '../../../components/worker/employment/WorkerEntityI9Section';
+import {
+  omitWorkerPayrollChecklistRows,
+  workerEmploymentEntityPageHeadline,
+  workerEmploymentSurfaceStatusLabel,
+  workerPayrollSetupStatusLabel,
+} from '../../../utils/workerEmploymentWorkerSurface';
 import { getComplianceTypeLabel, getComplianceStatusDisplayLabel } from '../../../types/compliance';
 import { getExpirationState, hasExpiredCompliance, hasExpiringSoonCompliance } from '../../../utils/complianceExpiration';
 import { getWorkerReadiness, type ReadinessStatus } from '../../../utils/workerReadiness';
@@ -147,7 +152,7 @@ const WorkerEntityPayrollLinkButtons: React.FC<{
           rel="noopener noreferrer"
           component="a"
         >
-          Payroll login (existing account)
+          Already started? Sign in
         </Button>
       ) : null}
       {portalAfterCompleteHref ? (
@@ -414,6 +419,8 @@ const MyEmploymentDetailPage: React.FC = () => {
   const [workerBuckets, setWorkerBuckets] = useState<Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]> | null>(
     null
   );
+  /** Full path rows before payroll omission — used for pathCoversPayroll / work auth. */
+  const [onboardingPathFlatRaw, setOnboardingPathFlatRaw] = useState<EmploymentOnboardingRow[]>([]);
   const [pathLoading, setPathLoading] = useState(false);
   const [headerPathCtx, setHeaderPathCtx] = useState<{
     assignments: EmploymentAssignmentSummary[];
@@ -511,6 +518,7 @@ const MyEmploymentDetailPage: React.FC = () => {
   useEffect(() => {
     if (!tenantId || !uid || !employment?.entityId) {
       setWorkerBuckets(null);
+      setOnboardingPathFlatRaw([]);
       setHeaderPathCtx(null);
       return;
     }
@@ -535,6 +543,7 @@ const MyEmploymentDetailPage: React.FC = () => {
       setPathLoading(false);
       if (!args) {
         setWorkerBuckets({ ...EMPTY_BUCKETS });
+        setOnboardingPathFlatRaw([]);
         setHeaderPathCtx(null);
         return;
       }
@@ -583,7 +592,9 @@ const MyEmploymentDetailPage: React.FC = () => {
       });
       const groups = filterOnboardingPathGroupsForWorkerUi(relationshipOnly);
       const flat = dedupeWorkerOnboardingRows(flattenFilteredWorkerGroups(groups));
-      setWorkerBuckets(partitionWorkerOnboardingRows(flat));
+      setOnboardingPathFlatRaw(flat);
+      const flatNoPayroll = omitWorkerPayrollChecklistRows(flat);
+      setWorkerBuckets(partitionWorkerOnboardingRows(flatNoPayroll));
     })();
     return () => {
       cancelled = true;
@@ -666,8 +677,8 @@ const MyEmploymentDetailPage: React.FC = () => {
     });
   }, [employment, headerPathCtx]);
 
-  const pathCoversPayroll = workerPathCoversPayrollRow(allPathRows);
-  const pathCoversWorkAuth = workerPathCoversWorkAuthRows(allPathRows);
+  const pathCoversPayroll = workerPathCoversPayrollRow(onboardingPathFlatRaw);
+  const pathCoversWorkAuth = workerPathCoversWorkAuthRows(onboardingPathFlatRaw);
 
   const payrollComplete = payrollAccount?.status === 'complete';
   const hasEntityPayrollLinks = Boolean(payrollSignupUrl?.trim() || payrollPortalLoginUrl?.trim());
@@ -704,7 +715,8 @@ const MyEmploymentDetailPage: React.FC = () => {
     );
   }
 
-  const headerStatusLabel = employmentHeaderStateLabel(employmentHeaderState);
+  const headerStatusLabel = workerEmploymentSurfaceStatusLabel(employmentHeaderState);
+  const headerHeadline = workerEmploymentEntityPageHeadline(employmentHeaderState, pathRelationshipHistorical);
   const startedAt = employment.onboardingStartedAt?.toDate?.();
   const hiredAt = employment.hiredAt?.toDate?.();
   const isOnboarding = employment.status === 'onboarding';
@@ -738,6 +750,8 @@ const MyEmploymentDetailPage: React.FC = () => {
   };
 
   const showOnboardingPath = workerBuckets !== null && (isOnboarding || allPathRows.length > 0);
+  const showPayrollCard = Boolean(payrollAccount || hasEntityPayrollLinks || pathCoversPayroll);
+  const payrollSetupDisplayLabel = workerPayrollSetupStatusLabel(payrollAccount?.status);
 
   return (
     <Container maxWidth="sm" sx={{ py: 2 }}>
@@ -778,6 +792,9 @@ const MyEmploymentDetailPage: React.FC = () => {
             <Typography variant="h6" fontWeight={600}>
               {employment.entityName || employment.entityKey || 'Entity'}
             </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.75 }}>
+              {headerHeadline}
+            </Typography>
             <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" sx={{ mt: 0.5 }}>
               <Chip
                 label={headerStatusLabel}
@@ -794,7 +811,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                           : employmentHeaderState === 'waiting_on_company'
                             ? 'info'
                             : employmentHeaderState === 'in_progress'
-                              ? 'warning'
+                              ? 'primary'
                               : 'default'
                 }
               />
@@ -831,11 +848,24 @@ const MyEmploymentDetailPage: React.FC = () => {
               </Alert>
             ) : null}
             <WorkerBucketCard
-              title={pathRelationshipHistorical ? 'Record: your past tasks' : 'Your tasks'}
+              title={pathRelationshipHistorical ? 'Record: your past tasks' : 'What you need to do'}
               rows={workerBuckets.your_tasks}
               debugMode={pathDebugMode}
               pathHistorical={pathRelationshipHistorical}
             />
+          </>
+        )}
+
+        {tenantId && uid ? (
+          <WorkerEntityI9Section
+            tenantId={tenantId}
+            workerUserId={uid}
+            requestedForEntityId={employment.entityId ?? null}
+          />
+        ) : null}
+
+        {showOnboardingPath && workerBuckets && (
+          <>
             <WorkerBucketCard
               title={pathRelationshipHistorical ? 'Record: previously with your hiring team' : 'Waiting on your hiring team'}
               rows={workerBuckets.waiting_team}
@@ -851,10 +881,10 @@ const MyEmploymentDetailPage: React.FC = () => {
             <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
               <CardContent>
                 <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
-                  {pathRelationshipHistorical ? 'Completed & resources (record)' : 'Completed & resources'}
+                  {pathRelationshipHistorical ? 'Completed & resources (record)' : 'Completed items & resources'}
                 </Typography>
                 {workerBuckets.completed.length > 0 ? (
-                  <Stack spacing={1.25} divider={<Divider flexItem />} sx={{ mb: hasEntityPayrollLinks ? 2 : 0 }}>
+                  <Stack spacing={1.25} divider={<Divider flexItem />}>
                     {workerBuckets.completed.map((row) => (
                       <WorkerOnboardingPathRowItem
                         key={row.rowId}
@@ -864,78 +894,43 @@ const MyEmploymentDetailPage: React.FC = () => {
                       />
                     ))}
                   </Stack>
-                ) : null}
-                {(payrollAccount || hasEntityPayrollLinks) && (
-                  <Box sx={{ mt: workerBuckets.completed.length > 0 ? 0 : 0 }}>
-                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, display: 'block', mb: 1 }}>
-                      Payroll
-                    </Typography>
-                    {payrollAccount && !pathCoversPayroll && (
-                      <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 1 }}>
-                        <Chip
-                          label={getPayrollStatusLabel(payrollAccount.status)}
-                          size="small"
-                          variant="outlined"
-                          color={payrollAccount.status === 'complete' ? 'success' : 'default'}
-                        />
-                      </Stack>
-                    )}
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      {payrollAccount?.status === 'complete'
-                        ? 'Payroll setup is complete. Use the portal link to view pay history and tax documents when available.'
-                        : payrollAccount?.status === 'invite_sent' ||
-                            payrollAccount?.status === 'account_created' ||
-                            payrollAccount?.status === 'in_progress'
-                          ? 'Finish payroll and banking with our payroll partner.'
-                          : 'Set up payroll and banking so you can get paid.'}
-                    </Typography>
-                    <WorkerEntityPayrollLinkButtons
-                      payrollSignupUrl={payrollSignupUrl}
-                      payrollPortalLoginUrl={payrollPortalLoginUrl}
-                      payrollComplete={payrollComplete}
-                    />
-                  </Box>
-                )}
-                {workerBuckets.completed.length === 0 && !payrollAccount && !hasEntityPayrollLinks ? (
+                ) : (
                   <Typography variant="body2" color="text.secondary">
                     Nothing completed yet. Finished items will show up here.
                   </Typography>
-                ) : null}
+                )}
               </CardContent>
             </Card>
           </>
         )}
 
-        {!(showOnboardingPath && workerBuckets) && (payrollAccount || hasEntityPayrollLinks) && (
+        {showPayrollCard && (
           <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
             <CardContent>
-              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                Payroll
+              <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+                Payroll setup
               </Typography>
-              {payrollAccount && !pathCoversPayroll && (
-                <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 1 }}>
-                  <Chip
-                    label={getPayrollStatusLabel(payrollAccount.status)}
-                    size="small"
-                    variant="outlined"
-                    color={payrollAccount.status === 'complete' ? 'success' : 'default'}
-                  />
-                </Stack>
-              )}
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                {payrollAccount?.status === 'complete'
-                  ? 'Payroll setup is complete. Use the portal link to view pay history and tax documents when available.'
-                  : payrollAccount?.status === 'invite_sent' ||
-                      payrollAccount?.status === 'account_created' ||
-                      payrollAccount?.status === 'in_progress'
-                    ? 'Complete your payroll setup using the link below.'
-                    : 'Set up payroll and banking so you can get paid.'}
+              <Chip
+                label={payrollSetupDisplayLabel}
+                size="small"
+                variant="outlined"
+                color={payrollComplete ? 'success' : payrollSetupDisplayLabel === 'Not started' ? 'default' : 'primary'}
+              />
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.25, mb: 1 }}>
+                {payrollComplete
+                  ? 'You’re set up to get paid. Use the payroll portal when you need pay history or tax forms.'
+                  : 'Complete payroll and tax information with our payroll partner so you can get paid.'}
               </Typography>
               <WorkerEntityPayrollLinkButtons
                 payrollSignupUrl={payrollSignupUrl}
                 payrollPortalLoginUrl={payrollPortalLoginUrl}
                 payrollComplete={payrollComplete}
               />
+              {!payrollComplete && !hasEntityPayrollLinks && pathCoversPayroll ? (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+                  Your hiring team will add a setup link when it’s ready.
+                </Typography>
+              ) : null}
             </CardContent>
           </Card>
         )}

@@ -69,6 +69,8 @@ function substatusChipColor(
       return 'primary';
     case 'upload_requested':
       return 'warning';
+    case 'action_needed':
+      return 'warning';
     case 'rejected':
       return 'error';
     default:
@@ -175,6 +177,22 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
             />
           </Stack>
 
+          {vm.compactContextLines.length > 0 ? (
+            <Box sx={{ mb: 1 }}>
+              {vm.compactContextLines.map((line) => (
+                <Typography
+                  key={line}
+                  variant="caption"
+                  color="text.secondary"
+                  display="block"
+                  sx={{ lineHeight: 1.45, fontStyle: 'italic' }}
+                >
+                  {line}
+                </Typography>
+              ))}
+            </Box>
+          ) : null}
+
           <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.35 }}>
             Required to complete I-9:
           </Typography>
@@ -205,7 +223,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
               Last review: {vm.latestReviewedAtLabel}
             </Typography>
           </Stack>
-          {vm.latestRejectionReason && vm.substatus === 'rejected' ? (
+          {vm.latestRejectionReason && (vm.substatus === 'rejected' || vm.substatus === 'action_needed') ? (
             <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
               Latest rejection: {vm.latestRejectionReason}
             </Typography>

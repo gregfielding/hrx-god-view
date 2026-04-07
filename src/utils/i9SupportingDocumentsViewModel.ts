@@ -13,6 +13,7 @@ export type I9EmploymentDocsSubstatus =
   | 'not_requested'
   | 'upload_requested'
   | 'under_review'
+  | 'action_needed'
   | 'rejected'
   | 'complete';
 
@@ -46,6 +47,8 @@ export type I9SupportingDocumentsEmploymentViewModel = {
   latestRejectionReason: string | null;
   stillNeededLines: string[];
   uploadedSummaryLines: string[];
+  /** Employment compact block only: framing copy for multi-row / mixed states. */
+  compactContextLines: string[];
 };
 
 function formatTs(value: unknown): string {
@@ -111,6 +114,14 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     substatus = 'under_review';
   } else if (awaitingUploadCount > 0) {
     substatus = 'upload_requested';
+  } else if (
+    rejectedCount > 0 &&
+    approvedCount > 0 &&
+    pendingReviewCount === 0 &&
+    !documentSetComplete
+  ) {
+    // C2: partial progress — avoid global "Rejected" when another row is already approved.
+    substatus = 'action_needed';
   } else if (rejectedCount > 0) {
     substatus = 'rejected';
   } else if (requestCount === 0) {
@@ -123,6 +134,7 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     not_requested: 'Not requested',
     upload_requested: 'Upload requested',
     under_review: 'Under review',
+    action_needed: 'Action needed',
     rejected: 'Rejected',
     complete: 'Complete',
   };
@@ -152,6 +164,20 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     uploadedSummaryLines.push(`Uploaded: ${name} (${listLabel})${st === 'pending_review' ? ' — under review' : st === 'approved' ? ' — approved' : st === 'rejected' ? ' — rejected' : ''}`);
   }
 
+  const compactContextLines: string[] = [];
+  if (requestCount > 1) {
+    compactContextLines.push(
+      `This worker has ${requestCount} separate document requests. Each line below is one request.`,
+    );
+  }
+  if (pendingReviewCount > 0 && rejectedCount > 0) {
+    compactContextLines.push(
+      rejectedCount === 1
+        ? 'One document was rejected and may need replacement; others are still under review.'
+        : 'Some documents were rejected and may need replacement; others are still under review.',
+    );
+  }
+
   return {
     substatus,
     substatusLabel: substatusLabels[substatus],
@@ -169,5 +195,6 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     latestRejectionReason,
     stillNeededLines,
     uploadedSummaryLines,
+    compactContextLines,
   };
 }

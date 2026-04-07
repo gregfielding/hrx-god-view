@@ -18,19 +18,52 @@ export const I9_WORKER_PATH_HINT_A =
 export const I9_WORKER_PATH_HINT_BC =
   'You will upload two files: one List B and one List C, when your employer has requested them.';
 
-/** Worker SMS / push — short path per product (no deep nested nav). */
-export const I9_MESSAGE_REQUEST_UPLOAD_SMS = `Please upload your I-9 documents to move forward. Open your profile → Employment. Upload either one List A document, or one List B and one List C document.`;
+/** Shown on worker entity employment page (examples only). */
+export const I9_WORKER_ENTITY_EXAMPLES = `Examples:
+• List A: U.S. passport or passport card, Permanent Resident Card (Form I-551), Employment Authorization (Form I-766)
+• List B: Driver’s license or state-issued ID
+• List C: Social Security card, birth certificate`;
+
+/** Worker SMS / push — profile hub (no entity link). */
+export const I9_MESSAGE_REQUEST_UPLOAD_SMS = `Please upload your I-9 documents to move forward. Open My Profile → Employment, choose your employer, then follow I-9 steps. Upload either one List A document, or one List B and one List C document.`;
+
+/** When you have an absolute URL to the worker’s entity employment page. */
+export const I9_MESSAGE_REQUEST_UPLOAD_SMS_DEEPLINK = (absoluteUrl: string, entityName?: string) =>
+  `Please upload your I-9 documents to move forward.${
+    entityName ? ` Open your employment with ${entityName}:` : ' Open this link:'
+  } ${absoluteUrl} — upload either one List A document, or one List B and one List C document.`;
+
+export const I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY_DEEPLINK = (absoluteUrl: string, entityName?: string) =>
+  `Please upload your I-9 documents to move forward.
+
+${entityName ? `Open your employment with ${entityName}:` : 'Open your employment page:'}
+${absoluteUrl}
+
+Upload either:
+• one List A document, or
+• one List B and one List C document.`;
+
+export const I9_MESSAGE_REUPLOAD_SMS_DEEPLINK = (reason: string, absoluteUrl: string) =>
+  `Please re-upload your I-9 documents. Reason: ${reason}\nUse this link to replace your file(s): ${absoluteUrl}`;
+
+export const I9_MESSAGE_REUPLOAD_EMAIL_BODY_DEEPLINK = (reason: string, absoluteUrl: string) =>
+  `Please re-upload your I-9 documents.
+
+Reason: ${reason}
+
+Use this link to replace your file(s):
+${absoluteUrl}`;
 
 export const I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT = 'Action needed: Upload your I-9 documents';
 
 export const I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY = `Please upload your I-9 documents to move forward.
 
-Open your profile → Employment. Upload either:
+Open My Profile → Employment, choose your employer, then follow I-9 steps. Upload either:
 • one List A document, or
 • one List B and one List C document.`;
 
 export const I9_MESSAGE_REUPLOAD_SMS = (reason: string) =>
-  `Please re-upload your I-9 documents. Reason: ${reason}\nOpen your profile → Employment and replace the file(s).`;
+  `Please re-upload your I-9 documents. Reason: ${reason}\nOpen My Profile → Employment, open your employer, and replace the file(s).`;
 
 export const I9_MESSAGE_REUPLOAD_EMAIL_SUBJECT = 'Please re-upload your I-9 documents';
 
@@ -39,7 +72,7 @@ export const I9_MESSAGE_REUPLOAD_EMAIL_BODY = (reason: string) =>
 
 Reason: ${reason}
 
-Open your profile → Employment and replace the file(s).`;
+Open My Profile → Employment, open your employer, and replace the file(s).`;
 
 export const I9_MESSAGE_APPROVED_SMS =
   'Your I-9 documents have been approved. You’re all set.';
@@ -51,7 +84,7 @@ export const I9_MESSAGE_APPROVED_EMAIL_BODY =
 
 /** After staff creates request — in-app alert (not SMS). */
 export const I9_REQUEST_CREATED_STAFF_HINT =
-  'Request created — tell the worker: Open your profile → Employment';
+  'Request created — tell the worker: My Profile → Employment → their employer → I-9 documents (or send a link to their employment page if you have it).';
 
 export const I9_APPROVE_CONFIRM_BODY =
   'Approve this document? It counts toward the I-9 document requirement when the full set (List A or List B + C) is approved.';

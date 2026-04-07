@@ -70,6 +70,7 @@ import {
   callReviewWorkerI9SupportingDocument,
 } from '../../services/i9SupportingDocumentCallables';
 import { useWorkerI9SupportingDocumentsRows, type I9SupportingDocRow } from '../../hooks/useWorkerI9SupportingDocumentsRows';
+import type { I9DocumentExtractionBlock } from '../../types/i9SupportingDocumentV1';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_TYPES = /^image\/.+|application\/pdf$/i;
@@ -85,6 +86,84 @@ function formatTs(value: unknown): string {
     }
   }
   return '—';
+}
+
+function extractionChip(
+  ext: I9DocumentExtractionBlock | undefined,
+): { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'error' | 'info' } {
+  const st = String(ext?.status || '');
+  switch (st) {
+    case 'extraction_complete':
+      return { label: 'Reader: extracted', color: 'success' };
+    case 'extraction_pending':
+      return { label: 'Reader: running', color: 'warning' };
+    case 'extraction_failed':
+      return { label: 'Reader: failed', color: 'error' };
+    case 'extraction_unsupported':
+      return { label: 'Reader: n/a', color: 'default' };
+    default:
+      return { label: 'Reader: —', color: 'default' };
+  }
+}
+
+function ExtractionReviewAssist({
+  ext,
+  compact,
+}: {
+  ext: I9DocumentExtractionBlock | undefined;
+  compact?: boolean;
+}) {
+  if (!ext || !ext.status) return null;
+  const ef = ext.extractedFields;
+  const lines: string[] = [];
+  if (ef?.fullName) lines.push(`Name: ${ef.fullName}`);
+  else if (ef?.firstName || ef?.lastName) {
+    lines.push(`Name: ${[ef.firstName, ef.lastName].filter(Boolean).join(' ')}`.trim());
+  }
+  if (ef?.documentNumber) lines.push(`Document #: ${ef.documentNumber}`);
+  if (ef?.expirationDate) lines.push(`Expires: ${ef.expirationDate}`);
+  if (ef?.dateOfBirth) lines.push(`DOB: ${ef.dateOfBirth}`);
+  const warn = [...(ext.extractionWarnings || []), ...(ef?.extractionWarnings || [])].filter(Boolean);
+
+  if (compact) {
+    return (
+      <Box sx={{ mt: 0.75, maxWidth: 320 }}>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ fontWeight: 600 }}>
+          Document reader (assistive)
+        </Typography>
+        {lines.slice(0, 4).map((line) => (
+          <Typography key={line} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.4 }}>
+            {line}
+          </Typography>
+        ))}
+        {warn.length > 0 ? (
+          <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 0.5 }}>
+            {warn.slice(0, 3).join(' · ')}
+          </Typography>
+        ) : null}
+        {ext.status === 'extraction_failed' && ext.error?.message ? (
+          <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
+            {ext.error.message}
+          </Typography>
+        ) : null}
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ mt: 0.75, maxWidth: 360 }}>
+      {lines.map((line) => (
+        <Typography key={line} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
+          {line}
+        </Typography>
+      ))}
+      {warn.length > 0 ? (
+        <Alert severity="warning" sx={{ mt: 0.75, py: 0 }}>
+          {warn.join(' ')}
+        </Alert>
+      ) : null}
+    </Box>
+  );
 }
 
 function statusChip(status: string): { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'error' } {
@@ -433,6 +512,8 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                 const showUpload =
                   workerSelf &&
                   (status === 'awaiting_upload' || status === 'rejected' || status === 'pending_review');
+                const ext = data.documentExtraction as I9DocumentExtractionBlock | undefined;
+                const ec = extractionChip(ext);
 
                 return (
                   <TableRow key={id}>
@@ -444,6 +525,12 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                     </TableCell>
                     <TableCell>
                       <Chip size="small" label={sc.label} color={sc.color} variant={sc.color === 'default' ? 'outlined' : 'filled'} />
+                      {staffMode && path ? (
+                        <Box sx={{ mt: 0.5 }}>
+                          <Chip size="small" label={ec.label} color={ec.color} variant="outlined" sx={{ mr: 0.5 }} />
+                          <ExtractionReviewAssist ext={ext} compact />
+                        </Box>
+                      ) : null}
                       {status === 'pending_review' ? (
                         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, maxWidth: 280 }}>
                           The worker can replace this file while you review. Click Open again to see the latest version.
@@ -577,6 +664,12 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
           <Typography variant="body2" color="text.secondary">
             {I9_APPROVE_CONFIRM_BODY}
           </Typography>
+          {approveConfirmDocId ? (
+            <ExtractionReviewAssist
+              compact
+              ext={sortedRows.find((r) => r.id === approveConfirmDocId)?.data?.documentExtraction as I9DocumentExtractionBlock | undefined}
+            />
+          ) : null}
         </DialogContent>
         <DialogActions>
           <Button

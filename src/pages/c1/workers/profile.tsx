@@ -26,7 +26,10 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import { userDocHasStoredResume } from '../../../utils/workerProfilePrerequisites';
 import { useWorkerMyEmploymentList } from '../../../hooks/useWorkerMyEmploymentList';
+import { useWorkerI9SupportingDocumentsRows } from '../../../hooks/useWorkerI9SupportingDocumentsRows';
+import { buildI9SupportingDocumentsEmploymentViewModel } from '../../../utils/i9SupportingDocumentsViewModel';
 import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmploymentListRowModel';
+import { filterI9RowsForEntityEmployment } from '../../../utils/workerEmploymentWorkerSurface';
 
 const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, logout, tenantId: authTenantId, activeTenant } = useAuth();
@@ -42,6 +45,8 @@ const WorkerProfile: React.FC = () => {
     assignmentsByEntityKey,
     stepCounts: employmentStepCounts,
   } = useWorkerMyEmploymentList(tenantId, uid ?? null);
+
+  const { rows: allI9Rows } = useWorkerI9SupportingDocumentsRows(tenantId, uid ?? null, Boolean(tenantId && uid));
 
   useEffect(() => {
     if (!uid) return;
@@ -280,10 +285,20 @@ const WorkerProfile: React.FC = () => {
             ) : (
               <List disablePadding>
                 {employmentRecords.map((rec) => {
+                  const i9Scoped = filterI9RowsForEntityEmployment(
+                    allI9Rows,
+                    rec,
+                    employmentRecords.length,
+                  );
+                  const i9Vm = buildI9SupportingDocumentsEmploymentViewModel(i9Scoped);
                   const row = buildWorkerMyEmploymentListRowModel(
                     rec,
                     employmentStepCounts,
-                    assignmentsByEntityKey
+                    assignmentsByEntityKey,
+                    {
+                      i9Substatus: i9Scoped.length ? i9Vm.substatus : null,
+                      totalEmploymentRecords: employmentRecords.length,
+                    },
                   );
                   return (
                     <ListItemButton
@@ -299,7 +314,7 @@ const WorkerProfile: React.FC = () => {
                       <ListItemText
                         sx={{ my: 0, mr: 1, flex: 1, minWidth: 0 }}
                         primary={row.entityDisplayName}
-                        secondary={row.progressText ?? undefined}
+                        secondary={row.nextStepLine || row.progressText || undefined}
                         primaryTypographyProps={{ fontWeight: 600, variant: 'body1', noWrap: true }}
                         secondaryTypographyProps={{ variant: 'caption', noWrap: true }}
                       />
