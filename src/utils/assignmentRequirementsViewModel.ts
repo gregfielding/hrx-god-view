@@ -12,7 +12,13 @@ import type {
   OnboardingInstanceSnapshot,
   OnboardingPathGroup,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
-import { isAssignmentTerminalNormalized, normalizeAssignmentStatus } from './assignmentStatusNormalize';
+import { normalizeAssignmentStatus } from './assignmentStatusNormalize';
+import {
+  assignmentReadinessStateDisplay,
+  isAssignmentSummaryTerminal,
+  packageSectionsSummaryFromReadiness,
+  screeningLineFromReadiness,
+} from './assignmentReadinessUi';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { OnboardingAutomationDispatchBrief } from './employmentOnboardingNarrative';
@@ -22,6 +28,7 @@ import {
   screeningAutomationSyntheticRowContent,
   screeningOrderRequirementStatusLabel,
 } from './employmentOnboardingNarrative';
+import { internalPipelineScreeningRowsForAssignment } from './employmentOnboardingPathRecruiterConsolidation';
 
 const CERT_LIKE = /cert|license|credential|clearance|osi/i;
 
@@ -59,15 +66,15 @@ export function pickPrimaryAssignmentForEmploymentIA(
   assignments: EmploymentAssignmentSummary[]
 ): EmploymentAssignmentSummary | null {
   if (!assignments.length) return null;
-  const terminal = (status: string | null | undefined) => {
-    if (isAssignmentTerminalNormalized(status)) return true;
-    const s = String(status || '').toLowerCase();
+  const assignmentRowIsTerminal = (row: EmploymentAssignmentSummary) => {
+    if (isAssignmentSummaryTerminal(row)) return true;
+    const s = String(row.status || '').toLowerCase();
     return ['closed', 'terminated'].some((t) => s.includes(t));
   };
   const decorated = assignments.map((a, order) => ({
     a,
     order,
-    isTerm: terminal(a.status),
+    isTerm: assignmentRowIsTerminal(a),
     start: a.startDate ? Date.parse(a.startDate) : NaN,
   }));
   decorated.sort((x, y) => {
@@ -80,7 +87,7 @@ export function pickPrimaryAssignmentForEmploymentIA(
   const chosen = decorated[0]?.a ?? null;
   if (!chosen) return null;
   /** No live assignment — do not treat a terminal row as “primary” for current package requirements. */
-  if (terminal(chosen.status)) return null;
+  if (assignmentRowIsTerminal(chosen)) return null;
   return chosen;
 }
 
@@ -136,6 +143,32 @@ export interface BuildAssignmentRequirementsViewModelArgs {
   automationDispatchBriefs?: OnboardingAutomationDispatchBrief[];
 }
 
+function emptyAssignmentRequirementsViewModel(entityKey: EmploymentEntityKey): AssignmentRequirementsViewModel {
+  return {
+    entityKey,
+    hasPrimaryAssignment: false,
+    primaryAssignmentId: null,
+    primaryJobTitle: null,
+    primaryJobOrderId: null,
+    primaryAssignmentStatus: null,
+    onboardingInstanceId: null,
+    onboardingPackageStatus: null,
+    onboardingPercentComplete: null,
+    entityScreeningMilestones: [],
+    requiredChecks: [],
+    requiredCertifications: [],
+    requiredUploads: [],
+    assignmentDocuments: [],
+    adminSteps: [],
+    backgroundOrdersLinked: [],
+    openBlockerCount: 0,
+    primaryAssignmentReadinessV1: null,
+    primaryCanonicalReadinessHeadline: null,
+    primaryCanonicalScreeningLine: null,
+    primaryCanonicalPackageLine: null,
+  };
+}
+
 export function buildAssignmentRequirementsViewModel(args: BuildAssignmentRequirementsViewModelArgs): AssignmentRequirementsViewModel {
   const {
     fullOnboardingPathGroups,
@@ -146,6 +179,10 @@ export function buildAssignmentRequirementsViewModel(args: BuildAssignmentRequir
     entityKey,
     automationDispatchBriefs,
   } = args;
+
+  if (!assignments.length) {
+    return emptyAssignmentRequirementsViewModel(entityKey);
+  }
 
   const screeningsGroup = findOnboardingPathGroup(fullOnboardingPathGroups, 'screenings');
   const assignmentGroup = findOnboardingPathGroup(fullOnboardingPathGroups, 'assignment_requirements');
@@ -169,6 +206,8 @@ export function buildAssignmentRequirementsViewModel(args: BuildAssignmentRequir
   const adminRows: EmploymentOnboardingRow[] = [];
 
   const checksByKey = new Map((inst?.resolvedChecks ?? []).map((c) => [c.key, c]));
+
+  const internalScreeningRows = internalPipelineScreeningRowsForAssignment(fullOnboardingPathGroups);
 
   assignRows.forEach((row) => {
     const parsed = parseAssignmentRowSuffix(row);
@@ -204,6 +243,11 @@ export function buildAssignmentRequirementsViewModel(args: BuildAssignmentRequir
   });
 
   let requiredChecks = checkRows.map((r) => itemFromAssignmentRow(r, 'check'));
+  const packagedCheckRowIds = new Set(checkRows.map((r) => r.rowId));
+  for (const r of internalScreeningRows) {
+    if (packagedCheckRowIds.has(r.rowId)) continue;
+    requiredChecks.push(itemFromAssignmentRow(r, 'check'));
+  }
   if (screeningBriefs.length && !hasScreeningPackageCheckRow) {
     const synthetic = screeningAutomationSyntheticRowContent(
       screeningBriefs,
@@ -248,6 +292,13 @@ export function buildAssignmentRequirementsViewModel(args: BuildAssignmentRequir
     ...adminSteps,
   ].filter((i) => i.blocking && i.pathRow && !isRowDone(i.pathRow)).length;
 
+  const readiness = primary?.assignmentReadinessV1 ?? null;
+  const primaryCanonicalReadinessHeadline =
+    readiness?.readinessSummary?.trim() ||
+    (readiness ? assignmentReadinessStateDisplay(readiness.assignmentReadinessState) : null);
+  const primaryCanonicalScreeningLine = readiness ? screeningLineFromReadiness(readiness) : null;
+  const primaryCanonicalPackageLine = readiness ? packageSectionsSummaryFromReadiness(readiness) : null;
+
   return {
     entityKey,
     hasPrimaryAssignment: Boolean(primary),
@@ -267,6 +318,10 @@ export function buildAssignmentRequirementsViewModel(args: BuildAssignmentRequir
     adminSteps,
     backgroundOrdersLinked,
     openBlockerCount: openBlockers,
+    primaryAssignmentReadinessV1: readiness,
+    primaryCanonicalReadinessHeadline,
+    primaryCanonicalScreeningLine,
+    primaryCanonicalPackageLine,
   };
 }
 
@@ -275,13 +330,42 @@ function isRowDone(row: EmploymentOnboardingRow | undefined): boolean {
   return row.status === 'completed' || row.status === 'satisfied_by_existing_record' || row.status === 'not_required';
 }
 
+/** Blocking assignment-package / path-linked rows for summary-first UI and global banner lines. */
+export function blockingAssignmentRequirementLines(
+  vm: AssignmentRequirementsViewModel
+): Array<{ title: string; statusLabel: string }> {
+  const items = [
+    ...vm.entityScreeningMilestones,
+    ...vm.requiredChecks,
+    ...vm.requiredCertifications,
+    ...vm.requiredUploads,
+    ...vm.assignmentDocuments,
+    ...vm.adminSteps,
+  ];
+  const out: Array<{ title: string; statusLabel: string }> = [];
+  for (const i of items) {
+    if (!i.blocking || !i.pathRow || isRowDone(i.pathRow)) continue;
+    out.push({ title: i.title, statusLabel: i.statusLabel });
+  }
+  return out;
+}
+
 /**
  * One-line status for systems strip when screenings move out of path ( paystub-style label).
  */
 export function assignmentRequirementsSystemsLine(vm: AssignmentRequirementsViewModel): string | null {
   const parts: string[] = [];
-  if (vm.hasPrimaryAssignment) {
-    parts.push(vm.onboardingPackageStatus || 'Package in progress');
+  if (vm.primaryCanonicalReadinessHeadline) {
+    parts.push(vm.primaryCanonicalReadinessHeadline);
+  }
+  if (vm.primaryCanonicalScreeningLine) {
+    parts.push(vm.primaryCanonicalScreeningLine);
+  }
+  if (vm.primaryCanonicalPackageLine) {
+    parts.push(vm.primaryCanonicalPackageLine);
+  }
+  if (vm.hasPrimaryAssignment && !vm.primaryCanonicalReadinessHeadline) {
+    parts.push(vm.onboardingPackageStatus || 'Job onboarding in progress');
   }
   if (vm.backgroundOrdersLinked.length > 0) {
     const open = vm.backgroundOrdersLinked.filter((b) => !/completed|canceled|error/i.test(b.statusLabel)).length;
@@ -289,7 +373,24 @@ export function assignmentRequirementsSystemsLine(vm: AssignmentRequirementsView
   }
   if (vm.entityScreeningMilestones.length > 0) {
     const pending = vm.entityScreeningMilestones.filter((m) => !m.pathRow || !isRowDone(m.pathRow)).length;
-    if (pending > 0) parts.push(`${pending} entity screening milestone(s) open`);
+    if (pending > 0) parts.push(`${pending} open screening requirement(s)`);
+  }
+  return parts.length ? parts.join(' · ') : null;
+}
+
+/**
+ * Short subheader for Systems card when canonical assignment readiness is already shown on Assignment —
+ * avoids repeating headline + screening + package in the card header.
+ */
+export function assignmentRequirementsSystemsSubheaderSupplement(vm: AssignmentRequirementsViewModel): string | null {
+  const parts: string[] = [];
+  if (vm.backgroundOrdersLinked.length > 0) {
+    const open = vm.backgroundOrdersLinked.filter((b) => !/completed|canceled|error/i.test(b.statusLabel)).length;
+    parts.push(open > 0 ? `${open} open screening order(s)` : 'Screening orders closed');
+  }
+  if (vm.entityScreeningMilestones.length > 0) {
+    const pending = vm.entityScreeningMilestones.filter((m) => !m.pathRow || !isRowDone(m.pathRow)).length;
+    if (pending > 0) parts.push(`${pending} entity screening requirement(s)`);
   }
   return parts.length ? parts.join(' · ') : null;
 }

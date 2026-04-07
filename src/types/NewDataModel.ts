@@ -671,7 +671,7 @@ export const COLLECTION_PATHS = {
   LOCATIONS: 'locations',
   JOB_ORDERS: 'jobOrders',
   CANDIDATES: 'candidates',
-  JOB_BOARD_POSTS: 'jobBoardPosts',
+  JOB_BOARD_POSTS: 'job_postings',
   APPLICATIONS: 'applications',
   ASSIGNMENTS: 'assignments',
   USER_GROUPS: 'userGroups',

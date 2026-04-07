@@ -32,6 +32,8 @@ import { deriveC1EntityKeyFromEntityName, resolveC1SelectEntityId } from '../uti
 import { getWorkerPayrollAccount } from '../utils/workerPayrollAccount';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
+import type { AssignmentReadinessV1Snapshot } from '../types/assignmentReadinessV1';
+import { coerceAssignmentReadinessV1FromDoc } from '../utils/assignmentReadinessUi';
 
 function pipelineEntityKey(pipe: WorkerOnboardingPipeline, userId: string): EmploymentEntityKey | null {
   const fromField = String(pipe.entityKey || '').toLowerCase();
@@ -128,6 +130,7 @@ export function useEntityEmploymentOverview({
         onboardingStatus?: string | null;
         onboardingPercent?: number | null;
         jobTitle?: string | null;
+        assignmentReadinessV1?: AssignmentReadinessV1Snapshot | null;
       }>
     >;
     onboardingByInstanceId: Map<string, OnboardingInstanceSnapshot>;
@@ -157,6 +160,7 @@ export function useEntityEmploymentOverview({
 
     const run = async () => {
       try {
+        // Keep fetch/merge aligned with `loadEntityOnboardingEngineBuildContextAdmin` (worker_onboarding trigger).
         const entitiesSnap = await getDocs(collection(db, p.entities(tenantId)));
         const entityBrief = entitiesSnap.docs.map((d) => {
           const data = d.data() as { name?: string; entityCode?: string };
@@ -281,6 +285,7 @@ export function useEntityEmploymentOverview({
           onboardingStatus?: string | null;
           onboardingPercent?: number | null;
           jobTitle?: string | null;
+          assignmentReadinessV1?: AssignmentReadinessV1Snapshot | null;
         };
         const assignmentsByKey: Record<EmploymentEntityKey, AssignmentRow[]> = {
           select: [],
@@ -291,9 +296,14 @@ export function useEntityEmploymentOverview({
         const onboardingInstanceIds: string[] = [];
         assignmentsMap.forEach((data, aid) => {
           const jobOrderId = data.jobOrderId as string | undefined;
-          const ek = assignmentEntityKey(jobOrderId ?? null);
+          const docEkRaw = String((data as { entityKey?: string }).entityKey || '').toLowerCase();
+          const docEk: EmploymentEntityKey | null =
+            docEkRaw === 'select' || docEkRaw === 'workforce' || docEkRaw === 'events'
+              ? (docEkRaw as EmploymentEntityKey)
+              : null;
+          const ek = docEk ?? assignmentEntityKey(jobOrderId ?? null);
           if (!ek) return;
-          const row = {
+          const row: AssignmentRow = {
             assignmentId: aid,
             jobOrderId: jobOrderId ?? null,
             status: (data.status as string) ?? null,
@@ -302,6 +312,7 @@ export function useEntityEmploymentOverview({
             onboardingStatus: (data.onboardingStatus as string | undefined) ?? null,
             onboardingPercent: (data.onboardingPercent as number | undefined) ?? null,
             jobTitle: jobOrderId ? jobOrderById.get(jobOrderId)?.jobTitle ?? jobOrderById.get(jobOrderId)?.jobOrderName ?? null : null,
+            assignmentReadinessV1: coerceAssignmentReadinessV1FromDoc(data.assignmentReadinessV1),
           };
           assignmentsByKey[ek].push(row);
           if (row.onboardingInstanceId) onboardingInstanceIds.push(row.onboardingInstanceId);
@@ -413,11 +424,12 @@ export function useEntityEmploymentOverview({
         };
         EMPLOYMENT_ENTITY_KEYS.forEach((ek) => {
           const jset = jobOrdersByEntity[ek];
-          const eidForEk = resolveEntityFirestoreIdForTab(ek, entityBrief, employmentsByKey[ek]);
+          const assignmentIdsForEk = new Set(assignmentsByKey[ek].map((a) => a.assignmentId));
           backgroundByKey[ek] = bgList.filter((b) => {
-            if (b.jobOrderId && jset.has(b.jobOrderId)) return true;
-            if (eidForEk && b.automationHiringEntityId === eidForEk) return true;
-            if (b.relationshipEntityKey === ek) return true;
+            const autoAid = String(b.automationAssignmentId || '').trim();
+            if (autoAid && assignmentIdsForEk.has(autoAid)) return true;
+            const jo = String(b.jobOrderId || '').trim();
+            if (jo && jset.has(jo)) return true;
             return false;
           });
         });

@@ -21,6 +21,11 @@ import { doc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore
 import { db } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import type { RecruiterAccount } from '../../types/recruiter/account';
+import {
+  mergeRecruiterOrderDetails,
+  mergeScreeningPackageFromOrderDefaultLayers,
+  type RecruiterOrderDetailsData,
+} from '../../utils/recruiterAccountOrderDefaultsMerge';
 import { experienceOptions, educationOptions } from '../../data/experienceOptions';
 import { backgroundCheckOptions, drugScreeningOptions, additionalScreeningOptions } from '../../data/screeningsOptions';
 import { getOptionsForField } from '../../utils/fieldOptions';
@@ -38,29 +43,8 @@ const DRESS_CODE_OPTIONS = [
   'Business Casual', 'Casual', 'Uniform Provided', 'Steel-Toe Boots', 'Non-Slip Shoes', 'Scrubs', 'Other',
 ];
 
-export interface OrderDetailsData {
-  backgroundCheckPackages?: string[];
-  drugScreeningPanels?: string[];
-  additionalScreenings?: string[];
-  licensesCerts?: string[];
-  experienceRequired?: string;
-  educationRequired?: string;
-  languagesRequired?: string[];
-  skillsRequired?: string[];
-  physicalRequirements?: string[];
-  ppeRequirements?: string[];
-  ppeProvidedBy?: string;
-  requirementPackId?: string;
-  dressCode?: string[];
-  customUniformRequirements?: string;
-  decisionMaker?: string;
-  hrContactId?: string;
-  operationsContactId?: string;
-  procurementContactId?: string;
-  billingContactId?: string;
-  safetyContactId?: string;
-  invoiceContactId?: string;
-}
+/** @deprecated Use RecruiterOrderDetailsData from utils — kept for external imports of this type */
+export type OrderDetailsData = RecruiterOrderDetailsData;
 
 export interface AccountOrderDetailsFormProps {
   account: RecruiterAccount | null;
@@ -72,47 +56,10 @@ export interface AccountOrderDetailsFormProps {
   onRefreshLocation?: () => void | Promise<void>;
   /** Contacts for Company Contact dropdowns (e.g. location contacts or account company contacts). May have id + label, or id + fullName/name/email. */
   contacts: Array<{ id: string; label?: string; fullName?: string; name?: string; firstName?: string; lastName?: string; email?: string; title?: string }>;
-}
-
-const emptyOrderDetails: OrderDetailsData = {
-  backgroundCheckPackages: [],
-  drugScreeningPanels: [],
-  additionalScreenings: [],
-  licensesCerts: [],
-  experienceRequired: '',
-  educationRequired: '',
-  languagesRequired: [],
-  skillsRequired: [],
-  physicalRequirements: [],
-  ppeRequirements: [],
-  ppeProvidedBy: 'company',
-  requirementPackId: '',
-  dressCode: [],
-  customUniformRequirements: '',
-  decisionMaker: '',
-  hrContactId: '',
-  operationsContactId: '',
-  procurementContactId: '',
-  billingContactId: '',
-  safetyContactId: '',
-  invoiceContactId: '',
-};
-
-function mergeOrderDetails(location: OrderDetailsData | undefined, account: OrderDetailsData | undefined): OrderDetailsData {
-  return {
-    ...emptyOrderDetails,
-    ...account,
-    ...location,
-    backgroundCheckPackages: location?.backgroundCheckPackages ?? account?.backgroundCheckPackages ?? [],
-    drugScreeningPanels: location?.drugScreeningPanels ?? account?.drugScreeningPanels ?? [],
-    additionalScreenings: location?.additionalScreenings ?? account?.additionalScreenings ?? [],
-    licensesCerts: location?.licensesCerts ?? account?.licensesCerts ?? [],
-    languagesRequired: location?.languagesRequired ?? account?.languagesRequired ?? [],
-    skillsRequired: location?.skillsRequired ?? account?.skillsRequired ?? [],
-    physicalRequirements: location?.physicalRequirements ?? account?.physicalRequirements ?? [],
-    ppeRequirements: location?.ppeRequirements ?? account?.ppeRequirements ?? [],
-    dressCode: location?.dressCode ?? account?.dressCode ?? [],
-  };
+  /**
+   * National / parent account doc — when set (child account UI), order details and screening merge parent → child → location.
+   */
+  inheritanceParentAccount?: RecruiterAccount | null;
 }
 
 const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
@@ -124,25 +71,29 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   locationDefaults,
   onRefreshLocation,
   contacts,
+  inheritanceParentAccount,
 }) => {
   const locationOrderDetails = (locationDefaults as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
   const accountOrderDetails = (account as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
-  const effective = mergeOrderDetails(locationOrderDetails, accountOrderDetails);
+  const parentOrderDetails = (inheritanceParentAccount as any)?.orderDefaults?.orderDetails as OrderDetailsData | undefined;
+
+  const effective = useMemo(() => {
+    const accountPlusParent = inheritanceParentAccount
+      ? mergeRecruiterOrderDetails(accountOrderDetails, parentOrderDetails)
+      : mergeRecruiterOrderDetails(undefined, accountOrderDetails);
+    return mergeRecruiterOrderDetails(locationOrderDetails, accountPlusParent);
+  }, [locationOrderDetails, accountOrderDetails, parentOrderDetails, inheritanceParentAccount]);
 
   const mergedScreening = useMemo(() => {
     const odLoc = (locationDefaults as any)?.orderDefaults as Record<string, unknown> | undefined;
     const odAcc = (account as any)?.orderDefaults as Record<string, unknown> | undefined;
-    const locId = String(odLoc?.screeningPackageId ?? '').trim();
-    const accId = String(odAcc?.screeningPackageId ?? '').trim();
-    const locName = String(odLoc?.screeningPackageName ?? '').trim();
-    const accName = String(odAcc?.screeningPackageName ?? '').trim();
-    if (locationKey) {
-      const id = locId || accId;
-      const name = locId ? locName : accName;
-      return { id, name };
-    }
-    return { id: accId, name: accName };
-  }, [locationDefaults, account, locationKey]);
+    const odParent = (inheritanceParentAccount as any)?.orderDefaults as Record<string, unknown> | undefined;
+    return mergeScreeningPackageFromOrderDefaultLayers(
+      locationKey ? odLoc : undefined,
+      odAcc,
+      inheritanceParentAccount ? odParent : undefined
+    );
+  }, [locationDefaults, account, inheritanceParentAccount, locationKey]);
 
   const [form, setForm] = useState<OrderDetailsData>(effective);
   const [screeningPackageId, setScreeningPackageId] = useState(mergedScreening.id);
@@ -155,8 +106,8 @@ const AccountOrderDetailsForm: React.FC<AccountOrderDetailsFormProps> = ({
   }, [form]);
 
   useEffect(() => {
-    setForm(mergeOrderDetails(locationOrderDetails, accountOrderDetails));
-  }, [locationOrderDetails, accountOrderDetails]);
+    setForm(effective);
+  }, [effective]);
 
   useEffect(() => {
     setScreeningPackageId(mergedScreening.id);

@@ -1,6 +1,10 @@
 import * as admin from "firebase-admin";
 import { onCall, HttpsError } from "firebase-functions/v2/https";
 import { logger } from "firebase-functions/v2";
+import {
+  buildAdminEntityEmploymentLifecyclePatch,
+  buildBootstrapOnboardingLifecyclePatch,
+} from "./entityEmploymentLifecycle";
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -83,6 +87,7 @@ function canManageOnboardingFromClaims(auth: any, tenantId: string): boolean {
   const tenantRole = roles?.[tenantId]?.role;
   if (tenantRole && ["Recruiter", "Manager", "Admin"].includes(String(tenantRole))) return true;
   if (auth?.token?.isHRX === true) return true;
+  if (auth?.token?.hrx === true) return true;
   return false;
 }
 
@@ -453,14 +458,13 @@ export async function ensureWorkerOnboardingPipeline(args: {
       entityKey: entityContext.entityKey,
       entityName: entityContext.entityName,
       workerType: workerTypeForEmployment,
-      status: "onboarding",
+      ...buildBootstrapOnboardingLifecyclePatch(),
       onboardingPipelineId: pipelineId,
       sourceAssignmentId: assignmentId ?? null,
       sourceJobOrderId: jobOrderId ?? null,
       everifyRequired,
       backgroundRequired: bgRequired,
       drugScreenRequired: drugRequired,
-      active: false,
       updatedAt: now,
     };
     if (isFirstEmployment) {
@@ -609,6 +613,9 @@ export const updateWorkerOnboardingStepStatus = onCall({ cors: true }, async (re
   const now = admin.firestore.FieldValue.serverTimestamp();
   const nestedNow = timestampForNestedDoc();
 
+  const employmentRef =
+    stepId === "e_verify" ? db.doc(`tenants/${tenantId}/entity_employments/${pipelineId}`) : null;
+
   await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     if (!snap.exists) {
@@ -648,6 +655,29 @@ export const updateWorkerOnboardingStepStatus = onCall({ cors: true }, async (re
       },
       { merge: true }
     );
+
+    // E-Verify completed outside HRX: keep entity_employments.everifyStatus aligned for chips / queues.
+    if (employmentRef) {
+      if (status === "complete") {
+        tx.set(
+          employmentRef,
+          {
+            everifyStatus: "manual_outside_hrx",
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      } else if (status === "not_started") {
+        tx.set(
+          employmentRef,
+          {
+            everifyStatus: admin.firestore.FieldValue.delete(),
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      }
+    }
   });
 
   return { success: true };
@@ -869,19 +899,11 @@ export const updateEntityEmploymentStatus = onCall({ cors: true }, async (reques
   const ref = db.doc(`tenants/${tenantId}/entity_employments/${employmentId}`);
   const now = admin.firestore.FieldValue.serverTimestamp();
 
-  const updates: Record<string, unknown> = {
+  const updates = buildAdminEntityEmploymentLifecyclePatch({
     status,
-    active: status === "active",
-    updatedAt: now,
-  };
-  if (status === "terminated" || status === "inactive") {
-    updates.terminatedAt = now;
-    if (terminationReason) updates.terminationReason = terminationReason;
-  }
-  if (status === "active") {
-    updates.hiredAt = now;
-    updates.onboardingCompletedAt = now;
-  }
+    terminationReason,
+    now,
+  });
 
   await ref.set(updates, { merge: true });
   return { success: true };

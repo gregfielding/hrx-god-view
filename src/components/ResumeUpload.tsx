@@ -23,10 +23,13 @@ import {
   Visibility
 } from '@mui/icons-material';
 import { useDropzone } from 'react-dropzone';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { getAuth } from 'firebase/auth';
+import { db } from '../firebase';
 import { logger } from '../utils/logger';
 import { toChipLabel } from '../utils/chipLabel';
+import { openUserResumeInNewTab, pickResumeFromUserDoc, type UserResumeForOpen } from '../utils/userResumeOpen';
 
 interface ResumeUploadProps {
   userId: string;
@@ -36,6 +39,8 @@ interface ResumeUploadProps {
   hideTitle?: boolean;
   compact?: boolean;
   hideCaptureActions?: boolean;
+  /** When true, omit the green “current resume” alert (e.g. worker profile shows it in the section header). */
+  hideStoredResumeAlert?: boolean;
 }
 
 interface ParsingStatus {
@@ -113,6 +118,7 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
   hideTitle = false,
   compact = false,
   hideCaptureActions = false,
+  hideStoredResumeAlert = false,
 }) => {
   const [parsingStatus, setParsingStatus] = useState<ParsingStatus>({
     status: 'idle',
@@ -124,6 +130,23 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
   const [pendingPreviews, setPendingPreviews] = useState<PendingPreview[]>([]);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const photoLibraryInputRef = useRef<HTMLInputElement | null>(null);
+  const [storedResume, setStoredResume] = useState<UserResumeForOpen | null>(null);
+
+  useEffect(() => {
+    if (!userId) {
+      setStoredResume(null);
+      return;
+    }
+    const userRef = doc(db, 'users', userId);
+    const unsub = onSnapshot(userRef, (snap) => {
+      if (!snap.exists()) {
+        setStoredResume(null);
+        return;
+      }
+      setStoredResume(pickResumeFromUserDoc(snap.data() as Record<string, unknown>));
+    });
+    return () => unsub();
+  }, [userId]);
 
   useEffect(() => {
     onParsingStatusChange?.(parsingStatus.status);
@@ -429,7 +452,31 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
           Upload Resume
         </Typography>
       )}
-      
+
+      {/* Middle “current resume” card — hidden on worker /profile/resume; header card shows View there instead. */}
+      {!hideStoredResumeAlert && storedResume && (
+        <Alert severity="success" sx={{ mb: 2 }} icon={<Description fontSize="inherit" />}>
+          <Stack spacing={1}>
+            <Typography variant="body2">
+              Current resume: <strong>{storedResume.fileName}</strong>
+            </Typography>
+            <Box>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<Visibility />}
+                onClick={() => openUserResumeInNewTab(storedResume)}
+              >
+                View resume
+              </Button>
+            </Box>
+            <Typography variant="caption" color="text.secondary">
+              Upload a new file below to replace it.
+            </Typography>
+          </Stack>
+        </Alert>
+      )}
+
       <Paper
         {...getRootProps()}
         sx={{
@@ -451,7 +498,11 @@ const ResumeUpload: React.FC<ResumeUploadProps> = ({
         <CloudUpload sx={{ fontSize: 48, color: 'primary.main', mb: 2 }} />
         
         <Typography variant="h6" gutterBottom>
-          {isDragActive ? 'Drop your resume or photos here' : 'Upload your resume'}
+          {isDragActive
+            ? 'Drop your resume or photos here'
+            : storedResume
+              ? 'Replace your resume'
+              : 'Upload your resume'}
         </Typography>
         
         <Typography variant="body2" color="text.secondary" gutterBottom>

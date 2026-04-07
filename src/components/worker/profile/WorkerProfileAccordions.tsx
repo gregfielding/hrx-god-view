@@ -24,6 +24,7 @@ import BioStep from '../../apply/steps/BioStep';
 import ShiftPreferencesCard from '../../../pages/UserProfile/components/ShiftPreferencesCard';
 import type { DesiredWorkType, TargetIndustry } from '../../../utils/jobReadinessOpportunityMap';
 import { buildReadinessIntentWritePatch } from '../../../utils/workerReadinessWriteModel';
+import { userDocHasStoredResume } from '../../../utils/workerProfilePrerequisites';
 import ResumeUpload from '../../ResumeUpload';
 
 const accordionSx = {
@@ -100,7 +101,7 @@ const WorkerProfileAccordions: React.FC<Props> = ({
         workExperience: data?.workExperience || data?.workHistory || [],
         workHistory: data?.workHistory || data?.workExperience || [],
       });
-      setResumePresent(Boolean(data?.resume?.fileUrl || data?.resumeUrl));
+      setResumePresent(userDocHasStoredResume(data as Record<string, unknown>));
       setTenantId(
         typeof data?.tenantId === 'string'
           ? data.tenantId
@@ -395,7 +396,7 @@ const WorkerProfileAccordions: React.FC<Props> = ({
           <Typography variant="subtitle2" sx={{ fontWeight: 700, mt: 2, mb: 1 }}>
             Bio / Summary
           </Typography>
-          <BioStep value={bioData} onChange={handleBioChange} />
+          <BioStep value={bioData} onChange={handleBioChange} hideIntro profileUserId={uid} />
         </AccordionDetails>
       </Accordion>
 

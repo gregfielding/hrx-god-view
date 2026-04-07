@@ -7,10 +7,13 @@
  * everifyCheckEligibility and other callables fail from the browser with a CORS preflight error.
  */
 export const CALLABLE_BROWSER_CORS: Array<string | RegExp> = [
+  // Explicit production origins (string match avoids any RegExp edge cases in the cors middleware / bundling).
+  'https://hrxone.com',
+  'https://www.hrxone.com',
   /^http:\/\/localhost(?::\d+)?$/,
   /^http:\/\/127\.0\.0\.1(?::\d+)?$/,
   /^https:\/\/.+\.firebaseapp\.com$/,
   /^https:\/\/.+\.web\.app$/,
-  // Apex + any subdomain (app.hrxone.com, www, tenant paths, etc.)
+  // Apex + any subdomain (app.hrxone.com, tenant paths, etc.)
   /^https:\/\/([a-z0-9-]+\.)*hrxone\.com$/,
 ];

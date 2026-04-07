@@ -11,6 +11,13 @@ export type Application = {
 
   // Optional linkage
   jobOrderId?: string | null;
+  userId?: string;
+  candidateId?: string;
+  jobId?: string | null;
+  postId?: string | null;
+  shiftId?: string | null;
+  shiftIds?: string[];
+  selectedShifts?: unknown[];
 
   // Candidate core
   candidate: {
@@ -53,6 +60,13 @@ export type Application = {
 export type ApplicationFormData = {
   // Optional linkage
   jobOrderId?: string | null;
+  userId?: string;
+  candidateId?: string;
+  jobId?: string | null;
+  postId?: string | null;
+  shiftId?: string | null;
+  shiftIds?: string[];
+  selectedShifts?: unknown[];
 
   // Candidate core
   candidate: {

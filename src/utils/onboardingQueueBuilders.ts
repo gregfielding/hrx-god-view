@@ -677,9 +677,10 @@ export function buildTaxPayrollQueueRows(
     });
   }
 
+  // Newest activity first (recruiter expectation for /staff-onboarding); urgency breaks ties.
   rows.sort((a, b) => {
+    if (b.lastActivityMs !== a.lastActivityMs) return b.lastActivityMs - a.lastActivityMs;
     if (a.sortPriority !== b.sortPriority) return a.sortPriority - b.sortPriority;
-    if (a.lastActivityMs !== b.lastActivityMs) return a.lastActivityMs - b.lastActivityMs;
     return a.workerDisplayName.localeCompare(b.workerDisplayName);
   });
 
@@ -766,8 +767,8 @@ export function buildEverifyQueueRows(
   }
 
   rows.sort((a, b) => {
+    if (b.lastUpdateMs !== a.lastUpdateMs) return b.lastUpdateMs - a.lastUpdateMs;
     if (a.sortPriority !== b.sortPriority) return a.sortPriority - b.sortPriority;
-    if (a.lastUpdateMs !== b.lastUpdateMs) return a.lastUpdateMs - b.lastUpdateMs;
     return a.workerDisplayName.localeCompare(b.workerDisplayName);
   });
 
@@ -871,8 +872,8 @@ export function buildBackgroundQueueRows(
   }
 
   rows.sort((a, b) => {
+    if (b.lastUpdateMs !== a.lastUpdateMs) return b.lastUpdateMs - a.lastUpdateMs;
     if (a.sortPriority !== b.sortPriority) return a.sortPriority - b.sortPriority;
-    if (a.lastUpdateMs !== b.lastUpdateMs) return a.lastUpdateMs - b.lastUpdateMs;
     return a.workerDisplayName.localeCompare(b.workerDisplayName);
   });
 

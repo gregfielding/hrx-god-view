@@ -42,6 +42,7 @@ import { useFavorites } from '../hooks/useFavorites';
 import StandardTablePagination from '../components/StandardTablePagination';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
+import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
 import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData, compareEVerifyComfort } from '../utils/eVerifyComfortDisplay';
@@ -76,6 +77,7 @@ interface RecruiterUser {
   comfortableEVerify?: string;
   workerAttestations?: { eVerifyWillingness?: string };
   resume?: Record<string, unknown> | null;
+  addedToIndeedFlex?: boolean;
 }
 
 interface TenantUserGroup {
@@ -215,6 +217,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
             comfortableEVerify: user.comfortableEVerify,
             workerAttestations: user.workerAttestations,
             resume: user.resume ?? null,
+            addedToIndeedFlex: user.addedToIndeedFlex === true,
           } as RecruiterUser;
         });
 
@@ -779,6 +782,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                                   <UserTableResumeIcon user={user as unknown as Record<string, unknown>} />
                                 </Box>
                               )}
+                              <UserTableIndeedFlexBadge user={user as unknown as Record<string, unknown>} />
                             </Box>
                           </Box>
                         </TableCell>

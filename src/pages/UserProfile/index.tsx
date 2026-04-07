@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip, CircularProgress } from '@mui/material';
+import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip, CircularProgress, Snackbar } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
 import MessageIcon from '@mui/icons-material/Message';
@@ -17,6 +17,7 @@ import { httpsCallable } from 'firebase/functions';
 import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, getDocs, getCountFromServer, serverTimestamp } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
+import { FirebaseError } from 'firebase/app';
 import { db, functions, storage } from '../../firebase'; // adjust path
 import ImageCropDialog from '../../components/common/ImageCropDialog';
 import CameraAltIcon from '@mui/icons-material/CameraAlt';
@@ -48,6 +49,7 @@ import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
 import ActivityLogTab from './components/ActivityLogTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
+import ProfileReadinessTabContent from './components/ProfileReadinessTabContent';
 import SystemAccessTab from './components/SystemAccessTab';
 import EmailSignatureTab from './components/EmailSignatureTab';
 import OnboardingTab from './components/OnboardingTab';
@@ -75,6 +77,7 @@ import {
   backgroundComplianceScreeningRowElementId,
   employmentOnboardingEverifyRowElementId,
 } from '../../utils/employmentOnboardingPath';
+import { EMPLOYMENT_I9_SECTION_ELEMENT_ID } from '../../utils/workerReadinessBannerModel';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -124,12 +127,14 @@ const UserProfilePage = () => {
   const [managerId, setManagerId] = useState<string>('');
   const [targetUserSecurityLevel, setTargetUserSecurityLevel] = useState<string>('');
   const [accessDenied, setAccessDenied] = useState(false);
+  const [addedToIndeedFlex, setAddedToIndeedFlex] = useState(false);
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
   const [profileCompletenessScore, setProfileCompletenessScore] = useState<number | undefined>(undefined);
   const [scoreSummary, setScoreSummary] = useState<ScoreSummary | undefined>(undefined);
   const [reviewsCount, setReviewsCount] = useState<number>(0);
   const [createdAt, setCreatedAt] = useState<any>(null);
   const [workAuthorizedStatus, setWorkAuthorizedStatus] = useState<'yes' | 'no' | 'skipped'>('skipped');
+  const [workAuthorizationAttestedAt, setWorkAuthorizationAttestedAt] = useState<unknown>(null);
   const [eVerifyComfortStatus, setEVerifyComfortStatus] = useState<EVerifyComfortStatus>('skipped');
   const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
@@ -137,6 +142,8 @@ const UserProfilePage = () => {
   const [notesCount, setNotesCount] = useState<number>(0);
   /** Staff onboarding queue deep-link: highlight a screening row on Backgrounds. */
   const [backgroundComplianceHighlightId, setBackgroundComplianceHighlightId] = useState<string | null>(null);
+  /** Readiness → Employment deep-link: brief highlight on I-9 / tax & identity block. */
+  const [employmentI9SectionFlash, setEmploymentI9SectionFlash] = useState(false);
   const [interviewsCount, setInterviewsCount] = useState<number>(0);
   /** Latest interview from subcollection (used for header when scoreSummary is not yet updated) */
   const [latestInterviewFromSubcollection, setLatestInterviewFromSubcollection] = useState<{ lastAt: Date; lastScore10: number } | null>(null);
@@ -147,6 +154,11 @@ const UserProfilePage = () => {
   const [emailComposeOpen, setEmailComposeOpen] = useState(false);
   const [viewerGmailConnected, setViewerGmailConnected] = useState(false);
   const [smsComposeOpen, setSmsComposeOpen] = useState(false);
+  /** Prefill body when opening SMS compose from Employment I-9 flow. */
+  const [smsComposePrefillBody, setSmsComposePrefillBody] = useState<string | undefined>(undefined);
+  const [emailComposePrefill, setEmailComposePrefill] = useState<{ subject?: string; body?: string } | undefined>(
+    undefined,
+  );
   const [viewerHasSmsSender, setViewerHasSmsSender] = useState(false);
   const [quickReviewStars, setQuickReviewStars] = useState<number | null>(null);
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
@@ -166,6 +178,7 @@ const UserProfilePage = () => {
   const [profileUpdateReminderSendError, setProfileUpdateReminderSendError] = useState<string | null>(null);
   const [sendingProfileUpdateReminder, setSendingProfileUpdateReminder] = useState(false);
   const [messageHistoryRefreshKey, setMessageHistoryRefreshKey] = useState(0);
+  const [recordHeaderAvatarSaveError, setRecordHeaderAvatarSaveError] = useState<string | null>(null);
 
   const canEditRecordAvatar = !!uid && (user?.uid === uid || (typeof securityLevel === 'string' && parseInt(securityLevel, 10) >= 4));
   const handleRecordHeaderAvatarClick = useCallback(() => {
@@ -191,6 +204,7 @@ const UserProfilePage = () => {
   const handleConfirmRecordHeaderAvatarCrop = useCallback(async (blob: Blob) => {
     if (!uid) return;
     setRecordHeaderAvatarBusy(true);
+    setRecordHeaderAvatarSaveError(null);
     try {
       const storageRef = ref(storage, `avatars/${uid}.jpg`);
       await uploadBytes(storageRef, blob, { contentType: blob.type || 'image/jpeg' });
@@ -201,6 +215,12 @@ const UserProfilePage = () => {
       setPendingRecordAvatarSrc(null);
     } catch (err) {
       console.error('Error saving avatar:', err);
+      const denied = err instanceof FirebaseError && err.code === 'permission-denied';
+      setRecordHeaderAvatarSaveError(
+        denied
+          ? "Couldn't save the photo (permission denied). Ask an admin or try again signed in with the right tenant role."
+          : "Couldn't save the photo. Check your connection and try again."
+      );
     } finally {
       setRecordHeaderAvatarBusy(false);
     }
@@ -568,6 +588,8 @@ const UserProfilePage = () => {
 
           // Set createdAt
           setCreatedAt(data.createdAt || null);
+          const attestation = data.workEligibilityAttestation as { attestedAt?: unknown } | null | undefined;
+          setWorkAuthorizationAttestedAt(attestation?.attestedAt ?? null);
           setWorkAuthorizedStatus(
             getWorkAuthorizedStatus({
               workEligibility: data.workEligibility,
@@ -687,6 +709,7 @@ const UserProfilePage = () => {
           workEligibility: data.workEligibility !== false,
           emergencyContact: data.emergencyContact || null,
           transportMethod: data.transportMethod || null,
+          addedToIndeedFlex: data.addedToIndeedFlex === true,
         });
 
         // Load onboarding status
@@ -709,6 +732,22 @@ const UserProfilePage = () => {
 
     fetchOnce();
     return () => { cancelled = true; };
+  }, [uid, user, securityLevel]);
+
+  useEffect(() => {
+    if (!uid || !canAccessProfile()) {
+      setAddedToIndeedFlex(false);
+      return;
+    }
+    const userRef = doc(db, 'users', uid);
+    const unsub = onSnapshot(userRef, (snap) => {
+      if (snap.exists()) {
+        setAddedToIndeedFlex(snap.data()?.addedToIndeedFlex === true);
+      } else {
+        setAddedToIndeedFlex(false);
+      }
+    });
+    return () => unsub();
   }, [uid, user, securityLevel]);
 
   // Fetch counts for tabs
@@ -863,10 +902,11 @@ const UserProfilePage = () => {
       { label: 'Resume Upload', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
+      { label: 'Readiness', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
       { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
       { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Employment', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Compliance', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Certifications', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
       { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
@@ -948,6 +988,52 @@ const UserProfilePage = () => {
   }, [searchParams, availableTabLabels, location.pathname, navigate]);
 
   useEffect(() => {
+    const rf = searchParams.get('readinessFocus');
+    if (rf !== 'Readiness' || availableTabLabels.length === 0) return;
+    if (!availableTabLabels.includes('Readiness')) return;
+    setTabValue('Readiness');
+    const next = new URLSearchParams(searchParams);
+    next.delete('readinessFocus');
+    const q = next.toString();
+    navigate(`${location.pathname}${q ? `?${q}` : ''}`, { replace: true });
+  }, [searchParams, availableTabLabels, location.pathname, navigate]);
+
+  /** `?tab=employment&focus=i9` — open Employment tab and scroll to I-9 / work authorization checklist (Readiness deep-link). */
+  useEffect(() => {
+    const tabParam = (searchParams.get('tab') || '').toLowerCase();
+    if (tabParam !== 'employment' || availableTabLabels.length === 0) return;
+    if (!availableTabLabels.includes('Employment')) return;
+
+    const focusParam = (searchParams.get('focus') || '').toLowerCase();
+    setTabValue('Employment');
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('tab');
+    next.delete('focus');
+    const q = next.toString();
+    navigate(`${location.pathname}${q ? `?${q}` : ''}`, { replace: true });
+
+    if (focusParam === 'i9') {
+      setEmploymentI9SectionFlash(true);
+      const runScroll = (): void => {
+        document.getElementById(EMPLOYMENT_I9_SECTION_ELEMENT_ID)?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      };
+      requestAnimationFrame(() => {
+        window.setTimeout(runScroll, 320);
+      });
+    }
+  }, [searchParams, availableTabLabels, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!employmentI9SectionFlash) return;
+    const t = window.setTimeout(() => setEmploymentI9SectionFlash(false), 2000);
+    return () => window.clearTimeout(t);
+  }, [employmentI9SectionFlash]);
+
+  useEffect(() => {
     if (!backgroundComplianceHighlightId) return;
     const t = window.setTimeout(() => setBackgroundComplianceHighlightId(null), 4000);
     return () => window.clearTimeout(t);
@@ -966,6 +1052,7 @@ const UserProfilePage = () => {
     const pathname = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
     params.delete('tab');
+    params.delete('focus');
     const search = params.toString();
     navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
   };
@@ -978,10 +1065,24 @@ const UserProfilePage = () => {
       const pathname = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
       params.delete('tab');
+      params.delete('focus');
       const search = params.toString();
       navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
     }
   };
+
+  const handleOpenWorkerNotificationComposer = useCallback(
+    (args: { channel: 'sms' | 'email'; body: string; subject?: string }) => {
+      if (args.channel === 'sms') {
+        setSmsComposePrefillBody(args.body);
+        setSmsComposeOpen(true);
+      } else {
+        setEmailComposePrefill({ body: args.body, subject: args.subject });
+        setEmailComposeOpen(true);
+      }
+    },
+    [],
+  );
 
   const pathnameForEntityChips = location.pathname;
   const isRecruiterRouteForEntityChips =
@@ -1297,6 +1398,7 @@ const UserProfilePage = () => {
           avatarUrl={avatarUrl}
           onAvatarUpdated={setAvatarUrl}
           headerUserGroups={headerUserGroups}
+          showIndeedFlexBadge={addedToIndeedFlex}
           showBackButton={(isRecruiterRoute || user?.uid !== uid) && !isWorkforceRoute}
           onBack={() => {
             if (isRecruiterRoute) {
@@ -1825,6 +1927,24 @@ const UserProfilePage = () => {
                       </IconButton>
                     </Tooltip>
                   )}
+                    {addedToIndeedFlex ? (
+                      <Tooltip title="Added to Indeed Flex">
+                        <Box
+                          component="img"
+                          src="/img/flex.png"
+                          alt="Indeed Flex"
+                          sx={{
+                            height: 36,
+                            width: 'auto',
+                            maxWidth: 96,
+                            objectFit: 'contain',
+                            display: 'block',
+                            flexShrink: 0,
+                            alignSelf: 'center',
+                          }}
+                        />
+                      </Tooltip>
+                    ) : null}
                     </Stack>
                     </Box>
                     {/* Line 3: Metadata subtitle */}
@@ -2303,6 +2423,13 @@ const UserProfilePage = () => {
                     tenantId={tenantId || authTenantId || activeTenant?.id || null}
                   />
                 );
+              case 'Readiness':
+                return (
+                  <ProfileReadinessTabContent
+                    uid={uid}
+                    tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                  />
+                );
               case 'User Groups':
                 return <UserGroupsTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || undefined} />;
               case 'Onboarding':
@@ -2316,9 +2443,14 @@ const UserProfilePage = () => {
                     workerDisplayName={
                       `${firstName} ${lastName}`.trim() || preferredName?.trim() || null
                     }
+                    workAuthorizedStatus={workAuthorizedStatus}
+                    workAuthorizationAttestedAt={workAuthorizationAttestedAt}
+                    employmentI9SectionFlash={employmentI9SectionFlash}
+                    onNavigateToProfileTab={handleHeaderTabChange}
+                    onOpenWorkerNotificationComposer={handleOpenWorkerNotificationComposer}
                   />
                 );
-              case 'Compliance':
+              case 'Certifications':
                 return <ComplianceTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || null} />;
               case 'Backgrounds':
                 return (
@@ -2386,7 +2518,10 @@ const UserProfilePage = () => {
       {uid && (tenantId || authTenantId || activeTenant?.id) && (
         <MessageDrawer
           open={emailComposeOpen}
-          onClose={() => setEmailComposeOpen(false)}
+          onClose={() => {
+            setEmailComposeOpen(false);
+            setEmailComposePrefill(undefined);
+          }}
           recipients={[
             {
               userId: uid,
@@ -2398,6 +2533,8 @@ const UserProfilePage = () => {
           ]}
           tenantId={(tenantId || authTenantId || activeTenant?.id) as string}
           defaultChannels={['email']}
+          defaultSubject={emailComposePrefill?.subject}
+          defaultBody={emailComposePrefill?.body}
         />
       )}
 
@@ -2405,7 +2542,10 @@ const UserProfilePage = () => {
       {uid && (tenantId || authTenantId || activeTenant?.id) && (
         <MessageDrawer
           open={smsComposeOpen}
-          onClose={() => setSmsComposeOpen(false)}
+          onClose={() => {
+            setSmsComposeOpen(false);
+            setSmsComposePrefillBody(undefined);
+          }}
           recipients={[
             {
               userId: uid,
@@ -2417,6 +2557,7 @@ const UserProfilePage = () => {
           ]}
           tenantId={(tenantId || authTenantId || activeTenant?.id) as string}
           defaultChannels={['sms']}
+          defaultBody={smsComposePrefillBody}
         />
       )}
 
@@ -2571,6 +2712,22 @@ const UserProfilePage = () => {
         currentUserId={user?.uid || ''}
         tenantId={tenantId || authTenantId || activeTenant?.id || ''}
       />
+
+      <Snackbar
+        open={!!recordHeaderAvatarSaveError}
+        autoHideDuration={8000}
+        onClose={() => setRecordHeaderAvatarSaveError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setRecordHeaderAvatarSaveError(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {recordHeaderAvatarSaveError}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

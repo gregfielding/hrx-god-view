@@ -58,11 +58,8 @@ import type {
   HeaderEmploymentStatus,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import { isOnboardingPathRowBlocker } from './employmentOnboardingPath';
-import {
-  isAssignmentTerminalNormalized,
-  normalizeAssignmentStatus,
-  type AssignmentStatusCanonical,
-} from './assignmentStatusNormalize';
+import { normalizeAssignmentStatus, type AssignmentStatusCanonical } from './assignmentStatusNormalize';
+import { isAssignmentSummaryTerminal } from './assignmentReadinessUi';
 
 export interface DeriveEmploymentHeaderStateArgs {
   /** From `entity_employments.onboardingPhase` (or legacy inference). */
@@ -75,7 +72,10 @@ export interface DeriveEmploymentHeaderStateArgs {
   actionableBy: EmploymentOnboardingRowActionableBy | 'mixed' | 'none';
   /** Use best “current” assignment for this entity (see `primaryAssignmentStatusForHeader`). */
   assignmentStatus?: string | null;
-  /** Raw `entity_employments.status` — `active` ≠ assignment `confirmed` during onboarding. */
+  /**
+   * Prefer `entity_employments.employmentState` with fallback to `status` (caller should pass
+   * `entityEmploymentLifecycleLower(ee)`).
+   */
   entityEmploymentStatus?: string | null;
   /**
    * When false, stale pipeline/path/phase must not read as active onboarding (no live assignment demand).
@@ -104,7 +104,7 @@ export function primaryAssignmentRowForHeader(
   assignments: EmploymentAssignmentSummary[] | undefined
 ): EmploymentAssignmentSummary | null {
   if (!assignments?.length) return null;
-  const live = assignments.filter((a) => !isAssignmentTerminalNormalized(a.status));
+  const live = assignments.filter((a) => !isAssignmentSummaryTerminal(a));
   if (live.length === 0) return null;
   const rank: Record<AssignmentStatusCanonical, number> = {
     in_progress: 3,
@@ -137,8 +137,8 @@ export function primaryAssignmentStatusForHeader(
  * Whether current UX should treat onboarding as **actively demanded** (vs historical pipeline/path only).
  *
  * **true** when:
- * - `entity_employments.status` is **`active`** or **`blocked`**, or
- * - `entity_employments.status` is **`onboarding`** and `employmentEntryMode === 'on_call_pool'` (labor pool / pre-assignment hire), or
+ * - Entity lifecycle (`employmentState` ?? `status`) is **`active`** or **`blocked`**, or
+ * - That lifecycle is **`onboarding`** and `employmentEntryMode === 'on_call_pool'` (labor pool / pre-assignment hire), or
  * - `assignments` is a non-empty array with at least one **non-terminal** row (`pending` / `confirmed` / `in_progress`).
  *
  * **false** when assignments are missing, empty, or all terminal — unless employment is `active`/`blocked` or on-call onboarding.
@@ -146,6 +146,7 @@ export function primaryAssignmentStatusForHeader(
  */
 export function computeHasOpenOnboardingDemand(args: {
   assignments: EmploymentAssignmentSummary[] | undefined;
+  /** Use `entityEmploymentLifecycleLower(ee)` so `employmentState` wins over legacy `status`. */
   entityEmploymentStatus?: string | null;
   /** Pre-assignment / on-call pool hire — relationship onboarding without a live assignment. */
   employmentEntryMode?: 'assignment_based' | 'on_call_pool' | string | null;
@@ -361,7 +362,7 @@ export function employmentHeaderStateExplanation(
   switch (state) {
     case 'not_started':
       if (meta?.noOpenOnboardingDemand) {
-        return 'No current assignment onboarding for this entity. Historical onboarding data may still appear below.';
+        return 'No active job onboarding for this entity. Earlier steps may still show below for reference.';
       }
       return 'Onboarding has not started for this entity yet.';
     case 'on_assignment':

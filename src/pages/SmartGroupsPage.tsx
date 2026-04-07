@@ -70,6 +70,8 @@ import { getGeocodingErrorMessage } from '../utils/geocodeAddress';
 import { calculateDistance } from '../utils/locationUtils';
 import { useSmartGroupSettings } from '../hooks/useSmartGroupSettings';
 import { usePageCache } from '../hooks/usePageCache';
+import { useActiveAssignmentUserIds } from '../hooks/useActiveAssignmentUserIds';
+import { getWorkStatusColumnDisplay } from '../utils/workStatusColumnDisplay';
 
 const SMART_GROUPS_CACHE_KEY = 'smartGroups';
 
@@ -146,6 +148,9 @@ interface ResidenceRow {
   certifications?: string[];
   scoreSummary?: { aiScore?: number; interviewAvg?: number; interviewCount?: number; interviewLastAt?: any; interviewLastScore10?: number };
   securityLevel?: string;
+  employeeOnboardStatus?: string;
+  contractorOnboardStatus?: string;
+  onboardingType?: string;
 }
 
 function getUserResidenceData(userData: any) {
@@ -498,6 +503,9 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             certifications,
             scoreSummary: userData?.scoreSummary,
             securityLevel: userData?.tenantIds?.[tenantId]?.securityLevel ?? userData?.securityLevel,
+            employeeOnboardStatus: userData?.employeeOnboardStatus,
+            contractorOnboardStatus: userData?.contractorOnboardStatus,
+            onboardingType: userData?.onboardingType,
           });
         }
         result.sort((a, b) => (a.distance ?? 0) - (b.distance ?? 0));
@@ -546,6 +554,9 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
             certifications,
             scoreSummary: userData?.scoreSummary,
             securityLevel: userData?.tenantIds?.[tenantId]?.securityLevel ?? userData?.securityLevel,
+            employeeOnboardStatus: userData?.employeeOnboardStatus,
+            contractorOnboardStatus: userData?.contractorOnboardStatus,
+            onboardingType: userData?.onboardingType,
           });
         }
         result.sort((a, b) => (a.city + a.state).localeCompare(b.city + b.state));
@@ -974,17 +985,11 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     }
   };
 
-  const getWorkStatusDisplay = (row: ResidenceRow): { label: string; color: 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info'; sx?: any } => {
-    const sl = String(row.securityLevel ?? '');
-    switch (sl) {
-      case '4': return { label: 'Hired', color: 'success' };
-      case '3': return { label: 'Candidate', color: 'primary' };
-      case '2': return { label: 'Applicant', color: 'info' };
-      case '1': return { label: 'Dismissed', color: 'default' };
-      case '0': return { label: 'Suspended', color: 'error' };
-      default: return { label: sl || '—', color: 'default' };
-    }
-  };
+  const residenceUserIdsForAssignments = useMemo(() => residenceRows.map((r) => r.userId), [residenceRows]);
+  const activeAssignmentUserIds = useActiveAssignmentUserIds(tenantId ?? undefined, residenceUserIdsForAssignments);
+
+  const getWorkStatusDisplay = (row: ResidenceRow) =>
+    getWorkStatusColumnDisplay(row, { hasActiveAssignment: activeAssignmentUserIds.has(row.userId) });
 
   const renderResidenceAiScore = (row: ResidenceRow) => {
     const rawScore = row.scoreSummary?.aiScore;

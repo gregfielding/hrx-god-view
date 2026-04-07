@@ -2,23 +2,18 @@
  * My Assignments — /c1/workers/assignments
  * Worker-facing upcoming and past shifts. Loads from tenants/{tenantId}/assignments.
  * Detail route: /c1/workers/assignments/:assignmentId
+ * List-only UI (no card-deck toggle).
  */
 
 import React, { useState, useEffect } from 'react';
-import { Box, Stack, Typography, Button, CircularProgress, ToggleButtonGroup, ToggleButton } from '@mui/material';
-import ViewListIcon from '@mui/icons-material/ViewList';
-import ViewModuleIcon from '@mui/icons-material/ViewModule';
-import { useNavigate } from 'react-router-dom';
+import { Box, Stack, Typography, CircularProgress } from '@mui/material';
 import { collection, doc, query, where, getDocs, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import { getCalendarDayLocal } from '../../../utils/dateUtils';
 import WorkerAssignmentsTabs from '../../../components/worker/assignments/WorkerAssignmentsTabs';
-import WorkerAssignmentCard from '../../../components/worker/assignments/WorkerAssignmentCard';
-import CardDeck from '../../../components/worker/cards/CardDeck';
 import SmsWarningBanner from '../../../components/worker/SmsWarningBanner';
-import { emitWorkerCardSignal } from '../../../utils/workerCardSignals';
 import type { WorkerAssignmentItem } from '../../../components/worker/assignments/WorkerAssignmentCard';
 import type { AssignmentStatus } from '../../../components/worker/assignments/WorkerAssignmentCard';
 
@@ -134,7 +129,6 @@ function docToItem(
 }
 
 const WorkerAssignments: React.FC = () => {
-  const navigate = useNavigate();
   const t = useT();
   const { user, activeTenant } = useAuth();
   const [tabIndex, setTabIndex] = useState(0);
@@ -144,8 +138,6 @@ const WorkerAssignments: React.FC = () => {
 
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
   const [refreshKey, setRefreshKey] = useState(0);
-  const [viewMode, setViewMode] = useState<'list' | 'cards'>('list');
-  const [deckIndex, setDeckIndex] = useState(0);
 
   const handleCancelShift = React.useCallback(
     async (assignment: WorkerAssignmentItem) => {
@@ -290,96 +282,29 @@ const WorkerAssignments: React.FC = () => {
     return () => { cancelled = true; };
   }, [user?.uid, tenantId, refreshKey]);
 
-  const currentList = tabIndex === 0 ? upcoming : past;
-  const hasItems = currentList.length > 0;
-  const showCardDeck = viewMode === 'cards' && hasItems;
-
   return (
     <Box sx={{ maxWidth: 'lg', mx: 'auto' }}>
       <Stack spacing={4} sx={{ py: 2 }}>
         <SmsWarningBanner />
-        <Stack
-          direction="row"
-          justifyContent="space-between"
-          alignItems="center"
-          flexWrap="wrap"
-          gap={2}
-        >
-          <Box>
-            <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-              {t('assignments.title')}
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {t('assignments.subtitle')}
-            </Typography>
-          </Box>
-          <Stack direction="row" alignItems="center" spacing={2} flexWrap="wrap">
-            {hasItems && (
-              <ToggleButtonGroup
-                value={viewMode}
-                exclusive
-                onChange={(_, v) => { if (v != null) setViewMode(v); setDeckIndex(0); }}
-                size="small"
-                aria-label={t('assignments.viewMode')}
-              >
-                <ToggleButton value="list" aria-label={t('assignments.viewList')}>
-                  <ViewListIcon sx={{ mr: 0.5 }} /> {t('assignments.viewList')}
-                </ToggleButton>
-                <ToggleButton value="cards" aria-label={t('assignments.viewCards')}>
-                  <ViewModuleIcon sx={{ mr: 0.5 }} /> {t('assignments.viewCards')}
-                </ToggleButton>
-              </ToggleButtonGroup>
-            )}
-            <Button variant="contained" onClick={() => navigate('/c1/jobs-board')}>
-              {t('nav.findWork')}
-            </Button>
-            <Button variant="outlined" onClick={() => navigate('/c1/workers/applications')}>
-              {t('nav.viewApplications')}
-            </Button>
-          </Stack>
-        </Stack>
+        <Box>
+          <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
+            {t('assignments.title')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            {t('assignments.subtitle')}
+          </Typography>
+        </Box>
 
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
             <CircularProgress />
           </Box>
-        ) : showCardDeck ? (
-          <CardDeck
-            totalCards={currentList.length}
-            activeIndex={deckIndex}
-            onIndexChange={setDeckIndex}
-            onExpand={() => {
-              const item = currentList[deckIndex];
-              if (item) {
-                emitWorkerCardSignal({ type: 'assignment_viewed', entityId: item.assignmentId });
-                const route = `/c1/workers/assignments/${item.assignmentId}`;
-                console.debug('[WorkerAssignmentsNav] navigate', {
-                  source: 'card_deck_expand',
-                  route,
-                  params: { assignmentId: item.assignmentId },
-                });
-                navigate(route);
-              }
-            }}
-            showSectionProgress={false}
-            expandDisabled={currentList.length === 0}
-            ariaLabel={t('assignments.title')}
-          >
-            {currentList[deckIndex] && (
-              <WorkerAssignmentCard
-                assignment={currentList[deckIndex]}
-                showViewDetails
-                isUpcoming={tabIndex === 0}
-                onCancelShift={handleCancelShift}
-              />
-            )}
-          </CardDeck>
         ) : (
           <WorkerAssignmentsTabs
             upcoming={upcoming}
             past={past}
             tabIndex={tabIndex}
-            onTabChange={(idx) => { setTabIndex(idx); setDeckIndex(0); }}
+            onTabChange={setTabIndex}
             onCancelShift={handleCancelShift}
           />
         )}

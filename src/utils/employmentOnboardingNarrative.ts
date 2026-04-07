@@ -268,17 +268,14 @@ export function filterScreeningAutomationDispatchBriefs(
 }
 
 /**
- * Include a dispatch row for an Employment entity tab when `hiringEntityId` matches **or**
- * when it is missing but `assignmentId` belongs to this tab’s assignments (avoids dropping screening events).
+ * Employment V2: dispatch rows are included only when `assignmentId` is one of this tab’s assignments.
+ * Hiring-entity-only matches are intentionally excluded to prevent cross-entity screening leakage.
  */
 export function automationDispatchBriefMatchesEntityTab(opts: {
   brief: OnboardingAutomationDispatchBrief;
   entityFirestoreId: string | null | undefined;
   assignmentIdsForTab: readonly string[];
 }): boolean {
-  const eid = String(opts.entityFirestoreId || '').trim();
-  const hid = String(opts.brief.hiringEntityId || '').trim();
-  if (eid && hid && hid === eid) return true;
   const idSet = new Set(
     opts.assignmentIdsForTab.map((x) => String(x || '').trim()).filter(Boolean)
   );

@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "dryRun": true,
+    "tenantId": "BCiP2bQ9CgVOCTfV6MhD",
+    "jobOrderId": "br0wmqSmuBR94ppBpxGh",
+    "generatedAtIso": "2026-04-06T14:44:53.078Z",
+    "allowEmailFallbackMerge": false,
+    "maxPairsCap": 20,
+    "pairsEvaluated": 0
+  },
+  "counts": {
+    "nestedApplications": 0,
+    "tenantApplicationsForJobOrder": 12
+  },
+  "summary": {
+    "autoMergePairClassifications": 0,
+    "requiresReviewPairClassifications": 0
+  },
+  "pairEvaluations": [],
+  "proposedReviewQueuePath": "tenants/BCiP2bQ9CgVOCTfV6MhD/application_consolidation_review/{clusterId}",
+  "note": "PR2: review doc id is clusterId (deterministic). Run consolidation:execute --execute to enqueue reviews and apply strong-key merges."
+}

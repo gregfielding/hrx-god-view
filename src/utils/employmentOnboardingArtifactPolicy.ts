@@ -53,9 +53,11 @@ const TERMINAL_BG = new Set(['completed', 'canceled', 'error']);
 
 /**
  * Background check reuse (conceptual):
- * - Prefer orders linked to this entity’s job orders → “in this flow” (row status: completed).
- * - If this entity has no completed linked order, but the worker has another tenant completed order,
- *   treat as a portable artifact (worker_global) for UI purposes.
+ * - Prefer orders linked to this entity tab’s assignment job orders → “in this flow”.
+ * - If there is at least one such job order on-file but no completed linked order, a **completed** order
+ *   elsewhere in the tenant may satisfy `background_completed` as a portable artifact (`worker_global`).
+ * - If this tab has **no** assignment-linked job orders (`entityLinkedJobOrderIds` empty), portable reuse
+ *   is **disabled** (no cross-entity satisfaction from another tab’s assignment).
  *
  * Equivalency v1: same tenant + same candidate + hrxStatus completed. Package / recency parity not enforced.
  */
@@ -64,6 +66,9 @@ export function findPortableBackgroundArtifact(args: {
   allTenantWorkerChecks: BackgroundCheckRecord[];
 }): PortableBackgroundArtifact | null {
   const { entityLinkedJobOrderIds, allTenantWorkerChecks } = args;
+  if (entityLinkedJobOrderIds.size === 0) {
+    return null;
+  }
   const linked = allTenantWorkerChecks.filter(
     (c) => c.jobOrderId && entityLinkedJobOrderIds.has(String(c.jobOrderId))
   );

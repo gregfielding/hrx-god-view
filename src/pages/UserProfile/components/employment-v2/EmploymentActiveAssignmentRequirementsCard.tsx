@@ -1,19 +1,16 @@
 import React, { useState } from 'react';
 import {
+  Alert,
   Box,
   Button,
   Card,
   CardContent,
-  CardHeader,
   Chip,
   Collapse,
   Divider,
-  IconButton,
   Stack,
   Typography,
 } from '@mui/material';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { useNavigate } from 'react-router-dom';
 import type {
   AssignmentRequirementItemVm,
@@ -22,6 +19,9 @@ import type {
 } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
+import ManualScreeningOrderSelect from './ManualScreeningOrderSelect';
+import { assignmentReadinessStateDisplay } from '../../../../utils/assignmentReadinessUi';
+import { blockingAssignmentRequirementLines } from '../../../../utils/assignmentRequirementsViewModel';
 
 function Subsection({
   title,
@@ -43,9 +43,11 @@ function Subsection({
   if (!items.length) {
     return (
       <Box sx={{ mb: 1.5 }}>
-        <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
-          {title}
-        </Typography>
+        {title ? (
+          <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
+            {title}
+          </Typography>
+        ) : null}
         <Typography variant="body2" color="text.secondary">
           {emptyHint}
         </Typography>
@@ -55,9 +57,11 @@ function Subsection({
 
   return (
     <Box sx={{ mb: 2 }}>
-      <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
-        {title}
-      </Typography>
+      {title ? (
+        <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
+          {title}
+        </Typography>
+      ) : null}
       <Stack spacing={1.25} divider={<Divider flexItem />}>
         {items.map((item) => (
           <Stack
@@ -110,10 +114,6 @@ export interface EmploymentActiveAssignmentRequirementsCardProps {
   entityKey: EmploymentEntityKey;
   actionContext: EmploymentV2ActionResolutionContext | null;
   onActionComplete?: () => void;
-  /**
-   * When the onboarding checklist already lists this assignment’s package rows, omit duplicate line-item sections here.
-   */
-  assignmentPackageSummarizedInChecklist?: boolean;
 }
 
 const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssignmentRequirementsCardProps> = ({
@@ -121,220 +121,234 @@ const EmploymentActiveAssignmentRequirementsCard: React.FC<EmploymentActiveAssig
   entityKey,
   actionContext,
   onActionComplete,
-  assignmentPackageSummarizedInChecklist = false,
 }) => {
   const navigate = useNavigate();
   const vm = overview.assignmentRequirementsViewModel;
   const primaryId = vm.primaryAssignmentId;
   const hasDemand = overview.hasOpenOnboardingDemand;
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const demoteChips = !hasDemand;
+  const isRecruiter = actionContext?.viewer === 'recruiter';
+  const [legacyJobOpen, setLegacyJobOpen] = useState(false);
+  const [fullDetailsOpen, setFullDetailsOpen] = useState(false);
 
-  /** No non-terminal assignment for this hiring entity — assignmentsRows are already scoped by hiringEntityId → tab. */
-  if (!vm.hasPrimaryAssignment) {
+  if (!overview.assignments.length) {
     return null;
   }
 
-  const compactAssignmentSurface =
-    Boolean(assignmentPackageSummarizedInChecklist && hasDemand);
+  const backgroundItems: AssignmentRequirementItemVm[] = [
+    ...vm.entityScreeningMilestones,
+    ...vm.backgroundOrdersLinked,
+    ...vm.requiredChecks,
+  ];
 
-  const hasAnyJobContent =
+  const otherItems: AssignmentRequirementItemVm[] = [
+    ...vm.requiredUploads,
+    ...vm.assignmentDocuments,
+    ...vm.adminSteps,
+  ];
+
+  const showCard =
     vm.hasPrimaryAssignment ||
-    vm.entityScreeningMilestones.length > 0 ||
-    vm.backgroundOrdersLinked.length > 0;
+    backgroundItems.length > 0 ||
+    vm.requiredCertifications.length > 0 ||
+    otherItems.length > 0 ||
+    isRecruiter;
 
-  const historyOnlySections =
-    !hasDemand && (vm.entityScreeningMilestones.length > 0 || vm.backgroundOrdersLinked.length > 0);
-  const demoteChips = !hasDemand;
+  if (!showCard) return null;
+
+  const readiness = vm.primaryAssignmentReadinessV1;
+  const headline =
+    vm.primaryCanonicalReadinessHeadline ||
+    (readiness ? assignmentReadinessStateDisplay(readiness.assignmentReadinessState) : null);
+  const summaryText = readiness?.readinessSummary?.trim() || '';
+  const showSummaryUnderHeadline =
+    summaryText &&
+    headline &&
+    summaryText.toLowerCase() !== String(headline).trim().toLowerCase();
+
+  const canonicalBlockingIds = readiness?.blockingRequirementIds?.length
+    ? readiness.blockingRequirementIds
+    : null;
+  const showPathOpenFooter =
+    hasDemand &&
+    vm.openBlockerCount > 0 &&
+    (!canonicalBlockingIds || canonicalBlockingIds.length === 0);
+
+  const blockingLines = blockingAssignmentRequirementLines(vm);
+  const blockingCount =
+    blockingLines.length > 0 ? blockingLines.length : hasDemand ? vm.openBlockerCount : 0;
+  const decisionTitle =
+    hasDemand && blockingCount > 0
+      ? 'Not ready for this job'
+      : headline || (vm.hasPrimaryAssignment ? 'Assignment readiness' : 'Job requirements');
+  const decisionSeverity: 'warning' | 'info' | 'success' =
+    hasDemand && blockingCount > 0 ? 'warning' : readiness?.assignmentReadinessState === 'ready' ? 'success' : 'info';
 
   return (
-    <Card sx={{ mb: 2 }}>
-      <CardHeader
-        title={
-          compactAssignmentSurface
-            ? 'Active assignment'
-            : hasDemand
-              ? 'Active assignment requirements'
-              : 'Assignment & screening record'
-        }
-        subheader={
-          compactAssignmentSurface
-            ? 'Steps for this job are in the checklist above'
-            : hasDemand
-              ? 'Job-specific package, screening orders, and entity screening policy — separate from the employment relationship path above.'
-              : 'No active assignment onboarding for this entity. Expand history to review prior milestones and screening orders — not current required work by default.'
-        }
-        titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
-      />
-      <CardContent sx={{ pt: 0 }}>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.5 }}>
-          {compactAssignmentSurface
-            ? 'Open the assignment for full detail.'
-            : hasDemand
-              ? 'Entity Settings still control which screening milestones apply to this hiring relationship; detail and fulfillment for orders and assignment tasks are grouped here so the main path stays focused on I-9, forms, payroll, and internal readiness.'
-              : 'When you have a live assignment, job package and screening activity will appear here as current work. What follows is retained for reference.'}
-        </Typography>
-
-        {!hasAnyJobContent ? (
-          <Typography variant="body2" color="text.secondary">
-            No primary assignment, screening milestones, or linked screening orders for this entity yet.
+    <Card sx={{ mb: 2 }} variant="outlined">
+      <CardContent sx={{ pt: 2 }}>
+        {vm.hasPrimaryAssignment ? (
+          <Typography variant="body2" sx={{ mb: 1.5 }}>
+            <Box component="span" sx={{ fontWeight: 700 }}>
+              Current job:{' '}
+            </Box>
+            {vm.primaryJobTitle || vm.primaryJobOrderId || '—'}
           </Typography>
         ) : null}
 
-        {historyOnlySections ? (
-          <>
-            <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
-              <Typography variant="subtitle2" fontWeight={700}>
-                History: policy milestones &amp; screening orders
-              </Typography>
-              <IconButton aria-label={historyOpen ? 'Collapse history' : 'Expand history'} onClick={() => setHistoryOpen((v) => !v)} size="small">
-                {historyOpen ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-              </IconButton>
-            </Stack>
-            <Collapse in={historyOpen}>
-              {vm.entityScreeningMilestones.length > 0 ? (
-                <Subsection
-                  title="Entity screening (policy milestones)"
-                  items={vm.entityScreeningMilestones}
-                  emptyHint=""
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  demoteBlockingChips={demoteChips}
-                />
-              ) : null}
-              {vm.backgroundOrdersLinked.length > 0 ? (
-                <>
-                  {vm.entityScreeningMilestones.length > 0 ? <Divider sx={{ my: 2 }} /> : null}
-                  <Subsection
-                    title="Screening orders (linked job orders)"
-                    items={vm.backgroundOrdersLinked}
-                    emptyHint=""
-                    entityKey={entityKey}
-                    actionContext={actionContext}
-                    onActionComplete={onActionComplete}
-                    demoteBlockingChips={demoteChips}
-                  />
-                </>
-              ) : null}
-            </Collapse>
-          </>
-        ) : (
-          <>
-            {vm.entityScreeningMilestones.length > 0 ? (
-              <Subsection
-                title="Entity screening (policy milestones)"
-                items={vm.entityScreeningMilestones}
-                emptyHint=""
-                entityKey={entityKey}
-                actionContext={actionContext}
-                onActionComplete={onActionComplete}
-                demoteBlockingChips={demoteChips}
-              />
+        <Alert severity={decisionSeverity} variant="outlined" sx={{ mb: 2, '& .MuiAlert-message': { width: '100%' } }}>
+          <Typography variant="subtitle1" fontWeight={800} component="div">
+            {decisionTitle}
+          </Typography>
+          {hasDemand && blockingCount > 0 ? (
+            <Typography variant="body2" fontWeight={600} sx={{ mt: 0.75 }}>
+              {blockingCount} item{blockingCount === 1 ? '' : 's'} blocking start
+            </Typography>
+          ) : null}
+          {showSummaryUnderHeadline ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1, lineHeight: 1.45 }}>
+              {summaryText}
+            </Typography>
+          ) : null}
+          {canonicalBlockingIds ? (
+            <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 1, lineHeight: 1.45 }}>
+              Blocking requirement ids: {canonicalBlockingIds.join(', ')}
+            </Typography>
+          ) : null}
+          <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5 }}>
+            <Button size="small" variant="outlined" onClick={() => setFullDetailsOpen((o) => !o)}>
+              {fullDetailsOpen ? 'Hide' : 'View'} full requirements
+            </Button>
+            {primaryId ? (
+              <Button size="small" variant="contained" onClick={() => navigate(`/assignments/${primaryId}`)}>
+                Open assignment
+              </Button>
             ) : null}
-          </>
+          </Stack>
+        </Alert>
+
+        {isRecruiter && hasDemand ? (
+          <Box sx={{ mb: 2 }}>
+            <ManualScreeningOrderSelect />
+          </Box>
+        ) : null}
+
+        {blockingLines.length > 0 ? (
+          <Box sx={{ mb: 2 }}>
+            <Typography variant="body2" fontWeight={700} sx={{ mb: 0.75 }}>
+              Key issues
+            </Typography>
+            <Box component="ul" sx={{ m: 0, pl: 2.5 }}>
+              {blockingLines.map((row, i) => (
+                <Typography key={`${i}:${row.title}`} component="li" variant="body2" sx={{ lineHeight: 1.45 }}>
+                  {row.title} → {row.statusLabel}
+                </Typography>
+              ))}
+            </Box>
+          </Box>
+        ) : hasDemand ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.5 }}>
+            No blocking rows detected on the assignment package path. Expand full requirements if you need the
+            checklist or to add a screening.
+          </Typography>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.5 }}>
+            Nothing active for a live job on this tab. Recruiters can still open full requirements to add a screening
+            or review history.
+          </Typography>
         )}
 
-        {vm.hasPrimaryAssignment ? (
-          <>
-            <Divider sx={{ my: 2 }} />
-            <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
-              Primary assignment
-            </Typography>
-            <Stack spacing={0.5} sx={{ mb: 2 }}>
-              <Typography variant="body2">
-                <Box component="span" sx={{ fontWeight: 600 }}>
-                  Role / job:{' '}
-                </Box>
-                {vm.primaryJobTitle || vm.primaryJobOrderId || '—'}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Assignment status: {vm.primaryAssignmentStatus || '—'}
-                {vm.onboardingPercentComplete != null ? ` · Package ${vm.onboardingPercentComplete}%` : ''}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Onboarding instance: {vm.onboardingPackageStatus || '—'}
-              </Typography>
-              {primaryId ? (
-                <Button size="small" variant="outlined" sx={{ alignSelf: 'flex-start', mt: 0.5 }} onClick={() => navigate(`/assignments/${primaryId}`)}>
-                  Open assignment
-                </Button>
-              ) : null}
-            </Stack>
-
-            {!compactAssignmentSurface ? (
-              <>
-                <Subsection
-                  title="Required checks"
-                  items={vm.requiredChecks}
-                  emptyHint="No package checks in this assignment’s onboarding instance."
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  demoteBlockingChips={demoteChips}
-                />
-                <Subsection
-                  title="Required certifications"
-                  items={vm.requiredCertifications}
-                  emptyHint="No certification-style checks detected (naming heuristic)."
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  demoteBlockingChips={demoteChips}
-                />
-                <Subsection
-                  title="Required uploads / verifications"
-                  items={vm.requiredUploads}
-                  emptyHint="No non–e-sign document requirements in the package."
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  demoteBlockingChips={demoteChips}
-                />
-                <Subsection
-                  title="Assignment documents (e-sign)"
-                  items={vm.assignmentDocuments}
-                  emptyHint="No e-sign documents required for this assignment."
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  demoteBlockingChips={demoteChips}
-                />
-                <Subsection
-                  title="Assignment admin steps"
-                  items={vm.adminSteps}
-                  emptyHint="No recruiter/admin steps in the package."
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  demoteBlockingChips={demoteChips}
-                />
-              </>
-            ) : null}
-          </>
-        ) : null}
-
-        {hasDemand && vm.backgroundOrdersLinked.length > 0 ? (
-          <>
-            <Divider sx={{ my: 2 }} />
-            <Subsection
-              title="Screening orders (linked job orders)"
-              items={vm.backgroundOrdersLinked}
-              emptyHint=""
-              entityKey={entityKey}
-              actionContext={actionContext}
-              onActionComplete={onActionComplete}
-              demoteBlockingChips={demoteChips}
-            />
-          </>
-        ) : null}
-
-        {hasDemand && vm.openBlockerCount > 0 ? (
-          <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 1 }}>
-            {compactAssignmentSurface
-              ? `${vm.openBlockerCount} open item${vm.openBlockerCount === 1 ? '' : 's'} — see checklist`
-              : `${vm.openBlockerCount} blocking item${vm.openBlockerCount === 1 ? '' : 's'} in this job / screening area (not counted in the relationship path above).`}
+        {vm.onboardingPercentComplete != null && vm.hasPrimaryAssignment ? (
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+            Progress: {vm.onboardingPercentComplete}% complete (instance)
           </Typography>
         ) : null}
+
+        <Collapse in={fullDetailsOpen}>
+          {vm.hasPrimaryAssignment && readiness ? (
+            <Box sx={{ mb: 2 }}>
+              <Button
+                size="small"
+                onClick={() => setLegacyJobOpen((o) => !o)}
+                sx={{ textTransform: 'none', px: 0, minWidth: 0, mb: legacyJobOpen ? 0.5 : 0 }}
+                aria-expanded={legacyJobOpen}
+              >
+                {legacyJobOpen ? 'Hide' : 'Show'} Firestore record details (assignment &amp; instance)
+              </Button>
+              <Collapse in={legacyJobOpen}>
+                <Stack spacing={0.5} sx={{ borderLeft: 1, borderColor: 'divider', pl: 1.5, mb: 1 }}>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Raw assignment status: {vm.primaryAssignmentStatus || '—'}
+                    {vm.onboardingPercentComplete != null ? ` · Instance ${vm.onboardingPercentComplete}%` : ''}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Instance package status: {vm.onboardingPackageStatus || '—'}
+                  </Typography>
+                </Stack>
+              </Collapse>
+            </Box>
+          ) : vm.hasPrimaryAssignment ? (
+            <Stack spacing={0.5} sx={{ mb: 2 }}>
+              <Typography variant="caption" color="text.secondary" display="block">
+                Assignment status: {vm.primaryAssignmentStatus || '—'}
+                {vm.onboardingPercentComplete != null ? ` · Instance ${vm.onboardingPercentComplete}%` : ''}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block">
+                Instance package: {vm.onboardingPackageStatus || '—'}
+              </Typography>
+            </Stack>
+          ) : null}
+
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+            Background Checks and Screenings
+          </Typography>
+          <Subsection
+            title=""
+            items={backgroundItems}
+            emptyHint="No screening requirements or orders in view for this tab yet."
+            entityKey={entityKey}
+            actionContext={actionContext}
+            onActionComplete={onActionComplete}
+            demoteBlockingChips={demoteChips}
+          />
+
+          <Divider sx={{ my: 2 }} />
+
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+            Required Certifications
+          </Typography>
+          <Subsection
+            title=""
+            items={vm.requiredCertifications}
+            emptyHint="No certification-style requirements detected for this assignment (naming heuristic)."
+            entityKey={entityKey}
+            actionContext={actionContext}
+            onActionComplete={onActionComplete}
+            demoteBlockingChips={demoteChips}
+          />
+
+          <Divider sx={{ my: 2 }} />
+
+          <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
+            Other Requirements
+          </Typography>
+          <Subsection
+            title=""
+            items={otherItems}
+            emptyHint="No uploads, e-sign documents, or admin steps in the assignment package."
+            entityKey={entityKey}
+            actionContext={actionContext}
+            onActionComplete={onActionComplete}
+            demoteBlockingChips={demoteChips}
+          />
+
+          {showPathOpenFooter ? (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+              {vm.openBlockerCount} path row{vm.openBlockerCount === 1 ? '' : 's'} marked blocking in the onboarding
+              checklist (open the checklist above for row actions).
+            </Typography>
+          ) : null}
+        </Collapse>
       </CardContent>
     </Card>
   );

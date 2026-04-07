@@ -5,6 +5,9 @@
 
 import type { ExternalOnboardingStepsState } from '../../../../types/externalOnboardingSteps';
 import type { SignatureEnvelopeStatus } from '../../../../types/phase1cOnboarding';
+import type { EmploymentStateV1 } from '../../../../types/workforceStateV1';
+import type { AssignmentReadinessV1Snapshot } from '../../../../types/assignmentReadinessV1';
+import type { WorkerPayrollAccount } from '../../../../types/payroll';
 
 export type EmploymentEntityKey = 'select' | 'workforce' | 'events';
 
@@ -23,6 +26,8 @@ export interface EntityEmploymentRecord {
   entityName: string;
   workerType: string;
   status: string;
+  /** v1 operating state — mirrors `status` for this migration; server-authoritative. */
+  employmentState?: EmploymentStateV1 | string;
   onboardingPipelineId: string;
   onboardingStartedAt?: { toDate: () => Date } | null;
   onboardingCompletedAt?: { toDate: () => Date } | null;
@@ -35,6 +40,20 @@ export interface EntityEmploymentRecord {
   everifyStatus?: string;
   backgroundStatus?: string;
   drugScreenStatus?: string;
+  /**
+   * Denormalized from canonical onboarding completion (Tax/Identity excl. E-Verify, Handbook/Policies, Payroll).
+   * Updated by Cloud Functions when `worker_onboarding` changes; may lag slightly behind the live path in UI.
+   */
+  onboardingComplete?: boolean;
+  /**
+   * Onboarding completion engine section snapshots (Firestore). `payrollStatus` here is the **Payroll section**
+   * of the entity onboarding checklist — not `worker_payroll_accounts.payrollStatus`.
+   */
+  taxIdentityStatus?: EntityOnboardingSectionStatus | string | null;
+  handbookStatus?: EntityOnboardingSectionStatus | string | null;
+  payrollStatus?: EntityOnboardingSectionStatus | string | null;
+  /** Gating recruiter follow-up slice of the onboarding engine (v1: always complete / unused). */
+  recruiterFollowUpGatingStatus?: EntityOnboardingSectionStatus | string | null;
   /** Onboarding lifecycle phase on the employment record (not the same as `status`). */
   onboardingPhase?: string | null;
   /**
@@ -150,6 +169,8 @@ export interface EmploymentAssignmentSummary {
     checksRequired: number;
     signaturesPending: number;
   };
+  /** Persisted canonical readiness (`assignments.assignmentReadinessV1`) when present. */
+  assignmentReadinessV1?: AssignmentReadinessV1Snapshot | null;
 }
 
 export interface EmploymentEverifySummary {
@@ -177,12 +198,16 @@ export interface EmploymentScreeningSummary {
   statusDisplay: string;
   openOrderCount: number;
   actionNeeded?: boolean;
+  /** Secondary line (e.g. legacy open-order counts) under canonical `statusDisplay`. */
+  recordDetail?: string | null;
 }
 
 export interface EmploymentDocumentsSummary {
   applicable: boolean;
   signedCount: number;
   pendingCount: number;
+  /** From `assignmentReadinessV1` sections when primary assignment has persisted readiness. */
+  canonicalStatusLine?: string | null;
 }
 
 /**
@@ -243,6 +268,34 @@ export type OnboardingPathUiStatus =
 
 /** Alias for canonical onboarding row status (same enum as OnboardingPathUiStatus). */
 export type EmploymentOnboardingRowStatus = OnboardingPathUiStatus;
+
+/**
+ * Onboarding completion engine: one status per checklist section (Tax & Identity, Handbook & Policies, Payroll).
+ * Derived from consolidated path rows + `externalOnboardingSteps` (TempWorks today; Everee can feed the same shape).
+ */
+export type EntityOnboardingSectionStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'pending_review'
+  | 'complete';
+
+export interface EntityOnboardingEngineResult {
+  taxIdentityStatus: EntityOnboardingSectionStatus;
+  handbookStatus: EntityOnboardingSectionStatus;
+  payrollStatus: EntityOnboardingSectionStatus;
+  /**
+   * Recruiter follow-up rows marked `isGating` on the consolidated checklist (v1: none).
+   * When `complete`, all gating follow-ups are satisfied.
+   */
+  recruiterFollowUpGatingStatus: EntityOnboardingSectionStatus;
+  onboardingComplete: boolean;
+  pendingRequiredItems: Array<{
+    bucket: 'tax_and_identity' | 'handbook_and_policies' | 'payroll' | 'recruiter_followup';
+    rowLabel: string;
+    rowId: string;
+    status: EmploymentOnboardingRowStatus;
+  }>;
+}
 
 /** Subsystem that produced the satisfying artifact (reuse path). */
 export type EmploymentOnboardingArtifactSourceType =
@@ -414,6 +467,12 @@ export interface AssignmentRequirementsViewModel {
   /** AccuSource / tenant screening orders tied to this entity’s job orders. */
   backgroundOrdersLinked: AssignmentRequirementItemVm[];
   openBlockerCount: number;
+  /** Persisted readiness for primary assignment (subset of `EmploymentAssignmentSummary`). */
+  primaryAssignmentReadinessV1?: AssignmentReadinessV1Snapshot | null;
+  /** Top-line copy from canonical readiness (summary or state label). */
+  primaryCanonicalReadinessHeadline?: string | null;
+  primaryCanonicalScreeningLine?: string | null;
+  primaryCanonicalPackageLine?: string | null;
 }
 
 export interface OnboardingPathGroup {
@@ -485,6 +544,18 @@ export interface EmploymentEntityOverview {
    */
   onboardingChecklistGroups: OnboardingPathGroup[];
 
+  /**
+   * Deterministic onboarding completion engine (live path + external steps). Same rules as `entity_employments`
+   * fields written by the worker_onboarding sync trigger.
+   */
+  onboardingEngine: EntityOnboardingEngineResult;
+  /**
+   * True when all three section statuses are `complete` (same as `onboardingEngine.onboardingComplete`).
+   */
+  onboardingComplete: boolean;
+  /** @deprecated Use `onboardingEngine.pendingRequiredItems`. */
+  onboardingCompletionPendingItems: EntityOnboardingEngineResult['pendingRequiredItems'];
+
   /** Primary assignment package + entity screening milestones + linked screening orders. */
   assignmentRequirementsViewModel: AssignmentRequirementsViewModel;
 
@@ -494,6 +565,9 @@ export interface EmploymentEntityOverview {
     screenings?: EmploymentScreeningSummary | null;
     documents?: EmploymentDocumentsSummary | null;
   };
+
+  /** Worker payroll account doc for this entity tab (invite timestamps, status). */
+  workerPayrollAccount: (WorkerPayrollAccount & { id: string }) | null;
 }
 
 export type { SignatureEnvelopeStatus };

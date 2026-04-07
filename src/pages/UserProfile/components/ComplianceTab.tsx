@@ -1,5 +1,6 @@
 /**
- * Phase 2A / 2A.1: Worker-level compliance overview. Lists items, sync from onboarding, add/edit credentials.
+ * User Profile → Certifications tab: worker credentials, expirations, and onboarding-synced compliance items.
+ * (Tab label is Certifications; assignment-specific requirements live on Assignments.)
  */
 import React, { useEffect, useMemo, useState } from 'react';
 import {
@@ -258,7 +259,8 @@ const ComplianceTab: React.FC<ComplianceTabProps> = ({ uid, tenantId }) => {
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
       <Typography variant="subtitle2" color="text.secondary">
-        Compliance items for this worker. Sync from onboarding to backfill; add credentials/permits manually.
+        Worker credentials and compliance records (expirations, onboarding sync). Add or edit licenses and permits here.
+        Job-specific certification requirements are tracked on the <strong>Assignments</strong> tab.
       </Typography>
       <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
         <Button

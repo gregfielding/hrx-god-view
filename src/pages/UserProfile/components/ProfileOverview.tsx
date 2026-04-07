@@ -21,6 +21,7 @@ import {
   DialogContentText,
   FormControlLabel,
   Switch,
+  Checkbox,
   Card,
   CardContent,
   CardHeader,
@@ -60,6 +61,7 @@ import { sendPasswordResetEmail } from 'firebase/auth';
 
 import { db , auth } from '../../../firebase';
 import { formatPhoneNumber } from '../../../utils/formatPhone';
+import { normalizeLast4SsnDigits } from '../../../utils/last4Ssn';
 import { logProfileUpdateActivity, logSecurityChangeActivity } from '../../../utils/activityLogger';
 import { persistScoreSummaryFromProfile } from '../../../utils/persistScoreSummaryFromProfile';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -156,6 +158,8 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
   const { tenantId: activeTenantId, user, securityLevel, activeTenant } = useAuth();
   const viewerSecurityLevel = parseInt(String(securityLevel || '0'), 10);
   const isOwnProfile = !!user?.uid && user.uid === uid;
+  /** Logged-in applicant/flex/worker (0–4) viewing their own profile — show SSN last-four near phone. */
+  const isStaffSelfProfile = isOwnProfile && viewerSecurityLevel >= 0 && viewerSecurityLevel <= 4;
   // Only show User Groups on a user's *own* profile, and only for admin security levels 5-7.
   const canViewUserGroupsSection = isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7;
   const [form, setForm] = useState<UserProfileForm>({
@@ -166,6 +170,7 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
     phone: '',
     linkedinUrl: '',
     dateOfBirth: '',
+    last4SSN: '',
     gender: undefined,
     securityLevel: '5',
     employmentType: 'Full-Time',
@@ -182,6 +187,7 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
     languages: [],
     emergencyContact: undefined,
     transportMethod: undefined,
+    addedToIndeedFlex: false,
     role: 'Worker',
     jobTitle: '',
     department: '',
@@ -334,6 +340,7 @@ const transportOptions: Array<{
               phone: data.phone || (data.phoneE164 ? formatPhoneNumber(data.phoneE164.replace('+1', '')) : ''),
               linkedinUrl: data.linkedinUrl || '',
               dateOfBirth,
+              last4SSN: normalizeLast4SsnDigits(data.last4SSN ?? ''),
               gender: data.gender || undefined,
               securityLevel: tenantData.securityLevel || data.securityLevel || '5',
               employmentType: data.employmentType || 'Full-Time',
@@ -360,6 +367,7 @@ const transportOptions: Array<{
               })(),
               emergencyContact: data.emergencyContact || undefined,
               transportMethod: data.transportMethod || null,
+              addedToIndeedFlex: data.addedToIndeedFlex === true,
               role: data.role || 'Worker',
               jobTitle: data.jobTitle || '',
               department: data.department || '',
@@ -584,7 +592,11 @@ const transportOptions: Array<{
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     // Functional update avoids stale `form` — without this, phone (and other fields) can "snap back" while typing.
-    setForm((prev) => ({ ...prev, [name]: value }));
+    setForm((prev) =>
+      name === 'last4SSN'
+        ? { ...prev, last4SSN: normalizeLast4SsnDigits(value) }
+        : { ...prev, [name]: value },
+    );
   };
 
   const handleSelectChange = (e: any) => {
@@ -624,9 +636,9 @@ const transportOptions: Array<{
       persistEmploymentField(name, value);
     }
     // Persist Basic Identity text fields on blur
-    const identityTextFields = new Set(['firstName', 'lastName', 'preferredName', 'email']);
+    const identityTextFields = new Set(['firstName', 'lastName', 'preferredName', 'email', 'last4SSN']);
     if (identityTextFields.has(name)) {
-      persistProfileField(name, value);
+      persistProfileField(name, name === 'last4SSN' ? normalizeLast4SsnDigits(value) : value);
     }
   };
 
@@ -805,6 +817,21 @@ const transportOptions: Array<{
       }
     }
 
+    if (field === 'last4SSN') {
+      try {
+        const userRef = doc(db, 'users', uid);
+        const digits = normalizeLast4SsnDigits(value);
+        if (digits.length === 4) {
+          await updateDoc(userRef, { last4SSN: digits, updatedAt: new Date() });
+        } else if (digits.length === 0) {
+          await updateDoc(userRef, { last4SSN: null, updatedAt: new Date() });
+        }
+      } catch (error) {
+        console.error('Error updating last4SSN', error);
+      }
+      return;
+    }
+
     await persistEmploymentField(field, value);
   };
 
@@ -816,15 +843,22 @@ const transportOptions: Array<{
       // Convert form data back to proper format for Firestore
       // Filter out undefined values to prevent Firestore errors
       const cleanForm = Object.fromEntries(
-        Object.entries(form).filter(([_, value]) => value !== undefined)
+        Object.entries(form).filter(
+          ([key, value]) => key !== 'last4SSN' && value !== undefined,
+        ),
       );
-      
+
+      const last4Digits = normalizeLast4SsnDigits(form.last4SSN);
+      const last4Payload =
+        last4Digits.length === 4 ? last4Digits : last4Digits.length === 0 ? null : undefined;
+
       const updateData = {
         ...cleanForm,
         // Store as date-only strings to avoid timezone day-shifts
         dob: form.dateOfBirth || null, // Standard field name
         dateOfBirth: form.dateOfBirth || null, // Backward compatibility: keep same value (string)
         startDate: form.startDate || null,
+        ...(last4Payload !== undefined ? { last4SSN: last4Payload } : {}),
         updatedAt: new Date()
       };
       
@@ -832,7 +866,10 @@ const transportOptions: Array<{
       const finalUpdateData = Object.fromEntries(
         Object.entries(updateData).filter(([key, value]) => {
           // Filter out null, undefined, and empty strings for optional fields
-          if (value === null || value === undefined) return false;
+          if (value === null || value === undefined) {
+            if (key === 'last4SSN' && last4Payload === null) return true;
+            return false;
+          }
           if (typeof value === 'string' && value === '' && ['preferredName', 'divisionId', 'locationId', 'managerId', 'workerId', 'union', 'jobTitle', 'department'].includes(key)) return false;
           
           // Handle emergencyContact object - only include if it has valid data
@@ -997,6 +1034,23 @@ const transportOptions: Array<{
                         Missing Phone Number
                       </Alert>
                     )}
+                    {isStaffSelfProfile && normalizeLast4SsnDigits(form.last4SSN).length !== 4 && (
+                      <Alert
+                        severity="info"
+                        sx={{ mb: 1 }}
+                        action={
+                          <Button
+                            size="small"
+                            onClick={() => setIsEditingBasicIdentity(true)}
+                            color="inherit"
+                          >
+                            Add
+                          </Button>
+                        }
+                      >
+                        Last 4 of SSN or ITIN is not on file. Add it next to your phone number if you choose (optional).
+                      </Alert>
+                    )}
                   </Box>
                 )}
                 {isEditingBasicIdentity ? (
@@ -1041,7 +1095,7 @@ const transportOptions: Array<{
                             size="small"
                           />
                         </Grid>
-                        <Grid item xs={12}>
+                        <Grid item xs={12} sm={6}>
                           <TextField
                             fullWidth
                             required
@@ -1059,6 +1113,21 @@ const transportOptions: Array<{
                             }}
                             helperText={phoneVerified ? "Verified" : ""}
                             size="small"
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            name="last4SSN"
+                            label="Last 4 of SSN or ITIN"
+                            inputMode="numeric"
+                            autoComplete="off"
+                            value={form.last4SSN || ''}
+                            onChange={handleChange}
+                            onBlur={handleBlur}
+                            helperText="Optional. Last four digits of SSN or ITIN."
+                            size="small"
+                            inputProps={{ maxLength: 4 }}
                           />
                         </Grid>
                         <Grid item xs={12}>
@@ -1170,6 +1239,22 @@ const transportOptions: Array<{
                             size="small"
                           />
                         </Grid>
+                        {viewerSecurityLevel >= 5 && (
+                          <Grid item xs={12}>
+                            <FormControlLabel
+                              control={
+                                <Checkbox
+                                  checked={!!form.addedToIndeedFlex}
+                                  onChange={(_, checked) => {
+                                    setForm((prev) => ({ ...prev, addedToIndeedFlex: checked }));
+                                    void persistProfileField('addedToIndeedFlex', checked);
+                                  }}
+                                />
+                              }
+                              label="Added to Indeed Flex"
+                            />
+                          </Grid>
+                        )}
                         <Grid item xs={12}>
                           <Box>
                             <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
@@ -1342,6 +1427,24 @@ const transportOptions: Array<{
                             </Box>
                           </Grid>
                         )}
+
+                        {(normalizeLast4SsnDigits(form.last4SSN).length === 4 || isStaffSelfProfile) && (
+                          <Grid item xs={12} sm={6}>
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <SecurityIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                              <Box sx={{ flex: 1, minWidth: 0 }}>
+                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                  Last 4 of SSN or ITIN
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                                  {normalizeLast4SsnDigits(form.last4SSN).length === 4
+                                    ? `••••${normalizeLast4SsnDigits(form.last4SSN)}`
+                                    : '— Use the edit control above to add your last four SSN or ITIN (optional).'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                          </Grid>
+                        )}
                         
                         {form.dateOfBirth && (
                           <Grid item xs={12} sm={6}>
@@ -1465,6 +1568,30 @@ const transportOptions: Array<{
                             </Grid>
                           )}
                         </Grid>
+                      </Box>
+                    )}
+
+                    {form.addedToIndeedFlex && (
+                      <Box sx={{ mb: form.transportMethod ? 2 : 0 }}>
+                        <Typography
+                          variant="subtitle2"
+                          fontWeight={600}
+                          color="text.primary"
+                          sx={{ mb: 1.5, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}
+                        >
+                          Indeed Flex
+                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                          <Box
+                            component="img"
+                            src="/img/flex.png"
+                            alt="Indeed Flex"
+                            sx={{ height: 28, width: 'auto', objectFit: 'contain' }}
+                          />
+                          <Typography variant="body2" color="text.secondary">
+                            Added to Indeed Flex
+                          </Typography>
+                        </Box>
                       </Box>
                     )}
 

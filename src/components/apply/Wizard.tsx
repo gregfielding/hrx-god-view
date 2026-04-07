@@ -75,6 +75,7 @@ import { useT } from '../../i18n';
 import { buildCanonicalWorkerProfileWritePatch } from '../../utils/workerReadinessWriteModel';
 import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroupAutoAdd';
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
+import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 
 type WizardProps = {
@@ -945,6 +946,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
       email: existingPersonal.email || userProfile.email || '',
       phone: existingPersonal.phone || userProfile.phone || userProfile.phoneE164 || '',
       dob: toDobString(existingPersonal.dob || userProfile.dob || userProfile.dateOfBirth) || '',
+      last4SSN: normalizeLast4SsnDigits(
+        existingPersonal.last4SSN ?? userProfile.last4SSN ?? '',
+      ),
       preferredLanguage:
         existingPersonal.preferredLanguage ||
         (userProfile.preferredLanguage === 'es' ? 'es' : 'en'),
@@ -1358,6 +1362,11 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           setSaving(false);
           return;
         }
+        if (!isEmptyOrValidLast4Ssn(formData?.personal?.last4SSN)) {
+          alert(t('apply.last4SsnInvalid'));
+          setSaving(false);
+          return;
+        }
       }
       if (actualStep === 3) {
         const ev = String(
@@ -1396,6 +1405,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
           const typedFirstName = String(formData?.personal?.firstName || '').trim();
           const typedLastName = String(formData?.personal?.lastName || '').trim();
           const composedDisplayName = [typedFirstName, typedLastName].filter(Boolean).join(' ').trim();
+          const signupLast4 = normalizeLast4SsnDigits(formData?.personal?.last4SSN);
           const userRef = doc(db, 'users', newUid);
           const userSnap = await getDoc(userRef);
 
@@ -1460,6 +1470,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                   timestamp: new Date().toISOString(),
                 },
               },
+              ...(signupLast4.length === 4 ? { last4SSN: signupLast4 } : {}),
             };
 
             try {
@@ -1510,6 +1521,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
             String((p as any).preferredLanguage || '').toLowerCase() === 'es'
               ? 'es'
               : detectDefaultLanguage();
+          const last4Step = normalizeLast4SsnDigits((p as any).last4SSN);
+          if (last4Step.length === 4) {
+            update.last4SSN = last4Step;
+          }
 
           const addr: any = {};
           if (p.street) addr.street = String(p.street).trim();
@@ -1609,6 +1624,9 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 email: updatedProfile.email || p.email || '',
                 phone: updatedProfile.phone || updatedProfile.phoneE164 || p.phone || '',
                 dob: updatedProfile.dob || updatedProfile.dateOfBirth || p.dob || '',
+                last4SSN: normalizeLast4SsnDigits(
+                  updatedProfile.last4SSN ?? (p as { last4SSN?: string }).last4SSN ?? '',
+                ),
                 preferredLanguage:
                   (updatedProfile.preferredLanguage === 'es' ? 'es' : undefined) ||
                   ((p as any).preferredLanguage === 'es' ? 'es' : 'en'),
@@ -2225,6 +2243,10 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         String((personal as any).preferredLanguage || '').toLowerCase() === 'es'
           ? 'es'
           : detectDefaultLanguage();
+      const last4Submit = normalizeLast4SsnDigits((personal as any).last4SSN);
+      if (last4Submit.length === 4) {
+        profileUpdate.last4SSN = last4Submit;
+      }
 
       // Save address data
       if (personal.street || personal.city || personal.state || personal.zip) {

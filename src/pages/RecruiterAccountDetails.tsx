@@ -1428,6 +1428,8 @@ const RecruiterAccountDetails: React.FC = () => {
   const [defaultsSaving, setDefaultsSaving] = useState(false);
   /** When this account is a child, parent's E-Verify and Hiring Entity for display on Account Details card */
   const [parentDefaults, setParentDefaults] = useState<{ eVerifyRequired: boolean; hiringEntityId: string | null } | null>(null);
+  /** Full parent account doc for Order Defaults → Order Details inheritance (national → child). */
+  const [orderDefaultsInheritanceParent, setOrderDefaultsInheritanceParent] = useState<RecruiterAccount | null>(null);
 
   /** Entity (Employer of Record) is the source of truth for E-Verify; we look it up and show read-only. */
   const displayEntityId = account ? (isChildAccount && parentDefaults != null ? parentDefaults.hiringEntityId : (account.hiringEntityId ?? null)) : null;
@@ -1495,6 +1497,7 @@ const RecruiterAccountDetails: React.FC = () => {
     const parentId = account?.parentAccountId;
     if (!tenantId || !parentId) {
       setParentDefaults(null);
+      setOrderDefaultsInheritanceParent(null);
       return;
     }
     let cancelled = false;
@@ -1503,6 +1506,7 @@ const RecruiterAccountDetails: React.FC = () => {
       if (cancelled || !isMountedRef.current) return;
       if (!snap.exists()) {
         setParentDefaults(null);
+        setOrderDefaultsInheritanceParent(null);
         return;
       }
       const d = snap.data();
@@ -1510,8 +1514,12 @@ const RecruiterAccountDetails: React.FC = () => {
       const eVerifyRequired = eVerify && typeof eVerify === 'object' ? !!eVerify.eVerifyRequired : false;
       const hiringEntityId = d?.hiringEntityId ?? null;
       setParentDefaults({ eVerifyRequired, hiringEntityId });
+      setOrderDefaultsInheritanceParent(d as RecruiterAccount);
     }).catch(() => {
-      if (!cancelled && isMountedRef.current) setParentDefaults(null);
+      if (!cancelled && isMountedRef.current) {
+        setParentDefaults(null);
+        setOrderDefaultsInheritanceParent(null);
+      }
     });
     return () => { cancelled = true; };
   }, [tenantId, account?.parentAccountId]);
@@ -6819,6 +6827,7 @@ to={`/accounts/${account.id}/locations/${loc.locationId}?companyId=${loc.company
                   tenantId={tenantId!}
                   userId={user?.uid || ''}
                   contacts={contacts}
+                  inheritanceParentAccount={orderDefaultsInheritanceParent}
                 />
               )}
             </Grid>

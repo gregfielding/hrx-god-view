@@ -61,6 +61,7 @@ import { useSmartGroupSettings, type CustomMetrosMap } from '../hooks/useSmartGr
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
+import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
 import { formatOneDecimal } from '../utils/scoreSummary';
 import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
@@ -76,6 +77,8 @@ import {
   getMergedCityOptionsForSubarea,
   formatGeoLabel,
 } from '../data/metroSubareaSchema';
+import { useActiveAssignmentUserIds } from '../hooks/useActiveAssignmentUserIds';
+import { getWorkStatusColumnDisplay } from '../utils/workStatusColumnDisplay';
 import { getMetroDisplayLabel } from '../data/metroMaster';
 import { Autocomplete as GooglePlacesAutocomplete } from '@react-google-maps/api';
 import { geocodeAddress } from '../utils/geocodeAddress';
@@ -112,6 +115,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     skills?: string[];
     comfortableEVerify?: string;
     workerAttestations?: { eVerifyWillingness?: string };
+    employeeOnboardStatus?: string;
+    contractorOnboardStatus?: string;
+    onboardingType?: string;
   }>>([]);
   const [statusMenuAnchor, setStatusMenuAnchor] = useState<{ [userId: string]: HTMLElement | null }>({});
   const [loading, setLoading] = useState(true);
@@ -247,6 +253,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
           skills?: string[];
           comfortableEVerify?: string;
           workerAttestations?: { eVerifyWillingness?: string };
+          employeeOnboardStatus?: string;
+          contractorOnboardStatus?: string;
+          onboardingType?: string;
         }> = [];
         for (const uid of memberIds) {
           const userSnap = await getDoc(doc(db, 'users', uid));
@@ -271,6 +280,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
               skills: Array.isArray(d?.skills) ? d.skills : [],
               comfortableEVerify: d?.comfortableEVerify,
               workerAttestations: d?.workerAttestations,
+              employeeOnboardStatus: d?.employeeOnboardStatus,
+              contractorOnboardStatus: d?.contractorOnboardStatus,
+              onboardingType: d?.onboardingType,
             });
           } else {
             users.push({ id: uid });
@@ -317,6 +329,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     // For now, use empty array - can be enhanced later
     return [];
   }, []);
+
+  const memberIdsForAssignments = useMemo(() => membersData.map((m) => m.id), [membersData]);
+  const activeAssignmentUserIds = useActiveAssignmentUserIds(tenantId ?? undefined, memberIdsForAssignments);
 
   const handleSaveFilters = async () => {
     if (!tenantId || !groupId || !group) return;
@@ -387,6 +402,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         skills?: string[];
         comfortableEVerify?: string;
         workerAttestations?: { eVerifyWillingness?: string };
+        employeeOnboardStatus?: string;
+        contractorOnboardStatus?: string;
+        onboardingType?: string;
       }> = [];
       for (const uid of newMemberIds) {
         const userSnap = await getDoc(doc(db, 'users', uid));
@@ -410,6 +428,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             skills: Array.isArray(d?.skills) ? d.skills : [],
             comfortableEVerify: d?.comfortableEVerify,
             workerAttestations: d?.workerAttestations,
+            employeeOnboardStatus: d?.employeeOnboardStatus,
+            contractorOnboardStatus: d?.contractorOnboardStatus,
+            onboardingType: d?.onboardingType,
           });
         } else {
           users.push({ id: uid });
@@ -511,6 +532,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
         skills?: string[];
         comfortableEVerify?: string;
         workerAttestations?: { eVerifyWillingness?: string };
+        employeeOnboardStatus?: string;
+        contractorOnboardStatus?: string;
+        onboardingType?: string;
       }> = [];
       for (const uid of newMemberIds) {
         const userSnap = await getDoc(doc(db, 'users', uid));
@@ -534,6 +558,9 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
             skills: Array.isArray(d?.skills) ? d.skills : [],
             comfortableEVerify: d?.comfortableEVerify,
             workerAttestations: d?.workerAttestations,
+            employeeOnboardStatus: d?.employeeOnboardStatus,
+            contractorOnboardStatus: d?.contractorOnboardStatus,
+            onboardingType: d?.onboardingType,
           });
         } else {
           users.push({ id: uid });
@@ -646,17 +673,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     }
   };
 
-  const getWorkStatusDisplay = (m: (typeof membersData)[0]) => {
-    const sl = String(m.securityLevel ?? '0');
-    switch (sl) {
-      case '4': return { label: 'Hired', color: 'success' as const };
-      case '3': return { label: 'Candidate', color: 'primary' as const };
-      case '2': return { label: 'Applicant', color: 'info' as const };
-      case '1': return { label: 'Dismissed', color: 'default' as const };
-      case '0': return { label: 'Suspended', color: 'error' as const };
-      default: return { label: sl || '—', color: 'default' as const };
-    }
-  };
+  const getWorkStatusDisplay = (m: (typeof membersData)[0]) =>
+    getWorkStatusColumnDisplay(m, { hasActiveAssignment: activeAssignmentUserIds.has(m.id) });
 
   const renderAiScore = (m: (typeof membersData)[0]) => {
     const score = m.scoreSummary?.aiScore;
@@ -1327,6 +1345,7 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
                               </Typography>
                               <UserTableResumeIcon user={m as Record<string, unknown>} />
                             </Box>
+                            <UserTableIndeedFlexBadge user={m as Record<string, unknown>} />
                           </Box>
                         </Box>
                       </TableCell>

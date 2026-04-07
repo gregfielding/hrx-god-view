@@ -35,6 +35,10 @@ export interface BackgroundCheckDocument {
   worksiteId?: string | null;
   clientId: string;
   providerProfileId?: string | null;
+  /** V2 create response: e.g. PRO-… */
+  providerProfileNumber?: string | null;
+  /** V2 create response: SourceDirect subject id */
+  providerSubjectId?: string | number | null;
   providerClientId?: string | null;
   providerOrderIds?: string[] | null;
   orderMode: 'partial_profile' | 'full_profile';

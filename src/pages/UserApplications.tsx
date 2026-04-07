@@ -2,37 +2,18 @@ import React, { useEffect, useState } from 'react';
 import {
   Box,
   Typography,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Paper,
-  Chip,
   CircularProgress,
   Alert,
   Button,
-  IconButton,
-  Tooltip,
-  ToggleButtonGroup,
-  ToggleButton,
   Stack,
 } from '@mui/material';
-import ViewListIcon from '@mui/icons-material/ViewList';
-import ViewModuleIcon from '@mui/icons-material/ViewModule';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 import { collection, query, where, getDocs, doc, getDoc, updateDoc, serverTimestamp, deleteField } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useT, getLanguage } from '../i18n';
-import CardDeck from '../components/worker/cards/CardDeck';
-import ApplicationCard from '../components/worker/dashboard/cards/ApplicationCard';
-import type { ApplicationCardPayload } from '../components/worker/dashboard/cards/types';
-import { emitWorkerCardSignal } from '../utils/workerCardSignals';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
+import WorkerApplicationListCard from '../components/worker/applications/WorkerApplicationListCard';
 
 interface Application {
   id: string;
@@ -80,10 +61,9 @@ const UserApplications: React.FC = () => {
       setLoading(true);
       setError(null);
 
-      // Get user's applicationIds
       const userRef = doc(db, 'users', user.uid);
       const userSnap = await getDoc(userRef);
-      
+
       if (!userSnap.exists()) {
         setApplications([]);
         setLoading(false);
@@ -99,7 +79,6 @@ const UserApplications: React.FC = () => {
         return;
       }
 
-      // Load each application from tenants/{tenantId}/applications/{uid}_{jobId}
       const loadedApplications: Application[] = [];
 
       for (const appId of applicationIds) {
@@ -112,8 +91,7 @@ const UserApplications: React.FC = () => {
 
           if (appSnap.exists()) {
             const appData = appSnap.data();
-            
-            // Also fetch job posting details for display
+
             let jobTitle = '';
             let postTitle = '';
             let companyName = '';
@@ -121,29 +99,24 @@ const UserApplications: React.FC = () => {
             let payRate = undefined;
             let shiftStart: Date | undefined;
 
-            // First, try to get cached data from user's applicationData
-            const userRef = doc(db, 'users', user.uid);
-            const userDoc = await getDoc(userRef);
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
             if (userDoc.exists()) {
-              const userData = userDoc.data();
-              const appDataMap = userData.applicationData || {};
-              
-              // Find this specific application in the map
-              for (const [key, value] of Object.entries(appDataMap)) {
-                const appData = value as any;
-                if (appData.jobId === jobId) {
-                  // Use cached data from application
-                  location = appData.location || '';
-                  companyName = appData.companyName || '';
-                  payRate = appData.payRate;
-                  jobTitle = appData.jobTitle || '';
-                  postTitle = appData.postTitle || '';
+              const ud = userDoc.data();
+              const appDataMap = ud.applicationData || {};
+
+              for (const [, value] of Object.entries(appDataMap)) {
+                const cached = value as any;
+                if (cached.jobId === jobId) {
+                  location = cached.location || '';
+                  companyName = cached.companyName || '';
+                  payRate = cached.payRate;
+                  jobTitle = cached.jobTitle || '';
+                  postTitle = cached.postTitle || '';
                   break;
                 }
               }
             }
 
-            // If not found in cache, fetch from job posting
             if (!location || !jobTitle) {
               try {
                 const jobRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
@@ -154,7 +127,6 @@ const UserApplications: React.FC = () => {
                   postTitle = postTitle || jobData.postTitle || '';
                   companyName = companyName || jobData.companyName || '';
                   payRate = payRate !== undefined ? payRate : jobData.payRate;
-                  // Shift date: startDate or first shift start
                   if (jobData.startDate?.toDate) {
                     shiftStart = jobData.startDate.toDate();
                   } else if (jobData.startDate) {
@@ -163,7 +135,6 @@ const UserApplications: React.FC = () => {
                     const s = jobData.shifts[0];
                     shiftStart = s.startTime?.toDate ? s.startTime.toDate() : new Date(s.startTime);
                   }
-                  // Try multiple location fields
                   if (!location) {
                     if (jobData.city && jobData.state) {
                       location = `${jobData.city}, ${jobData.state}`;
@@ -198,7 +169,6 @@ const UserApplications: React.FC = () => {
         }
       }
 
-      // Sort by submitted date (newest first)
       loadedApplications.sort((a, b) => b.submittedAt.getTime() - a.submittedAt.getTime());
 
       setApplications(loadedApplications);
@@ -208,7 +178,6 @@ const UserApplications: React.FC = () => {
         setLinkedApplicationMissing(false);
       }
 
-      // Load proposed assignments (offer sent) → "Accept offer"; confirmed/active (accepted) → "You've been hired"
       const tenantIds = [...new Set(loadedApplications.map((a) => a.tenantId))];
       const pendingKeys = new Set<string>();
       const hiredKeys = new Set<string>();
@@ -312,6 +281,15 @@ const UserApplications: React.FC = () => {
     }
   };
 
+  const getStatusChipSx = (app: Application): object | undefined => {
+    const label = getStatusLabel(app);
+    if (label === t('applications.statusHired')) return { fontWeight: 600 };
+    if (label === t('applications.statusUnderReview') || label === t('applications.statusApplied')) {
+      return { backgroundColor: '#FFC700', color: '#000', fontWeight: 600 };
+    }
+    return undefined;
+  };
+
   const locale = getLanguage() === 'es' ? 'es' : 'en-US';
   const formatDate = (date: Date): string => {
     return new Intl.DateTimeFormat(locale, {
@@ -331,31 +309,9 @@ const UserApplications: React.FC = () => {
     }).format(date);
   };
 
-  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'table' | 'cards'>('table');
-  const [deckIndex, setDeckIndex] = useState(0);
-
-  const applicationPayloads: ApplicationCardPayload[] = applications.map((app) => {
-    const statusLabel = getStatusLabel(app);
-    const appliedDateOrStatus = app.shiftStart
-      ? formatShiftDate(app.shiftStart)
-      : formatDate(app.submittedAt);
-    const key = `${app.tenantId}_${app.jobId}`;
-    const needsResponse = pendingOfferKeys.has(key);
-    return {
-      type: 'application',
-      id: app.id,
-      label: t('dashboard.cardLabelApplicationUpdate'),
-      jobTitle: app.postTitle || app.jobTitle || t('applications.untitledJob'),
-      company: app.companyName,
-      location: app.location,
-      pay: app.payRate,
-      appliedDateOrStatus: `${statusLabel} · ${appliedDateOrStatus}`,
-      viewJobTo: `/c1/jobs-board/${app.jobId}`,
-      viewApplicationsTo: '/c1/workers/applications',
-      needsResponse,
-    };
-  });
+  const openJob = (app: Application) => {
+    navigate(`/c1/jobs-board/${app.jobId}`);
+  };
 
   if (loading) {
     return (
@@ -374,33 +330,15 @@ const UserApplications: React.FC = () => {
   }
 
   return (
-    <Box>
+    <Box sx={{ maxWidth: 'lg', mx: 'auto', py: 2 }}>
       {linkedApplicationMissing && (
         <Alert severity="warning" sx={{ mb: 2 }}>
           This item is unavailable. You can review your other applications below.
         </Alert>
       )}
-      <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={2} sx={{ mb: 2 }}>
-        <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-          {t('applications.title')}
-        </Typography>
-        {applications.length > 0 && (
-          <ToggleButtonGroup
-            value={viewMode}
-            exclusive
-            onChange={(_, v) => { if (v != null) setViewMode(v); setDeckIndex(0); }}
-            size="small"
-            aria-label={t('applications.viewMode')}
-          >
-            <ToggleButton value="table" aria-label={t('applications.viewTable')}>
-              <ViewListIcon sx={{ mr: 0.5 }} /> {t('applications.viewTable')}
-            </ToggleButton>
-            <ToggleButton value="cards" aria-label={t('applications.viewCards')}>
-              <ViewModuleIcon sx={{ mr: 0.5 }} /> {t('applications.viewCards')}
-            </ToggleButton>
-          </ToggleButtonGroup>
-        )}
-      </Stack>
+      <Typography variant="h4" component="h1" sx={{ fontWeight: 600, mb: applications.length > 0 ? 2 : 0 }}>
+        {t('applications.title')}
+      </Typography>
       {applications.length === 0 ? (
         <Box sx={{ p: 4, textAlign: 'center' }}>
           <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
@@ -410,151 +348,41 @@ const UserApplications: React.FC = () => {
             {t('applications.browseJobs')}
           </Button>
         </Box>
-      ) : viewMode === 'cards' ? (
-        <CardDeck
-          totalCards={applicationPayloads.length}
-          activeIndex={deckIndex}
-          onIndexChange={setDeckIndex}
-          onExpand={() => {
-            const app = applications[deckIndex];
-            if (app) {
-              emitWorkerCardSignal({ type: 'application_viewed', entityId: app.jobId });
-              navigate(`/c1/jobs-board/${app.jobId}`);
-            }
-          }}
-          showSectionProgress={false}
-          expandDisabled={applicationPayloads.length === 0}
-          ariaLabel={t('applications.title')}
-        >
-          {applicationPayloads[deckIndex] && (
-            <ApplicationCard
-              payload={applicationPayloads[deckIndex]}
-              onTap={() => {
-                const app = applications[deckIndex];
-                if (app) {
-                  emitWorkerCardSignal({ type: 'application_viewed', entityId: app.jobId });
-                  navigate(`/c1/jobs-board/${app.jobId}`);
-                }
-              }}
-            />
-          )}
-        </CardDeck>
       ) : (
-        <TableContainer 
-          component={Paper} 
-          elevation={0} 
-          sx={{ borderRadius: 0, overflowX: 'auto' }}
-        >
-          <Table>
-            <TableHead>
-              <TableRow sx={{ backgroundColor: 'grey.100' }}>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.jobTitle')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.company')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.location')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.shiftDate')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.payRate')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.dateApplied')}</TableCell>
-                <TableCell sx={{ fontWeight: 600 }}>{t('applications.status')}</TableCell>
-                <TableCell sx={{ fontWeight: 600, width: 140 }} />
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {applications.map((app) => (
-                <TableRow 
-                  key={app.id}
-                  hover
-                  onMouseEnter={() => setHoveredRowId(app.id)}
-                  onMouseLeave={() => setHoveredRowId(null)}
-                  sx={{ 
-                    cursor: 'pointer',
-                    '&:hover': { backgroundColor: 'action.hover' },
-                  }}
-                  onClick={() => navigate(`/c1/jobs-board/${app.jobId}`)}
-                >
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                      {app.postTitle || app.jobTitle || t('applications.untitledJob')}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {app.companyName || t('applications.na')}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {app.location || t('applications.na')}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {app.shiftStart ? formatShiftDate(app.shiftStart) : t('applications.na')}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {formatHourlyPayRateForDisplay(app.payRate) ?? t('applications.na')}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2" color="text.secondary">
-                      {formatDate(app.submittedAt)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip 
-                      label={getStatusLabel(app)} 
-                      color={getStatusColor(app)}
-                      size="small"
-                      sx={
-                        getStatusLabel(app) === t('applications.statusHired')
-                          ? { fontWeight: 600 }
-                          : getStatusLabel(app) === t('applications.statusUnderReview') || getStatusLabel(app) === t('applications.statusApplied')
-                            ? { backgroundColor: '#FFC700', color: '#000', fontWeight: 600 }
-                            : undefined
-                      }
-                    />
-                  </TableCell>
-                  <TableCell onClick={(e) => e.stopPropagation()} sx={{ py: 0.5 }}>
-                    <Box
-                      sx={{
-                        opacity: hoveredRowId === app.id ? 1 : 0,
-                        transition: 'opacity 0.15s',
-                        display: 'flex',
-                        alignItems: 'center',
-                                        gap: 0.5,
-                      }}
-                    >
-                      <Tooltip title={t('applications.viewJob')}>
-                        <IconButton
-                          size="small"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/c1/jobs-board/${app.jobId}`);
-                          }}
-                          color="primary"
-                        >
-                          <VisibilityIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      {canWithdraw(app) && (
-                        <Tooltip title={t('applications.withdrawApplication')}>
-                          <IconButton
-                            size="small"
-                            onClick={(e) => handleWithdraw(e, app)}
-                            color="error"
-                          >
-                            <CancelOutlinedIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </TableContainer>
+        <Stack spacing={2}>
+          {applications.map((app) => {
+            const title = app.postTitle || app.jobTitle || t('applications.untitledJob');
+            const companyLine = app.companyName || t('applications.na');
+            const locationLine = app.location || '';
+            const shiftLine = app.shiftStart ? formatShiftDate(app.shiftStart) : t('applications.na');
+            const payLine = formatHourlyPayRateForDisplay(app.payRate) ?? '';
+            const appliedLine = `${t('applications.dateApplied')}: ${formatDate(app.submittedAt)}`;
+            const statusLabel = getStatusLabel(app);
+            return (
+              <WorkerApplicationListCard
+                key={app.id}
+                jobTitle={title}
+                companyLine={companyLine}
+                locationLine={locationLine}
+                shiftDateLine={shiftLine}
+                payLine={payLine}
+                dateAppliedLine={appliedLine}
+                statusLabel={statusLabel}
+                statusChipColor={getStatusColor(app)}
+                statusChipSx={getStatusChipSx(app)}
+                showWithdraw={canWithdraw(app)}
+                withdrawLabel={t('applications.withdrawApplication')}
+                viewJobLabel={t('applications.viewJob')}
+                onCardClick={() => openJob(app)}
+                onViewJob={(e) => {
+                  e.stopPropagation();
+                  openJob(app);
+                }}
+                onWithdraw={(e) => handleWithdraw(e, app)}
+              />
+            );
+          })}
+        </Stack>
       )}
     </Box>
   );

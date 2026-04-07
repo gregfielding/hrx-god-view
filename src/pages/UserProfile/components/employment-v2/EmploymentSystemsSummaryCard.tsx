@@ -9,14 +9,12 @@ import {
   Stack,
   Collapse,
   IconButton,
-  Divider,
 } from '@mui/material';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../../../firebase';
 import type { EmploymentEntityOverview } from './employmentV2Types';
-import { assignmentRequirementsSystemsLine } from '../../../../utils/assignmentRequirementsViewModel';
 const resendPayrollInvite = httpsCallable<
   {
     tenantId: string;
@@ -52,7 +50,6 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
   const [payrollResendError, setPayrollResendError] = useState<string | null>(null);
   const { systems } = overview;
   const historical = !overview.hasOpenOnboardingDemand;
-  const iaLine = assignmentRequirementsSystemsLine(overview.assignmentRequirementsViewModel);
 
   const hiringEntityId = overview.entityEmployment?.entityId?.trim() || '';
   const payrollLinksConfigured = Boolean(
@@ -97,17 +94,8 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
         subheader={
           <span>
             {historical
-              ? 'Historical context — figures may include completed or cancelled assignment activity; not framed as current required work.'
-              : 'Operational detail — not the primary workflow surface.'}
-            {iaLine ? (
-              <>
-                <br />
-                <Typography component="span" variant="caption" color="text.secondary">
-                  {historical ? 'Snapshot (may include history): ' : 'Job / screening snapshot: '}
-                  {iaLine}
-                </Typography>
-              </>
-            ) : null}
+              ? 'Historical payroll / entity context — not framed as current required work.'
+              : 'Payroll links for this employment relationship. Assignment screenings, e-sign packages, and job readiness are on the Assignments tab.'}
           </span>
         }
         titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
@@ -170,34 +158,6 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
                     </Stack>
                   ) : null}
                 </Box>
-            )}
-            {systems.screenings && (
-              <>
-                <Divider />
-                <Box>
-                  <Typography variant="subtitle2" fontWeight={600}>
-                    Screenings
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {historical ? 'Record: ' : ''}
-                    {systems.screenings.statusDisplay}
-                  </Typography>
-                </Box>
-              </>
-            )}
-            {systems.documents && systems.documents.applicable && (
-              <>
-                <Divider />
-                <Box>
-                  <Typography variant="subtitle2" fontWeight={600}>
-                    Documents (e-sign)
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    {historical ? 'On file: ' : ''}Signed {systems.documents.signedCount} · Pending{' '}
-                    {systems.documents.pendingCount}
-                  </Typography>
-                </Box>
-              </>
             )}
           </Stack>
         </CardContent>

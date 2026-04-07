@@ -46,6 +46,10 @@ export interface BackgroundCheckRecord {
   worksiteId?: string | null;
   clientId?: string;
   providerProfileId?: string | null;
+  /** V2 create: SourceDirect profile number (e.g. PRO-…). */
+  providerProfileNumber?: string | null;
+  /** V2 create: SourceDirect subject id. */
+  providerSubjectId?: string | number | null;
   providerClientId?: string | null;
   orderMode?: 'partial_profile' | 'full_profile';
   hrxStatus?: HrxBackgroundCheckStatus;
@@ -61,7 +65,11 @@ export interface BackgroundCheckRecord {
   syncError?: string | null;
   createdAt?: Timestamp | null;
   updatedAt?: Timestamp | null;
+  /** Set after successful provider create / sync (server timestamp). */
+  lastSyncAt?: Timestamp | null;
   lastWebhookAt?: Timestamp | null;
+  /** Raw create response body (or normalized payload) for demo/debug. */
+  lastProviderProfileSnapshot?: unknown;
   createdBy?: string | null;
   /** Assignment-confirmed automation (AccuSource or simulated). */
   automationSource?: string | null;

@@ -412,7 +412,7 @@ export const onAssignmentConfirmedScreeningAutomation = onDocumentUpdated(
         lastName: String(u.lastName || ''),
         email: String(u.email || ''),
         phone: String(u.phone || u.phoneE164 || ''),
-        dateOfBirth: String(u.dateOfBirth || u.dob || ''),
+        dateOfBirth: u.dateOfBirth ?? u.dob,
       },
     };
 

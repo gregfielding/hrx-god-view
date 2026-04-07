@@ -14,5 +14,11 @@
   },
   "compileOnSave": true,
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts", "src/**/__tests__/**/*"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/__tests__/**/*",
+    "src/onboarding/onboardingEngineSyncBundleEntry.ts",
+    "src/readiness/syncHrxReadinessSnapshotV1.ts",
+    "src/readiness/hrxReadinessSnapshotLoadContext.ts"
+  ]
 }

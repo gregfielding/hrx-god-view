@@ -66,8 +66,12 @@ export function formatFirebaseHttpsError(e: unknown): string {
     if (typeof o.message === 'string' && o.message.trim()) {
       const msg = o.message.trim();
       // Unhandled server throws become functions/internal with useless "INTERNAL" text.
-      if (msg === 'INTERNAL' && typeof o.code === 'string' && o.code.includes('internal')) {
-        return 'Server error (internal). Check Cloud Functions logs for everifyCreateCase or redeploy with the latest error handling.';
+      if (
+        (msg === 'INTERNAL' || msg.toLowerCase() === 'internal') &&
+        typeof o.code === 'string' &&
+        o.code.includes('internal')
+      ) {
+        return 'Server error (internal). Check Cloud Functions logs or redeploy functions; if this persists, the callable may be throwing before returning a proper error message.';
       }
       return msg;
     }

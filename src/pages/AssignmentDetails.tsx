@@ -34,6 +34,7 @@ import {
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import type { ClaimsRole } from '../contexts/AuthContext';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
 import { useT } from '../i18n';
 import SmsWarningBanner from '../components/worker/SmsWarningBanner';
@@ -156,10 +157,32 @@ const toIsoDayLocal = (date: Date | undefined): string => {
   return `${y}-${m}-${d}`;
 };
 
+const STAFF_CLAIMS_ROLES: ClaimsRole[] = ['Admin', 'Manager', 'Recruiter'];
+
+/** Tenant staff (not the assigned worker) may open placements for candidates in their active / member tenant. */
+function canViewAssignmentAsTenantStaff(
+  assignmentTenantId: string | undefined,
+  opts: {
+    activeTenantId?: string;
+    tenantIds?: string[];
+    recruiterEnabled: boolean;
+    claimsRoles: Record<string, { role: ClaimsRole; securityLevel: string }>;
+  }
+): boolean {
+  if (!assignmentTenantId) return false;
+  const tid = assignmentTenantId.trim();
+  if (!tid) return false;
+  const inTenant = opts.activeTenantId === tid || Boolean(opts.tenantIds?.includes(tid));
+  if (!inTenant) return false;
+  if (opts.recruiterEnabled) return true;
+  const role = opts.claimsRoles[tid]?.role;
+  return Boolean(role && STAFF_CLAIMS_ROLES.includes(role));
+}
+
 const AssignmentDetails: React.FC = () => {
   const { assignmentId } = useParams<{ assignmentId: string }>();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, activeTenant, tenantIds, recruiterEnabled, claimsRoles } = useAuth();
   const preferredLanguage = useWorkerPreferredLanguage();
   const t = useT();
   const [assignment, setAssignment] = useState<AssignmentDetails | null>(null);
@@ -216,6 +239,7 @@ const AssignmentDetails: React.FC = () => {
       return;
     }
     loadAssignment();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload when assignment or user changes; staff gates read live values inside loadAssignment
   }, [assignmentId, user?.uid]);
 
   useEffect(() => {
@@ -514,13 +538,25 @@ const AssignmentDetails: React.FC = () => {
 
       const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 
+      const staffAuth = {
+        activeTenantId: activeTenant?.id as string | undefined,
+        tenantIds,
+        recruiterEnabled: Boolean(recruiterEnabled),
+        claimsRoles: claimsRoles || {},
+      };
+
       // Try legacy structure first (root assignments collection)
       const assignmentRef = doc(db, 'assignments', assignmentId);
       let assignmentSnap = await getDoc(assignmentRef);
 
-      // If not in legacy collection, try tenant-scoped. Try C1 first so worker "View details" only needs assignment rule to allow read.
+      // If not in legacy collection, try tenant-scoped. Prefer active tenant for recruiters, then C1, then other memberships.
       if (!assignmentSnap.exists()) {
-        const tenantIdsToTry: string[] = [C1_TENANT_ID];
+        const tenantIdsToTry: string[] = [];
+        const pushTid = (tid: string | undefined) => {
+          if (tid && !tenantIdsToTry.includes(tid)) tenantIdsToTry.push(tid);
+        };
+        pushTid(activeTenant?.id);
+        pushTid(C1_TENANT_ID);
         try {
           const userRef = doc(db, 'users', user.uid);
           const userSnap = await getDoc(userRef);
@@ -528,19 +564,21 @@ const AssignmentDetails: React.FC = () => {
             const userData = userSnap.data();
             if (userData?.tenantIds && typeof userData.tenantIds === 'object') {
               const keys = Object.keys(userData.tenantIds);
-              const rest = keys.filter((k) => k !== C1_TENANT_ID);
-              tenantIdsToTry.push(...rest);
+              keys.forEach((k) => pushTid(k));
             }
           }
         } catch (_) {
-          // Proceed with C1 only if user doc read fails (e.g. permissions)
+          // Proceed with whatever tenant ids we have
         }
         for (const tid of tenantIdsToTry) {
           const tenantAssignmentRef = doc(db, 'tenants', tid, 'assignments', assignmentId);
           const snap = await getDoc(tenantAssignmentRef);
           if (snap.exists()) {
             const d = snap.data();
-            if ((d?.userId || d?.candidateId) === user.uid) {
+            const candidateId = d?.userId || d?.candidateId;
+            const isOwner = candidateId === user.uid;
+            const isStaff = canViewAssignmentAsTenantStaff(tid, staffAuth);
+            if (isOwner || isStaff) {
               assignmentSnap = snap;
               break;
             }
@@ -566,11 +604,18 @@ const AssignmentDetails: React.FC = () => {
         });
       }
 
-      // Verify this assignment belongs to the current user
-      if ((data.userId || data.candidateId) !== user.uid) {
+      const candidateUserId = data.userId || data.candidateId;
+      const isOwner = candidateUserId === user.uid;
+      const tenantForAccess =
+        typeof resolvedTenantId === 'string' && resolvedTenantId.trim()
+          ? resolvedTenantId.trim()
+          : (assignmentSnap.ref.parent?.parent?.id as string | undefined);
+      const isStaffViewer = canViewAssignmentAsTenantStaff(tenantForAccess, staffAuth);
+
+      if (!isOwner && !isStaffViewer) {
         console.warn('[AssignmentDetails] fetch forbidden', {
           assignmentId: assignmentSnap.id,
-          assignmentUserId: data.userId || data.candidateId || null,
+          assignmentUserId: candidateUserId || null,
           uid: user.uid,
         });
         setError('You do not have permission to view this assignment');
@@ -1091,11 +1136,8 @@ const AssignmentDetails: React.FC = () => {
         </Button>
       </Stack>
 
-      {/* Main Content: two columns with gap */}
-      <Grid container spacing={3}>
-        {/* Left column: assignment cards */}
-        <Grid item xs={12} md={9}>
-          <Stack spacing={3}>
+      {/* Main content: full-width stack; My Recruiter appended at bottom only when assigned */}
+      <Stack spacing={3}>
         {/* Assignment Info (combined): two columns, company/worksite/address looked up when needed */}
         <Card elevation={0} sx={{ borderRadius: 0 }}>
           <CardContent>
@@ -1198,15 +1240,15 @@ const AssignmentDetails: React.FC = () => {
                       </Typography>
                     </Box>
                   </Stack>
-                  <Stack direction="row" spacing={2} alignItems="flex-start">
-                    <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.requiredPpe')}</Typography>
-                      <Typography variant="body1">
-                        {assignment.ppeRequirements || '—'}
-                      </Typography>
-                    </Box>
-                  </Stack>
+                  {String(assignment.ppeRequirements ?? '').trim().length > 0 ? (
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">{t('assignment.requiredPpe')}</Typography>
+                        <Typography variant="body1">{assignment.ppeRequirements}</Typography>
+                      </Box>
+                    </Stack>
+                  ) : null}
                   {assignment.physicalRequirements && (
                     <Stack direction="row" spacing={2} alignItems="flex-start">
                       <WorkIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
@@ -1218,15 +1260,15 @@ const AssignmentDetails: React.FC = () => {
                       </Box>
                     </Stack>
                   )}
-                  <Stack direction="row" spacing={2} alignItems="flex-start">
-                    <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
-                    <Box>
-                      <Typography variant="body2" color="text.secondary">{t('assignment.criticalRequirements')}</Typography>
-                      <Typography variant="body1">
-                        {criticalRequirementLabels.length > 0 ? criticalRequirementLabels.join(', ') : '—'}
-                      </Typography>
-                    </Box>
-                  </Stack>
+                  {criticalRequirementLabels.length > 0 ? (
+                    <Stack direction="row" spacing={2} alignItems="flex-start">
+                      <EngineeringIcon color="action" sx={{ flexShrink: 0, mt: 0.5 }} />
+                      <Box>
+                        <Typography variant="body2" color="text.secondary">{t('assignment.criticalRequirements')}</Typography>
+                        <Typography variant="body1">{criticalRequirementLabels.join(', ')}</Typography>
+                      </Box>
+                    </Stack>
+                  ) : null}
                 </Stack>
               </Grid>
             </Grid>
@@ -1497,60 +1539,49 @@ const AssignmentDetails: React.FC = () => {
             </CardContent>
           </Card>
         )}
-          </Stack>
-        </Grid>
 
-        {/* Right column: cards */}
-        <Grid item xs={12} md={3}>
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-            <Card>
-              <CardHeader
-                title="My Recruiter"
-                titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
-              />
-              <CardContent sx={{ pt: 0 }}>
-                {recruiters.length > 0 ? (
-                  <Stack spacing={2}>
-                    {recruiters.map((r) => (
-                      <Stack key={r.id} spacing={0.75} component="div">
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {r.displayName}
-                        </Typography>
-                        {r.phone && (
-                          <Typography variant="body2">
-                            <Link
-                              component="a"
-                              href={`sms:${r.phone.replace(/[^\d+]/g, '')}`}
-                              sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
-                            >
-                              {r.phone}
-                            </Link>
-                          </Typography>
-                        )}
-                        {r.email && (
-                          <Typography variant="body2">
-                            <Link
-                              component="a"
-                              href={`mailto:${r.email}`}
-                              sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
-                            >
-                              {r.email}
-                            </Link>
-                          </Typography>
-                        )}
-                      </Stack>
-                    ))}
+        {recruiters.length > 0 ? (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardHeader
+              title="My Recruiter"
+              titleTypographyProps={{ variant: 'h6', fontWeight: 'bold' }}
+            />
+            <CardContent sx={{ pt: 0 }}>
+              <Stack spacing={2}>
+                {recruiters.map((r) => (
+                  <Stack key={r.id} spacing={0.75} component="div">
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                      {r.displayName}
+                    </Typography>
+                    {r.phone && (
+                      <Typography variant="body2">
+                        <Link
+                          component="a"
+                          href={`sms:${r.phone.replace(/[^\d+]/g, '')}`}
+                          sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                        >
+                          {r.phone}
+                        </Link>
+                      </Typography>
+                    )}
+                    {r.email && (
+                      <Typography variant="body2">
+                        <Link
+                          component="a"
+                          href={`mailto:${r.email}`}
+                          sx={{ color: 'primary.main', textDecoration: 'none', '&:hover': { textDecoration: 'underline' } }}
+                        >
+                          {r.email}
+                        </Link>
+                      </Typography>
+                    )}
                   </Stack>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    {t('assignment.noRecruiterAssigned')}
-                  </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </Box>
-        </Grid>
-      </Grid>
+                ))}
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : null}
+      </Stack>
     </Box>
   );
 };

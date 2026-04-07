@@ -1,25 +1,11 @@
-import React, { useMemo, useState } from 'react';
-import { Alert, Button, Collapse, Stack, Typography } from '@mui/material';
-import PersonAddAlt1OutlinedIcon from '@mui/icons-material/PersonAddAlt1Outlined';
+import React, { useMemo } from 'react';
+import { Box, Card, CardContent, CardHeader, Stack } from '@mui/material';
+import type { WorkAuthorizedStatus } from '../../../../utils/workAuthorizedDisplay';
 import type { EmploymentEntityKey, EmploymentEntityOverview } from './employmentV2Types';
 import type { EmploymentV2ActionResolutionContext } from '../../../../utils/employmentBlockerActionMap';
-import EmploymentEntityHeaderCard from './EmploymentEntityHeaderCard';
-import EmploymentOnboardingPathCard from './EmploymentOnboardingPathCard';
-import EmploymentActiveAssignmentRequirementsCard from './EmploymentActiveAssignmentRequirementsCard';
-import EmploymentAssignmentsCard from './EmploymentAssignmentsCard';
-import EmploymentSystemsSummaryCard from './EmploymentSystemsSummaryCard';
+import EmploymentMinimalOnboardingChecklist from './EmploymentMinimalOnboardingChecklist';
 import EmploymentEmptyStateCard from './EmploymentEmptyStateCard';
-import StartOnCallEmploymentDialog from './StartOnCallEmploymentDialog';
-
-const ON_CALL_DETAIL_GUIDANCE = (
-  <>
-    Work Authorization rows may show &quot;waiting on payroll&quot; until data syncs or you confirm the step where
-    the product exposes it — there is no separate button on this line. Payroll invites are logged
-    under the profile <strong>Messages</strong> tab (use <strong>Resend invite</strong> on the row, or{' '}
-    <strong>Resend payroll invite</strong> under Systems summary). If SMS shows failed, check the worker&apos;s phone
-    number and carrier deliverability.
-  </>
-);
+import { EMPLOYMENT_V2_ANCHOR_ONBOARDING } from '../../../../utils/workerReadinessBannerModel';
 
 export interface EmploymentEntityPanelProps {
   entityKey: EmploymentEntityKey;
@@ -28,12 +14,16 @@ export interface EmploymentEntityPanelProps {
   tenantId: string;
   tenantSlug?: string;
   onRefresh?: () => void;
-  /** Admin UserProfile: worker’s display name for third-person onboarding copy. */
   workerDisplayName?: string | null;
-  /** Recruiter/admin: show “Start on-call employment” for the active entity tab. */
-  allowStartOnCallEmployment?: boolean;
-  /** Forwarded to onboarding path card; see `resolveEmploymentOnboardingPathDebugMode`. */
-  onboardingPathDebugMode?: boolean;
+  workAuthorizedStatus: WorkAuthorizedStatus;
+  workAuthorizationAttestedAt?: unknown | null;
+  employmentI9SectionFlash?: boolean;
+  onNavigateToProfileTab?: (tabLabel: string) => void;
+  onOpenWorkerNotificationComposer?: (args: {
+    channel: 'sms' | 'email';
+    body: string;
+    subject?: string;
+  }) => void;
 }
 
 const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
@@ -43,21 +33,15 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
   tenantId,
   tenantSlug,
   onRefresh,
-  onboardingPathDebugMode,
-  allowStartOnCallEmployment,
   workerDisplayName,
+  workAuthorizedStatus,
+  workAuthorizationAttestedAt,
+  employmentI9SectionFlash = false,
+  onNavigateToProfileTab,
+  onOpenWorkerNotificationComposer,
 }) => {
-  const [onCallOpen, setOnCallOpen] = useState(false);
-  const [onCallLearnMoreOpen, setOnCallLearnMoreOpen] = useState(false);
   const showEmptyExplainer = !overview.entityEmployment && !overview.workerOnboarding;
   const onCallPoolActive = overview.entityEmployment?.employmentEntryMode === 'on_call_pool';
-  const showStartOnCallButton = Boolean(allowStartOnCallEmployment && !onCallPoolActive);
-
-  const assignmentPackageSummarizedInChecklist =
-    overview.hasOpenOnboardingDemand &&
-    overview.onboardingChecklistGroups.some(
-      (g) => g.groupId === 'assignment_requirements' && g.rows.length > 0
-    );
 
   const actionContext: EmploymentV2ActionResolutionContext = useMemo(() => {
     const entityDisplayName =
@@ -81,79 +65,46 @@ const EmploymentEntityPanel: React.FC<EmploymentEntityPanelProps> = ({
     };
   }, [profileUserId, tenantId, tenantSlug, overview, workerDisplayName, onCallPoolActive]);
 
+  const showChecklist = overview.employmentHeaderState !== 'not_started';
+
   return (
     <Stack spacing={0}>
-      {allowStartOnCallEmployment && onCallPoolActive ? (
-        <Alert severity="info" sx={{ mb: 1 }} variant="outlined">
-          <Typography variant="body2" fontWeight={700} sx={{ mb: 0.75 }}>
-            On-call onboarding is active. Complete checklist below.
-          </Typography>
-          <Button
-            size="small"
-            onClick={() => setOnCallLearnMoreOpen((o) => !o)}
-            sx={{ textTransform: 'none', px: 0, minWidth: 0, mb: onCallLearnMoreOpen ? 0.5 : 0 }}
-            aria-expanded={onCallLearnMoreOpen}
-          >
-            {onCallLearnMoreOpen ? 'Hide details' : 'Learn more'}
-          </Button>
-          <Collapse in={onCallLearnMoreOpen}>
-            <Typography variant="body2" color="text.secondary" component="div" sx={{ lineHeight: 1.5, pt: 0.5 }}>
-              {ON_CALL_DETAIL_GUIDANCE}
-            </Typography>
-          </Collapse>
-        </Alert>
-      ) : null}
-      {showStartOnCallButton ? (
-        <>
-          <Stack direction="row" justifyContent="flex-end" sx={{ mb: 1 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<PersonAddAlt1OutlinedIcon />}
-              onClick={() => setOnCallOpen(true)}
-            >
-              Start on-call employment
-            </Button>
-          </Stack>
-          <StartOnCallEmploymentDialog
-            open={onCallOpen}
-            onClose={() => setOnCallOpen(false)}
-            tenantId={tenantId}
-            profileUserId={profileUserId}
-            entityKey={entityKey}
-            onSuccess={() => onRefresh?.()}
-          />
-        </>
-      ) : null}
-      <EmploymentEntityHeaderCard overview={overview} />
-      <EmploymentOnboardingPathCard
-        groups={overview.onboardingChecklistGroups}
-        entityKey={entityKey}
-        actionContext={actionContext}
-        onActionComplete={onRefresh}
-        debugMode={onboardingPathDebugMode}
-        suppressCurrentDemandBlockers={!overview.hasOpenOnboardingDemand}
-        workerOnboarding={overview.workerOnboarding}
-      />
-      <EmploymentActiveAssignmentRequirementsCard
-        overview={overview}
-        entityKey={entityKey}
-        actionContext={actionContext}
-        onActionComplete={onRefresh}
-        assignmentPackageSummarizedInChecklist={assignmentPackageSummarizedInChecklist}
-      />
-      <EmploymentSystemsSummaryCard
-        overview={overview}
-        tenantId={tenantId}
-        profileUserId={profileUserId}
-        onPayrollResendComplete={() => onRefresh?.()}
-        defaultExpanded={false}
-      />
-      <EmploymentAssignmentsCard
-        assignments={overview.assignments}
-        hasOpenOnboardingDemand={overview.hasOpenOnboardingDemand}
-        defaultListExpanded={false}
-      />
+      <Box id={EMPLOYMENT_V2_ANCHOR_ONBOARDING} sx={{ scrollMarginTop: 96 }}>
+        {showChecklist ? (
+          <Card variant="outlined" sx={{ mb: 2 }}>
+            <CardHeader
+              title="Onboarding checklist"
+              titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
+              sx={{ pb: 1 }}
+            />
+            <CardContent sx={{ pt: 0, '&:last-child': { pb: 2 } }}>
+              <EmploymentMinimalOnboardingChecklist
+                entityKey={entityKey}
+                overview={overview}
+                tenantId={tenantId}
+                profileUserId={profileUserId}
+                actionContext={actionContext}
+                onRefresh={onRefresh}
+                workAuthorizedStatus={workAuthorizedStatus}
+                workAuthorizationAttestedAt={workAuthorizationAttestedAt}
+                employmentI9SectionFlash={employmentI9SectionFlash}
+                onNavigateToProfileTab={onNavigateToProfileTab}
+                onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}
+              />
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {/*
+        <EmploymentSystemsSummaryCard
+          overview={overview}
+          tenantId={tenantId}
+          profileUserId={profileUserId}
+          onPayrollResendComplete={() => onRefresh?.()}
+          defaultExpanded={false}
+        />
+        */}
+      </Box>
       {showEmptyExplainer && <EmploymentEmptyStateCard entityKey={entityKey} />}
     </Stack>
   );

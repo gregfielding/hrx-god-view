@@ -2,7 +2,7 @@
  * Worker-facing "My Employment" list.
  * Profile → My Employment. One card per entity employment.
  */
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import {
   Alert,
   Box,
@@ -16,45 +16,11 @@ import {
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import WorkIcon from '@mui/icons-material/Work';
-import { collection, doc, getDoc, getDocs, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
-import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
-import type { EmploymentAssignmentSummary, EmploymentEntityKey } from '../../../pages/UserProfile/components/employment-v2/employmentV2Types';
-import { normalizeEntityKey } from '../../../utils/employmentEntityPresentation';
-import {
-  computeHasOpenOnboardingDemand,
-  deriveEmploymentHeaderStateWorkerListFallback,
-  employmentHeaderStateLabel,
-  primaryAssignmentRowForHeader,
-} from '../../../utils/deriveEmploymentHeaderState';
-import { loadWorkerAssignmentsByEntityKey } from '../../../utils/loadWorkerAssignmentsByEntityKey';
-import { countPipelineProgressForEntity } from '../../../utils/onboardingPipelineProgress';
-
-interface EntityEmploymentRecord {
-  id: string;
-  userId: string;
-  entityKey: string;
-  entityName: string;
-  workerType: string;
-  status: string;
-  onboardingPipelineId: string;
-  onboardingPhase?: string | null;
-  onboardingCompletedAt?: { toDate: () => Date } | null;
-  employmentEntryMode?: string | null;
-}
-
-const HEADER_LIST_COLOR: Record<string, 'default' | 'warning' | 'success' | 'error' | 'info'> = {
-  not_started: 'default',
-  in_progress: 'warning',
-  action_required: 'warning',
-  waiting_on_company: 'info',
-  ready: 'success',
-  on_assignment: 'success',
-  terminated: 'error',
-  inactive: 'default',
-};
+import { useWorkerMyEmploymentList } from '../../../hooks/useWorkerMyEmploymentList';
+import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmploymentListRowModel';
 
 const MyEmploymentPage: React.FC = () => {
   const { user, tenantId: authTenantId, activeTenant } = useAuth();
@@ -62,68 +28,7 @@ const MyEmploymentPage: React.FC = () => {
   const tenantId = authTenantId || activeTenant?.id || null;
   const uid = user?.uid ?? null;
 
-  const [loading, setLoading] = useState(true);
-  const [records, setRecords] = useState<EntityEmploymentRecord[]>([]);
-  const [assignmentsByEntityKey, setAssignmentsByEntityKey] = useState<Record<
-    EmploymentEntityKey,
-    EmploymentAssignmentSummary[]
-  > | null>(null);
-  const [stepCounts, setStepCounts] = useState<Record<string, { complete: number; total: number }>>({});
-
-  useEffect(() => {
-    if (!tenantId || !uid) {
-      setRecords([]);
-      setAssignmentsByEntityKey(null);
-      setLoading(false);
-      return;
-    }
-    const load = async () => {
-      setLoading(true);
-      try {
-        const ref = collection(db, 'tenants', tenantId, 'entity_employments');
-        const q = query(ref, where('userId', '==', uid));
-        const [snap, byKey] = await Promise.all([getDocs(q), loadWorkerAssignmentsByEntityKey(tenantId, uid)]);
-        const list: EntityEmploymentRecord[] = snap.docs.map((d) => ({
-          id: d.id,
-          ...(d.data() as Omit<EntityEmploymentRecord, 'id'>),
-        }));
-        setRecords(list);
-        setAssignmentsByEntityKey(byKey);
-      } catch {
-        setRecords([]);
-        setAssignmentsByEntityKey({ select: [], workforce: [], events: [] });
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
-  }, [tenantId, uid]);
-
-  useEffect(() => {
-    if (!tenantId || records.length === 0) {
-      setStepCounts({});
-      return;
-    }
-    const loadCounts = async () => {
-      const counts: Record<string, { complete: number; total: number }> = {};
-      await Promise.all(
-        records.map(async (rec) => {
-          if (!rec.onboardingPipelineId) return;
-          try {
-            const pipelineRef = doc(db, 'tenants', tenantId!, 'worker_onboarding', rec.onboardingPipelineId);
-            const snap = await getDoc(pipelineRef);
-            const data = snap.data();
-            const steps = Array.isArray(data?.steps) ? data.steps : [];
-            counts[rec.onboardingPipelineId] = countPipelineProgressForEntity(steps, rec.entityKey);
-          } catch {
-            counts[rec.onboardingPipelineId] = { complete: 0, total: 0 };
-          }
-        })
-      );
-      setStepCounts(counts);
-    };
-    loadCounts();
-  }, [tenantId, records]);
+  const { loading, records, assignmentsByEntityKey, stepCounts } = useWorkerMyEmploymentList(tenantId, uid);
 
   if (!uid) {
     return (
@@ -168,46 +73,7 @@ const MyEmploymentPage: React.FC = () => {
         ) : (
           <Stack spacing={1.5}>
             {records.map((rec) => {
-              const counts = stepCounts[rec.onboardingPipelineId];
-              const isComplete = rec.status === 'active' || rec.onboardingCompletedAt != null;
-              const entityKey = normalizeEntityKey(rec.entityKey);
-              const rowAssignments =
-                assignmentsByEntityKey != null && entityKey ? assignmentsByEntityKey[entityKey] : undefined;
-              const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
-                assignments: rowAssignments,
-                entityEmploymentStatus: rec.status,
-                employmentEntryMode: rec.employmentEntryMode ?? null,
-              });
-              const primaryAssign = primaryAssignmentRowForHeader(rowAssignments);
-              const pipelineIncomplete = Boolean(counts && counts.total > 0 && counts.complete < counts.total);
-              const progressText = (() => {
-                if (isComplete) return 'Onboarding complete';
-                if (!hasOpenOnboardingDemand) {
-                  if (counts && counts.total > 0) {
-                    return `Prior relationship path on file (${counts.complete} of ${counts.total} steps)`;
-                  }
-                  return 'No current assignment onboarding';
-                }
-                if (counts && counts.total > 0) return `${counts.complete} of ${counts.total} steps complete`;
-                return null;
-              })();
-              const headerState = deriveEmploymentHeaderStateWorkerListFallback({
-                onboardingPhase: rec.onboardingPhase,
-                entityEmploymentStatus: rec.status,
-                pipelineIncomplete,
-                hasOpenOnboardingDemand,
-                employmentEntryMode: rec.employmentEntryMode ?? null,
-                hasNonTerminalAssignment: primaryAssign != null,
-              });
-              const statusLabel = employmentHeaderStateLabel(headerState);
-              const terminalList = headerState === 'terminated' || headerState === 'inactive';
-              const listHistoricalChip =
-                !hasOpenOnboardingDemand && !terminalList;
-              const listChipColor =
-                listHistoricalChip &&
-                (HEADER_LIST_COLOR[headerState] === 'success' || HEADER_LIST_COLOR[headerState] === 'info')
-                  ? 'default'
-                  : HEADER_LIST_COLOR[headerState] || 'default';
+              const row = buildWorkerMyEmploymentListRowModel(rec, stepCounts, assignmentsByEntityKey);
 
               return (
                 <Card
@@ -228,29 +94,29 @@ const MyEmploymentPage: React.FC = () => {
                         <WorkIcon sx={{ color: 'text.secondary', fontSize: 22 }} />
                         <Box minWidth={0}>
                           <Typography variant="subtitle1" fontWeight={600} noWrap>
-                            {rec.entityName || rec.entityKey || 'Entity'}
+                            {row.entityDisplayName}
                           </Typography>
-                          {progressText && (
+                          {row.progressText && (
                             <Typography variant="caption" color="text.secondary" display="block">
-                              {progressText}
+                              {row.progressText}
                             </Typography>
                           )}
                         </Box>
                       </Stack>
                       <Stack direction="row" alignItems="center" spacing={0.75} flexShrink={0}>
-                        {(rec.workerType === 'w2' || rec.workerType === '1099') && (
+                        {row.workerTypeLabel && (
                           <Chip
-                            label={rec.workerType === '1099' ? '1099' : 'W-2'}
+                            label={row.workerTypeLabel}
                             size="small"
                             variant="outlined"
                             sx={{ fontWeight: 500 }}
                           />
                         )}
                         <Chip
-                          label={listHistoricalChip ? `Record · ${statusLabel}` : statusLabel}
+                          label={row.statusChipLabel}
                           size="small"
-                          color={listChipColor}
-                          variant={listHistoricalChip ? 'outlined' : 'filled'}
+                          color={row.listChipColor}
+                          variant={row.listHistoricalChip ? 'outlined' : 'filled'}
                         />
                         <ChevronRightIcon color="action" sx={{ fontSize: 20 }} />
                       </Stack>

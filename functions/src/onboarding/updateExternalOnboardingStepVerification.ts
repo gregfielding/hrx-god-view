@@ -6,6 +6,7 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { FieldValue } from 'firebase-admin/firestore';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
+import { canManageOnboarding } from './workerOnboardingPipeline';
 
 const db = admin.firestore();
 
@@ -28,16 +29,23 @@ const ALLOWED_STEP_KEYS = new Set([
 
 type Action = 'verify_complete' | 'request_correction' | 'mark_error';
 
-function canManageTenantOnboarding(
-  auth: { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined,
-  tenantId: string
-): boolean {
-  if (!auth) return false;
-  const roles = auth.token?.roles || {};
-  const tenantRole = roles[tenantId]?.role;
-  if (tenantRole && ['Recruiter', 'Manager', 'Admin'].includes(String(tenantRole))) return true;
-  if (auth.token?.hrx === true) return true;
-  return false;
+/** Firestore update() rejects undefined anywhere in the payload (unless ignoreUndefinedProperties is set early). */
+function shallowOmitUndefined(rec: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(rec)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+function sanitizeExternalOnboardingStepsMap(
+  steps: Record<string, Record<string, unknown>>
+): Record<string, Record<string, unknown>> {
+  const out: Record<string, Record<string, unknown>> = {};
+  for (const [k, v] of Object.entries(steps)) {
+    out[k] = shallowOmitUndefined(v);
+  }
+  return out;
 }
 
 function coerceStepRecord(raw: unknown): Record<string, unknown> {
@@ -94,7 +102,7 @@ export const updateExternalOnboardingStepVerification = onCall(
       throw new HttpsError('invalid-argument', 'Invalid action');
     }
 
-    if (!canManageTenantOnboarding(auth as { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } }, tenantId)) {
+    if (!(await canManageOnboarding(auth, tenantId, auth.uid))) {
       throw new HttpsError('permission-denied', 'Insufficient permissions');
     }
 
@@ -190,8 +198,10 @@ export const updateExternalOnboardingStepVerification = onCall(
       };
     }
 
+    const stepsClean = sanitizeExternalOnboardingStepsMap(steps);
+
     await ref.update({
-      externalOnboardingSteps: steps,
+      externalOnboardingSteps: stepsClean,
       updatedAt: now,
     });
 

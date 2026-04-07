@@ -34,6 +34,7 @@ import DocumentIconBar from './DocumentIconBar';
 import CertificationsModal from './CertificationsModal';
 import ContactActionButtons from './ContactActionButtons';
 import MessageDrawer, { MessageRecipient } from '../../../components/MessageDrawer';
+import { FirebaseError } from 'firebase/app';
 import { functions } from '../../../firebase';
 import { httpsCallable } from 'firebase/functions';
 import MissingItemsAlert from './MissingItemsAlert';
@@ -138,6 +139,8 @@ interface UserProfileHeaderProps {
   tenantId?: string;
   onOnboardingStarted?: () => void;
   headerUserGroups?: Array<{ id: string; title: string }>;
+  /** When true, show Indeed Flex logo beside name (user doc `addedToIndeedFlex`). */
+  showIndeedFlexBadge?: boolean;
 }
 
 const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
@@ -208,6 +211,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   tenantId,
   onOnboardingStarted,
   headerUserGroups = [],
+  showIndeedFlexBadge = false,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [hover, setHover] = useState(false);
@@ -216,6 +220,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [showCertificationsModal, setShowCertificationsModal] = useState(false);
   const [copySuccess, setCopySuccess] = useState<string | null>(null);
+  const [avatarSaveError, setAvatarSaveError] = useState<string | null>(null);
   const [showAddNoteDialog, setShowAddNoteDialog] = useState(false);
   const [showStartOnboardingDialog, setShowStartOnboardingDialog] = useState(false);
   const [showCancelOnboardingDialog, setShowCancelOnboardingDialog] = useState(false);
@@ -436,6 +441,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 
   const handleConfirmCroppedAvatar = async (blob: Blob) => {
     setAvatarBusy(true);
+    setAvatarSaveError(null);
     try {
       // Check authentication
       const auth = getAuth();
@@ -452,12 +458,19 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
       if (fileInputRef.current) fileInputRef.current.value = '';
     } catch (err) {
       console.error('❌ Error saving cropped avatar:', err);
+      const denied = err instanceof FirebaseError && err.code === 'permission-denied';
+      setAvatarSaveError(
+        denied
+          ? "Couldn't save the photo (permission denied)."
+          : "Couldn't save the photo. Try again."
+      );
     } finally {
       setAvatarBusy(false);
     }
   };
 
   const handleDeleteAvatar = async () => {
+    setAvatarSaveError(null);
     try {
       // Prefer deleting by URL (works for both gs:// and https://)
       if (avatarUrl) {
@@ -473,6 +486,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
       onAvatarUpdated('');
     } catch (err) {
       console.error('Error deleting avatar:', err);
+      const denied = err instanceof FirebaseError && err.code === 'permission-denied';
+      setAvatarSaveError(denied ? "Couldn't remove the photo (permission denied)." : "Couldn't remove the photo. Try again.");
     }
   };
 
@@ -927,8 +942,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           )}
 
           {/* Mobile: Contact Icons Row */}
-          {canShowContactIconsRow && (phone || email || resume) && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1, mt: 1 }}>
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 1, mt: 1 }}>
               {phone && (
                 <>
                   <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
@@ -1060,6 +1075,24 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       <NoteIcon sx={{ fontSize: 20 }} />
                     </IconButton>
                   </Badge>
+                </Tooltip>
+              )}
+              {showIndeedFlexBadge && (
+                <Tooltip title="Added to Indeed Flex">
+                  <Box
+                    component="img"
+                    src="/img/flex.png"
+                    alt="Indeed Flex"
+                    sx={{
+                      height: 36,
+                      width: 'auto',
+                      maxWidth: 96,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                    }}
+                  />
                 </Tooltip>
               )}
             </Stack>
@@ -1495,8 +1528,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
           )}
           
           {/* Contact Icons Row - Phone, SMS, Email, Resume (Icon-only buttons) */}
-          {canShowContactIconsRow && (phone || email || resume) && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 1, mb: 0.5 }}>
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mt: 1, mb: 0.5 }}>
               {phone && (
                 <>
                   <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
@@ -1657,6 +1690,24 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                       <NoteIcon sx={{ fontSize: 20 }} />
                     </IconButton>
                   </Badge>
+                </Tooltip>
+              )}
+              {showIndeedFlexBadge && (
+                <Tooltip title="Added to Indeed Flex">
+                  <Box
+                    component="img"
+                    src="/img/flex.png"
+                    alt="Indeed Flex"
+                    sx={{
+                      height: 36,
+                      width: 'auto',
+                      maxWidth: 96,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                    }}
+                  />
                 </Tooltip>
               )}
             </Stack>
@@ -1968,6 +2019,22 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
       >
         <Alert onClose={() => setCopySuccess(null)} severity="success" sx={{ width: '100%' }}>
           {copySuccess}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={!!avatarSaveError}
+        autoHideDuration={8000}
+        onClose={() => setAvatarSaveError(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setAvatarSaveError(null)}
+          severity="error"
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {avatarSaveError}
         </Alert>
       </Snackbar>
 

@@ -12,6 +12,7 @@ import {
   TableRow,
   Paper,
   Chip,
+  Avatar,
   CircularProgress,
   Alert,
   Select,
@@ -21,7 +22,6 @@ import {
   Button,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import PersonIcon from '@mui/icons-material/Person';
 import EmailIcon from '@mui/icons-material/Email';
 import PhoneIcon from '@mui/icons-material/Phone';
 import WorkIcon from '@mui/icons-material/Work';
@@ -42,6 +42,10 @@ import {
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
+import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
+import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
+import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
+import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 
 // Security levels for filtering
 type SecurityLevel = '0' | '1' | '2' | '3' | '4' | 'all';
@@ -83,6 +87,8 @@ interface CandidateWithDetails {
   mostRecentApplication?: ApplicationData;
   comfortableEVerify?: string;
   workerAttestations?: { eVerifyWillingness?: string };
+  resume?: Record<string, unknown> | null;
+  addedToIndeedFlex?: boolean;
 }
 
 const RecruiterApplicants: React.FC = () => {
@@ -213,6 +219,8 @@ const RecruiterApplicants: React.FC = () => {
           workEligibilityAttestation: userData.workEligibilityAttestation,
           comfortableEVerify: userData.comfortableEVerify,
           workerAttestations: userData.workerAttestations,
+          resume: userData.resume ?? null,
+          addedToIndeedFlex: userData.addedToIndeedFlex === true,
         };
       });
       
@@ -636,11 +644,44 @@ const RecruiterApplicants: React.FC = () => {
                     />
                   </TableCell>
                   <TableCell>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                      <PersonIcon sx={{ fontSize: 16, color: 'text.secondary' }} />
-                      <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                        {candidate.lastName}, {candidate.firstName}
-                      </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+                      <Avatar
+                        src={candidate.avatar}
+                        alt={`${candidate.firstName} ${candidate.lastName}`}
+                        sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE, flexShrink: 0 }}
+                      >
+                        {candidate.firstName?.[0]}
+                      </Avatar>
+                      <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
+                        <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
+                          {candidate.lastName}, {candidate.firstName}
+                        </Typography>
+                        {(candidate.createdAt ||
+                          pickResumeFromUserDoc(candidate as unknown as Record<string, unknown>)) && (
+                          <Box
+                            sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              flexWrap: 'nowrap',
+                              gap: '6px',
+                              mt: 0.25,
+                            }}
+                          >
+                            {candidate.createdAt && (
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                component="span"
+                                sx={{ lineHeight: 1.2 }}
+                              >
+                                {formatDate(candidate.createdAt)}
+                              </Typography>
+                            )}
+                            <UserTableResumeIcon user={candidate as unknown as Record<string, unknown>} />
+                          </Box>
+                        )}
+                        <UserTableIndeedFlexBadge user={candidate as unknown as Record<string, unknown>} />
+                      </Box>
                     </Box>
                   </TableCell>
                   <TableCell>

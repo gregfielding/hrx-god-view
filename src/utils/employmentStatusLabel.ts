@@ -1,7 +1,7 @@
 /**
  * Worker-facing display labels for entity_employments.
  *
- * Backend status (entity_employments.status): onboarding | active | inactive | terminated
+ * Backend status (entity_employments.status): onboarding | active | inactive | terminated | blocked
  * Backend workerType: w2 | 1099
  *
  * UI mapping (worker-side "My Employment" only):
@@ -12,7 +12,7 @@
  * Do NOT add backend statuses like active_employee or active_contractor.
  */
 
-export type EntityEmploymentStatus = 'onboarding' | 'active' | 'inactive' | 'terminated';
+export type EntityEmploymentStatus = 'onboarding' | 'active' | 'inactive' | 'terminated' | 'blocked';
 export type EntityEmploymentWorkerType = 'w2' | '1099';
 
 const STATUS_LABEL: Record<EntityEmploymentStatus, string> = {
@@ -20,6 +20,7 @@ const STATUS_LABEL: Record<EntityEmploymentStatus, string> = {
   active: 'Active', // overridden below when workerType is known
   inactive: 'Inactive',
   terminated: 'Terminated',
+  blocked: 'Blocked',
 };
 
 /**

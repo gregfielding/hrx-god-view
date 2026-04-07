@@ -79,6 +79,11 @@ export interface JobOrder {
   // Requirements
   requiredLicenses: string[];
   requiredCertifications: string[];
+  /**
+   * Optional: `worker_compliance_items` doc ids for job-required certs (matches `cert_*` suffix in readiness snapshots).
+   * @see `placementQualificationChipsModel` / docs when added to Firestore.
+   */
+  requiredCertificationComplianceIds?: string[];
   drugScreenRequired: boolean;
   backgroundCheckRequired: boolean;
   experienceRequired?: string;
@@ -268,6 +273,8 @@ export interface JobOrderFormData {
   // Requirements
   requiredLicenses: string[];
   requiredCertifications: string[];
+  /** Optional compliance item ids for placement cert blockers; see main `JobOrder` type. */
+  requiredCertificationComplianceIds?: string[];
   drugScreenRequired: boolean;
   backgroundCheckRequired: boolean;
   experienceRequired?: string;

@@ -57,7 +57,6 @@ export {
 // Dashboard internal notifications (recruiter signals)
 export {
   recruiterNotificationOnJobOrderAssigned,
-  recruiterNotificationOnJobOrderApplicationCreated,
   recruiterNotificationOnTenantApplicationCreated,
   recruiterNotificationOnTaskCreated,
   recruiterNotificationOnTaskUpdated,
@@ -250,6 +249,30 @@ export {
   syncAccusourcePackageCatalog,
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
+export { syncWorkerProfileReadinessV1 } from './readiness/profileReadinessTrigger';
+export { syncWorkerReadinessV1FromEntityEmployment } from './readiness/entityEmploymentWorkerReadinessTrigger';
+export { syncWorkerReadinessV1FromAssignment } from './readiness/assignmentWorkerReadinessTrigger';
+export { syncAssignmentReadinessV1OnAssignmentWrite } from './readiness/assignmentReadinessOnAssignmentWrite';
+export { syncAssignmentReadinessV1OnOnboardingInstanceWrite } from './readiness/assignmentReadinessOnOnboardingInstanceWrite';
+export { syncAssignmentReadinessV1OnSignatureEnvelopeWrite } from './readiness/assignmentReadinessOnSignatureEnvelopeWrite';
+export { syncAssignmentReadinessV1OnBackgroundCheckWrite } from './readiness/assignmentReadinessOnBackgroundCheckWrite';
+export {
+  syncHrxReadinessSnapshotV1OnPayrollWrite,
+  syncHrxReadinessSnapshotV1OnWorkerOnboardingWrite,
+  syncHrxReadinessSnapshotV1OnEntityEmploymentWrite,
+  syncHrxReadinessSnapshotV1OnUserEmploymentWrite,
+  syncHrxReadinessSnapshotV1OnComplianceWrite,
+} from './readiness/hrxReadinessSnapshotOnUpstreamWrite';
+export { syncHrxReadinessSnapshotV1OnUserWrite } from './readiness/hrxReadinessSnapshotOnUserWrite';
+export {
+  syncHrxReadinessSnapshotV1OnJobOrderWrite,
+  syncHrxReadinessSnapshotV1OnRecruiterJobOrderWrite,
+  syncHrxReadinessSnapshotV1OnAccountHiringWrite,
+} from './readiness/hrxReadinessSnapshotOnHiringLinkageWrite';
+// Bundled with esbuild (`npm run build:hrx-readiness-snapshot`) — imports `src/shared/` + web utils.
+// eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
+const hrxReadinessSnapshot = require('./readiness/syncHrxReadinessSnapshotV1.cjs');
+export const syncHrxReadinessSnapshotV1 = hrxReadinessSnapshot.syncHrxReadinessSnapshotV1;
 export { workerSupportAssistant } from './workerSupportAssistant';
 export {
   triggerWorkerOnboardingPipeline,
@@ -259,8 +282,14 @@ export {
   updateWorkerOnboardingStepMilestone,
   updateEntityEmploymentStatus,
 } from './onboarding/workerOnboardingPipeline';
+export { syncEntityEmploymentOnboardingFromWorkerOnboarding } from './onboarding/entityEmploymentOnboardingSync';
 export { startOnCallEmployment, startOnCallOnboarding } from './onboarding/startOnCallEmployment';
 export { resendPayrollOnboardingInvite } from './onboarding/resendPayrollOnboardingInvite';
+export { getI9SupportingDocumentSignedUrl } from './onboarding/i9SupportingDocumentSignedUrl';
+export {
+  createWorkerI9SupportingDocumentRequest,
+  reviewWorkerI9SupportingDocument,
+} from './onboarding/i9SupportingDocumentWorkflowCallables';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';

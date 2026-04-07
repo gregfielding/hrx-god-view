@@ -189,6 +189,8 @@ export default function AccountLocationDetail() {
   const [entityOptions, setEntityOptions] = useState<EntityOption[]>([]);
   /** Child account docs may omit hiringEntityId; inherit from parent for pricing / payroll tax UI. */
   const [inheritedAccountHiringEntityId, setInheritedAccountHiringEntityId] = useState<string | null>(null);
+  /** National parent doc for location Order Details (national → child account → location_defaults). */
+  const [orderDefaultsInheritanceParent, setOrderDefaultsInheritanceParent] = useState<RecruiterAccount | null>(null);
   const [locationDefaultRules, setLocationDefaultRules] = useState({
     replacingExistingAgency: false,
     rolloverExistingStaff: false,
@@ -361,6 +363,25 @@ export default function AccountLocationDetail() {
       cancelled = true;
     };
   }, [tenantId, account?.id, account?.hiringEntityId, account?.parentAccountId]);
+
+  useEffect(() => {
+    if (!tenantId || !account?.parentAccountId || !String(account.parentAccountId).trim()) {
+      setOrderDefaultsInheritanceParent(null);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(db, p.recruiterAccount(tenantId, String(account.parentAccountId).trim())))
+      .then((snap) => {
+        if (cancelled || !isMounted.current) return;
+        setOrderDefaultsInheritanceParent(snap.exists() ? (snap.data() as RecruiterAccount) : null);
+      })
+      .catch(() => {
+        if (!cancelled && isMounted.current) setOrderDefaultsInheritanceParent(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, account?.parentAccountId]);
 
   const locationKey = resolvedCompanyId && locationId ? `${resolvedCompanyId}_${locationId}`.replace(/\//g, '_') : '';
 
@@ -2818,6 +2839,7 @@ export default function AccountLocationDetail() {
               locationDefaults={locationDefaults as any}
               onRefreshLocation={refreshLocationDefaults}
               contacts={contactsAtLocation}
+              inheritanceParentAccount={orderDefaultsInheritanceParent}
             />
           )}
         </TabPanel>

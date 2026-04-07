@@ -44,6 +44,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../../firebase';
 import { logCustomActivity } from '../../../utils/activityLogger';
+import AccusourceScreeningDebugSection from '../../../components/recruiter/AccusourceScreeningDebugSection';
 import { AccusourcePackageSelector } from '../../../components/recruiter/AccusourcePackageSelector';
 import { useAccusourceCatalog } from '../../../hooks/useAccusourceCatalog';
 import { fetchMergedScreeningPackageForCandidate } from '../../../utils/screeningPackageDefaultsLoader';
@@ -55,6 +56,7 @@ import {
   resolveC1SelectEntityId,
 } from '../../../utils/c1EntityWorkAuthorizationUi';
 import { backgroundComplianceScreeningRowElementId } from '../../../utils/employmentOnboardingPath';
+import { normalizeUserDocumentDobToYyyyMmDd } from '../../../utils/userProfileDob';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
 import {
   buildComplianceSummary,
@@ -67,6 +69,7 @@ import {
   type ScreeningPackageMergeResult,
 } from './backgroundsComplianceModel';
 import { EVERIFY_SELECT_PERM_HINT } from './StartEverifySelectDialog';
+import I9SupportingDocumentsSection from '../../../components/i9SupportingDocuments/I9SupportingDocumentsSection';
 
 const PAGE_LIMIT = 100;
 
@@ -430,6 +433,19 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         setBgSubmitting(false);
         return;
       }
+      const dobForOrder = normalizeUserDocumentDobToYyyyMmDd(profileUser.dateOfBirth ?? profileUser.dob);
+      if (!dobForOrder) {
+        setBgMessage(
+          'AccuSource requires a valid date of birth (MM/DD/YYYY once sent). Add date of birth on this worker’s Profile → Overview, then retry.'
+        );
+        setBgSubmitting(false);
+        return;
+      }
+      if (!String(profileUser.email || '').trim()) {
+        setBgMessage('AccuSource requires a work email on the worker profile.');
+        setBgSubmitting(false);
+        return;
+      }
       const services = selectedServiceIds;
       await createAccusourceBackgroundCheck({
         tenantId,
@@ -447,7 +463,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
           lastName: String(profileUser.lastName || ''),
           email: String(profileUser.email || ''),
           phone: String(profileUser.phone || profileUser.phoneE164 || ''),
-          dateOfBirth: String(profileUser.dateOfBirth || profileUser.dob || ''),
+          dateOfBirth: dobForOrder,
         },
       });
       if (bgNotes.trim()) {
@@ -506,11 +522,24 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
 
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
+      <Alert severity="info" variant="outlined">
+        <Typography variant="body2" component="div" sx={{ lineHeight: 1.45 }}>
+          This tab is the <strong>screening record</strong> surface (orders, PDFs, E-Verify / I-9 context). It does not
+          drive assignment readiness — use <strong>Assignments</strong> for per-placement readiness, blockers, and actions.
+        </Typography>
+      </Alert>
       <Typography variant="subtitle2" color="text.secondary">
-        Compliance control center — <strong>C1 Select</strong> work authorization (I-9 + E-Verify), <strong>C1 Workforce</strong> I-9 status, and
-        AccuSource screening. E-Verify cases tied to non-Select entities are hidden here (fix <code>entityId</code> on the case if needed). Data loads
-        from Firestore; actions use server functions only.
+        <strong>C1 Select</strong> work authorization (I-9 + E-Verify), <strong>C1 Workforce</strong> I-9 status, and
+        AccuSource screening rows. E-Verify cases tied to non-Select entities are hidden here (fix <code>entityId</code>{' '}
+        on the case if needed). Data loads from Firestore; actions use server functions only.
       </Typography>
+
+      <Typography variant="caption" color="text.secondary" display="block">
+        Primary I-9 supporting document requests and uploads live on the <strong>Employment</strong> tab. This section is
+        the full audit trail and review surface.
+      </Typography>
+
+      <I9SupportingDocumentsSection tenantId={tenantId} workerUserId={uid} />
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)}>
@@ -730,75 +759,93 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                 const rowDomId = backgroundComplianceScreeningRowElementId(r.id);
                 const rowHighlighted = Boolean(highlightScreeningRowId && highlightScreeningRowId === r.id);
                 return (
-                  <TableRow
-                    key={row.key}
-                    id={rowDomId}
-                    sx={
-                      rowHighlighted
-                        ? {
-                            outline: '2px solid',
-                            outlineColor: 'primary.main',
-                            outlineOffset: -2,
-                            bgcolor: 'action.selected',
-                            transition: 'background-color 0.2s ease',
-                          }
-                        : undefined
-                    }
-                  >
-                    <TableCell>
-                      Background
-                      {row.drugReportReady && (
-                        <Typography component="span" variant="caption" display="block" color="text.secondary">
-                          (+ drug component)
-                        </Typography>
-                      )}
-                    </TableCell>
-                    <TableCell>{row.packageLabel}</TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{row.statusPrimary}</Typography>
-                    </TableCell>
-                    <TableCell>{formatTime(row.submittedAt)}</TableCell>
-                    <TableCell>{row.providerLabel}</TableCell>
-                    <TableCell>{row.actionNeeded || '—'}</TableCell>
-                    <TableCell>
-                      <Stack direction="row" gap={0.5} flexWrap="wrap">
-                        {r.finalReportReady && (
-                          <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : ''}>
-                            <span>
-                              <Button
-                                size="small"
-                                disabled={!!pdfLoading || !canAccusourceAdmin}
-                                onClick={() => openPdf(r.id, 'final')}
-                              >
-                                Final PDF
-                              </Button>
-                            </span>
-                          </Tooltip>
+                  <React.Fragment key={row.key}>
+                    <TableRow
+                      id={rowDomId}
+                      sx={
+                        rowHighlighted
+                          ? {
+                              outline: '2px solid',
+                              outlineColor: 'primary.main',
+                              outlineOffset: -2,
+                              bgcolor: 'action.selected',
+                              transition: 'background-color 0.2s ease',
+                            }
+                          : undefined
+                      }
+                    >
+                      <TableCell>
+                        Background
+                        {row.drugReportReady && (
+                          <Typography component="span" variant="caption" display="block" color="text.secondary">
+                            (+ drug component)
+                          </Typography>
                         )}
-                        {r.drugReportReady && (
-                          <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : ''}>
-                            <span>
-                              <Button
-                                size="small"
-                                disabled={!!pdfLoading || !canAccusourceAdmin}
-                                onClick={() => openPdf(r.id, 'drug')}
-                              >
-                                Drug PDF
-                              </Button>
-                            </span>
-                          </Tooltip>
+                      </TableCell>
+                      <TableCell>{row.packageLabel}</TableCell>
+                      <TableCell>
+                        <Typography variant="body2">{row.statusPrimary}</Typography>
+                      </TableCell>
+                      <TableCell>{formatTime(row.submittedAt)}</TableCell>
+                      <TableCell>{row.providerLabel}</TableCell>
+                      <TableCell>{row.actionNeeded || '—'}</TableCell>
+                      <TableCell>
+                        <Stack direction="row" gap={0.5} flexWrap="wrap">
+                          {r.finalReportReady && (
+                            <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : ''}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  disabled={!!pdfLoading || !canAccusourceAdmin}
+                                  onClick={() => openPdf(r.id, 'final')}
+                                >
+                                  Final PDF
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                          {r.drugReportReady && (
+                            <Tooltip title={!canAccusourceAdmin ? ACCUSOURCE_PERM_HINT : ''}>
+                              <span>
+                                <Button
+                                  size="small"
+                                  disabled={!!pdfLoading || !canAccusourceAdmin}
+                                  onClick={() => openPdf(r.id, 'drug')}
+                                >
+                                  Drug PDF
+                                </Button>
+                              </span>
+                            </Tooltip>
+                          )}
+                          {!r.finalReportReady && !r.drugReportReady && '—'}
+                        </Stack>
+                      </TableCell>
+                      <TableCell align="right">
+                        {r.applicantPortalLink && (
+                          <Link href={r.applicantPortalLink} target="_blank" rel="noopener noreferrer">
+                            Portal
+                          </Link>
                         )}
-                        {!r.finalReportReady && !r.drugReportReady && '—'}
-                      </Stack>
-                    </TableCell>
-                    <TableCell align="right">
-                      {r.applicantPortalLink && (
-                        <Link href={r.applicantPortalLink} target="_blank" rel="noopener noreferrer">
-                          Portal
-                        </Link>
-                      )}
-                    </TableCell>
-                  </TableRow>
+                      </TableCell>
+                    </TableRow>
+                    {canAccusourceAdmin ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={8}
+                          sx={{
+                            py: 1,
+                            px: 2,
+                            bgcolor: 'action.hover',
+                            borderBottom: 1,
+                            borderColor: 'divider',
+                            verticalAlign: 'top',
+                          }}
+                        >
+                          <AccusourceScreeningDebugSection record={r} />
+                        </TableCell>
+                      </TableRow>
+                    ) : null}
+                  </React.Fragment>
                 );
               })}
             </TableBody>

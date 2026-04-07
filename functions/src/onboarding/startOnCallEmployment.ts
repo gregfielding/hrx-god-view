@@ -190,7 +190,7 @@ export async function runStartOnCallEmploymentFlow(
         lastName: String(u.lastName || ""),
         email: String(u.email || ""),
         phone: String(u.phoneE164 || u.phone || ""),
-        dateOfBirth: String(u.dateOfBirth || u.dob || ""),
+        dateOfBirth: u.dateOfBirth ?? u.dob,
       };
 
       const accountId =

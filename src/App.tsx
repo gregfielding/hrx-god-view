@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, useParams, useNavigate, useLocation, useSearchParams, Navigate, Outlet } from 'react-router-dom';
 import { LoadScript, Libraries } from '@react-google-maps/api';
 import { logger } from './utils/logger';
+import { getUsersIndexRedirectPath } from './utils/usersLayoutPersistence';
 
 import Layout from './components/Layout';
 import ConditionalJobsBoardLayout from './components/ConditionalJobsBoardLayout';
@@ -14,6 +15,7 @@ import TaskDetailPage from './pages/TaskDetailPage';
 import AIDashboard from './pages/TenantViews/AIDashboard';
 import ChatGPT from './pages/TenantViews/ChatGPT';
 import UserProfile from './pages/UserProfile';
+import UserReadinessPage from './pages/UserReadinessPage';
 import Login from './pages/Login';
 import UserOnboarding from './pages/UserOnboarding';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -206,6 +208,10 @@ function C1UserProfileOrRedirect() {
 function RecruiterUserGroupsRedirect() {
   const { groupId } = useParams();
   return <Navigate to={`/usergroups/${groupId}`} replace />;
+}
+
+function UsersHubIndexRedirect() {
+  return <Navigate to={getUsersIndexRedirectPath()} replace />;
 }
 
 function RecruiterAccountDetailsRedirect() {
@@ -508,6 +514,7 @@ function App() {
           <Route path="applications" element={<Navigate to="/c1/workers/applications" replace />} />
           <Route path="assignments" element={<MyAssignments />} />
           <Route path="assignments/:assignmentId" element={<AssignmentDetails />} />
+          <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
           <Route path="users/:uid" element={<C1UserProfileOrRedirect />} />
         </Route>
         <Route path="/apply/:tenantSlug/:jobId?" element={<ApplyWizardPage />} />
@@ -574,6 +581,7 @@ function App() {
             <TenantUsers />
           </ProtectedRoute>
         } />
+        <Route path="users/:uid/readiness" element={<UserReadinessPage />} />
         <Route path="users/:uid" element={<UserProfile />} />
         <Route path="users/:uid/onboarding" element={
           <ProtectedRoute requiredSecurityLevel="4">
@@ -760,7 +768,7 @@ function App() {
             </RecruiterAccessGuard>
           </ProtectedRoute>
         }>
-          <Route index element={<Navigate to="/users/all" replace />} />
+          <Route index element={<UsersHubIndexRedirect />} />
           <Route path="all" element={<RecruiterUsers hideHeader scope="all" />} />
           <Route path="my" element={<RecruiterUsers hideHeader scope="my" />} />
           <Route path="invite-users" element={<InviteUsersPage hideHeader />} />
@@ -769,6 +777,7 @@ function App() {
           <Route path="all-smart-groups" element={<AllSmartGroupsPage hideHeader />} />
           <Route path="my-smart-groups" element={<MySmartGroupsListPage hideHeader />} />
           <Route path="my-smart-groups/:groupId" element={<SavedSmartGroupDetailPage hideHeader />} />
+          <Route path=":uid/readiness" element={<UserReadinessPage />} />
           <Route path=":uid" element={<UserProfile />} />
         </Route>
 
@@ -834,6 +843,7 @@ function App() {
             <WorkforceDashboard />
           </ProtectedRoute>
         } />
+        <Route path="workforce/users/:uid/readiness" element={<UserReadinessPage />} />
         <Route path="workforce/users/:uid" element={<UserProfile />} />
         <Route path="customers" element={
           <ProtectedRoute requiredSecurityLevel="4">
@@ -1305,6 +1315,15 @@ function App() {
             <PrivacySettings />
           </ProtectedRoute>
         } />
+        {/* Recruiter hub links (e.g. profile Assignments tab) use /assignments/:id — must be before static /assignments */}
+        <Route
+          path="assignments/:assignmentId"
+          element={
+            <ProtectedRoute>
+              <AssignmentDetails />
+            </ProtectedRoute>
+          }
+        />
         <Route path="assignments" element={<WorkerAssignments />} />
       </Route>
     </Routes>

@@ -234,7 +234,11 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
               size="small"
               label={`E-Verify (Select): ${everifyStatus || '—'}`}
               variant="outlined"
-              color={everifyStatus === 'employment_authorized' ? 'success' : 'default'}
+              color={
+                everifyStatus === 'employment_authorized' || everifyStatus === 'manual_outside_hrx'
+                  ? 'success'
+                  : 'default'
+              }
               sx={{ fontWeight: 600 }}
             />
           </Tooltip>
@@ -245,7 +249,13 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
               <Button
                 size="small"
                 variant="outlined"
-                disabled={!canCreate || createLoading || checkLoading || everifyStatus === 'employment_authorized'}
+                disabled={
+                  !canCreate ||
+                  createLoading ||
+                  checkLoading ||
+                  everifyStatus === 'employment_authorized' ||
+                  everifyStatus === 'manual_outside_hrx'
+                }
                 onClick={handleClickCreate}
               >
                 {createLoading || checkLoading ? (

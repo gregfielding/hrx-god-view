@@ -100,6 +100,8 @@ const DETAIL_FIELDS: { key: keyof BackgroundCheckRecord; label: string }[] = [
   { key: 'worksiteId', label: 'Worksite ID' },
   { key: 'clientId', label: 'Client ID (HRX)' },
   { key: 'providerProfileId', label: 'Provider profile ID' },
+  { key: 'providerProfileNumber', label: 'Provider profile # (SD)' },
+  { key: 'providerSubjectId', label: 'Provider subject ID' },
   { key: 'providerEnvironment', label: 'Environment' },
   { key: 'applicantPortalLink', label: 'Applicant portal' },
   { key: 'lastWebhookType', label: 'Last webhook' },

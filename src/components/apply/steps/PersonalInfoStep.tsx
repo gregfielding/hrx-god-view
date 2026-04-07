@@ -6,6 +6,7 @@ import { geocodeAddress } from '../../../utils/geocodeAddress';
 import { auth } from '../../../firebase';
 import { useT } from '../../../i18n';
 import { isValidUsPhone10 } from '../../../utils/usPhoneValidation';
+import { normalizeLast4SsnDigits } from '../../../utils/last4Ssn';
 
 type Props = {
   value: any;
@@ -525,6 +526,18 @@ const PersonalInfoStep: React.FC<Props> = ({ value, onChange, onPasswordChange, 
           </ResumeSuggestionField>
         </Grid>
         <Grid item xs={12} md={6}>
+          <TextField
+            fullWidth
+            label={t('apply.last4Ssn')}
+            helperText={t('apply.last4SsnHelper')}
+            inputMode="numeric"
+            autoComplete="off"
+            value={value.last4SSN || ''}
+            onChange={(e) => handle('last4SSN', normalizeLast4SsnDigits(e.target.value))}
+            inputProps={{ maxLength: 4, inputMode: 'numeric' as const }}
+          />
+        </Grid>
+        <Grid item xs={12} md={6}>
           <FormControl fullWidth>
             <InputLabel id="apply-preferred-language-mobile-label">{t('apply.preferredMessageLanguage')}</InputLabel>
             <Select
@@ -635,6 +648,18 @@ label={t('profile.phone')}
                     helperText={phoneInvalidAfterBlur ? t('apply.phoneTenDigits') : t('apply.phoneTenDigitsHelper')}
                   />
                 </ResumeSuggestionField>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <TextField
+                  fullWidth
+                  label={t('apply.last4Ssn')}
+                  helperText={t('apply.last4SsnHelper')}
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={value.last4SSN || ''}
+                  onChange={(e) => handle('last4SSN', normalizeLast4SsnDigits(e.target.value))}
+                  inputProps={{ maxLength: 4, inputMode: 'numeric' as const }}
+                />
               </Grid>
               <Grid item xs={12} md={6}>
                 <FormControl fullWidth>

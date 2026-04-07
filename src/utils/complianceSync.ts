@@ -38,6 +38,7 @@ function toComplianceStatus(raw: string | undefined): ComplianceStatus {
   if (!raw) return 'not_started';
   const v = raw.toLowerCase();
   if (v === 'complete' || v === 'completed' || v === 'done') return 'complete';
+  if (v === 'employment_authorized' || v === 'manual_outside_hrx') return 'complete';
   if (v === 'failed') return 'failed';
   if (v === 'not_started' || v === 'not started') return 'not_started';
   if (v === 'in_progress' || v === 'in progress' || v === 'in_review') return 'in_review';

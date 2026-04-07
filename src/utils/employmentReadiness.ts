@@ -30,7 +30,6 @@ import type {
   WorkerOnboardingPipeline,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import {
-  buildOnboardingPathFromSettings,
   filterEntityRelationshipOnboardingPathGroups,
   isOnboardingPathRowBlocker,
   isOnboardingPathRowDone,
@@ -45,19 +44,31 @@ import {
   lifecycleStatusFromEmploymentHeaderState,
   primaryAssignmentRowForHeader,
 } from './deriveEmploymentHeaderState';
-import { buildAssignmentRequirementsViewModel } from './assignmentRequirementsViewModel';
-import { isAssignmentTerminalNormalized } from './assignmentStatusNormalize';
+import {
+  buildAssignmentRequirementsViewModel,
+  pickPrimaryAssignmentForEmploymentIA,
+} from './assignmentRequirementsViewModel';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import { entityLabelForKey, defaultWorkerTypeForEntity } from './employmentEntityPresentation';
 import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import type { AssignmentReadinessV1Snapshot } from '../types/assignmentReadinessV1';
+import { entityEmploymentLifecycleLower } from './entityEmploymentLifecycle';
+import {
+  documentsAndSignaturesLineFromReadiness,
+  screeningLineFromReadiness,
+} from './assignmentReadinessUi';
 import type {
   EverifyCaseNarrativeBrief,
   OnboardingAutomationDispatchBrief,
 } from './employmentOnboardingNarrative';
-import { enrichOnboardingPathWithNarrativesFromOverviewDeps } from './employmentOnboardingNarrative';
 import { resolveEffectiveEmploymentWorkerType } from './employmentWorkerTypeResolution';
 import type { ExternalOnboardingWorkerTypeNorm } from './externalOnboardingSteps';
+import {
+  buildEnrichedFullOnboardingPathFromEngineContext,
+  computeEntityOnboardingEngineFromEnrichedFullPath,
+} from './entityOnboardingEngineFromContext';
+import type { EntityOnboardingEngineBuildContext } from './entityOnboardingEngineFromContext';
 
 /** Drop redundant recruiter pipeline tasks; payroll milestones cover forms on the checklist. */
 function omitInternalOnboardingFormsTasksFromChecklist(row: EmploymentOnboardingRow): boolean {
@@ -266,6 +277,7 @@ export interface BuildOverviewContext {
     onboardingStatus?: string | null;
     onboardingPercent?: number | null;
     jobTitle?: string | null;
+    assignmentReadinessV1?: AssignmentReadinessV1Snapshot | null;
   }>;
   onboardingByInstanceId: Map<string, OnboardingInstanceSnapshot>;
   envelopesByAssignmentId: Map<string, Map<string, SignatureEnvelopeStatus>>;
@@ -317,51 +329,9 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
   });
   const workerType = overviewWorkerTypeCoarse(effectiveWorkerType.normalizedExternal, entityKey);
 
-  const assignments: EmploymentAssignmentSummary[] = ctx.assignmentsRows.map((row) => {
-    const inst = row.onboardingInstanceId
-      ? ctx.onboardingByInstanceId.get(row.onboardingInstanceId)
-      : undefined;
-    const env = ctx.envelopesByAssignmentId.get(row.assignmentId);
-    return {
-      assignmentId: row.assignmentId,
-      jobOrderId: row.jobOrderId ?? null,
-      title: row.jobTitle ?? null,
-      status: row.status ?? null,
-      onboardingInstanceId: row.onboardingInstanceId ?? null,
-      onboardingStatus: row.onboardingStatus ?? inst?.status ?? null,
-      onboardingPercent: row.onboardingPercent ?? inst?.percentComplete ?? null,
-      startDate: row.startDate ?? null,
-      resolvedRequirementsSummary: countResolvedRequirements(inst, env),
-    };
-  });
-
-  let fullOnboardingPath = buildOnboardingPathFromSettings({
-    entityKey,
-    entitySettings: ctx.entitySettings,
-    pipeline,
-    assignments,
-    onboardingByInstanceId: ctx.onboardingByInstanceId,
-    envelopesByAssignmentId: ctx.envelopesByAssignmentId,
-    everifySummary: entityKey === 'select' ? ctx.everifySummary : null,
-    payrollAccount: ctx.payrollAccount,
-    backgroundChecksForEntity: ctx.backgroundChecksForEntity,
-    allTenantWorkerBackgroundChecks: ctx.allTenantWorkerBackgroundChecks,
-    everifyCaseBriefs: entityKey === 'select' ? ctx.everifyCaseBriefs : undefined,
-    employmentRecordWorkerType: ee?.workerType ?? null,
-  });
-
-  fullOnboardingPath = enrichOnboardingPathWithNarrativesFromOverviewDeps(fullOnboardingPath, {
-    workerOnboarding: pipeline,
-    payrollAccount: ctx.payrollAccount,
-    backgroundChecksForEntity: ctx.backgroundChecksForEntity,
-    allTenantWorkerBackgroundChecks: ctx.allTenantWorkerBackgroundChecks,
-    envelopesByAssignmentId: ctx.envelopesByAssignmentId,
-    onboardingByInstanceId: ctx.onboardingByInstanceId,
-    assignments,
-    everifyCaseBriefs: entityKey === 'select' ? ctx.everifyCaseBriefs : undefined,
-    narrativeAudience: 'admin',
-    automationDispatchBriefs: ctx.automationDispatchBriefs,
-  });
+  const { assignments, fullOnboardingPath } = buildEnrichedFullOnboardingPathFromEngineContext(
+    ctx as EntityOnboardingEngineBuildContext
+  );
 
   const assignmentRequirementsViewModel = buildAssignmentRequirementsViewModel({
     fullOnboardingPathGroups: fullOnboardingPath,
@@ -375,12 +345,10 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
 
   const onboardingPath = filterEntityRelationshipOnboardingPathGroups(fullOnboardingPath);
 
-  const assignmentPathGroup = fullOnboardingPath.find((g) => g.groupId === 'assignment_requirements');
-  const hasLiveAssignment = assignments.some((a) => !isAssignmentTerminalNormalized(a.status));
-  const onboardingChecklistGroups = [
-    ...filterChecklistPathGroups(onboardingPath),
-    ...(assignmentPathGroup && hasLiveAssignment && assignmentPathGroup.rows.length > 0 ? [assignmentPathGroup] : []),
-  ];
+  /** Assignment package rows stay out of the Onboarding checklist — they render only under Assignment. */
+  const onboardingChecklistGroups = filterChecklistPathGroups(onboardingPath);
+
+  const onboardingEngine = computeEntityOnboardingEngineFromEnrichedFullPath(fullOnboardingPath, pipeline);
 
   const allPathRows = onboardingPath.flatMap((g) => g.rows);
   const pathRowCount = allPathRows.length;
@@ -390,7 +358,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
   const liveAssignmentRow = primaryAssignmentRowForHeader(assignments);
   const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
     assignments,
-    entityEmploymentStatus: ee?.status ?? null,
+    entityEmploymentStatus: entityEmploymentLifecycleLower(ee),
     employmentEntryMode: ee?.employmentEntryMode ?? null,
   });
   const hasAnyBlockers =
@@ -421,11 +389,25 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
   };
 
   const openScr = openBackgroundCount(ctx.backgroundChecksForEntity);
+  const primaryForSystems = pickPrimaryAssignmentForEmploymentIA(assignments);
+  const readinessSys = primaryForSystems?.assignmentReadinessV1 ?? null;
+  const screeningCanonicalTop =
+    readinessSys != null ? screeningLineFromReadiness(readinessSys) : null;
   const screeningSummary: EmploymentScreeningSummary = {
-    applicable: Boolean(ee || openScr > 0),
-    statusDisplay: openScr > 0 ? `${openScr} open` : 'None open',
+    applicable: Boolean(ee || openScr > 0 || readinessSys != null),
+    statusDisplay: screeningCanonicalTop ?? (openScr > 0 ? `${openScr} open` : 'None open'),
     openOrderCount: openScr,
-    actionNeeded: openScr > 0,
+    actionNeeded: Boolean(
+      openScr > 0 ||
+        (readinessSys &&
+          ['blocked', 'requirements_incomplete', 'pending_confirmation'].includes(
+            readinessSys.assignmentReadinessState
+          ))
+    ),
+    recordDetail:
+      readinessSys != null && openScr > 0
+        ? `${openScr} open screening order(s) in tenant records`
+        : null,
   };
 
   let docSigned = 0;
@@ -445,10 +427,13 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     });
   });
 
+  const docsCanonicalLine =
+    readinessSys != null ? documentsAndSignaturesLineFromReadiness(readinessSys) : null;
   const documentsSummary: EmploymentDocumentsSummary = {
-    applicable: docSigned + docPending > 0,
+    applicable: docSigned + docPending > 0 || Boolean(docsCanonicalLine),
     signedCount: docSigned,
     pendingCount: docPending,
+    canonicalStatusLine: docsCanonicalLine,
   };
 
   const systems: EmploymentEntityOverview['systems'] = {
@@ -481,7 +466,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     blockers: headerMergedBlockers,
     actionableBy: headerActionable,
     assignmentStatus: primaryAssignmentRow?.status ?? null,
-    entityEmploymentStatus: ee?.status ?? null,
+    entityEmploymentStatus: entityEmploymentLifecycleLower(ee),
     hasOpenOnboardingDemand,
     employmentEntryMode: ee?.employmentEntryMode ?? null,
     hasNonTerminalAssignment: liveAssignmentRow != null,
@@ -526,8 +511,12 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     assignments,
     onboardingPath,
     onboardingChecklistGroups,
+    onboardingEngine,
+    onboardingComplete: onboardingEngine.onboardingComplete,
+    onboardingCompletionPendingItems: onboardingEngine.pendingRequiredItems,
     assignmentRequirementsViewModel,
     systems,
+    workerPayrollAccount: ctx.payrollAccount,
   };
 }
 

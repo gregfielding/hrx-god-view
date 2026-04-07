@@ -50,7 +50,7 @@
 
 - `request()` — attaches Bearer, JSON body for non-GET.
 - `getCompanyDetails(isActive)` — **GET** `ACCUSOURCE_COMPANY_DETAILS_PATH` or default **`/api/v2/company/details?isActive=1`** (or `0` / `all`).
-- `createPartialProfile(payload)` — **POST** `ACCUSOURCE_CREATE_PROFILE_PATH` or default **`/profiles`**.
+- `createPartialProfile(payload)` — **POST** `ACCUSOURCE_CREATE_PROFILE_PATH` or default **`/api/v2/profile/partial`** (V2 body: `packageId`, `clientId`, `subject`, …).
 
 ### 2.4 Catalog sync (`syncPackageCatalog.ts`)
 

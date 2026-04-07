@@ -237,7 +237,7 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
             </AccordionSummary>
             <AccordionDetails sx={{ pt: 0 }}>
               {editingSection === 'bio' ? (
-                <BioStep value={bioData} onChange={handleBioChange} compact />
+                <BioStep value={bioData} onChange={handleBioChange} compact profileUserId={uid} />
               ) : bioText ? (
                 <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{bioText}</Typography>
               ) : (

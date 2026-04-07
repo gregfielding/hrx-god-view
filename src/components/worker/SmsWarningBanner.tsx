@@ -5,13 +5,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
-
-/** Same rule as worker profile app-language / PrivacySettings: SMS is on unless explicitly opted out or system-blocked (STOP). */
-function isWorkerSmsEffectivelyEnabled(data: Record<string, unknown>): boolean {
-  const smsOptIn = data.smsOptIn;
-  const blocked = data.smsBlockedSystem === true;
-  return smsOptIn !== false && !blocked;
-}
+import { getWorkerSmsAlertsContext } from '../../utils/workerSmsAlertsContext';
 
 const SNOOZE_MS = 24 * 60 * 60 * 1000;
 
@@ -58,14 +52,10 @@ const SmsWarningBanner: React.FC = () => {
           return;
         }
         const data = snap.data() as Record<string, unknown>;
-        const notifications = (data.notificationSettings || {}) as Record<string, unknown>;
-        const phone = String(data.phone || '').trim();
-        const unavailable =
-          data.smsSystemUnavailable === true || notifications.smsUnavailable === true;
-
-        setSmsDisabled(!isWorkerSmsEffectivelyEnabled(data));
-        setHasPhone(phone.length > 0);
-        setSmsSystemAvailable(!unavailable);
+        const ctx = getWorkerSmsAlertsContext(data);
+        setSmsDisabled(ctx.smsDisabled);
+        setHasPhone(ctx.hasPhone);
+        setSmsSystemAvailable(ctx.smsSystemAvailable);
       } finally {
         if (!cancelled) setLoading(false);
       }

@@ -90,10 +90,15 @@ export const p = {
   shift: (tid: string, jobOrderId: string, shiftId: string) => `tenants/${tid}/job_orders/${jobOrderId}/shifts/${shiftId}`,
 
   /**
-   * Job Board Posts
+   * Job board postings (canonical Firestore collection — live app uses `job_postings`).
+   * `jobBoardPosts` / `jobBoardPost` are deprecated aliases; prefer `jobPostings` / `jobPosting`.
    */
-  jobBoardPosts: (tid: string) => `tenants/${tid}/jobBoardPosts`,
-  jobBoardPost: (tid: string, id: string) => `tenants/${tid}/jobBoardPosts/${id}`,
+  jobPostings: (tid: string) => `tenants/${tid}/job_postings`,
+  jobPosting: (tid: string, id: string) => `tenants/${tid}/job_postings/${id}`,
+  /** @deprecated Use `jobPostings` — path is `job_postings` */
+  jobBoardPosts: (tid: string) => `tenants/${tid}/job_postings`,
+  /** @deprecated Use `jobPosting` — path is `job_postings` */
+  jobBoardPost: (tid: string, id: string) => `tenants/${tid}/job_postings/${id}`,
 
   /**
    * Applications (tenant-level authoritative)
@@ -144,6 +149,13 @@ export const p = {
   workerPayrollAccount: (tid: string, id: string) => `tenants/${tid}/worker_payroll_accounts/${id}`,
   workerSignals: (tid: string) => `tenants/${tid}/worker_signals`,
   workerSignal: (tid: string, id: string) => `tenants/${tid}/worker_signals/${id}`,
+  /**
+   * I-9 supporting uploads (identity / List A–C). Canonical scope: tenant + user; doc stores userId + optional workflow fields.
+   * @see docs/I9_SUPPORTING_DOCUMENTS_ARCHITECTURE.md
+   */
+  workerI9SupportingDocuments: (tid: string) => `tenants/${tid}/worker_i9_supporting_documents`,
+  workerI9SupportingDocument: (tid: string, documentId: string) =>
+    `tenants/${tid}/worker_i9_supporting_documents/${documentId}`,
 
   /**
    * AccuSource (tenant-global): synced SourceDirect package/service catalog. Single doc id `catalog`.

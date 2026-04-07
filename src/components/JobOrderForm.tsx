@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -65,6 +65,7 @@ import {
   fetchResolvedAccountPricingPositions,
   buildPricingByJobTitle,
 } from '../utils/accountPricingForJobOrder';
+import { fetchMergedRecruiterOrderDefaultsForJobOrder } from '../utils/recruiterAccountOrderDefaultsMerge';
 import type { AccountPositionPricing } from '../types/recruiter/account';
 
 /** Apply account Pricing row (exact job title match) to career job order form fields. */
@@ -285,6 +286,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string; workersCompClassCode?: string; workersCompRate?: string}>>([
     { jobTitle: '', workersNeeded: 1, payRate: '' }
   ]); // For gig-type jobs with multiple positions
+  /** Draft text for career Job Title Autocomplete (value commits on blur / pick / Enter — avoids save+re-render each keystroke). */
+  const [careerJobTitleInput, setCareerJobTitleInput] = useState('');
+  const careerJobTitleInputRef = useRef('');
+  careerJobTitleInputRef.current = careerJobTitleInput;
+  /** Supersedes stale async merges when account/company/worksite changes quickly */
+  const orderDefaultsMergeSeqRef = useRef(0);
   const [companies, setCompanies] = useState<Company[]>(propCompanies || []);
   const [locations, setLocations] = useState<Location[]>(propLocations || []);
   const [filteredLocations, setFilteredLocations] = useState<Location[]>([]);
@@ -446,6 +453,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
 
   const isEditing = !!jobOrderId;
 
+  // Keep career job title draft aligned when loaded data or external updates change `formData.jobTitle`.
+  useEffect(() => {
+    setCareerJobTitleInput(String(formData.jobTitle ?? ''));
+  }, [formData.jobTitle]);
+
   // Load account Pricing positions for gig job title options (after formData / loadedJobOrderData exist)
   useEffect(() => {
     if (!tenantId) return;
@@ -603,6 +615,62 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       return { ...prev, companyId: '', worksiteId: '' };
     });
   }, [requireAccountSelection, isEditing, pickedRecruiterAccountId, recruiterAccountsForPicker]);
+
+  // National → child account → location_defaults → pre-fill compliance when creating a job order
+  useEffect(() => {
+    if (!tenantId || isEditing) return;
+    const rid = effectiveRecruiterAccountId;
+    if (!rid) return;
+    const mergeSeq = ++orderDefaultsMergeSeqRef.current;
+    let cancelled = false;
+    (async () => {
+      try {
+        const merged = await fetchMergedRecruiterOrderDefaultsForJobOrder(tenantId, {
+          recruiterAccountId: rid,
+          companyId: formData.companyId || null,
+          worksiteId: formData.worksiteId || null,
+        });
+        if (cancelled || !merged || mergeSeq !== orderDefaultsMergeSeqRef.current) return;
+        const od = merged.orderDetails;
+        const bgLen = od.backgroundCheckPackages?.length ?? 0;
+        const drugLen = od.drugScreeningPanels?.length ?? 0;
+        setFormData((prev) => ({
+          ...prev,
+          screeningPackageId: merged.screeningPackageId,
+          screeningPackageName: merged.screeningPackageName,
+          eVerifyRequired: merged.eVerifyRequired,
+          backgroundCheckPackages: od.backgroundCheckPackages ?? [],
+          drugScreeningPanels: od.drugScreeningPanels ?? [],
+          additionalScreenings: od.additionalScreenings ?? [],
+          licensesCerts: od.licensesCerts ?? [],
+          experienceRequired: od.experienceRequired ?? '',
+          educationRequired: od.educationRequired ?? '',
+          languagesRequired: od.languagesRequired ?? [],
+          skillsRequired: od.skillsRequired ?? [],
+          physicalRequirements: od.physicalRequirements ?? [],
+          ppeRequirements: od.ppeRequirements ?? [],
+          ppeProvidedBy: od.ppeProvidedBy ?? 'company',
+          requirementPackId: od.requirementPackId ?? '',
+          dressCode: od.dressCode ?? [],
+          customUniformRequirements: od.customUniformRequirements ?? '',
+          decisionMaker: od.decisionMaker ?? '',
+          hrContactId: od.hrContactId ?? '',
+          operationsContactId: od.operationsContactId ?? '',
+          procurementContactId: od.procurementContactId ?? '',
+          billingContactId: od.billingContactId ?? '',
+          safetyContactId: od.safetyContactId ?? '',
+          invoiceContactId: od.invoiceContactId ?? '',
+          backgroundCheckRequired: bgLen > 0,
+          drugScreenRequired: drugLen > 0,
+        }));
+      } catch (e) {
+        console.warn('JobOrderForm: merged recruiter order defaults failed', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, isEditing, effectiveRecruiterAccountId, formData.companyId, formData.worksiteId]);
 
   const gigGrossProfitDisplay = useMemo(
     () => formatGigGrossProfit(formData.gigEstimatedValue, formData.gigAverageMarkup),
@@ -1494,6 +1562,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         customUniformRequirements: dataToUse.customUniformRequirements || undefined,
         screeningPackageId: String((dataToUse as any).screeningPackageId ?? '').trim() || null,
         screeningPackageName: String((dataToUse as any).screeningPackageName ?? '').trim() || null,
+        jobTitle:
+          (dataToUse as any).jobType === 'gig'
+            ? String(gigPositions[0]?.jobTitle ?? '')
+            : String((dataToUse as any).jobTitle ?? ''),
+        ...( (dataToUse as any).jobType === 'gig' ? { gigPositions } : {}),
         stageData: stageDataUpdate,
         updatedAt: new Date(),
         updatedBy: user.uid,
@@ -1530,6 +1603,19 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       console.error('Error auto-saving field:', error);
       // Don't show error to user for auto-save failures
     }
+  };
+
+  /** Commit career job title from draft (pricing preset, form state, Firestore). Not used on every keystroke. */
+  const commitCareerJobTitle = (title: string) => {
+    setFormData((prev) => {
+      if (String(prev.jobTitle ?? '') === title) return prev;
+      const merged = mergeCareerFormWithPricingPreset(prev as any, title, pricingByJobTitle) as any;
+      if (isEditing && jobOrderId) {
+        void saveFieldToFirestore('jobTitle', title, merged as any);
+      }
+      return merged as any;
+    });
+    setCareerJobTitleInput(title);
   };
 
   // When account Pricing loads or updates, backfill Job description from client for career orders that still have it empty.
@@ -2282,19 +2368,31 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       freeSolo
                       options={jobTitleOptions}
                       value={formData.jobTitle}
-                      onChange={(_event, newValue) => {
-                        const title = String(newValue ?? '');
-                        let mergedSnapshot: Record<string, unknown> | null = null;
-                        setFormData((prev) => {
-                          mergedSnapshot = mergeCareerFormWithPricingPreset(
-                            prev as any,
-                            title,
-                            pricingByJobTitle
-                          ) as any;
-                          return mergedSnapshot as any;
-                        });
-                        if (isEditing && jobOrderId && mergedSnapshot) {
-                          void saveFieldToFirestore('jobTitle', title, mergedSnapshot);
+                      inputValue={careerJobTitleInput}
+                      onInputChange={(_, newInputValue, reason) => {
+                        if (reason === 'input') {
+                          setCareerJobTitleInput(newInputValue);
+                          careerJobTitleInputRef.current = newInputValue;
+                        } else if (reason === 'clear') {
+                          setCareerJobTitleInput('');
+                          careerJobTitleInputRef.current = '';
+                        } else if (reason === 'reset') {
+                          setCareerJobTitleInput(newInputValue);
+                          careerJobTitleInputRef.current = newInputValue;
+                        }
+                      }}
+                      onChange={(_event, newValue, reason) => {
+                        if (reason === 'selectOption' || reason === 'createOption') {
+                          commitCareerJobTitle(String(newValue ?? ''));
+                          return;
+                        }
+                        if (reason === 'clear') {
+                          commitCareerJobTitle('');
+                        }
+                      }}
+                      onClose={(_, reason) => {
+                        if (reason === 'blur') {
+                          commitCareerJobTitle(careerJobTitleInputRef.current);
                         }
                       }}
                       renderInput={(params) => (
@@ -2302,21 +2400,6 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                           {...params}
                           label={getFieldDef('jobTitle')?.label || 'Job Title'}
                           required
-                          onBlur={(e) => {
-                            const title = String(e.target.value ?? '');
-                            let mergedSnapshot: Record<string, unknown> | null = null;
-                            setFormData((prev) => {
-                              mergedSnapshot = mergeCareerFormWithPricingPreset(
-                                prev as any,
-                                title,
-                                pricingByJobTitle
-                              ) as any;
-                              return mergedSnapshot as any;
-                            });
-                            if (isEditing && jobOrderId && mergedSnapshot) {
-                              void saveFieldToFirestore('jobTitle', title, mergedSnapshot);
-                            }
-                          }}
                         />
                       )}
                     />

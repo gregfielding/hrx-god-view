@@ -21,8 +21,9 @@ import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Autocomplete } from '@react-google-maps/api';
 import { storage, db } from '../../../firebase';
 import { useT } from '../../../i18n';
-import { formatPhoneNumber } from '../../../utils/formatPhone';
+import { formatPhoneNumber, formatUsPhoneProgressive } from '../../../utils/formatPhone';
 import { geocodeAddress } from '../../../utils/geocodeAddress';
+import { normalizeLast4SsnDigits } from '../../../utils/last4Ssn';
 import ImageCropDialog from '../../common/ImageCropDialog';
 
 export interface WorkerBasicIdentityForm {
@@ -37,6 +38,8 @@ export interface WorkerBasicIdentityForm {
   city: string;
   state: string;
   zip: string;
+  /** Last four of SSN or ITIN (digits only, max 4); persisted on users/{uid}.last4SSN */
+  last4SSN: string;
   homeLat?: number | null;
   homeLng?: number | null;
 }
@@ -53,6 +56,7 @@ const defaultForm: WorkerBasicIdentityForm = {
   city: '',
   state: '',
   zip: '',
+  last4SSN: '',
   homeLat: null,
   homeLng: null,
 };
@@ -72,11 +76,16 @@ function fromUserDoc(data: Record<string, unknown> | null): WorkerBasicIdentityF
     email: (data.email as string) ?? '',
     dateOfBirth: dobStr,
     emergencyContactName: (ec.name as string) ?? '',
-    emergencyContactPhone: (ec.phone as string) ?? '',
+    emergencyContactPhone: (() => {
+      const raw = String(ec.phone ?? '').replace(/\D/g, '');
+      if (raw.length >= 10) return formatPhoneNumber(raw.slice(-10));
+      return String(ec.phone ?? '').trim();
+    })(),
     streetAddress: (addr.streetAddress as string) ?? '',
     city: (addr.city as string) ?? (data.city as string) ?? '',
     state: (addr.state as string) ?? (data.state as string) ?? '',
     zip: (addr.zip as string) ?? (addr.zipCode as string) ?? '',
+    last4SSN: normalizeLast4SsnDigits(data.last4SSN ?? ''),
     homeLat,
     homeLng,
   };
@@ -169,6 +178,11 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
           homeLng: homeLng ?? null,
         };
       }
+      if (updates.last4SSN !== undefined) {
+        const d = normalizeLast4SsnDigits(updates.last4SSN);
+        if (d.length === 4) payload.last4SSN = d;
+        else if (d.length === 0) payload.last4SSN = null;
+      }
       await updateDoc(userRef, payload);
     },
     [uid, userDoc]
@@ -191,6 +205,20 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
       setForm((prev) => ({ ...prev, phone: formatted }));
       if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = setTimeout(() => persist({ phone: formatted }), 600);
+    },
+    [persist]
+  );
+
+  const handleLast4SsnChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const normalized = normalizeLast4SsnDigits(e.target.value);
+      setForm((prev) => ({ ...prev, last4SSN: normalized }));
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      saveTimeoutRef.current = setTimeout(() => {
+        if (normalized.length === 4 || normalized.length === 0) {
+          void persist({ last4SSN: normalized });
+        }
+      }, 600);
     },
     [persist]
   );
@@ -387,6 +415,23 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                 InputLabelProps={{ shrink: true }}
               />
             </Grid>
+            <Grid item xs={12} sm={6}>
+              <TextField
+                fullWidth
+                size="small"
+                label={t('apply.last4Ssn')}
+                helperText={t('apply.last4SsnHelper')}
+                inputMode="numeric"
+                autoComplete="off"
+                value={form.last4SSN}
+                onChange={handleLast4SsnChange}
+                onBlur={() => {
+                  const d = normalizeLast4SsnDigits(formRef.current.last4SSN);
+                  if (d.length === 4 || d.length === 0) void persist({ last4SSN: d });
+                }}
+                inputProps={{ maxLength: 4, inputMode: 'numeric' as const }}
+              />
+            </Grid>
           </Grid>
 
           <Typography variant="subtitle2" sx={{ fontWeight: 600, mt: 3, mb: 1 }}>
@@ -411,13 +456,18 @@ const WorkerBasicIdentityCard: React.FC<WorkerBasicIdentityCardProps> = ({
                 type="tel"
                 value={form.emergencyContactPhone}
                 onChange={(e) => {
-                  const raw = e.target.value.replace(/\D/g, '');
-                  const formatted = raw.length >= 10 ? formatPhoneNumber(raw.slice(-10)) : e.target.value;
+                  const formatted = formatUsPhoneProgressive(e.target.value);
                   setForm((prev) => ({ ...prev, emergencyContactPhone: formatted }));
                   if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
                   saveTimeoutRef.current = setTimeout(() => persist({ emergencyContactPhone: formatted }), 600);
                 }}
-                onBlur={() => persist({ emergencyContactPhone: form.emergencyContactPhone })}
+                onBlur={() => {
+                  const raw = formRef.current.emergencyContactPhone.replace(/\D/g, '');
+                  const normalized =
+                    raw.length >= 10 ? formatPhoneNumber(raw.slice(-10)) : formRef.current.emergencyContactPhone;
+                  setForm((prev) => ({ ...prev, emergencyContactPhone: normalized }));
+                  void persist({ emergencyContactPhone: normalized });
+                }}
               />
             </Grid>
           </Grid>

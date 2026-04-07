@@ -4,29 +4,44 @@ import {
   Box,
   Card,
   CardContent,
+  Chip,
+  CircularProgress,
   Container,
   Divider,
   List,
   ListItemButton,
+  ListItemIcon,
   ListItemText,
   Stack,
   Typography,
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import WorkIcon from '@mui/icons-material/Work';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
+import { userDocHasStoredResume } from '../../../utils/workerProfilePrerequisites';
+import { useWorkerMyEmploymentList } from '../../../hooks/useWorkerMyEmploymentList';
+import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmploymentListRowModel';
 
 const WorkerProfile: React.FC = () => {
-  const { user, avatarUrl, logout } = useAuth();
+  const { user, avatarUrl, logout, tenantId: authTenantId, activeTenant } = useAuth();
+  const tenantId = authTenantId || activeTenant?.id || null;
   const t = useT();
   const navigate = useNavigate();
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
+
+  const {
+    loading: employmentLoading,
+    records: employmentRecords,
+    assignmentsByEntityKey,
+    stepCounts: employmentStepCounts,
+  } = useWorkerMyEmploymentList(tenantId, uid ?? null);
 
   useEffect(() => {
     if (!uid) return;
@@ -72,10 +87,14 @@ const WorkerProfile: React.FC = () => {
       (typeof workEligibilityAttestation.requireSponsorship === 'boolean' ||
         typeof userDoc?.requireSponsorship === 'boolean')
   );
-  const resumeObj = (userDoc?.resume || {}) as Record<string, unknown>;
-  const resumeComplete = Boolean(
-    resumeObj.downloadUrl || resumeObj.fileName || resumeObj.storagePath || userDoc?.resumeStoragePath || userDoc?.resumeUrl
+  const resumeComplete = userDocHasStoredResume(userDoc);
+  const bioComplete = Boolean(
+    String(userDoc?.professionalBio || userDoc?.bio || '')
+      .trim()
+      .length > 0
   );
+  const skillsList = Array.isArray(userDoc?.skills) ? userDoc.skills : [];
+  const skillsComplete = skillsList.length >= 3;
   const certificationsComplete = Boolean(Array.isArray(userDoc?.certifications) && userDoc?.certifications.length > 0);
   const workExperienceComplete = Boolean(
     (Array.isArray(userDoc?.workExperience) && userDoc?.workExperience.length > 0) ||
@@ -93,10 +112,12 @@ const WorkerProfile: React.FC = () => {
   const workProfileSectionComplete =
     hasWorkAuth &&
     resumeComplete &&
+    bioComplete &&
     certificationsComplete &&
     workExperienceComplete &&
     educationComplete &&
-    languagesComplete;
+    languagesComplete &&
+    skillsComplete;
   const accountSectionComplete = Boolean(String(userDoc?.email || '').trim());
   const totalSections = 3;
   const completeSectionCount = [
@@ -154,11 +175,10 @@ const WorkerProfile: React.FC = () => {
             <Divider />
             <List disablePadding>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
-                <ListItemText primary="Personal details" secondary="Update your name, email, and phone." />
-                <ChevronRightIcon color="action" />
-              </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/location')}>
-                <ListItemText primary="City and state" secondary="Keep your location updated for stronger opportunities." />
+                <ListItemText
+                  primary="Personal details"
+                  secondary={t('profile.sectionPersonalDetailsHubSecondary')}
+                />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
             </List>
@@ -181,6 +201,13 @@ const WorkerProfile: React.FC = () => {
                 <ListItemText primary="Resume" />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {resumeComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/bio')}>
+                <ListItemText primary="Bio" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {bioComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
@@ -212,6 +239,13 @@ const WorkerProfile: React.FC = () => {
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
+              <ListItemButton onClick={() => navigate('/c1/workers/profile/skills')}>
+                <ListItemText primary="Skills" />
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {skillsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
+                  <ChevronRightIcon color="action" />
+                </Stack>
+              </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/preferences')}>
                 <ListItemText primary="Availability and preferences" />
                 <Stack direction="row" spacing={0.5} alignItems="center">
@@ -227,12 +261,70 @@ const WorkerProfile: React.FC = () => {
           <CardContent sx={{ p: 0 }}>
             <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Employment</Typography>
             <Divider />
-            <List disablePadding>
-              <ListItemButton onClick={() => navigate('/c1/workers/my-employment')}>
-                <ListItemText primary="My Employment" secondary="View your status with each C1 entity." />
-                <ChevronRightIcon color="action" />
-              </ListItemButton>
-            </List>
+            {!tenantId ? (
+              <Box sx={{ px: 2, py: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Employment will appear here once you’re linked to a C1 entity.
+                </Typography>
+              </Box>
+            ) : employmentLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+                <CircularProgress size={28} />
+              </Box>
+            ) : employmentRecords.length === 0 ? (
+              <Box sx={{ px: 2, py: 2 }}>
+                <Typography variant="body2" color="text.secondary">
+                  No employment records yet. They’re added when you’re confirmed for a role or start onboarding.
+                </Typography>
+              </Box>
+            ) : (
+              <List disablePadding>
+                {employmentRecords.map((rec) => {
+                  const row = buildWorkerMyEmploymentListRowModel(
+                    rec,
+                    employmentStepCounts,
+                    assignmentsByEntityKey
+                  );
+                  return (
+                    <ListItemButton
+                      key={rec.id}
+                      onClick={() =>
+                        navigate(`/c1/workers/my-employment/${encodeURIComponent(rec.id)}`)
+                      }
+                      sx={{ alignItems: 'center', py: 1.25, gap: 1 }}
+                    >
+                      <ListItemIcon sx={{ minWidth: 40 }}>
+                        <WorkIcon sx={{ color: 'text.secondary', fontSize: 22 }} />
+                      </ListItemIcon>
+                      <ListItemText
+                        sx={{ my: 0, mr: 1, flex: 1, minWidth: 0 }}
+                        primary={row.entityDisplayName}
+                        secondary={row.progressText ?? undefined}
+                        primaryTypographyProps={{ fontWeight: 600, variant: 'body1', noWrap: true }}
+                        secondaryTypographyProps={{ variant: 'caption', noWrap: true }}
+                      />
+                      <Stack direction="row" alignItems="center" spacing={0.75} flexShrink={0}>
+                        {row.workerTypeLabel ? (
+                          <Chip
+                            label={row.workerTypeLabel}
+                            size="small"
+                            variant="outlined"
+                            sx={{ fontWeight: 500 }}
+                          />
+                        ) : null}
+                        <Chip
+                          label={row.statusChipLabel}
+                          size="small"
+                          color={row.listChipColor}
+                          variant={row.listHistoricalChip ? 'outlined' : 'filled'}
+                        />
+                        <ChevronRightIcon color="action" />
+                      </Stack>
+                    </ListItemButton>
+                  );
+                })}
+              </List>
+            )}
           </CardContent>
         </Card>
 
@@ -245,12 +337,16 @@ const WorkerProfile: React.FC = () => {
                 <ListItemText primary="Reset password" secondary="Update your sign-in password." />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
-              <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
+              {/* Phone updates live under profile completion / verification flows; keep personal-details routable elsewhere if linked. */}
+              {/* <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
                 <ListItemText primary="Update phone number" secondary="Update your contact phone number." />
                 <ChevronRightIcon color="action" />
-              </ListItemButton>
+              </ListItemButton> */}
               <ListItemButton onClick={() => navigate('/c1/workers/profile/app-language')}>
-                <ListItemText primary="App language" secondary="Manage app language preferences." />
+                <ListItemText
+                  primary={t('profile.sectionAppLanguageTitle')}
+                  secondary={t('profile.sectionAppLanguageDescription')}
+                />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
               <ListItemButton onClick={() => void logout()}>

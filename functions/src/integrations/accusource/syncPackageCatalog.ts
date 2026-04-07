@@ -4,7 +4,10 @@ import { accusourceClient } from './accusourceClient';
 import { hasAccusourceOutboundAuth } from './accusourceAccessToken';
 import { getAccusourceConfig } from './config';
 import { ensureAccusourceAdmin } from './accusourceAdminGate';
-import { normalizeAccusourceCompanyDetailsResponse } from './catalogNormalize';
+import {
+  normalizeAccusourceCompanyDetailsResponse,
+  probeCatalogSyncResponse,
+} from './catalogNormalize';
 import { accusourceLog } from './accusourceLogger';
 
 if (!admin.apps.length) {
@@ -14,6 +17,15 @@ const db = admin.firestore();
 
 /** Single doc: normalized packages/services + sync metadata (server writes only). */
 export const ACCUSOURCE_CATALOG_DOC_PATH = 'integrations_accusource/catalog';
+
+/**
+ * Temporary catalog sync diagnostics (no Bearer token, no raw JSON body).
+ * Set `ACCUSOURCE_CATALOG_SYNC_DEBUG=1` (or `true`) on the function for one deploy, then remove.
+ */
+function shouldEmitAccusourceCatalogSyncProbe(): boolean {
+  const v = (process.env.ACCUSOURCE_CATALOG_SYNC_DEBUG || '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes';
+}
 
 /** SourceDirect returns 401 when Bearer token is wrong/expired or env URL mismatch — append ops hint for Firestore + logs. */
 function appendAccusource401Hint(message: string): string {
@@ -67,8 +79,24 @@ export const syncAccusourcePackageCatalog = onCall({ cors: true }, async (reques
   );
 
   try {
-    const raw = await accusourceClient.getCompanyDetails(isActive);
+    const { raw, meta } = await accusourceClient.getCompanyDetails(isActive);
+    const probe = probeCatalogSyncResponse(raw);
     const normalized = normalizeAccusourceCompanyDetailsResponse(raw);
+
+    if (shouldEmitAccusourceCatalogSyncProbe()) {
+      accusourceLog('info', 'catalog', 'catalog_sync_probe', {
+        requestUrl: meta.fullUrl,
+        isActiveQueryParam: meta.isActiveParam,
+        hasIsActiveInUrl: meta.fullUrl.includes('isActive='),
+        responseTopLevelKeys: probe.topLevelKeys,
+        rawPackageRowCount: probe.rawPackageRowCount,
+        rawPackageRowsWithIdCount: probe.rawPackageRowsWithIdCount,
+        normalizedPackageCount: normalized.packages.length,
+        normalizedServiceCount: normalized.services.length,
+        companySliceCount: normalized.companyCount,
+        providerEnvironment: cfg.environment,
+      });
+    }
 
     await ref.set(
       {

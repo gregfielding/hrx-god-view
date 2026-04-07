@@ -71,6 +71,8 @@ export interface UserProfile {
   phoneVerifiedAt?: Date; // When phone was verified
   dob?: string; // Date of birth for eligibility verification
   dateOfBirth?: Date;
+  /** Last four digits of SSN (optional; payroll / identity hints). */
+  last4SSN?: string;
   preferredLanguage?: 'en' | 'es'; // Preferred language for templated messaging
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   avatar?: string; // file URL
@@ -140,6 +142,8 @@ export interface UserProfile {
   // 🧪 Enrichments
   emergencyContact?: EmergencyContact;
   transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
+  /** Admin: worker was added to Indeed Flex (shows badge in profile header when true). */
+  addedToIndeedFlex?: boolean;
 
   // 🔒 Privacy & Notifications
   notificationSettings?: NotificationSettings;
@@ -189,6 +193,7 @@ export interface UserProfileForm {
   phone: string;
   linkedinUrl?: string;
   dateOfBirth?: string; // ISO date string for form input
+  last4SSN?: string;
   gender?: 'Male' | 'Female' | 'Nonbinary' | 'Other' | 'Prefer not to say';
   
   // Employment Classification
@@ -211,7 +216,8 @@ export interface UserProfileForm {
   // Enrichments
   emergencyContact?: EmergencyContact;
   transportMethod?: 'Car' | 'Public Transit' | 'Bike' | 'Walk' | 'Other';
-  
+  addedToIndeedFlex?: boolean;
+
   // Legacy fields
   role?: string;
   jobTitle?: string;

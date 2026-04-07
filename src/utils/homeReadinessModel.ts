@@ -6,6 +6,7 @@ import type {
   ReadinessChecklistStatus,
 } from '../types/homeReadiness';
 import type { HomeReadinessLaunchStep } from '../components/worker/home/types';
+import { userDocHasCompleteWorkAuthorization, userDocHasStoredResume } from './workerProfilePrerequisites';
 
 type TargetIndustry = 'hospitality' | 'industrial';
 
@@ -130,11 +131,7 @@ function hasProfilePhoto(userDoc: Record<string, unknown> | null): boolean {
 }
 
 function hasWorkAuthorization(userDoc: Record<string, unknown> | null): boolean {
-  const attestation = (userDoc?.workEligibilityAttestation as Record<string, unknown> | undefined) || {};
-  return (
-    (attestation.authorizedToWorkUS !== undefined && attestation.requireSponsorship !== undefined) ||
-    typeof userDoc?.workEligibility === 'boolean'
-  );
+  return userDocHasCompleteWorkAuthorization(userDoc);
 }
 
 function hasCertifications(userDoc: Record<string, unknown> | null): boolean {
@@ -151,7 +148,7 @@ function hasSkills(userDoc: Record<string, unknown> | null): boolean {
 }
 
 function hasResume(userDoc: Record<string, unknown> | null): boolean {
-  return Boolean((userDoc?.resume as Record<string, unknown> | undefined)?.fileUrl || userDoc?.resumeUrl);
+  return userDocHasStoredResume(userDoc);
 }
 
 function responseExists(userDoc: Record<string, unknown> | null, key: string): boolean {

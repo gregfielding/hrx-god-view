@@ -23,6 +23,8 @@ type Props = {
   jobId?: string;
   jobPosting?: any;
   profileUid?: string;
+  /** Profile hub: render only the skills editor (no languages / experience blocks). */
+  showOnly?: 'skills';
 };
 
 const QualificationsStep: React.FC<Props> = ({
@@ -32,7 +34,8 @@ const QualificationsStep: React.FC<Props> = ({
   tenantId,
   jobId,
   jobPosting,
-  profileUid
+  profileUid,
+  showOnly,
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -215,6 +218,24 @@ const QualificationsStep: React.FC<Props> = ({
     run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [context, showExperience, effectiveUid]);
+
+  if (showOnly === 'skills') {
+    return (
+      <Box>
+        <SkillsTab
+          user={userData}
+          onUpdate={(updated) => onChange({ ...value, ...updated })}
+          onetSkills={onetSkills as any}
+          onetJobTitles={onetJobTitles as any}
+          hideCertsAndReferences
+          hideIndustryPreferences
+          hideEducation
+          hideWorkExperience
+          hideLanguages
+        />
+      </Box>
+    );
+  }
 
   return (
     <Box>

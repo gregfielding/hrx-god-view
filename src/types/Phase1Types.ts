@@ -52,7 +52,7 @@ export interface Application extends BaseEntity {
   id: string;
   candidateId: string; // Reference to users
   jobOrderId?: string; // Optional - reference to jobOrders
-  jobBoardPostId?: string; // Optional - reference to jobBoardPosts
+  jobBoardPostId?: string; // Optional — posting doc id under tenants/{tid}/job_postings
   status: 'applied' | 'interviewing' | 'background' | 'drug' | 'onboarded' | 'rejected';
   createdAt: number; // timestamp
   
@@ -121,7 +121,7 @@ export const PHASE1_COLLECTION_PATHS = {
   JOB_ORDERS: 'jobOrders',
   APPLICATIONS: 'applications', 
   USER_GROUPS: 'userGroups',
-  JOB_BOARD_POSTS: 'jobBoardPosts',
+  JOB_BOARD_POSTS: 'job_postings',
   
   // Existing structure (keep)
   CRM_COMPANIES: 'crm_companies',

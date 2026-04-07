@@ -82,7 +82,23 @@ import {
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
-import { doc, getDoc, collection, query, where, getDocs, updateDoc, serverTimestamp, setDoc, onSnapshot, limit, deleteField, deleteDoc, type DocumentSnapshot } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  collection,
+  query,
+  where,
+  getDocs,
+  updateDoc,
+  serverTimestamp,
+  setDoc,
+  onSnapshot,
+  limit,
+  deleteField,
+  deleteDoc,
+  type Firestore,
+  type QueryDocumentSnapshot,
+} from 'firebase/firestore';
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
@@ -116,6 +132,7 @@ import { normalizeScoreSummary, formatOneDecimal, getUserScore } from '../utils/
 import { getOrComputeJobScoreSummary } from '../utils/jobScore';
 import { getOrComputeJobScoreSummaryV1, computeJobScoreSummaryV1 } from '../utils/jobScoreV1';
 import { getRequirementPackV1 } from '../data/jobRequirementPacksV1';
+import { isExcludedFromPlacementsApplicantPool, normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
@@ -226,6 +243,25 @@ interface Applicant {
   shiftAssignments?: Record<string, 'pending' | 'approved' | 'rejected' | 'waitlisted'>;
 }
 
+function applicationRowId(a: Applicant, jobOrderId: string): string {
+  const id = a.applicationData?.id;
+  if (typeof id === 'string' && id.length > 0) return id;
+  return `${a.uid}::__row__::${jobOrderId}`;
+}
+
+function applicationDocRefForApplicant(
+  firestore: Firestore,
+  tenantId: string,
+  _jobOrderId: string,
+  applicant: Applicant,
+) {
+  const id = applicant.applicationData?.id;
+  if (!id) {
+    throw new Error('Missing application document id');
+  }
+  return doc(firestore, 'tenants', tenantId, 'applications', id);
+}
+
 const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   jobOrderId,
   connectedJobPosts,
@@ -267,7 +303,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [availableUsers, setAvailableUsers] = useState<any[]>([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [loadingUsers, setLoadingUsers] = useState(false);
-  const [selectedApplicantIds, setSelectedApplicantIds] = useState<Set<string>>(new Set());
+  const [selectedApplicationRowIds, setSelectedApplicationRowIds] = useState<Set<string>>(new Set());
   const [bulkStatusMenuAnchor, setBulkStatusMenuAnchor] = useState<HTMLElement | null>(null);
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
@@ -286,60 +322,60 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       }
       setLoading(true);
 
-      const jobPostIds = (connectedJobPosts || []).map(p => p.id).filter(Boolean);
+      const jobPostIds = (connectedJobPosts || []).map((p) => p.id).filter(Boolean);
       const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
+      const tenantById = new Map<string, QueryDocumentSnapshot>();
 
-      // 1) Applications linked by jobOrderId (e.g. applied when post was already connected, or from job order flow)
       const appsByOrderQ = query(applicationsRef, where('jobOrderId', '==', jobOrderId));
       const appsByOrderSnap = await getDocs(appsByOrderQ);
-      const docMap = new Map<string, DocumentSnapshot>();
-      appsByOrderSnap.docs.forEach((d) => docMap.set(d.id, d));
+      appsByOrderSnap.docs.forEach((d) => tenantById.set(d.id, d));
 
-      // 2) Applications to connected job board posts (jobId = post id). Include these so that when a post
-      // was connected after applicants applied, those applicants still show on the job order.
       if (jobPostIds.length > 0) {
         const IN_LIMIT = 10;
         for (let i = 0; i < jobPostIds.length; i += IN_LIMIT) {
           const slice = jobPostIds.slice(i, i + IN_LIMIT);
-          const appsByPostQ = query(applicationsRef, where('jobId', 'in', slice));
-          const appsByPostSnap = await getDocs(appsByPostQ);
-          appsByPostSnap.docs.forEach((d) => docMap.set(d.id, d));
+          const appsByJobIdSnap = await getDocs(query(applicationsRef, where('jobId', 'in', slice)));
+          appsByJobIdSnap.docs.forEach((d) => tenantById.set(d.id, d));
+          const appsByPostIdSnap = await getDocs(query(applicationsRef, where('postId', 'in', slice)));
+          appsByPostIdSnap.docs.forEach((d) => tenantById.set(d.id, d));
         }
       }
 
-      const appDocs = Array.from(docMap.values());
-      if (appDocs.length === 0) {
+      const tenantSnaps = Array.from(tenantById.values());
+      const rows = tenantSnaps.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+
+      if (rows.length === 0) {
         setApplicants([]);
         setLoading(false);
         return;
       }
 
-      const applicationItems = appDocs.map(d => ({ id: d.id, ...(d.data() as any) }));
-      const userIds = Array.from(new Set(applicationItems.map(a => a.userId).filter(Boolean)));
+      const applicationItems = rows.map((r) => ({ id: r.id, ...r.data })) as Array<Record<string, any> & { id: string }>;
+      const userIds = Array.from(new Set(applicationItems.map((a) => a.userId).filter(Boolean)));
 
       const usersRef = collection(db, 'users');
       const usersSnap = await getDocs(usersRef);
       const userMap = new Map<string, any>();
-      usersSnap.docs.forEach(u => {
+      usersSnap.docs.forEach((u) => {
         if (userIds.includes(u.id)) userMap.set(u.id, u.data());
       });
 
       const requirementPackId = (jobOrder as any)?.requirementPackId;
 
       const applicantsData: Applicant[] = applicationItems
-        .filter((app) => {
-          const status = app.status || 'submitted';
-          return status !== 'withdrawn' && status !== 'deleted';
-        })
+        .filter((app) => !isExcludedFromPlacementsApplicantPool(app.status))
         .map((app) => {
           const userData = userMap.get(app.userId) || {};
           const profileScore = calculateProfileScore(userData);
           const fitScore = app.scores?.fitScore ?? null;
           const hiringScore = getUserScore(userData);
           const packV1 = requirementPackId ? getRequirementPackV1(requirementPackId) : null;
+          const appForScore = { ...app, userId: app.userId };
           const jobScoreSummary = packV1
-            ? getOrComputeJobScoreSummaryV1({ ...app, userId: app.userId }, userData, requirementPackId, hiringScore)
-            : getOrComputeJobScoreSummary({ ...app, userId: app.userId }, userData, requirementPackId, hiringScore);
+            ? getOrComputeJobScoreSummaryV1(appForScore as { jobScoreSummary?: any }, userData, requirementPackId, hiringScore)
+            : getOrComputeJobScoreSummary(appForScore, userData, requirementPackId, hiringScore);
+          const rawStatus = app.status || 'submitted';
+          const applicationStatus = normalizeApplicationStatus(rawStatus) ?? String(rawStatus);
 
           return {
             uid: app.userId,
@@ -358,7 +394,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             workerAttestations: userData.workerAttestations,
             phoneVerified: userData.phoneVerified || false,
             appliedAt: app.appliedAt,
-            applicationStatus: app.status || 'submitted',
+            applicationStatus,
             profileScore,
             fitScore,
             hiringScore: typeof hiringScore === 'number' && Number.isFinite(hiringScore) ? hiringScore : undefined,
@@ -386,14 +422,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         return dateB.getTime() - dateA.getTime();
       });
 
-      const seenUids = new Set<string>();
-      const deduped = applicantsData.filter((a) => {
-        if (seenUids.has(a.uid)) return false;
-        seenUids.add(a.uid);
-        return true;
-      });
-
-      setApplicants(deduped);
+      setApplicants(applicantsData);
     } catch (error) {
       console.error('Error fetching applicants:', error);
       setApplicants([]);
@@ -519,9 +548,10 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     const packV1 = requirementPackId ? getRequirementPackV1(requirementPackId) : null;
     if (!tenantId || !requirementPackId || !packV1) return;
 
-    const toRefresh = selectedApplicantIds.size > 0
-      ? applicants.filter((a) => selectedApplicantIds.has(a.uid))
-      : applicants;
+    const toRefresh =
+      selectedApplicationRowIds.size > 0
+        ? applicants.filter((a) => selectedApplicationRowIds.has(applicationRowId(a, jobOrderId)))
+        : applicants;
     if (toRefresh.length === 0) return;
 
     setRefreshingScores(true);
@@ -536,7 +566,12 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
           userProfileUpdatedAt: (userData as any)?.profileUpdatedAt ?? (userData as any)?.updatedAt,
         });
         if (!summary) continue;
-        const appRef = doc(db, 'tenants', tenantId, 'applications', appId);
+        let appRef;
+        try {
+          appRef = applicationDocRefForApplicant(db, tenantId, jobOrderId, applicant);
+        } catch {
+          continue;
+        }
         await updateDoc(appRef, {
           jobScoreSummary: { ...summary, computedAt: serverTimestamp(), writtenAt: serverTimestamp() },
           updatedAt: serverTimestamp(),
@@ -548,7 +583,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     } finally {
       setRefreshingScores(false);
     }
-  }, [tenantId, jobOrder, selectedApplicantIds, applicants, fetchApplicants]);
+  }, [tenantId, jobOrder, selectedApplicationRowIds, applicants, fetchApplicants, jobOrderId]);
 
   // Fetch available job orders for switching
   useEffect(() => {
@@ -613,31 +648,31 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     window.open(`/users/${uid}`, '_blank');
   };
 
-  const handleOpenActionMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
+  const handleOpenActionMenu = (event: React.MouseEvent<HTMLElement>, applicantRowId: string) => {
     event.stopPropagation();
-    setActionMenuAnchor({ ...actionMenuAnchor, [applicantUid]: event.currentTarget });
+    setActionMenuAnchor({ ...actionMenuAnchor, [applicantRowId]: event.currentTarget });
   };
 
-  const handleCloseActionMenu = (applicantUid: string) => {
-    setActionMenuAnchor({ ...actionMenuAnchor, [applicantUid]: null });
+  const handleCloseActionMenu = (applicantRowId: string) => {
+    setActionMenuAnchor({ ...actionMenuAnchor, [applicantRowId]: null });
   };
 
-  const handleOpenStatusMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
+  const handleOpenStatusMenu = (event: React.MouseEvent<HTMLElement>, applicantRowId: string) => {
     event.stopPropagation();
-    setStatusMenuAnchor({ ...statusMenuAnchor, [applicantUid]: event.currentTarget });
+    setStatusMenuAnchor({ ...statusMenuAnchor, [applicantRowId]: event.currentTarget });
   };
 
-  const handleCloseStatusMenu = (applicantUid: string) => {
-    setStatusMenuAnchor({ ...statusMenuAnchor, [applicantUid]: null });
+  const handleCloseStatusMenu = (applicantRowId: string) => {
+    setStatusMenuAnchor({ ...statusMenuAnchor, [applicantRowId]: null });
   };
 
-  const handleOpenLevelMenu = (event: React.MouseEvent<HTMLElement>, applicantUid: string) => {
+  const handleOpenLevelMenu = (event: React.MouseEvent<HTMLElement>, applicantRowId: string) => {
     event.stopPropagation();
-    setLevelMenuAnchor({ ...levelMenuAnchor, [applicantUid]: event.currentTarget });
+    setLevelMenuAnchor({ ...levelMenuAnchor, [applicantRowId]: event.currentTarget });
   };
 
-  const handleCloseLevelMenu = (applicantUid: string) => {
-    setLevelMenuAnchor({ ...levelMenuAnchor, [applicantUid]: null });
+  const handleCloseLevelMenu = (applicantRowId: string) => {
+    setLevelMenuAnchor({ ...levelMenuAnchor, [applicantRowId]: null });
   };
 
   const toMillis = (input: any): number => {
@@ -702,34 +737,35 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       onCandidateCountChange(candidateCount);
     }
   }, [displayedApplicants, onCandidateCountChange]);
-  const isAllSelected = displayedApplicants.length > 0 && selectedApplicantIds.size === displayedApplicants.length;
-  const isSomeSelected = selectedApplicantIds.size > 0;
+  const isAllSelected =
+    displayedApplicants.length > 0 && selectedApplicationRowIds.size === displayedApplicants.length;
+  const isSomeSelected = selectedApplicationRowIds.size > 0;
 
   const handleSelectAll = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.checked) {
-      setSelectedApplicantIds(new Set(displayedApplicants.map((a) => a.uid)));
+      setSelectedApplicationRowIds(new Set(displayedApplicants.map((a) => applicationRowId(a, jobOrderId))));
     } else {
-      setSelectedApplicantIds(new Set());
+      setSelectedApplicationRowIds(new Set());
     }
   };
 
-  const handleSelectOne = (uid: string) => {
-    setSelectedApplicantIds((prev) => {
+  const handleSelectOne = (rowId: string) => {
+    setSelectedApplicationRowIds((prev) => {
       const next = new Set(prev);
-      if (next.has(uid)) next.delete(uid);
-      else next.add(uid);
+      if (next.has(rowId)) next.delete(rowId);
+      else next.add(rowId);
       return next;
     });
   };
 
   const handleBulkChangeStatus = (newStatus: string) => {
-    const ids = Array.from(selectedApplicantIds);
-    ids.forEach((uid) => {
-      const applicant = applicants.find((a) => a.uid === uid);
+    const rowIds = Array.from(selectedApplicationRowIds);
+    rowIds.forEach((rowId) => {
+      const applicant = applicants.find((a) => applicationRowId(a, jobOrderId) === rowId);
       if (applicant) handleChangeStatus(applicant, newStatus);
     });
     setBulkStatusMenuAnchor(null);
-    setSelectedApplicantIds(new Set());
+    setSelectedApplicationRowIds(new Set());
   };
 
   const handleOpenBulkStatusMenu = (event: React.MouseEvent<HTMLElement>) => {
@@ -741,7 +777,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   };
 
   const bulkRecipientsAndIds = React.useMemo(() => {
-    const selected = applicants.filter((a) => selectedApplicantIds.has(a.uid));
+    const selected = applicants.filter((a) => selectedApplicationRowIds.has(applicationRowId(a, jobOrderId)));
     const recipients: MessageRecipient[] = selected.map((a) => ({
       userId: a.uid,
       name: a.displayName || [a.firstName, a.lastName].filter(Boolean).join(' ').trim() || a.uid,
@@ -750,7 +786,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }));
     const recipientUserIds = selected.map((a) => a.uid);
     return { recipients, recipientUserIds };
-  }, [applicants, selectedApplicantIds]);
+  }, [applicants, selectedApplicationRowIds, jobOrderId]);
 
   const formatInterviewDate = (ts: any) => {
     const d = ts?.toDate?.();
@@ -769,11 +805,13 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
     try {
-      const jobId = applicant.applicationData?.jobId || applicant.applicationData?.postId || '';
-      const tenantAppDocId = applicant.applicationData?.id || `${applicant.uid}_${jobId}`;
-
-      // Canonical write: tenant application doc
-      const applicationRef = doc(db, 'tenants', tenantId, 'applications', tenantAppDocId);
+      let applicationRef;
+      try {
+        applicationRef = applicationDocRefForApplicant(db, tenantId, jobOrderId, applicant);
+      } catch {
+        alert('Missing application document for this row.');
+        return;
+      }
       const updateData: Record<string, unknown> = {
         status: newStatus,
         updatedAt: serverTimestamp(),
@@ -785,13 +823,12 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       }
       await updateDoc(applicationRef, updateData);
 
-      setApplicants(prev =>
-        prev.map(a =>
-          a.uid === applicant.uid ? { ...a, applicationStatus: newStatus } : a
-        )
+      const rid = applicationRowId(applicant, jobOrderId);
+      setApplicants((prev) =>
+        prev.map((a) => (applicationRowId(a, jobOrderId) === rid ? { ...a, applicationStatus: newStatus } : a)),
       );
 
-      handleCloseStatusMenu(applicant.uid);
+      handleCloseStatusMenu(rid);
     } catch (error) {
       console.error('❌ Error changing application status:', error);
       alert('Failed to update status. Check the console for details.');
@@ -810,7 +847,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
       // Update the candidate field directly on the APPLICATION DOCUMENT
       // This makes candidate status specific to this application
-      const applicationRef = doc(db, 'tenants', tenantId, 'applications', applicant.applicationData.id);
+      const applicationRef = applicationDocRefForApplicant(db, tenantId, jobOrderId, applicant);
       const updateData: any = {
         candidate: isCandidateNow,
         updatedAt: serverTimestamp()
@@ -830,23 +867,24 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       // TODO: Log activity
 
       // Update local state to reflect the change
-      setApplicants(prev => 
-        prev.map(a => 
-          a.uid === applicant.uid 
-            ? { 
-                ...a, 
-                applicationData: { 
-                  ...a.applicationData, 
+      const rid = applicationRowId(applicant, jobOrderId);
+      setApplicants((prev) =>
+        prev.map((a) =>
+          applicationRowId(a, jobOrderId) === rid
+            ? {
+                ...a,
+                applicationData: {
+                  ...a.applicationData,
                   candidate: isCandidateNow,
-                  vettedBy: isCandidateNow ? (user?.uid || 'unknown') : null,
-                  vettedAt: isCandidateNow ? new Date() : null
-                } 
+                  vettedBy: isCandidateNow ? user?.uid || 'unknown' : null,
+                  vettedAt: isCandidateNow ? new Date() : null,
+                },
               }
-            : a
-        )
+            : a,
+        ),
       );
 
-      handleCloseLevelMenu(applicant.uid);
+      handleCloseLevelMenu(rid);
     } catch (error) {
       console.error('❌ Error changing level:', error);
     }
@@ -855,7 +893,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const handleMarkAsCandidate = async (applicant: Applicant) => {
     // Reuse the new handleChangeLevel function
     await handleChangeLevel(applicant, 'candidate');
-    handleCloseActionMenu(applicant.uid);
+    handleCloseActionMenu(applicationRowId(applicant, jobOrderId));
   };
 
   const handleRemoveApplication = async (applicant: Applicant) => {
@@ -869,49 +907,23 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     }
 
     try {
-      const applicationsRef = collection(db, 'tenants', tenantId, 'applications');
-      const docIdsToUpdate: string[] = [];
-
-      // Find all application docs for this user + this job (by jobOrderId or by jobId in connected posts)
-      const byOrderQ = query(
-        applicationsRef,
-        where('userId', '==', applicant.uid),
-        where('jobOrderId', '==', jobOrderId),
-      );
-      const byOrderSnap = await getDocs(byOrderQ);
-      byOrderSnap.docs.forEach((d) => docIdsToUpdate.push(d.id));
-
-      const jobPostIds = (connectedJobPosts || []).map((p) => p.id).filter(Boolean);
-      if (jobPostIds.length > 0) {
-        const IN_LIMIT = 10;
-        for (let i = 0; i < jobPostIds.length; i += IN_LIMIT) {
-          const slice = jobPostIds.slice(i, i + IN_LIMIT);
-          const byPostQ = query(
-            applicationsRef,
-            where('userId', '==', applicant.uid),
-            where('jobId', 'in', slice),
-          );
-          const byPostSnap = await getDocs(byPostQ);
-          byPostSnap.docs.forEach((d) => docIdsToUpdate.push(d.id));
-        }
+      let appRef;
+      try {
+        appRef = applicationDocRefForApplicant(db, tenantId, jobOrderId, applicant);
+      } catch {
+        alert('Could not resolve application document to remove.');
+        return;
       }
+      await updateDoc(appRef, {
+        status: 'deleted',
+        deletedAt: serverTimestamp(),
+        deletedBy: user?.uid,
+        updatedAt: serverTimestamp(),
+      });
 
-      const uniqueIds = Array.from(new Set(docIdsToUpdate));
-      if (uniqueIds.length === 0) {
-        console.warn('No application doc(s) found to remove for', applicant.uid);
-      }
-      for (const appDocId of uniqueIds) {
-        const tenantAppRef = doc(db, 'tenants', tenantId, 'applications', appDocId);
-        await updateDoc(tenantAppRef, {
-          status: 'deleted',
-          deletedAt: serverTimestamp(),
-          deletedBy: user?.uid,
-          updatedAt: serverTimestamp(),
-        });
-      }
-
-      setApplicants((prev) => prev.filter((a) => a.uid !== applicant.uid));
-      handleCloseActionMenu(applicant.uid);
+      const rid = applicationRowId(applicant, jobOrderId);
+      setApplicants((prev) => prev.filter((a) => applicationRowId(a, jobOrderId) !== rid));
+      handleCloseActionMenu(rid);
     } catch (error) {
       console.error('❌ Error removing application:', error);
       alert('Error removing application. Please try again.');
@@ -922,7 +934,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     setSelectedApplicant(applicant);
     setSwitchJobDialogOpen(true);
     setTargetJobOrderId('');
-    handleCloseActionMenu(applicant.uid);
+    handleCloseActionMenu(applicationRowId(applicant, jobOrderId));
   };
 
   const handleCloseSwitchJobDialog = () => {
@@ -983,10 +995,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
         switchedBy: user?.uid
       };
 
-      const [currentApplicationRef, newApplicationRef] = [
-        doc(db, 'tenants', tenantId, 'applications', currentApplicationDocId),
-        doc(db, 'tenants', tenantId, 'applications', newTenantAppDocId),
-      ];
+      const currentApplicationRef = applicationDocRefForApplicant(db, tenantId, jobOrderId, selectedApplicant);
+      const newApplicationRef = doc(db, 'tenants', tenantId, 'applications', newTenantAppDocId);
 
       // Soft-delete current application and create the new application
       await updateDoc(currentApplicationRef, {
@@ -1007,8 +1017,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
       // TODO: Log activity
 
-      // Remove from current list
-      setApplicants(prev => prev.filter(a => a.uid !== selectedApplicant.uid));
+      const rid = applicationRowId(selectedApplicant, jobOrderId);
+      setApplicants((prev) => prev.filter((a) => applicationRowId(a, jobOrderId) !== rid));
 
       handleCloseSwitchJobDialog();
     } catch (error) {
@@ -1327,7 +1337,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               }}
             >
               <Typography variant="body2" color="text.secondary">
-                {selectedApplicantIds.size} selected
+                {selectedApplicationRowIds.size} selected
               </Typography>
               <Button
                 size="small"
@@ -1372,7 +1382,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 <MenuItem onClick={() => handleBulkChangeStatus('waitlisted')}>Waitlisted</MenuItem>
                 <MenuItem onClick={() => handleBulkChangeStatus('rejected')}>Rejected</MenuItem>
               </Menu>
-              <Button size="small" onClick={() => setSelectedApplicantIds(new Set())}>
+              <Button size="small" onClick={() => setSelectedApplicationRowIds(new Set())}>
                 Clear selection
               </Button>
             </Box>
@@ -1446,12 +1456,11 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     </Alert>
                   </TableCell>
                 </TableRow>
-              ) : displayedApplicants.map((applicant) => (
+              ) : displayedApplicants.map((applicant) => {
+                const rowId = applicationRowId(applicant, jobOrderId);
+                return (
                 <TableRow 
-                  key={
-                    applicant.applicationData?.id ||
-                    `${applicant.uid || 'unknown'}_${applicant.applicationData?.jobId || jobOrderId || 'unknown'}`
-                  }
+                  key={rowId}
                   hover
                   onClick={() => handleViewApplicant(applicant.uid)}
                   sx={{
@@ -1461,8 +1470,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                 >
                   <TableCell padding="checkbox" sx={{ width: 48 }} onClick={(e) => e.stopPropagation()}>
                     <Checkbox
-                      checked={selectedApplicantIds.has(applicant.uid)}
-                      onChange={() => handleSelectOne(applicant.uid)}
+                      checked={selectedApplicationRowIds.has(rowId)}
+                      onChange={() => handleSelectOne(rowId)}
                       size="small"
                       onClick={(e) => e.stopPropagation()}
                       aria-label={`Select ${applicant.displayName}`}
@@ -1742,7 +1751,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                             size="small"
                             color={displayColor}
                             icon={isAssigned && !isConfirmed ? <LockedIcon fontSize="small" /> : undefined}
-                            onClick={(e) => handleOpenStatusMenu(e, applicant.uid)}
+                            onClick={(e) => handleOpenStatusMenu(e, rowId)}
                             sx={{
                               cursor: 'pointer',
                               ...(isAssigned && !isConfirmed && {
@@ -1756,9 +1765,9 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       );
                     })()}
                     <Menu
-                      anchorEl={statusMenuAnchor[applicant.uid]}
-                      open={Boolean(statusMenuAnchor[applicant.uid])}
-                      onClose={() => handleCloseStatusMenu(applicant.uid)}
+                      anchorEl={statusMenuAnchor[rowId]}
+                      open={Boolean(statusMenuAnchor[rowId])}
+                      onClose={() => handleCloseStatusMenu(rowId)}
                     >
                       <MenuItem onClick={() => handleChangeStatus(applicant, 'submitted')}>
                         Submitted
@@ -1776,16 +1785,16 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                       label={applicant.applicationData?.candidate ? '⭐ Candidate' : 'Applicant'}
                       size="small"
                       color={applicant.applicationData?.candidate ? 'primary' : 'default'}
-                      onClick={(e) => handleOpenLevelMenu(e, applicant.uid)}
+                      onClick={(e) => handleOpenLevelMenu(e, rowId)}
                       sx={{ 
                         cursor: 'pointer',
                         fontWeight: applicant.applicationData?.candidateStatus ? 600 : 400
                       }}
                     />
                     <Menu
-                      anchorEl={levelMenuAnchor[applicant.uid]}
-                      open={Boolean(levelMenuAnchor[applicant.uid])}
-                      onClose={() => handleCloseLevelMenu(applicant.uid)}
+                      anchorEl={levelMenuAnchor[rowId]}
+                      open={Boolean(levelMenuAnchor[rowId])}
+                      onClose={() => handleCloseLevelMenu(rowId)}
                     >
                       <MenuItem onClick={() => handleChangeLevel(applicant, 'applicant')}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -1804,14 +1813,14 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                     <IconButton
                       size="small"
-                      onClick={(e) => handleOpenActionMenu(e, applicant.uid)}
+                      onClick={(e) => handleOpenActionMenu(e, rowId)}
                     >
                       <MoreVertIcon />
                     </IconButton>
                     <Menu
-                      anchorEl={actionMenuAnchor[applicant.uid]}
-                      open={Boolean(actionMenuAnchor[applicant.uid])}
-                      onClose={() => handleCloseActionMenu(applicant.uid)}
+                      anchorEl={actionMenuAnchor[rowId]}
+                      open={Boolean(actionMenuAnchor[rowId])}
+                      onClose={() => handleCloseActionMenu(rowId)}
                     >
                       <MenuItem onClick={() => handleOpenSwitchJobDialog(applicant)}>
                         <WorkIcon fontSize="small" sx={{ mr: 1 }} />
@@ -1827,7 +1836,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     </Menu>
                   </TableCell>
                 </TableRow>
-              ))}
+              );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
@@ -1956,7 +1966,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       recipientUserIds={bulkRecipientsAndIds.recipientUserIds}
       defaultChannels={[bulkDrawerChannel]}
       onSend={() => {
-        setSelectedApplicantIds(new Set());
+        setSelectedApplicationRowIds(new Set());
         setBulkDrawerOpen(false);
       }}
     />
@@ -2894,7 +2904,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
   /** Entity for linked account (Account Type / E-Verify / Hiring Entity on Basic Information card). */
   const { entity: linkedAccountEntity } = useEntity(tenantId, linkedAccount?.hiringEntityId ?? null);
-  /** Job order hiring entity (for Placements: C1 Events LLC → everyone Eligible). */
+  /** Job order hiring entity (Placements: resolves C1 entity key for `entity_employments` employment chip). */
   const { entity: jobOrderHiringEntity } = useEntity(tenantId, jobOrder?.hiringEntityId ?? null);
 
   // Subscribe to job order with onSnapshot so Staff Instructions inputs update in real time; save on blur
@@ -3515,7 +3525,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
     }
   };
 
-  /** Permanently remove job order, linked job posts, shifts, placements on those shifts, and nested application stubs. */
+  /** Permanently remove job order, linked job posts, shifts, and placements on those shifts. */
   const handleConfirmDeleteJobOrder = async () => {
     if (!tenantId || !jobOrderId) return;
     setDeleteJobOrderSubmitting(true);
@@ -3536,12 +3546,6 @@ const RecruiterJobOrderDetail: React.FC = () => {
           await deleteDoc(pd.ref);
         }
         await deleteDoc(shiftDoc.ref);
-      }
-
-      const nestedAppsRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications');
-      const nestedAppsSnap = await getDocs(nestedAppsRef);
-      for (const ad of nestedAppsSnap.docs) {
-        await deleteDoc(ad.ref);
       }
 
       await deleteDoc(doc(db, p.jobOrder(tenantId, jobOrderId)));
@@ -4073,8 +4077,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         <DialogContent>
           <Typography variant="body2" sx={{ mb: 2 }}>
             This permanently deletes <strong>{jobOrder.jobOrderName || 'this job order'}</strong> ({formatJobOrderNumber(jobOrder.jobOrderNumber || '')}
-            ). Linked job board posts, all shifts, placements on those shifts, and nested application links under this
-            order will be removed. This cannot be undone.
+            ). Linked job board posts, all shifts, and placements on those shifts will be removed. This cannot be undone.
           </Typography>
           {(applicantsCount > 0 || assignmentsCount > 0) && (
             <Alert severity="warning" sx={{ mb: 1 }}>

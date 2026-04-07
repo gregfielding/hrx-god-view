@@ -54,7 +54,6 @@ import {
 import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRowAction';
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
 import InternalPipelineTaskVerification from './InternalPipelineTaskVerification';
-import ManualScreeningOrderSelect from './ManualScreeningOrderSelect';
 
 /** Explicit `false` turns debug off; `undefined` uses `REACT_APP_EMPLOYMENT_ONBOARDING_PATH_DEBUG`. */
 export function resolveEmploymentOnboardingPathDebugMode(explicit?: boolean): boolean {
@@ -202,37 +201,49 @@ function collectActivityFromRows(rows: EmploymentOnboardingRow[]): {
 }
 
 /** Collapsed “View activity” only — keeps the default row surface minimal. */
-function ActivityCollapse({ rows }: { rows: EmploymentOnboardingRow[] }) {
+function ActivityCollapse({ rows, compact = false }: { rows: EmploymentOnboardingRow[]; compact?: boolean }) {
   const [open, setOpen] = React.useState(false);
   const { summaries, events } = React.useMemo(() => collectActivityFromRows(rows), [rows]);
   if (summaries.length === 0 && events.length === 0) return null;
 
   return (
-    <Box sx={{ mt: 0.5 }}>
+    <Box sx={{ mt: compact ? 0.25 : 0.5 }}>
       <Button
         size="small"
         onClick={() => setOpen((o) => !o)}
         endIcon={
           <ExpandMoreIcon
-            fontSize="small"
+            fontSize="inherit"
             sx={{ transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
           />
         }
-        sx={{ px: 0, minWidth: 0, textTransform: 'none' }}
+        sx={{
+          px: 0,
+          minWidth: 0,
+          textTransform: 'none',
+          fontSize: compact ? '0.7rem' : undefined,
+          minHeight: compact ? 28 : undefined,
+        }}
       >
-        View activity
+        Activity
       </Button>
       <Collapse in={open}>
-        <Box sx={{ mt: 0.75 }}>
+        <Box sx={{ mt: compact ? 0.5 : 0.75 }}>
           {summaries.map((s, i) => (
-            <Typography key={i} variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
+            <Typography
+              key={i}
+              variant="caption"
+              color="text.secondary"
+              display="block"
+              sx={{ mb: compact ? 0.35 : 0.75, lineHeight: 1.4, fontSize: compact ? '0.7rem' : undefined }}
+            >
               {s}
             </Typography>
           ))}
           {events.length > 0 ? (
             <List dense disablePadding>
               {events.map((ev, i) => (
-                <ListItem key={i} disableGutters sx={{ py: 0.2, alignItems: 'flex-start' }}>
+                <ListItem key={i} disableGutters sx={{ py: compact ? 0.1 : 0.2, alignItems: 'flex-start' }}>
                   <ListItemText
                     primary={ev.message}
                     secondary={
@@ -244,8 +255,16 @@ function ActivityCollapse({ rows }: { rows: EmploymentOnboardingRow[] }) {
                           }`
                         : narrativeActorLabelForUi(ev.type, 'admin')
                     }
-                    primaryTypographyProps={{ variant: 'caption', color: 'text.primary', sx: { whiteSpace: 'pre-wrap' } }}
-                    secondaryTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+                    primaryTypographyProps={{
+                      variant: 'caption',
+                      color: 'text.primary',
+                      sx: { whiteSpace: 'pre-wrap', fontSize: compact ? '0.7rem' : undefined },
+                    }}
+                    secondaryTypographyProps={{
+                      variant: 'caption',
+                      color: 'text.secondary',
+                      sx: { fontSize: compact ? '0.65rem' : undefined },
+                    }}
                   />
                 </ListItem>
               ))}
@@ -321,6 +340,8 @@ function StepRow({
   mergedSources,
   onDismissOptionalPolicyRow,
   internalTaskRow,
+  flattenChrome,
+  isLastInGroup,
 }: {
   row: EmploymentOnboardingRow;
   entityKey: EmploymentEntityKey;
@@ -333,6 +354,9 @@ function StepRow({
   onDismissOptionalPolicyRow?: (rowId: string) => void;
   /** Consolidated internal pipeline_task (recruiter checkbox) merged into this requirement row. */
   internalTaskRow?: EmploymentOnboardingRow;
+  /** List-style rows (no nested “cards”) when checklist sits inside accordion / drill-down. */
+  flattenChrome?: boolean;
+  isLastInGroup?: boolean;
 }) {
   const theme = useTheme();
   const isCompletedFlow = row.status === 'completed';
@@ -405,6 +429,18 @@ function StepRow({
           ? alpha(theme.palette.action.hover, 0.45)
           : theme.palette.action.hover;
 
+  /** Flat list: no tinted “cards”; subtle striping only when attention needed. */
+  const rowSurfaceDisplay =
+    flattenChrome && relationshipPathHistorical
+      ? 'transparent'
+      : flattenChrome
+        ? verifiedQuiet
+          ? 'transparent'
+          : recruiterLeanIn
+            ? alpha(theme.palette.primary.main, 0.05)
+            : alpha(theme.palette.divider, 0.06)
+        : rowSurface;
+
   const rowAccent =
     recruiterLeanIn && !verifiedQuiet
       ? theme.palette.primary.main
@@ -425,7 +461,8 @@ function StepRow({
         ? 'Met by an existing compliance record on file.'
         : null;
 
-  const rowOpacity = verifiedQuiet && !debugMode ? 0.88 : workerVendorMuted && !debugMode ? 0.93 : 1;
+  const rowOpacity =
+    flattenChrome && relationshipPathHistorical ? 1 : verifiedQuiet && !debugMode ? 0.88 : workerVendorMuted && !debugMode ? 0.93 : 1;
 
   const workerAssignmentCta =
     row.groupId === 'assignment_requirements' &&
@@ -436,44 +473,116 @@ function StepRow({
     ? employmentOnboardingEverifyRowElementId(entityKey)
     : undefined;
 
+  /** Completed / reuse rows: one shallow line; detail in tooltip + Activity. */
+  const compactDone =
+    !debugMode && !policyOptionalDismiss && (isCompletedFlow || isSatisfiedReuse);
+  const showOneLineHelperBelow = Boolean(oneLineHelper && !(flattenChrome && relationshipPathHistorical));
+  const detailTooltip = [rowInfoTooltip, oneLineHelper].filter(Boolean).join('\n\n') || '';
+  const historicalFlatTooltip =
+    flattenChrome && relationshipPathHistorical
+      ? [rowInfoTooltip, oneLineHelper].filter(Boolean).join('\n\n') || ''
+      : '';
+
   return (
     <Box
       id={everifyScrollAnchorId}
       sx={{
-        py: verifiedQuiet ? 0.75 : 1.15,
-        px: 1.25,
-        borderRadius: 1,
-        bgcolor: rowSurface,
-        borderLeft: rowAccent !== 'transparent' ? 3 : 0,
+        py: flattenChrome
+          ? compactDone
+            ? 0.3
+            : relationshipPathHistorical
+              ? 0.5
+              : 0.65
+          : compactDone
+            ? 0.35
+            : verifiedQuiet
+              ? 0.75
+              : 1.15,
+        px: flattenChrome ? (compactDone ? 0.5 : 1) : compactDone ? 0.75 : 1.25,
+        borderRadius: flattenChrome ? 0 : 1,
+        bgcolor: flattenChrome ? rowSurfaceDisplay : rowSurface,
+        borderLeft:
+          flattenChrome && relationshipPathHistorical
+            ? 0
+            : rowAccent !== 'transparent'
+              ? compactDone
+                ? 2
+                : 3
+              : 0,
         borderLeftColor: rowAccent,
         borderLeftStyle: 'solid',
+        borderBottom:
+          flattenChrome && !isLastInGroup ? `1px solid ${theme.palette.divider}` : undefined,
         opacity: rowOpacity,
       }}
     >
-      <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1} sx={{ mb: 0.75 }}>
-        <Stack direction="row" alignItems="flex-start" gap={0.5} sx={{ flex: 1, minWidth: 0 }}>
-          <Typography
-            variant="body2"
-            fontWeight={verifiedQuiet ? 500 : workerVendorMuted ? 600 : 700}
-            color={verifiedQuiet || workerVendorMuted ? 'text.secondary' : 'text.primary'}
-            sx={{ lineHeight: 1.35 }}
-          >
-            {row.label}
-          </Typography>
-          {rowInfoTooltip && !debugMode ? (
-            <Tooltip title={rowInfoTooltip} placement="right" enterTouchDelay={0}>
-              <IconButton size="small" aria-label="Row details" sx={{ mt: -0.5, color: 'text.secondary' }}>
-                <InfoOutlinedIcon fontSize="small" />
-              </IconButton>
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        gap={1}
+        sx={{ mb: compactDone ? 0 : 0.75 }}
+      >
+        <Stack direction="row" alignItems="center" gap={0.5} sx={{ flex: 1, minWidth: 0 }}>
+          {compactDone ? (
+            detailTooltip ? (
+              <Tooltip title={detailTooltip} placement="top" enterDelay={400}>
+                <Typography
+                  variant="body2"
+                  fontWeight={500}
+                  color="text.secondary"
+                  sx={{ lineHeight: 1.25 }}
+                >
+                  {row.label}
+                </Typography>
+              </Tooltip>
+            ) : (
+              <Typography
+                variant="body2"
+                fontWeight={500}
+                color="text.secondary"
+                sx={{ lineHeight: 1.25 }}
+              >
+                {row.label}
+              </Typography>
+            )
+          ) : flattenChrome && relationshipPathHistorical && historicalFlatTooltip ? (
+            <Tooltip title={historicalFlatTooltip} placement="top" enterDelay={400}>
+              <Typography
+                variant="body2"
+                fontWeight={verifiedQuiet ? 500 : workerVendorMuted ? 600 : 700}
+                color={verifiedQuiet || workerVendorMuted ? 'text.secondary' : 'text.primary'}
+                sx={{ lineHeight: 1.3 }}
+              >
+                {row.label}
+              </Typography>
             </Tooltip>
-          ) : null}
+          ) : (
+            <>
+              <Typography
+                variant="body2"
+                fontWeight={verifiedQuiet ? 500 : workerVendorMuted ? 600 : 700}
+                color={verifiedQuiet || workerVendorMuted ? 'text.secondary' : 'text.primary'}
+                sx={{ lineHeight: 1.35 }}
+              >
+                {row.label}
+              </Typography>
+              {rowInfoTooltip && !debugMode ? (
+                <Tooltip title={rowInfoTooltip} placement="right" enterTouchDelay={0}>
+                  <IconButton size="small" aria-label="Row details" sx={{ mt: -0.5, color: 'text.secondary' }}>
+                    <InfoOutlinedIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              ) : null}
+            </>
+          )}
         </Stack>
         <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.5} useFlexGap sx={{ flexShrink: 0 }}>
-          {!debugMode && actionContext?.viewer === 'recruiter' ? (
+          {!compactDone && !debugMode && actionContext?.viewer === 'recruiter' ? (
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mr: 0.25 }}>
               {recruiterLeadOwnerLabel(row, internalTaskRow)}
             </Typography>
-          ) : !debugMode ? (
+          ) : !compactDone && !debugMode ? (
             <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mr: 0.25 }}>
               {OWNER_LABEL[row.owner]}
             </Typography>
@@ -482,8 +591,13 @@ function StepRow({
             size="small"
             label={relationshipPathHistorical && !isCompletedFlow && !isSatisfiedReuse ? `Prior: ${chip.label}` : chip.label}
             color={chip.color}
-            variant={verifiedQuiet ? 'outlined' : 'filled'}
-            sx={{ flexShrink: 0, fontWeight: verifiedQuiet ? 500 : 600 }}
+            variant={verifiedQuiet || compactDone ? 'outlined' : 'filled'}
+            sx={{
+              flexShrink: 0,
+              fontWeight: verifiedQuiet || compactDone ? 500 : 600,
+              height: compactDone ? 22 : undefined,
+              '& .MuiChip-label': compactDone ? { px: 0.65, fontSize: '0.7rem' } : undefined,
+            }}
           />
         </Stack>
       </Stack>
@@ -508,13 +622,13 @@ function StepRow({
         </Typography>
       ) : null}
 
-      {oneLineHelper ? (
+      {!compactDone && showOneLineHelperBelow ? (
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5, lineHeight: 1.4 }}>
           {oneLineHelper}
         </Typography>
       ) : null}
 
-      <ActivityCollapse rows={mergedSources} />
+      <ActivityCollapse rows={mergedSources} compact={compactDone} />
 
       {actionContext?.viewer === 'recruiter' &&
       policyOptionalDismiss &&
@@ -579,6 +693,7 @@ function StepRow({
           ctx={actionContext}
           onComplete={onActionComplete}
           suppress={
+            (compactDone && verifiedQuiet) ||
             relationshipPathHistorical ||
             /* Payroll verification is the single source of truth for these milestones; pipeline task is legacy overlap. */
             (showExternalVerificationControls && Boolean(internalTaskRow))
@@ -609,6 +724,7 @@ function GroupSection({
   workerOnboarding,
   dismissedOptionalPolicyRowIds = new Set<string>(),
   onDismissOptionalPolicyRow = () => {},
+  flattenChrome,
 }: {
   consolidated: RecruiterConsolidatedPathGroup;
   entityKey: EmploymentEntityKey;
@@ -619,6 +735,7 @@ function GroupSection({
   workerOnboarding?: WorkerOnboardingPipeline | null;
   dismissedOptionalPolicyRowIds?: ReadonlySet<string>;
   onDismissOptionalPolicyRow?: (rowId: string) => void;
+  flattenChrome?: boolean;
 }) {
   const visibleItems = React.useMemo(
     () => consolidated.items.filter((it) => !dismissedOptionalPolicyRowIds.has(it.row.rowId)),
@@ -634,7 +751,7 @@ function GroupSection({
 
   const frac = totalCount > 0 ? `${doneCount} / ${totalCount}` : '—';
 
-  const renderItem = (it: RecruiterConsolidatedPathItem) => (
+  const renderItem = (it: RecruiterConsolidatedPathItem, idx: number) => (
     <StepRow
       key={it.mergedSources
         .map((r) => r.rowId)
@@ -650,42 +767,45 @@ function GroupSection({
       mergedSources={it.mergedSources}
       onDismissOptionalPolicyRow={onDismissOptionalPolicyRow}
       internalTaskRow={it.internalTaskRow}
+      flattenChrome={flattenChrome}
+      isLastInGroup={idx === visibleItems.length - 1}
     />
   );
 
   return (
-    <Box sx={{ mb: 2 }}>
-      <Stack direction="row" alignItems="flex-start" justifyContent="space-between" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
-        <Box>
-          <Typography variant="subtitle1" fontWeight={700}>
+    <Box sx={{ mb: flattenChrome ? 0 : 1.5 }}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" gap={1} sx={{ mb: 0.75 }}>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle2" fontWeight={700} sx={{ lineHeight: 1.3 }}>
             {consolidated.title}
           </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.15, lineHeight: 1.35 }}>
             {totalCount > 0 ? (
               <>
                 {historical ? 'Recorded: ' : ''}
                 {frac} complete
-                {reuseDone > 0 ? ` · ${reuseDone} prior record` : ''}
-                {flowDone > 0 && reuseDone === 0 ? ` · ${flowDone} finished in this flow` : null}
+                {reuseDone > 0 ? ` · ${reuseDone} prior` : ''}
+                {flowDone > 0 && reuseDone === 0 ? ` · ${flowDone} in flow` : null}
               </>
             ) : null}
           </Typography>
         </Box>
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Chip size="small" variant="outlined" label={historical ? `Prior: ${frac}` : `${frac} done`} />
-          {!suppressCurrentDemandBlockers && blockerCount > 0 && (
-            <Chip
-              size="small"
-              color="warning"
-              variant="outlined"
-              label={`${blockerCount} need${blockerCount === 1 ? 's' : ''} attention`}
-            />
-          )}
-        </Stack>
+        {!suppressCurrentDemandBlockers && blockerCount > 0 ? (
+          <Chip
+            size="small"
+            color="warning"
+            variant="outlined"
+            label={`${blockerCount} open`}
+            sx={{ flexShrink: 0, height: 24, '& .MuiChip-label': { px: 0.75 } }}
+          />
+        ) : totalCount > 0 ? (
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+            {frac}
+          </Typography>
+        ) : null}
       </Stack>
 
-      <Stack spacing={1.15}>{visibleItems.map(renderItem)}</Stack>
-      {consolidated.groupId === 'screenings' && actionContext?.viewer === 'recruiter' ? <ManualScreeningOrderSelect /> : null}
+      <Stack spacing={flattenChrome ? 0 : 0.65}>{visibleItems.map((it, idx) => renderItem(it, idx))}</Stack>
     </Box>
   );
 }
@@ -706,6 +826,11 @@ export interface EmploymentOnboardingPathCardProps {
   suppressCurrentDemandBlockers?: boolean;
   /** Worker onboarding pipeline (payroll milestone + task state for this tab). */
   workerOnboarding?: WorkerOnboardingPipeline | null;
+  /**
+   * Softer card chrome + title scale so this reads as drill-down under on-file summary / header,
+   * not a competing top-level status surface.
+   */
+  drillDownVisual?: boolean;
 }
 
 const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> = ({
@@ -716,6 +841,7 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
   debugMode: debugModeProp,
   suppressCurrentDemandBlockers = false,
   workerOnboarding,
+  drillDownVisual = false,
 }) => {
   const debugMode = resolveEmploymentOnboardingPathDebugMode(debugModeProp);
   const consolidatedGroups = React.useMemo(() => consolidateRecruiterOnboardingPathGroups(groups), [groups]);
@@ -732,50 +858,72 @@ const EmploymentOnboardingPathCard: React.FC<EmploymentOnboardingPathCardProps> 
     warnBlockingPathRowsMissingDedicatedActions(rows, actionContext, `entity:${entityKey}`);
   }, [actionContext, consolidatedGroups, entityKey, suppressCurrentDemandBlockers]);
 
+  const pathBody =
+    consolidatedGroups.length === 0 ? (
+      <Typography variant="body2" color="text.secondary">
+        No onboarding steps are configured for this entity in Settings, or nothing applies yet. Enable workflow steps
+        on the entity to see the path here.
+      </Typography>
+    ) : (
+      <>
+        {consolidatedGroups.map((g, i) => (
+          <React.Fragment key={g.groupId}>
+            {i > 0 && <Divider sx={{ my: drillDownVisual ? 1.25 : 2 }} />}
+            <GroupSection
+              consolidated={g}
+              entityKey={entityKey}
+              actionContext={actionContext}
+              onActionComplete={onActionComplete}
+              debugMode={debugMode}
+              suppressCurrentDemandBlockers={suppressCurrentDemandBlockers}
+              workerOnboarding={workerOnboarding}
+              dismissedOptionalPolicyRowIds={dismissedOptionalPolicyRowIds}
+              onDismissOptionalPolicyRow={dismissOptionalPolicyRow}
+              flattenChrome={drillDownVisual}
+            />
+          </React.Fragment>
+        ))}
+      </>
+    );
+
+  if (drillDownVisual) {
+    return (
+      <Box sx={{ px: { xs: 1.5, sm: 2 }, pt: 0.5 }}>
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+          {suppressCurrentDemandBlockers
+            ? 'Prior steps only — not current required work. Job package items stay under Job requirements.'
+            : 'Row-level checklist. Job package items stay under Job requirements.'}
+        </Typography>
+        {pathBody}
+      </Box>
+    );
+  }
+
   return (
-    <Card sx={{ mb: 2 }}>
+    <Card variant="elevation" sx={{ mb: 2 }}>
       <CardHeader
         title={
           <Typography variant="h6" fontWeight={700}>
-            Onboarding checklist
+            Step-by-step checklist
             {suppressCurrentDemandBlockers ? (
-              <Typography component="span" variant="body2" color="text.secondary" fontWeight={500} display="block" sx={{ mt: 0.5 }}>
-                Record of prior onboarding — not current required work
+              <Typography
+                component="span"
+                variant="body2"
+                color="text.secondary"
+                fontWeight={500}
+                display="block"
+                sx={{ mt: 0.5 }}
+              >
+                Record of prior work — not current required steps
               </Typography>
             ) : null}
           </Typography>
         }
-        subheader="One row per requirement. Assignment package items appear below when there is an active job assignment. Use View activity on a row for the detailed timeline."
+        subheader="One row per requirement. Assignment package items are under Job requirements."
         titleTypographyProps={{ component: 'div' }}
         subheaderTypographyProps={{ variant: 'body2', color: 'text.secondary' }}
       />
-      <CardContent sx={{ pt: 0 }}>
-        {consolidatedGroups.length === 0 ? (
-          <Typography variant="body2" color="text.secondary">
-            No onboarding steps are configured for this entity in Settings, or nothing applies yet. Enable workflow
-            steps on the entity to see the path here.
-          </Typography>
-        ) : (
-          <>
-            {consolidatedGroups.map((g, i) => (
-              <React.Fragment key={g.groupId}>
-                {i > 0 && <Divider sx={{ my: 2 }} />}
-                <GroupSection
-                  consolidated={g}
-                  entityKey={entityKey}
-                  actionContext={actionContext}
-                  onActionComplete={onActionComplete}
-                  debugMode={debugMode}
-                  suppressCurrentDemandBlockers={suppressCurrentDemandBlockers}
-                  workerOnboarding={workerOnboarding}
-                  dismissedOptionalPolicyRowIds={dismissedOptionalPolicyRowIds}
-                  onDismissOptionalPolicyRow={dismissOptionalPolicyRow}
-                />
-              </React.Fragment>
-            ))}
-          </>
-        )}
-      </CardContent>
+      <CardContent sx={{ pt: 0 }}>{pathBody}</CardContent>
     </Card>
   );
 };

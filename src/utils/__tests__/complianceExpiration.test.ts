@@ -64,15 +64,15 @@ describe('complianceExpiration', () => {
   describe('hasExpiredCompliance', () => {
     it('returns true when any item with expiration is expired', () => {
       const items = [
-        { status: 'complete', type: 'i9', expiresAt: null },
-        { status: 'complete', type: 'work_permit', expiresAt: yesterday.toISOString() },
+        { status: 'complete' as const, type: 'i9', expiresAt: null },
+        { status: 'complete' as const, type: 'work_permit', expiresAt: yesterday.toISOString() },
       ];
       expect(hasExpiredCompliance(items)).toBe(true);
     });
     it('returns false when no expiring-type items are expired', () => {
       const items = [
-        { status: 'complete', type: 'i9', expiresAt: null },
-        { status: 'complete', type: 'drivers_license', expiresAt: fortyDaysFromNow.toISOString() },
+        { status: 'complete' as const, type: 'i9', expiresAt: null },
+        { status: 'complete' as const, type: 'drivers_license', expiresAt: fortyDaysFromNow.toISOString() },
       ];
       expect(hasExpiredCompliance(items)).toBe(false);
     });
@@ -81,13 +81,13 @@ describe('complianceExpiration', () => {
   describe('hasExpiringSoonCompliance', () => {
     it('returns true when any item is expiring within threshold', () => {
       const items = [
-        { status: 'complete', type: 'drivers_license', expiresAt: tenDaysFromNow.toISOString() },
+        { status: 'complete' as const, type: 'drivers_license', expiresAt: tenDaysFromNow.toISOString() },
       ];
       expect(hasExpiringSoonCompliance(items)).toBe(true);
     });
     it('returns false when no items expiring soon', () => {
       const items = [
-        { status: 'complete', type: 'drivers_license', expiresAt: fortyDaysFromNow.toISOString() },
+        { status: 'complete' as const, type: 'drivers_license', expiresAt: fortyDaysFromNow.toISOString() },
       ];
       expect(hasExpiringSoonCompliance(items)).toBe(false);
     });

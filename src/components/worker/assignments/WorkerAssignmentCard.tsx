@@ -74,7 +74,8 @@ function getStatusKey(status: AssignmentStatus): string {
 }
 
 function getStatusChipColor(status: AssignmentStatus): 'default' | 'success' | 'error' | 'warning' {
-  if (status === 'confirmed' || status === 'completed') return 'success';
+  // `scheduled` and `confirmed` both use label statusUpcoming — keep chip styling aligned
+  if (status === 'scheduled' || status === 'confirmed' || status === 'completed') return 'success';
   if (status === 'cancelled' || status === 'no-show') return 'error';
   return 'default';
 }

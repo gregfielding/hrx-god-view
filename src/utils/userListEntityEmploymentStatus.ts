@@ -1,7 +1,11 @@
 /**
- * Maps `entity_employments` rows to compact recruiter table chips (per-entity onboarding).
- * Does not run full `buildEmploymentEntityOverview` — path blockers are not reflected until a batch overview exists.
+ * Maps `entity_employments` rows to compact recruiter table chips (per-entity employment).
+ * Prefers persisted `employmentState`; when absent, falls back to legacy `status` and `computeHasOpenOnboardingDemand`
+ * so stale `onboarding` rows without live assignment demand do not read as active onboarding.
  */
+
+import type { EmploymentAssignmentSummary } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
+import { computeHasOpenOnboardingDemand } from './deriveEmploymentHeaderState';
 
 export type UserListEntityOnboardingTone = 'ready' | 'onboarding' | 'needs_attention' | 'inactive';
 
@@ -37,15 +41,33 @@ export function displayEntityLabelForOnboardingChip(entityKeyRaw: string, entity
   return 'Entity';
 }
 
-/** Derive chip tone + label from `entity_employments.status`. */
+/**
+ * Derive chip tone + label from canonical `entity_employments.employmentState` (preferred) or legacy `status`,
+ * plus open onboarding demand when `employmentState` is absent (stale onboarding rows).
+ */
 export function entityEmploymentRowToChipItem(
   entityLabel: string,
-  rawStatus: string | null | undefined
+  opts: {
+    employmentState?: string | null;
+    legacyStatus?: string | null;
+    hasOpenOnboardingDemand: boolean;
+    /**
+     * `entity_employments.onboardingComplete` and/or `active` from engine sync — overrides stale `employmentState`
+     * / `status` in chips when the doc was not fully denormalized yet.
+     */
+    onboardingComplete?: boolean;
+  }
 ): UserListEntityOnboardingItem | null {
   const label = entityLabel.trim() || 'Entity';
-  const s = String(rawStatus || '')
+  const es = String(opts.employmentState || '')
     .trim()
     .toLowerCase();
+  const leg = String(opts.legacyStatus || '')
+    .trim()
+    .toLowerCase();
+  const hasCanon = Boolean(es);
+  const s = hasCanon ? es : leg;
+  const demand = opts.hasOpenOnboardingDemand;
 
   if (!s || s === 'not_started' || s === 'none') {
     return null;
@@ -54,17 +76,28 @@ export function entityEmploymentRowToChipItem(
   if (s === 'blocked') {
     return { entityLabel: label, statusLabel: 'Needs attention', tone: 'needs_attention', rawStatus: s };
   }
+  if (opts.onboardingComplete === true && s !== 'inactive' && s !== 'terminated') {
+    return { entityLabel: label, statusLabel: 'Active', tone: 'ready', rawStatus: es || leg || 'active' };
+  }
   if (s === 'onboarding') {
-    return { entityLabel: label, statusLabel: 'Onboarding', tone: 'onboarding', rawStatus: s };
+    if (hasCanon) {
+      return { entityLabel: label, statusLabel: 'Onboarding', tone: 'onboarding', rawStatus: es || leg };
+    }
+    if (!demand) return null;
+    return { entityLabel: label, statusLabel: 'Onboarding', tone: 'onboarding', rawStatus: leg };
   }
-  if (s === 'active' || s === 'ready') {
-    return { entityLabel: label, statusLabel: 'Ready', tone: 'ready', rawStatus: s };
+  if (s === 'active' || (!hasCanon && leg === 'ready')) {
+    return { entityLabel: label, statusLabel: 'Active', tone: 'ready', rawStatus: es || leg };
   }
-  if (s === 'inactive' || s === 'terminated') {
-    return null;
+  if (s === 'inactive') {
+    return { entityLabel: label, statusLabel: 'Inactive', tone: 'inactive', rawStatus: s };
+  }
+  if (s === 'terminated') {
+    return { entityLabel: label, statusLabel: 'Terminated', tone: 'inactive', rawStatus: s };
   }
 
-  return { entityLabel: label, statusLabel: 'Onboarding', tone: 'onboarding', rawStatus: s };
+  if (!demand) return null;
+  return { entityLabel: label, statusLabel: 'Onboarding', tone: 'onboarding', rawStatus: leg };
 }
 
 export function mergeEntityEmploymentItems(existing: UserListEntityOnboardingItem, incoming: UserListEntityOnboardingItem): UserListEntityOnboardingItem {
@@ -93,7 +126,8 @@ export type EntityEmploymentDocSnap = { id: string; data: () => Record<string, u
 /** Fold one `entity_employments` document into a per-entity dedupe map (single user or multi-user caller supplies the map). */
 export function mergeEntityEmploymentDocIntoChipMap(
   target: Map<string, UserListEntityOnboardingItem>,
-  docSnap: EntityEmploymentDocSnap
+  docSnap: EntityEmploymentDocSnap,
+  opts?: { assignmentsForEntity?: EmploymentAssignmentSummary[] | undefined }
 ): void {
   const d = docSnap.data();
   const uid = String(d.userId || '').trim();
@@ -101,7 +135,19 @@ export function mergeEntityEmploymentDocIntoChipMap(
   const entityKeyRaw = String(d.entityKey || '').trim();
   const entityName = String(d.entityName || '').trim();
   const displayLabel = displayEntityLabelForOnboardingChip(entityKeyRaw, entityName);
-  const item = entityEmploymentRowToChipItem(displayLabel, d.status as string | undefined);
+  const legacyStatus = String(d.status || '').trim();
+  const employmentState = String(d.employmentState || '').trim();
+  const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
+    assignments: opts?.assignmentsForEntity,
+    entityEmploymentStatus: legacyStatus || employmentState,
+    employmentEntryMode: d.employmentEntryMode as string,
+  });
+  const item = entityEmploymentRowToChipItem(displayLabel, {
+    employmentState: employmentState || undefined,
+    legacyStatus: legacyStatus || undefined,
+    hasOpenOnboardingDemand,
+    onboardingComplete: d.onboardingComplete === true || d.active === true,
+  });
   if (!item) return;
   const entityId = String(d.entityId || '').trim();
   const idPrefix = `${uid}__`;

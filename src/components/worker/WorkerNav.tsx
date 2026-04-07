@@ -19,18 +19,19 @@ import DashboardIcon from '@mui/icons-material/Dashboard';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
-import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
+import PersonIcon from '@mui/icons-material/Person';
 
 const drawerWidth = 240;
 
 const navConfig = [
   { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
+  { key: 'nav.myProfile', path: '/c1/workers/profile', icon: <PersonIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { key: 'nav.notifications', path: '/c1/workers/notifications', icon: <NotificationsNoneIcon /> },
-  { key: 'nav.helpSupport', path: '/c1/workers/support', icon: <HelpOutlineIcon /> },
+  /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
 ];
 
 const drawerPaperSx = {

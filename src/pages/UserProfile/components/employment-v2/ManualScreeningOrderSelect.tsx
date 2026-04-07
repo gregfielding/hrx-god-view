@@ -59,9 +59,8 @@ const ManualScreeningOrderSelect: React.FC = () => {
         Add a screening
       </Typography>
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.25, lineHeight: 1.45 }}>
-        Use this when there is no assignment package or you need an extra check. Assignment-required screenings stay in
-        the rows above. Each order will show its own steps (ordered → worker → vendor status) once the integration is
-        live.
+        Use this to start a new screening when needed. Rows above show existing requirements and orders. Full ordering
+        will connect here when the screening integration is live.
       </Typography>
       <FormControl size="small" fullWidth>
         <InputLabel id="manual-screening-type-label">Screening type</InputLabel>

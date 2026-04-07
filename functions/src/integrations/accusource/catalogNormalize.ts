@@ -23,18 +23,78 @@ function numId(value: unknown): string {
   return String(value).trim();
 }
 
+function collectCompaniesFromRoot(root: Record<string, unknown>): unknown[] {
+  const payload = root.payload;
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (payload != null && typeof payload === 'object') {
+    const p = payload as Record<string, unknown>;
+    if (Array.isArray(p.companies)) {
+      return p.companies as unknown[];
+    }
+    /** V2 Postman shape: single company object with packages[] under payload (no companies[]). */
+    if (Array.isArray(p.packages) || Array.isArray(p.services)) {
+      return [p];
+    }
+  }
+  /** Flat V2 shape: GET /api/v2/company/details returns packages[] (and optional services[]) at root. */
+  if (Array.isArray(root.packages) || Array.isArray(root.services)) {
+    return [{ packages: root.packages, services: root.services }];
+  }
+  const data = root.data;
+  if (data != null && typeof data === 'object') {
+    const d = data as Record<string, unknown>;
+    if (Array.isArray(d.companies)) {
+      return d.companies as unknown[];
+    }
+    if (Array.isArray(d.packages) || Array.isArray(d.services)) {
+      return [{ packages: d.packages, services: d.services }];
+    }
+  }
+  return [];
+}
+
+/**
+ * Safe diagnostics for catalog sync logs: top-level JSON keys + raw package row counts (no auth, no full body).
+ * `rawPackageRowCount` = objects under each company's `packages[]` before id/name normalization.
+ * `rawPackageRowsWithIdCount` = subset with a non-empty `id` (matches what normalize keeps as rows).
+ */
+export function probeCatalogSyncResponse(raw: unknown): {
+  topLevelKeys: string[];
+  rawPackageRowCount: number;
+  rawPackageRowsWithIdCount: number;
+} {
+  if (raw == null || typeof raw !== 'object') {
+    return { topLevelKeys: [], rawPackageRowCount: 0, rawPackageRowsWithIdCount: 0 };
+  }
+  const root = raw as Record<string, unknown>;
+  const topLevelKeys = Object.keys(root).sort();
+  const companies = collectCompaniesFromRoot(root);
+  let rawPackageRowCount = 0;
+  let rawPackageRowsWithIdCount = 0;
+  for (const c of companies) {
+    if (c == null || typeof c !== 'object') continue;
+    const pkgs = Array.isArray((c as Record<string, unknown>).packages)
+      ? ((c as Record<string, unknown>).packages as unknown[])
+      : [];
+    for (const p of pkgs) {
+      if (p == null || typeof p !== 'object') continue;
+      rawPackageRowCount += 1;
+      const id = numId((p as Record<string, unknown>).id);
+      if (id) rawPackageRowsWithIdCount += 1;
+    }
+  }
+  return { topLevelKeys, rawPackageRowCount, rawPackageRowsWithIdCount };
+}
+
 export function normalizeAccusourceCompanyDetailsResponse(raw: unknown): {
   packages: NormalizedAccusourcePackage[];
   services: NormalizedAccusourceService[];
   companyCount: number;
 } {
   const root = raw as Record<string, unknown>;
-  const payload = root.payload;
-  const companies: unknown[] = Array.isArray(payload)
-    ? payload
-    : payload != null && typeof payload === 'object' && Array.isArray((payload as Record<string, unknown>).companies)
-      ? ((payload as Record<string, unknown>).companies as unknown[])
-      : [];
+  const companies: unknown[] = collectCompaniesFromRoot(root);
 
   const packagesById = new Map<string, NormalizedAccusourcePackage>();
   const servicesById = new Map<string, NormalizedAccusourceService>();

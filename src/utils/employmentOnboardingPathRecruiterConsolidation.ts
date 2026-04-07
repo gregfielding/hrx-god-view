@@ -1,6 +1,10 @@
 /**
  * Recruiter Employment path — collapse duplicate lines (same requirement in Work Authorization +
  * Internal verification + owner buckets) into one row per requirement. Presentation only.
+ *
+ * Onboarding checklist: entity-driven steps only, bucketed as Tax and Identity / Handbook and Policies /
+ * Payroll / Recruiter follow-up. Assignment package + screening pipeline tasks are excluded here
+ * (they render under Assignment).
  */
 import type {
   EmploymentOnboardingRow,
@@ -53,6 +57,34 @@ export function recruiterPathRowConsolidationKey(row: EmploymentOnboardingRow): 
   }
 
   return `row:${row.rowId}`;
+}
+
+/** Rows that must not appear on the Onboarding checklist (Assignment / screenings surface instead). */
+export function rowExcludedFromOnboardingChecklist(r: EmploymentOnboardingRow): boolean {
+  if (r.groupId === 'screenings' || r.groupId === 'assignment_requirements') return true;
+  if (r.sourceType === 'assignment_requirement') return true;
+  if (r.groupId === 'internal_readiness' && r.sourceType === 'pipeline_task') {
+    const p = String(r.sourceRef?.pipelineStepId || '').toLowerCase();
+    if (p === 'background_check' || p === 'drug_screen' || p === 'drug_screening') return true;
+  }
+  return false;
+}
+
+/** Internal pipeline screening rows removed from onboarding — merge into Assignment > Background for ops clarity. */
+export function internalPipelineScreeningRowsForAssignment(groups: OnboardingPathGroup[]): EmploymentOnboardingRow[] {
+  const out: EmploymentOnboardingRow[] = [];
+  for (const g of groups) {
+    for (const r of g.rows) {
+      if (
+        r.groupId === 'internal_readiness' &&
+        r.sourceType === 'pipeline_task'
+      ) {
+        const p = String(r.sourceRef?.pipelineStepId || '').toLowerCase();
+        if (p === 'background_check' || p === 'drug_screen' || p === 'drug_screening') out.push(r);
+      }
+    }
+  }
+  return out;
 }
 
 function mapInternalOnlyRowToSection(row: EmploymentOnboardingRow): OnboardingPathGroup['groupId'] {
@@ -160,15 +192,90 @@ function synthesizeDisplayRow(bucket: EmploymentOnboardingRow[]): EmploymentOnbo
   return row;
 }
 
+export type RecruiterOnboardingDisplayBucketId =
+  | 'tax_and_identity'
+  | 'handbook_and_policies'
+  | 'payroll'
+  | 'recruiter_followup';
+
+const DISPLAY_BUCKET_ORDER: RecruiterOnboardingDisplayBucketId[] = [
+  'tax_and_identity',
+  'handbook_and_policies',
+  'payroll',
+  'recruiter_followup',
+];
+
+const DISPLAY_BUCKET_TITLE: Record<RecruiterOnboardingDisplayBucketId, string> = {
+  tax_and_identity: 'Tax and Identity',
+  handbook_and_policies: 'Handbook and Policies',
+  payroll: 'Payroll',
+  recruiter_followup: 'Recruiter follow-up',
+};
+
 export interface RecruiterConsolidatedPathItem {
   row: EmploymentOnboardingRow;
   mergedSources: EmploymentOnboardingRow[];
   /** Recruiter pipeline task merged into this line (TempWorks task checkbox). */
   internalTaskRow?: EmploymentOnboardingRow;
+  /**
+   * When true, this row may gate `onboardingComplete` even under Recruiter follow-up (v1: always false).
+   * Set via `recruiterFollowUpIsGatingForConsolidatedItem` when product policy requires it.
+   */
+  isGating: boolean;
 }
 
+/**
+ * Future hook: return true for recruiter follow-up checklist rows that must gate entity onboarding completion.
+ * v1: always false (non-gating). Wire to feature flags / tenant policy when follow-ups should block completion.
+ */
+export function recruiterFollowUpIsGatingForConsolidatedItem(_item: RecruiterConsolidatedPathItem): boolean {
+  return false;
+}
+
+/** Map one consolidated checklist item to an Onboarding sub-section (entity-driven IA). */
+export function recruiterOnboardingSubsectionForItem(item: RecruiterConsolidatedPathItem): RecruiterOnboardingDisplayBucketId {
+  const sources = [item.row, ...item.mergedSources];
+  for (const r of sources) {
+    if (r.groupId !== 'internal_readiness') continue;
+    const pipe = String(r.sourceRef?.pipelineStepId || '').toLowerCase();
+    if (pipe === 'everee') return 'payroll';
+    if (pipe === 'i9' || pipe === 'e_verify' || pipe === 'onboarding_forms') return 'tax_and_identity';
+  }
+
+  const r = item.row;
+  if (r.groupId === 'work_authorization') return 'tax_and_identity';
+  if (r.groupId === 'payroll') return 'payroll';
+
+  if (r.groupId === 'forms_and_policies') {
+    const blob = `${r.sourceRef?.externalStepKey || ''} ${r.label || ''} ${r.stepKey || ''}`.toLowerCase();
+    if (
+      /\b(w-4|w4|w-9|w9|1099|withhold|withholding|tax|i-9|i9|ein|w2|w-2)\b/.test(blob) &&
+      !/\bhandbook\b/.test(blob)
+    ) {
+      return 'tax_and_identity';
+    }
+    return 'handbook_and_policies';
+  }
+
+  if (r.groupId === 'internal_readiness') {
+    const pipe = String(r.sourceRef?.pipelineStepId || '').toLowerCase();
+    if (pipe === 'everee') return 'payroll';
+    if (pipe === 'i9' || pipe === 'e_verify' || pipe === 'onboarding_forms') return 'tax_and_identity';
+    return 'recruiter_followup';
+  }
+
+  return 'recruiter_followup';
+}
+
+const ONBOARDING_CHECKLIST_SOURCE_ORDER: OnboardingPathGroup['groupId'][] = [
+  'work_authorization',
+  'forms_and_policies',
+  'payroll',
+  'internal_readiness',
+];
+
 export interface RecruiterConsolidatedPathGroup {
-  groupId: OnboardingPathGroup['groupId'];
+  groupId: RecruiterOnboardingDisplayBucketId;
   title: string;
   doneCount: number;
   totalCount: number;
@@ -176,7 +283,7 @@ export interface RecruiterConsolidatedPathGroup {
   items: RecruiterConsolidatedPathItem[];
 }
 
-/** Section titles for recruiter checklist (relationship path). */
+/** @deprecated Legacy section titles — use DISPLAY_BUCKET_TITLE / recruiter buckets. */
 export const RECRUITER_PATH_SECTION_TITLE: Record<OnboardingPathGroup['groupId'], string> = {
   work_authorization: 'Work Authorization',
   forms_and_policies: 'Company Forms & Policies',
@@ -186,28 +293,19 @@ export const RECRUITER_PATH_SECTION_TITLE: Record<OnboardingPathGroup['groupId']
   internal_readiness: 'Your tasks',
 };
 
-const SECTION_ORDER: OnboardingPathGroup['groupId'][] = [
-  'work_authorization',
-  'forms_and_policies',
-  'payroll',
-  'screenings',
-  'assignment_requirements',
-  'internal_readiness',
-];
-
 /**
- * Flatten incoming groups, merge rows that describe the same requirement, re-bucket by display section.
- * Caller still runs per-row external-step merge (`mergeOnboardingPathRowsByExternalStepKey`) inside each section.
+ * Flatten relationship-path groups, merge duplicate rows, bucket into Onboarding sub-sections.
+ * Excludes assignment package rows and screening pipeline tasks (see rowExcludedFromOnboardingChecklist).
  */
 export function consolidateRecruiterOnboardingPathGroups(groups: OnboardingPathGroup[]): RecruiterConsolidatedPathGroup[] {
   const groupMap = new Map(groups.map((g) => [g.groupId, g]));
   const flat: EmploymentOnboardingRow[] = [];
-  for (const gid of SECTION_ORDER) {
+  for (const gid of ONBOARDING_CHECKLIST_SOURCE_ORDER) {
     const g = groupMap.get(gid);
-    if (g?.rows.length) flat.push(...g.rows);
-  }
-  for (const g of groups) {
-    if (!SECTION_ORDER.includes(g.groupId)) flat.push(...g.rows);
+    if (!g?.rows.length) continue;
+    for (const r of g.rows) {
+      if (!rowExcludedFromOnboardingChecklist(r)) flat.push(r);
+    }
   }
 
   const keyToRows = new Map<string, EmploymentOnboardingRow[]>();
@@ -230,26 +328,35 @@ export function consolidateRecruiterOnboardingPathGroups(groups: OnboardingPathG
         r.sourceType === 'pipeline_task' &&
         (r.actionableBy === 'recruiter' || r.owner === 'recruiter')
     );
-    return { row, mergedSources: bucket, internalTaskRow };
+    const draft: RecruiterConsolidatedPathItem = {
+      row,
+      mergedSources: bucket,
+      internalTaskRow,
+      isGating: false,
+    };
+    const subsection = recruiterOnboardingSubsectionForItem(draft);
+    draft.isGating =
+      subsection === 'recruiter_followup' && recruiterFollowUpIsGatingForConsolidatedItem(draft);
+    return draft;
   });
 
-  const bySection = new Map<OnboardingPathGroup['groupId'], RecruiterConsolidatedPathItem[]>();
+  const byBucket = new Map<RecruiterOnboardingDisplayBucketId, RecruiterConsolidatedPathItem[]>();
   for (const item of items) {
-    const gid = item.row.groupId;
-    if (!bySection.has(gid)) bySection.set(gid, []);
-    bySection.get(gid)!.push(item);
+    const b = recruiterOnboardingSubsectionForItem(item);
+    if (!byBucket.has(b)) byBucket.set(b, []);
+    byBucket.get(b)!.push(item);
   }
 
   const result: RecruiterConsolidatedPathGroup[] = [];
-  for (const gid of SECTION_ORDER) {
-    const list = bySection.get(gid);
+  for (const bid of DISPLAY_BUCKET_ORDER) {
+    const list = byBucket.get(bid);
     if (!list?.length) continue;
     const doneCount = list.filter((it) => isOnboardingPathRowDone(it.row.status)).length;
     const totalCount = list.length;
     const blockerCount = list.filter((it) => isOnboardingPathRowBlocker(it.row)).length;
     result.push({
-      groupId: gid,
-      title: RECRUITER_PATH_SECTION_TITLE[gid],
+      groupId: bid,
+      title: DISPLAY_BUCKET_TITLE[bid],
       doneCount,
       totalCount,
       blockerCount,

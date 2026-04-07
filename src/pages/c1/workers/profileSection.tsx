@@ -15,9 +15,10 @@ import {
   Typography,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import { doc, onSnapshot, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 
 import { db, auth } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -26,16 +27,20 @@ import WorkerBasicIdentityCard from '../../../components/worker/profile/WorkerBa
 import WorkEligibilityStep from '../../../components/apply/steps/WorkEligibilityStep';
 import { deriveWorkEligibilityFromAttestation } from '../../../types/workEligibility';
 import ResumeUpload from '../../../components/ResumeUpload';
+import BioStep from '../../../components/apply/steps/BioStep';
 import EducationStep from '../../../components/apply/steps/EducationStep';
 import WorkExperienceStep from '../../../components/apply/steps/WorkExperienceStep';
+import WorkerSkillsEditor from '../../../components/worker/profile/WorkerSkillsEditor';
 import { buildReadinessIntentWritePatch } from '../../../utils/workerReadinessWriteModel';
+import { openUserResumeInNewTab, pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
 
 type SectionKey =
   | 'personal-details'
-  | 'location'
   | 'work-authorization'
   | 'preferences'
   | 'resume'
+  | 'bio'
+  | 'skills'
   | 'certifications'
   | 'work-history'
   | 'education'
@@ -74,10 +79,6 @@ const SECTION_META: Record<SectionKey, { titleKey: string; descriptionKey: strin
     titleKey: 'profile.sectionPersonalDetailsTitle',
     descriptionKey: 'profile.sectionPersonalDetailsDescription',
   },
-  location: {
-    titleKey: 'profile.sectionLocationTitle',
-    descriptionKey: 'profile.sectionLocationDescription',
-  },
   'work-authorization': {
     titleKey: 'profile.sectionWorkAuthorizationTitle',
     descriptionKey: 'profile.sectionWorkAuthorizationDescription',
@@ -89,6 +90,14 @@ const SECTION_META: Record<SectionKey, { titleKey: string; descriptionKey: strin
   resume: {
     titleKey: 'profile.sectionResumeTitle',
     descriptionKey: 'profile.sectionResumeDescription',
+  },
+  bio: {
+    titleKey: 'profile.sectionBioTitle',
+    descriptionKey: 'profile.sectionBioDescription',
+  },
+  skills: {
+    titleKey: 'profile.sectionSkillsTitle',
+    descriptionKey: 'profile.sectionSkillsDescription',
   },
   certifications: {
     titleKey: 'profile.sectionCertificationsTitle',
@@ -129,7 +138,6 @@ const WorkerProfileSection: React.FC = () => {
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const [locationForm, setLocationForm] = useState({ city: '', state: '' });
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [industryPrefs, setIndustryPrefs] = useState<TargetIndustry[]>([]);
   const [schedulePrefs, setSchedulePrefs] = useState<ScheduleIntentOption[]>([]);
@@ -151,12 +159,6 @@ const WorkerProfileSection: React.FC = () => {
       }
       const data = snap.data() as Record<string, unknown>;
       setUserDoc(data);
-      const addressInfo = (data.addressInfo || {}) as Record<string, unknown>;
-      setLocationForm({
-        city: String(addressInfo.city || data.city || ''),
-        state: String(addressInfo.state || data.state || ''),
-      });
-
       const prefs = ((data.workerProfile || {}) as Record<string, unknown>).preferences as Record<string, unknown> | undefined;
       const industries = Array.isArray(prefs?.targetIndustries)
         ? prefs?.targetIndustries.map((v) => String(v || '').toLowerCase()).filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial')
@@ -199,6 +201,17 @@ const WorkerProfileSection: React.FC = () => {
   }, [uid]);
 
   const sectionMeta = SECTION_META[activeSection];
+
+  const resumeOnFile = useMemo(
+    () => (activeSection === 'resume' ? pickResumeFromUserDoc(userDoc) : null),
+    [activeSection, userDoc]
+  );
+
+  const skillsCount = useMemo(() => {
+    const s = userDoc?.skills;
+    if (!Array.isArray(s)) return 0;
+    return s.length;
+  }, [userDoc?.skills]);
 
   const workEligibilityValue = useMemo(() => {
     const a = userDoc?.workEligibilityAttestation as Record<string, unknown> | undefined;
@@ -246,27 +259,6 @@ const WorkerProfileSection: React.FC = () => {
     },
     [uid]
   );
-
-  const saveLocation = async () => {
-    if (!uid) return;
-    setSaveError(null);
-    setSaveMessage(null);
-    try {
-      await updateDoc(doc(db, 'users', uid), {
-        city: locationForm.city.trim(),
-        state: locationForm.state.trim(),
-        addressInfo: {
-          ...(((userDoc?.addressInfo || {}) as Record<string, unknown>) || {}),
-          city: locationForm.city.trim(),
-          state: locationForm.state.trim(),
-        },
-        updatedAt: serverTimestamp(),
-      });
-      setSaveMessage(t('profile.locationSaved'));
-    } catch {
-      setSaveError(t('profile.unableToSaveLocation'));
-    }
-  };
 
   const saveLanguages = async (languagesToSave = selectedLanguages) => {
     if (!uid) return;
@@ -389,6 +381,10 @@ const WorkerProfileSection: React.FC = () => {
     }
   };
 
+  if (normalizedSection === 'location') {
+    return <Navigate to="/c1/workers/profile/personal-details" replace />;
+  }
+
   if (!uid) {
     return (
       <Container maxWidth="md" sx={{ py: 2 }}>
@@ -423,8 +419,33 @@ const WorkerProfileSection: React.FC = () => {
               {t(sectionMeta.titleKey)}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              {t(sectionMeta.descriptionKey)}
+              {activeSection === 'skills' ? t('profile.workerSkillsPageHelper') : t(sectionMeta.descriptionKey)}
             </Typography>
+            {activeSection === 'skills' ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                {skillsCount === 0
+                  ? t('profile.skillsSummaryNone')
+                  : skillsCount === 1
+                    ? t('profile.skillsSummaryOne')
+                    : t('profile.skillsSummaryMany', { count: skillsCount })}
+              </Typography>
+            ) : null}
+            {activeSection === 'resume' && resumeOnFile ? (
+              <Stack spacing={1} sx={{ mt: 1.5 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Current resume: <strong>{resumeOnFile.fileName}</strong>
+                </Typography>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  startIcon={<VisibilityIcon />}
+                  onClick={() => openUserResumeInNewTab(resumeOnFile)}
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  View resume
+                </Button>
+              </Stack>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -438,30 +459,6 @@ const WorkerProfileSection: React.FC = () => {
             avatarUrl={String((userDoc?.workerProfile as Record<string, unknown> | undefined)?.photoUrl || userDoc?.avatar || avatarUrl || '')}
             onAvatarUpdated={setAvatarUrl}
           />
-        )}
-
-        {activeSection === 'location' && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-            <CardContent>
-              <Stack spacing={2}>
-                <TextField
-                  label={t('profile.city')}
-                  value={locationForm.city}
-                  onChange={(e) => setLocationForm((prev) => ({ ...prev, city: e.target.value }))}
-                  fullWidth
-                />
-                <TextField
-                  label={t('profile.state')}
-                  value={locationForm.state}
-                  onChange={(e) => setLocationForm((prev) => ({ ...prev, state: e.target.value }))}
-                  fullWidth
-                />
-                <Button variant="contained" onClick={saveLocation} sx={{ alignSelf: 'flex-start' }}>
-                  {t('profile.saveLocation')}
-                </Button>
-              </Stack>
-            </CardContent>
-          </Card>
         )}
 
         {activeSection === 'work-authorization' && (
@@ -517,8 +514,26 @@ const WorkerProfileSection: React.FC = () => {
             userId={uid}
             tenantId={typeof userDoc?.tenantId === 'string' ? userDoc.tenantId : undefined}
             compact
+            hideStoredResumeAlert
           />
         )}
+
+        {activeSection === 'bio' && (
+          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <CardContent>
+              <BioStep
+                value={{
+                  professionalBio: String(userDoc?.professionalBio ?? userDoc?.bio ?? ''),
+                  bio: String(userDoc?.bio ?? ''),
+                }}
+                onChange={() => {}}
+                hideIntro
+              />
+            </CardContent>
+          </Card>
+        )}
+
+        {activeSection === 'skills' && uid ? <WorkerSkillsEditor uid={uid} /> : null}
 
         {activeSection === 'certifications' && (
           <EducationStep

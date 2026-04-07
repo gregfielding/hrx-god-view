@@ -13,6 +13,7 @@ import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } 
 import { sendApplicationStatusChangedNotification } from './messaging/unifiedWorkerNotifications';
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
+import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -64,13 +65,19 @@ function applicationReceivedThanksDedupeSuffix(data: Record<string, any>): strin
 }
 
 function isSubmittedApplicationStatus(status: unknown): boolean {
-  return normalizeStringToken(status) === 'submitted';
+  return normalizeApplicationStatus(String(status ?? '')) === 'submitted';
 }
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
+
+/**
+ * When false, `onApplicationStatusChanged` sends nothing for status `waitlisted` (no SMS, email, push, or worker inbox title).
+ * Flip to true after waitlist notification bugs are resolved.
+ */
+const ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS = false;
 
 // Define secrets for Twilio (required for SMS sending)
 // SendGrid uses process.env (SENDGRID_API_KEY, etc.) - set in .env or Firebase config to avoid secret/env conflict
@@ -105,7 +112,7 @@ export const onApplicationCreated = onDocumentCreated(
     }
 
     // Application created with status 'accepted' = created by assignment flow (e.g. placementsCreateAssignments), not worker submit. Skip "thank you for applying" — assignment_created trigger will send the correct message.
-    if ((applicationData.status || '').toLowerCase() === 'accepted') {
+    if (normalizeApplicationStatus(String(applicationData.status ?? '')) === 'accepted') {
       logger.info(`Application ${applicationId} created with status accepted (assignment-driven), skipping application_received notification`);
       return { success: true };
     }
@@ -343,6 +350,13 @@ export const onApplicationStatusChanged = onDocumentUpdated(
       // When recruiter cancels assignment (Red X), application is reverted to submitted. Skip "Thank you for applying" — assignment_status_cancelled already sent the correct message.
       if (newStatus === 'submitted' && (after.statusChangeReason === 'assignment_cancelled' || after.revertedFromAssignmentCancel === true)) {
         logger.info(`Application ${applicationId} reverted to submitted due to assignment cancel - skipping application_received`);
+        return { success: true };
+      }
+
+      if (normalizeStringToken(String(newStatus)) === 'waitlisted' && !ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS) {
+        logger.info(
+          `Application ${applicationId}: waitlisted notifications globally paused (ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS=false); skipping all channels`
+        );
         return { success: true };
       }
 

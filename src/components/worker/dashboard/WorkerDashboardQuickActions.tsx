@@ -1,30 +1,28 @@
 /**
- * Worker Dashboard Quick Actions — compact quick-nav row.
- * Find Work | Assignments | Applications | Notifications | Profile
+ * Worker dashboard bottom nav — Find Work + My Profile only (mobile-first).
  */
 
 import React from 'react';
 import { Box, Link, Stack } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import WorkIcon from '@mui/icons-material/Work';
-import AssignmentIcon from '@mui/icons-material/Assignment';
-import ListAltIcon from '@mui/icons-material/ListAlt';
-import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import PersonIcon from '@mui/icons-material/Person';
 import { useT } from '../../../i18n';
 
 const ACTIONS = [
   { key: 'nav.findWork', to: '/c1/jobs-board', icon: <WorkIcon fontSize="small" /> },
-  { key: 'nav.myAssignments', to: '/c1/workers/assignments', icon: <AssignmentIcon fontSize="small" /> },
-  { key: 'nav.myApplications', to: '/c1/workers/applications', icon: <ListAltIcon fontSize="small" /> },
-  { key: 'nav.notifications', to: '/c1/workers/notifications', icon: <NotificationsNoneIcon fontSize="small" /> },
   { key: 'nav.myProfile', to: '/c1/workers/profile', icon: <PersonIcon fontSize="small" /> },
 ] as const;
 
 const WorkerDashboardQuickActions: React.FC = () => {
   const t = useT();
   return (
-    <Stack direction="row" flexWrap="wrap" gap={1.5} useFlexGap justifyContent="center">
+    <Stack
+      direction={{ xs: 'column', sm: 'row' }}
+      spacing={1}
+      useFlexGap
+      sx={{ justifyContent: { xs: 'stretch', sm: 'center' }, alignItems: 'stretch' }}
+    >
       {ACTIONS.map((a) => (
         <Link
           key={a.key}
@@ -34,18 +32,21 @@ const WorkerDashboardQuickActions: React.FC = () => {
           sx={{
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 0.75,
-            color: 'primary.main',
-            fontSize: '0.875rem',
-            fontWeight: 500,
-            textDecoration: 'none',
-            px: 1.5,
-            py: 1,
+            justifyContent: 'center',
+            gap: 1,
+            color: 'text.primary',
+            fontSize: '0.9375rem',
+            fontWeight: 600,
+            px: 2,
+            py: 1.25,
             borderRadius: 2,
-            '&:hover': { bgcolor: 'action.hover', color: 'primary.dark' },
+            border: '1px solid',
+            borderColor: 'divider',
+            bgcolor: 'background.paper',
+            '&:hover': { bgcolor: 'action.hover', borderColor: 'action.hover' },
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', color: 'inherit' }}>{a.icon}</Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', color: 'primary.main' }}>{a.icon}</Box>
           {t(a.key)}
         </Link>
       ))}

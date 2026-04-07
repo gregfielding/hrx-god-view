@@ -52,6 +52,7 @@ import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
+import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
 import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
 import { normalizeScoreSummary, formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
@@ -66,6 +67,8 @@ import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
 import UserEntityOnboardingStatusCell from '../components/tables/UserEntityOnboardingStatusCell';
 import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
+import { useActiveAssignmentUserIds } from '../hooks/useActiveAssignmentUserIds';
+import { getWorkStatusColumnDisplay } from '../utils/workStatusColumnDisplay';
 
 type SecurityLevel =
   | '0'
@@ -106,6 +109,7 @@ interface RecruiterUser {
   workerAttestations?: { eVerifyWillingness?: string };
   /** Firestore `resume` map — used for inline resume link in Person column */
   resume?: Record<string, unknown> | null;
+  addedToIndeedFlex?: boolean;
 }
 
 interface TenantUserGroup {
@@ -182,6 +186,7 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     comfortableEVerify: userData.comfortableEVerify,
     workerAttestations: userData.workerAttestations,
     resume: userData.resume ?? null,
+    addedToIndeedFlex: userData.addedToIndeedFlex === true,
   };
 }
 
@@ -519,22 +524,6 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           })
         );
 
-        // Phase2 job-linked applications path: tenants/{tenantId}/job_orders/{jobOrderId}/applications
-        await Promise.all(
-          jobOrderIds.map(async (jobOrderId) => {
-            try {
-              const subRef = collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'applications');
-              const snap = await getDocs(subRef);
-              snap.docs.forEach((d) => {
-                const id = extractUserId(d.data());
-                if (id) idSet.add(id);
-              });
-            } catch {
-              // ignore
-            }
-          })
-        );
-
         const myUserIds = Array.from(idSet);
         if (myUserIds.length === 0) {
           setUsers([]);
@@ -665,38 +654,6 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         return 'success';
       default:
         return 'default';
-    }
-  };
-
-  const getWorkStatusDisplay = (u: RecruiterUser): { label: string; color: 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info'; sx?: any } => {
-    const employeeInProgress = String(u.employeeOnboardStatus || '').toLowerCase() === 'in progress';
-    const contractorInProgress = String(u.contractorOnboardStatus || '').toLowerCase() === 'in progress';
-    if (employeeInProgress || contractorInProgress) {
-      const typeLabel =
-        String(u.onboardingType || '').toLowerCase() === 'contractor' || contractorInProgress
-          ? 'Contractor'
-          : 'Employee';
-      return {
-        label: `Onboarding (${typeLabel})`,
-        color: 'warning',
-        sx: { bgcolor: '#E4572E', color: '#FFFFFF' },
-      };
-    }
-
-    // Fall back to security-level-based lifecycle label
-    switch (u.securityLevel) {
-      case '4':
-        return { label: 'Hired', color: 'success' };
-      case '3':
-        return { label: 'Candidate', color: 'primary' };
-      case '2':
-        return { label: 'Applicant', color: 'info' };
-      case '1':
-        return { label: 'Dismissed', color: 'default' };
-      case '0':
-        return { label: 'Suspended', color: 'error' };
-      default:
-        return { label: u.securityLevel, color: 'default' };
     }
   };
 
@@ -897,6 +854,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     sortDirection,
     users,
   ]);
+
+  const filteredUserIdsForAssignments = useMemo(() => filteredUsers.map((u) => u.id), [filteredUsers]);
+  const activeAssignmentUserIds = useActiveAssignmentUserIds(tenantId, filteredUserIdsForAssignments);
+
+  const getWorkStatusDisplay = (u: RecruiterUser) =>
+    getWorkStatusColumnDisplay(u, { hasActiveAssignment: activeAssignmentUserIds.has(u.id) });
 
   const paginatedUsers = useMemo(() => {
     const start = page * rowsPerPage;
@@ -1546,6 +1509,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                             <UserTableResumeIcon user={user as unknown as Record<string, unknown>} />
                           </Box>
                         )}
+                        <UserTableIndeedFlexBadge user={user as unknown as Record<string, unknown>} />
                       </Box>
                     </Box>
                   </TableCell>

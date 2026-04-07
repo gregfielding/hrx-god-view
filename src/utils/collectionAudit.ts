@@ -127,7 +127,8 @@ export class CollectionAuditor {
       'recruiter_assignments',
       'recruiter_jobsBoardPosts',
       'jobOrders', // Legacy top-level
-      'jobBoardPosts',
+      'job_postings', // Canonical jobs board (see firestorePaths.jobPostings)
+      'jobBoardPosts', // Legacy name; may be empty if only job_postings is used
       'applications',
       'userGroups',
       'users',

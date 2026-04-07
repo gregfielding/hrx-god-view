@@ -3,17 +3,28 @@
  *
  * Single header with tabs: All Users | My Users | Invite Users | User Groups | Smart Groups | All Smart Groups | My Smart Groups.
  * Search (with Favorites) and, for User Groups, Create button are in the header, right-justified.
+ *
+ * Tab path + header search/favorites persist in sessionStorage so leaving the layout (e.g. opening
+ * /usergroups/:id) and returning via /users restores the prior list tab and filters.
  */
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Button } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
+import {
+  USERS_LAYOUT_TAB_CONFIG,
+  getActiveUsersTab,
+  loadUsersLayoutPersisted,
+  pathIsUsersListPath,
+  persistUsersLayout,
+  type UsersTab,
+} from '../utils/usersLayoutPersistence';
 
-export type UsersTab = 'all' | 'my' | 'invite-users' | 'user-groups' | 'smart-groups' | 'all-smart-groups' | 'my-smart-groups';
+export type { UsersTab };
 
 export interface UsersLayoutOutletContext {
   usersTab: UsersTab;
@@ -25,38 +36,33 @@ export interface UsersLayoutOutletContext {
   setOpenCreateGroupForm?: (value: boolean) => void;
 }
 
-const TAB_PATHS: { tab: UsersTab; path: string; label: string }[] = [
-  { tab: 'all', path: '/users/all', label: 'All Users' },
-  { tab: 'my', path: '/users/my', label: 'My Users' },
-  { tab: 'invite-users', path: '/users/invite-users', label: 'Invite Users' },
-  { tab: 'user-groups', path: '/users/user-groups', label: 'User Groups' },
-  { tab: 'smart-groups', path: '/users/smart-groups', label: 'Smart Groups' },
-  { tab: 'all-smart-groups', path: '/users/all-smart-groups', label: 'All Smart Groups' },
-  { tab: 'my-smart-groups', path: '/users/my-smart-groups', label: 'My Smart Groups' },
-];
-
-function getActiveTab(pathname: string): UsersTab {
-  if (pathname.includes('/users/user-groups')) return 'user-groups';
-  if (pathname.includes('/users/my-smart-groups')) return 'my-smart-groups';
-  if (pathname.includes('/users/all-smart-groups')) return 'all-smart-groups';
-  if (pathname.includes('/users/smart-groups')) return 'smart-groups';
-  if (pathname.includes('/users/invite-users')) return 'invite-users';
-  if (pathname.includes('/users/my')) return 'my';
-  if (pathname.includes('/users/all')) return 'all';
-  return 'all';
-}
-
 const UsersLayout: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const pathname = location.pathname;
-  const activeTab = getActiveTab(pathname);
+  const activeTab = getActiveUsersTab(pathname);
 
-  const [usersSearch, setUsersSearch] = useState('');
-  const [usersShowFavoritesOnly, setUsersShowFavoritesOnly] = useState(false);
-  const [groupsSearch, setGroupsSearch] = useState('');
-  const [groupsShowFavoritesOnly, setGroupsShowFavoritesOnly] = useState(false);
+  const persisted = loadUsersLayoutPersisted();
+  const [usersSearch, setUsersSearch] = useState(persisted.usersListSearch);
+  const [usersShowFavoritesOnly, setUsersShowFavoritesOnly] = useState(persisted.usersListFavoritesOnly);
+  const [groupsSearch, setGroupsSearch] = useState(persisted.userGroupsSearch);
+  const [groupsShowFavoritesOnly, setGroupsShowFavoritesOnly] = useState(persisted.userGroupsFavoritesOnly);
   const [openCreateGroupForm, setOpenCreateGroupForm] = useState(false);
+
+  useEffect(() => {
+    if (pathIsUsersListPath(pathname)) {
+      persistUsersLayout({ lastListPath: pathname });
+    }
+  }, [pathname]);
+
+  useEffect(() => {
+    persistUsersLayout({
+      usersListSearch: usersSearch,
+      usersListFavoritesOnly: usersShowFavoritesOnly,
+      userGroupsSearch: groupsSearch,
+      userGroupsFavoritesOnly: groupsShowFavoritesOnly,
+    });
+  }, [usersSearch, usersShowFavoritesOnly, groupsSearch, groupsShowFavoritesOnly]);
 
   const isUsersTab = activeTab === 'all' || activeTab === 'my';
   const isUserGroupsTab = activeTab === 'user-groups';
@@ -162,7 +168,7 @@ const UsersLayout: React.FC = () => {
         subtitle="All users, groups, and smart groups"
         filters={
           <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-            {TAB_PATHS.map(({ tab, path, label }) => {
+            {USERS_LAYOUT_TAB_CONFIG.map(({ tab, path, label }) => {
               const isActive = activeTab === tab;
               return (
                 <Button

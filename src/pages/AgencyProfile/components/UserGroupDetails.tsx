@@ -65,6 +65,7 @@ import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { TABLE_AVATAR_SIZE } from '../../../utils/uiConstants';
 import UserTableResumeIcon from '../../../components/tables/UserTableResumeIcon';
+import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
 import { normalizeScoreSummary } from '../../../utils/scoreSummary';
 import { calculateProfileScore } from '../../../utils/applicantScoring';
@@ -77,6 +78,8 @@ import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../../../components/EVerifyComfortChip';
 import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
+import { useActiveAssignmentUserIds } from '../../../hooks/useActiveAssignmentUserIds';
+import { getWorkStatusColumnDisplay } from '../../../utils/workStatusColumnDisplay';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
 
@@ -123,6 +126,8 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [avatarBusy, setAvatarBusy] = useState(false);
   const avatarFileInputRef = useRef<HTMLInputElement>(null);
   const lastSavedGroupMetaRef = useRef<{ title: string; description: string } | null>(null);
+
+  const activeAssignmentUserIds = useActiveAssignmentUserIds(tenantId, memberIds);
 
   // Check if we're accessing from the top-level usergroups page
   const isFromTopLevel = location.pathname.includes('/usergroups') || location.pathname === '/usergroups';
@@ -468,6 +473,26 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     return 2;
   };
 
+  const getWorkStatusDisplay = (u: any) =>
+    getWorkStatusColumnDisplay(u, { hasActiveAssignment: activeAssignmentUserIds.has(u.id) });
+
+  const getDisplaySkills = (u: any): string[] => {
+    const raw = u?.skills;
+    if (!Array.isArray(raw)) return [];
+    const out: string[] = [];
+    for (const item of raw) {
+      if (typeof item === 'string') {
+        const t = item.trim();
+        if (t) out.push(t);
+      } else if (item && typeof item === 'object') {
+        const t = String((item as any).name || (item as any).canonicalId || '').trim();
+        if (t) out.push(t);
+      }
+      if (out.length >= 8) break; // cap to avoid huge arrays
+    }
+    return out;
+  };
+
   const sortedMembers = [...members].sort((a: any, b: any) => {
     let cmp = 0;
     switch (membersSortBy) {
@@ -718,39 +743,6 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     });
   };
 
-  const getWorkStatusDisplay = (u: any): { label: string; color: 'default' | 'primary' | 'secondary' | 'success' | 'error' | 'warning' | 'info'; sx?: any } => {
-    const employeeInProgress = String(u.employeeOnboardStatus || '').toLowerCase() === 'in progress';
-    const contractorInProgress = String(u.contractorOnboardStatus || '').toLowerCase() === 'in progress';
-    if (employeeInProgress || contractorInProgress) {
-      const typeLabel =
-        String(u.onboardingType || '').toLowerCase() === 'contractor' || contractorInProgress
-          ? 'Contractor'
-          : 'Employee';
-      return {
-        label: `Onboarding (${typeLabel})`,
-        color: 'warning',
-        sx: { bgcolor: '#E4572E', color: '#FFFFFF' },
-      };
-    }
-
-    const sec = String(u.securityLevel ?? '0');
-
-    switch (sec) {
-      case '4':
-        return { label: 'Hired', color: 'success' };
-      case '3':
-        return { label: 'Candidate', color: 'primary' };
-      case '2':
-        return { label: 'Applicant', color: 'info' };
-      case '1':
-        return { label: 'Dismissed', color: 'default' };
-      case '0':
-        return { label: 'Suspended', color: 'error' };
-      default:
-        return { label: sec, color: 'default' };
-    }
-  };
-
   const renderAiScore = (u: any) => {
     const score =
       u?.scoreSummary?.aiScore ??
@@ -799,23 +791,6 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
         />
       </Tooltip>
     );
-  };
-
-  const getDisplaySkills = (u: any): string[] => {
-    const raw = u?.skills;
-    if (!Array.isArray(raw)) return [];
-    const out: string[] = [];
-    for (const item of raw) {
-      if (typeof item === 'string') {
-        const t = item.trim();
-        if (t) out.push(t);
-      } else if (item && typeof item === 'object') {
-        const t = String((item as any).name || (item as any).canonicalId || '').trim();
-        if (t) out.push(t);
-      }
-      if (out.length >= 8) break; // cap to avoid huge arrays
-    }
-    return out;
   };
 
   const noop = () => {
@@ -1333,6 +1308,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                                   </Typography>
                                   <UserTableResumeIcon user={u as Record<string, unknown>} />
                                 </Box>
+                                <UserTableIndeedFlexBadge user={u as Record<string, unknown>} />
                               </Box>
                             </Box>
                           </TableCell>

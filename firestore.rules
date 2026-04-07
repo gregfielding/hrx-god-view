@@ -369,6 +369,68 @@ service cloud.firestore {
         allow create, update, delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
       }
 
+      // I-9 supporting uploads metadata (Storage bytes: worker self-service + staff via signed URL callable only)
+      match /worker_i9_supporting_documents/{documentId} {
+        allow read: if request.auth != null && (
+          isHRX() ||
+          hasTenantRole(tenantId, request.auth.token.roles) ||
+          isAssignedToTenant(tenantId) ||
+          hasSecurityLevel(tenantId, 5) ||
+          resource.data.userId == request.auth.uid
+        );
+        // Pre-upload rows are created via callable (Admin SDK). Client-side: worker may create only with a real Storage path.
+        allow create: if request.auth != null &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.tenantId == tenantId &&
+          request.resource.data.storagePath.matches('^i9_docs/' + tenantId + '/' + request.auth.uid + '/.+');
+        allow update: if request.auth != null && (
+          (
+            resource.data.userId == request.auth.uid &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.tenantId == resource.data.tenantId &&
+            request.resource.data.reviewedBy == resource.data.reviewedBy &&
+            request.resource.data.reviewedAt == resource.data.reviewedAt &&
+            request.resource.data.rejectionReason == resource.data.rejectionReason &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'storagePath', 'status', 'uploadedAt', 'updatedAt', 'documentType',
+              'uploadedFileName', 'uploadedContentType',
+              'requestedForEntityId', 'requestedFromAssignmentId', 'lastUsedForEntityId', 'lastUsedAt'
+            ])
+          ) ||
+          (
+            resource.data.userId == request.auth.uid &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.tenantId == resource.data.tenantId &&
+            resource.data.status == 'rejected' &&
+            request.resource.data.status == 'pending_review' &&
+            request.resource.data.storagePath.matches('^i9_docs/' + tenantId + '/' + request.auth.uid + '/.+') &&
+            request.resource.data.rejectionReason == null &&
+            request.resource.data.reviewedBy == null &&
+            request.resource.data.reviewedAt == null &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'storagePath', 'status', 'uploadedAt', 'updatedAt', 'documentType',
+              'uploadedFileName', 'uploadedContentType',
+              'requestedForEntityId', 'requestedFromAssignmentId', 'lastUsedForEntityId', 'lastUsedAt',
+              'rejectionReason', 'reviewedAt', 'reviewedBy'
+            ])
+          ) ||
+          (
+            (isHRX() ||
+              hasTenantRole(tenantId, request.auth.token.roles) ||
+              isAssignedToTenant(tenantId) ||
+              hasSecurityLevel(tenantId, 5)) &&
+            request.resource.data.userId == resource.data.userId &&
+            request.resource.data.tenantId == resource.data.tenantId &&
+            request.resource.data.storagePath == resource.data.storagePath &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'reviewedAt', 'reviewedBy', 'rejectionReason', 'retainUntil',
+              'lastUsedForEntityId', 'lastUsedAt', 'updatedAt'
+            ])
+          )
+        );
+        allow delete: if request.auth != null && (isHRX() || isTenantAdmin(tenantId));
+      }
+
       // Worker payroll accounts (Employment tab) - same read as entity_employments
       match /worker_payroll_accounts/{accountId} {
         allow read: if request.auth != null && (
@@ -460,6 +522,15 @@ service cloud.firestore {
       allow read: if isAuthenticated() && hasCRMAccess() && belongsToSameTenant(resource.data);
       // Allow high-security-level users to update user profiles
       allow write: if isAuthenticated() && isHighSecurityLevel();
+      // Recruiters / tenant staff (security >= 4 in the target tenant) may set only `avatar` on
+      // another user's doc — matches UserProfile `canEditRecordAvatar` (storage already allows upload).
+      allow update: if isAuthenticated() &&
+        request.auth.uid != userId &&
+        (
+          (resource.data.activeTenantId != null && hasSecurityLevel(resource.data.activeTenantId, 4)) ||
+          (resource.data.activeTenantId == null && resource.data.tenantId != null && hasSecurityLevel(resource.data.tenantId, 4))
+        ) &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['avatar']);
       // Unified Association Service access for salespeople
       allow read: if isAuthenticated() && request.auth.uid != null;
       

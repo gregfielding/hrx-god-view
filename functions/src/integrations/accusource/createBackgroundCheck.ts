@@ -128,13 +128,32 @@ export async function createBackgroundCheckInternal(
   });
 
   try {
-    const providerPayload = buildPartialProfilePayload(input, clientId, backgroundCheckId);
+    let providerPayload;
+    try {
+      providerPayload = buildPartialProfilePayload(input, clientId, backgroundCheckId);
+    } catch (validationError: unknown) {
+      const msg =
+        validationError instanceof Error ? validationError.message : String(validationError);
+      await docRef.set(
+        {
+          hrxStatus: 'error',
+          syncError: msg,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      throw new HttpsError('invalid-argument', msg);
+    }
+
     const providerResponse = await accusourceClient.createPartialProfile(providerPayload);
     const parsed = parseProviderCreateResponse(providerResponse);
     const nextStatus = normalizeStatus(parsed.providerStatus);
 
     await docRef.set({
       providerProfileId: parsed.providerProfileId,
+      providerProfileNumber: parsed.providerProfileNumber,
+      providerSubjectId: parsed.providerSubjectId,
       providerClientId: parsed.providerClientId || clientId,
       applicantPortalLink: parsed.applicantPortalLink,
       providerStatus: parsed.providerStatus,
@@ -163,6 +182,17 @@ export async function createBackgroundCheckInternal(
       hasPortalLink: Boolean(parsed.applicantPortalLink),
       hrxClaim,
       productionValidationHrxOnlyActive,
+      /** Proof fields for sandbox / approval (no PII). */
+      requestedPackageId: input.requestedPackageId ?? null,
+      v2PackageIdSent: providerPayload.packageId,
+      v2AddonServiceIdsSent:
+        Array.isArray(providerPayload.orders) && providerPayload.orders.length > 0
+          ? providerPayload.orders.map((o) => o.serviceId)
+          : null,
+      clientIdSent: clientId,
+      providerProfileId: parsed.providerProfileId,
+      providerProfileNumber: parsed.providerProfileNumber,
+      providerSubjectId: parsed.providerSubjectId,
     });
 
     return {
@@ -174,8 +204,12 @@ export async function createBackgroundCheckInternal(
       applicantPortalLink: parsed.applicantPortalLink,
       hrxStatus: nextStatus,
     };
-  } catch (error: any) {
-    const message = error?.message || 'Failed to create SourceDirect partial profile.';
+  } catch (error: unknown) {
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+    const message =
+      error instanceof Error ? error.message : 'Failed to create SourceDirect partial profile.';
     accusourceLog('error', 'create', 'createPartialProfile failed', {
       callerUid: uid,
       backgroundCheckId,

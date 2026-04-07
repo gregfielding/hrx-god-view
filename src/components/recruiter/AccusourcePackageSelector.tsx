@@ -276,7 +276,7 @@ export const AccusourcePackageSelectorBase: React.FC<AccusourcePackageSelectorBa
               {...params}
               size="small"
               label="Additional services (optional)"
-              helperText="Uses exact service IDs from the synced catalog; sent as requestedServices on the order."
+              helperText="Exact service IDs from the synced catalog; sent to AccuSource as orders[].serviceId on create (with packageId)."
             />
           )}
         />
