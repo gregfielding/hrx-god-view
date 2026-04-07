@@ -15,12 +15,14 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n';
+import { C1_WORKER_SCREENING_PATH } from '../../constants/c1WorkerRoutes';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import PersonIcon from '@mui/icons-material/Person';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 
 const drawerWidth = 240;
 
@@ -28,6 +30,7 @@ const navConfig = [
   { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
   { key: 'nav.myProfile', path: '/c1/workers/profile', icon: <PersonIcon /> },
+  { key: 'nav.screening', path: C1_WORKER_SCREENING_PATH, icon: <VerifiedUserIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { key: 'nav.notifications', path: '/c1/workers/notifications', icon: <NotificationsNoneIcon /> },

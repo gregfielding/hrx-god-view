@@ -9,13 +9,8 @@ import {
 } from './i9SupportingDocumentCompletion';
 import { labelForI9SupportingDocumentType } from '../constants/i9SupportingDocumentUi';
 
-export type I9EmploymentDocsSubstatus =
-  | 'not_requested'
-  | 'upload_requested'
-  | 'under_review'
-  | 'action_needed'
-  | 'rejected'
-  | 'complete';
+/** Admin Employment I-9 block — system-driven model (no “not requested” / slot-request framing). */
+export type I9EmploymentDocsSubstatus = 'not_started' | 'under_review' | 'action_needed' | 'complete';
 
 function millisFromUnknown(value: unknown): number {
   if (value == null) return 0;
@@ -112,30 +107,16 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     substatus = 'complete';
   } else if (pendingReviewCount > 0) {
     substatus = 'under_review';
-  } else if (awaitingUploadCount > 0) {
-    substatus = 'upload_requested';
-  } else if (
-    rejectedCount > 0 &&
-    approvedCount > 0 &&
-    pendingReviewCount === 0 &&
-    !documentSetComplete
-  ) {
-    // C2: partial progress — avoid global "Rejected" when another row is already approved.
-    substatus = 'action_needed';
   } else if (rejectedCount > 0) {
-    substatus = 'rejected';
-  } else if (requestCount === 0) {
-    substatus = 'not_requested';
+    substatus = 'action_needed';
   } else {
-    substatus = 'under_review';
+    substatus = 'not_started';
   }
 
   const substatusLabels: Record<I9EmploymentDocsSubstatus, string> = {
-    not_requested: 'Not requested',
-    upload_requested: 'Upload requested',
+    not_started: 'Not started',
     under_review: 'Under review',
     action_needed: 'Action needed',
-    rejected: 'Rejected',
     complete: 'Complete',
   };
 

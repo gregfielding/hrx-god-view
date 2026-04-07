@@ -18,6 +18,7 @@ import {
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WorkIcon from '@mui/icons-material/Work';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
@@ -30,6 +31,7 @@ import { useWorkerI9SupportingDocumentsRows } from '../../../hooks/useWorkerI9Su
 import { buildI9SupportingDocumentsEmploymentViewModel } from '../../../utils/i9SupportingDocumentsViewModel';
 import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmploymentListRowModel';
 import { filterI9RowsForEntityEmployment } from '../../../utils/workerEmploymentWorkerSurface';
+import { C1_WORKER_SCREENING_PATH } from '../../../constants/c1WorkerRoutes';
 
 const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, logout, tenantId: authTenantId, activeTenant } = useAuth();
@@ -342,6 +344,27 @@ const WorkerProfile: React.FC = () => {
             )}
           </CardContent>
         </Card>
+
+        {tenantId ? (
+          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <CardContent sx={{ p: 0 }}>
+              <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Screening</Typography>
+              <Divider />
+              <List disablePadding>
+                <ListItemButton onClick={() => navigate(C1_WORKER_SCREENING_PATH)}>
+                  <ListItemIcon sx={{ minWidth: 40 }}>
+                    <VerifiedUserIcon sx={{ color: 'text.secondary', fontSize: 22 }} />
+                  </ListItemIcon>
+                  <ListItemText
+                    primary="Screening status"
+                    secondary="Background checks, drug screen, and verification — not payroll or I-9."
+                  />
+                  <ChevronRightIcon color="action" />
+                </ListItemButton>
+              </List>
+            </CardContent>
+          </Card>
+        ) : null}
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>

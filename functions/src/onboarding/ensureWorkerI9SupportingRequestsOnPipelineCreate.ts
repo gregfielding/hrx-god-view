@@ -79,6 +79,35 @@ export async function ensureWorkerI9SupportingRequestsOnPipelineCreate(args: {
   }
 
   const eid = String(entityId || "").trim();
+  const result = await ensureListBandCI9RowsForEntityIfEmpty({
+    tenantId,
+    userId,
+    entityId: eid,
+    createdByUid: SYSTEM_I9_REQUEST_ACTOR,
+    assignmentId: assignmentId ?? null,
+    logContext: { pipelineId, source: "worker_onboarding_pipeline" },
+  });
+  return result;
+}
+
+/**
+ * Idempotent: create default List B + List C awaiting_upload rows for one entity if none exist yet.
+ * Used by pipeline start and worker self-serve on entity employment page.
+ */
+export async function ensureListBandCI9RowsForEntityIfEmpty(args: {
+  tenantId: string;
+  userId: string;
+  entityId: string;
+  createdByUid: string;
+  assignmentId?: string | null;
+  logContext?: { pipelineId?: string; source: string };
+}): Promise<EnsureWorkerI9SupportingRequestsResult> {
+  const { tenantId, userId, entityId, createdByUid, assignmentId, logContext } = args;
+  const eid = String(entityId || "").trim();
+  if (!eid) {
+    return { skipped: true, reason: "missing_entity_id" };
+  }
+
   const col = db.collection(`tenants/${tenantId}/worker_i9_supporting_documents`);
   const existing = await col.where("userId", "==", userId).get();
   const forEntity = existing.docs.filter((d) => String(d.data()?.requestedForEntityId || "").trim() === eid);
@@ -107,7 +136,7 @@ export async function ensureWorkerI9SupportingRequestsOnPipelineCreate(args: {
       reviewedBy: null,
       rejectionReason: null,
       retainUntil: null,
-      createdByUid: SYSTEM_I9_REQUEST_ACTOR,
+      createdByUid: createdByUid,
       createdAt: now,
       updatedAt: now,
       requestedForEntityId: eid,
@@ -117,12 +146,13 @@ export async function ensureWorkerI9SupportingRequestsOnPipelineCreate(args: {
 
   await batch.commit();
 
-  logger.info("i9_supporting_document.auto_requests_created", {
+  logger.info("i9_supporting_document.list_b_c_requests_created", {
     tenantId,
     userId,
-    pipelineId,
     entityId: eid,
     documentIds: ids,
+    source: logContext?.source,
+    pipelineId: logContext?.pipelineId,
   });
 
   return { skipped: false, documentIds: ids };

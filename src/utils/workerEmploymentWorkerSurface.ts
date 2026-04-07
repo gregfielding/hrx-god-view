@@ -48,14 +48,10 @@ export type WorkerI9AttentionHint = 'none' | 'upload' | 'under_review' | 'reject
 
 export function i9SubstatusToWorkerHint(sub: I9EmploymentDocsSubstatus): WorkerI9AttentionHint {
   switch (sub) {
-    case 'not_requested':
-      return 'none';
-    case 'upload_requested':
+    case 'not_started':
       return 'upload';
     case 'under_review':
       return 'under_review';
-    case 'rejected':
-      return 'rejected';
     case 'action_needed':
       return 'action_needed';
     case 'complete':
@@ -74,8 +70,11 @@ export function workerEmploymentHubNextStepLine(args: {
 }): string | null {
   const { headerState, i9Hint, hasOpenOnboardingDemand, pipelineSummary } = args;
 
-  if (i9Hint === 'upload' || i9Hint === 'action_needed') {
+  if (i9Hint === 'upload') {
     return 'Upload I-9 documents';
+  }
+  if (i9Hint === 'action_needed') {
+    return 'Finish or replace I-9 documents';
   }
   if (i9Hint === 'rejected') {
     return 'Replace a rejected I-9 document';

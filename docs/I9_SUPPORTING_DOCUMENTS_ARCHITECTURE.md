@@ -95,6 +95,7 @@ Updates to “last used” should be **non-destructive** patches; they do not ch
 | Callable | Role |
 |----------|------|
 | `createWorkerI9SupportingDocumentRequest` | Staff (`canManageOnboarding`): creates metadata with `status: awaiting_upload`, `storagePath: ''`, timestamps; logs `i9_supporting_document.request_created`. **Client admin create in Firestore is disabled** — use this or Admin SDK. |
+| `ensureWorkerI9SlotsForMyEmploymentRecord` | **Worker** (callable): `tenantId` + `employmentRecordId` (`entity_employments` doc id). Verifies the employment belongs to `request.auth.uid`, skips Events/1099, then idempotently creates the same List B + List C rows as pipeline auto-create (`ensureListBandCI9RowsForEntityIfEmpty`). Used from the worker entity employment I-9 card when slots are missing. |
 | `reviewWorkerI9SupportingDocument` | Staff: `decision: approved \| rejected`; rejection requires `rejectionReason`. Cannot approve if `storagePath` is still empty. Logs `i9_supporting_document.review_*`. |
 | `getI9SupportingDocumentSignedUrl` | Worker self or staff: fails with `failed-precondition` if no file yet. |
 

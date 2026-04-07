@@ -70,6 +70,7 @@ import {
 } from './backgroundsComplianceModel';
 import { EVERIFY_SELECT_PERM_HINT } from './StartEverifySelectDialog';
 import I9SupportingDocumentsSection from '../../../components/i9SupportingDocuments/I9SupportingDocumentsSection';
+import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointerAlert';
 
 const PAGE_LIMIT = 100;
 
@@ -101,6 +102,8 @@ export interface BackgroundsComplianceTabProps {
   tenantId: string | null;
   /** When set (e.g. from staff onboarding queue deep link), row scrolls into view and is highlighted briefly. */
   highlightScreeningRowId?: string | null;
+  /** Worker self: jump to Employment for payroll / I-9 ownership. */
+  onNavigateToProfileTab?: (tabLabel: string) => void;
 }
 
 const ACCUSOURCE_PERM_HINT =
@@ -110,6 +113,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   uid,
   tenantId,
   highlightScreeningRowId = null,
+  onNavigateToProfileTab,
 }) => {
   const { user, isHRX, claimsRoles } = useAuth();
   const [viewerUserDoc, setViewerUserDoc] = useState<Record<string, unknown> | null | undefined>(undefined);
@@ -187,6 +191,10 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
     if (viewerUserDoc === undefined) return false;
     return canAccusourceAdminFromUserDoc(viewerUserDoc, tenantId);
   }, [viewerUserDoc, tenantId]);
+
+  const viewerIsProfileSubject = Boolean(user?.uid && uid && user.uid === uid);
+  const showEmploymentPointer =
+    viewerIsProfileSubject && Boolean(onNavigateToProfileTab) && userEmploymentsSnapshot.length > 0;
 
   const previewPackageNotInCatalog = useMemo(() => {
     const id = resolvedPreview?.merged.packageId?.trim();
@@ -522,6 +530,12 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
 
   return (
     <Stack spacing={2} sx={{ p: 2 }}>
+      {showEmploymentPointer && onNavigateToProfileTab ? (
+        <ProfileTabPointerAlert
+          message="Payroll setup and I-9 documents are in Employment."
+          onNavigate={() => onNavigateToProfileTab('Employment')}
+        />
+      ) : null}
       <Alert severity="info" variant="outlined">
         <Typography variant="body2" component="div" sx={{ lineHeight: 1.45 }}>
           This tab is the <strong>screening record</strong> surface (orders, PDFs, E-Verify / I-9 context). It does not
@@ -534,12 +548,16 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         on the case if needed). Data loads from Firestore; actions use server functions only.
       </Typography>
 
-      <Typography variant="caption" color="text.secondary" display="block">
-        Primary I-9 supporting document requests and uploads live on the <strong>Employment</strong> tab. This section is
-        the full audit trail and review surface.
-      </Typography>
+      {!viewerIsProfileSubject ? (
+        <Typography variant="caption" color="text.secondary" display="block">
+          Primary I-9 supporting document requests and uploads live on the <strong>Employment</strong> tab. This section is
+          the full audit trail and review surface.
+        </Typography>
+      ) : null}
 
-      <I9SupportingDocumentsSection tenantId={tenantId} workerUserId={uid} />
+      {!viewerIsProfileSubject ? (
+        <I9SupportingDocumentsSection tenantId={tenantId} workerUserId={uid} />
+      ) : null}
 
       {error && (
         <Alert severity="error" onClose={() => setError(null)}>

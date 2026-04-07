@@ -3,6 +3,7 @@ import { Box, Divider, Drawer, IconButton, Typography } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import I9SupportingDocumentsWorkspace from './I9SupportingDocumentsWorkspace';
 import type { I9SupportingDocRow } from '../../hooks/useWorkerI9SupportingDocumentsRows';
+import { I9_DRAWER_REVIEW_HELPER } from '../../constants/i9SupportingDocumentsEmploymentStrings';
 
 export interface I9SupportingDocumentsDetailDrawerProps {
   open: boolean;
@@ -13,6 +14,7 @@ export interface I9SupportingDocumentsDetailDrawerProps {
   loading: boolean;
   error: string | null;
   requestedForEntityId?: string | null;
+  employmentEntityKey?: string | null;
 }
 
 const I9SupportingDocumentsDetailDrawer: React.FC<I9SupportingDocumentsDetailDrawerProps> = ({
@@ -24,6 +26,7 @@ const I9SupportingDocumentsDetailDrawer: React.FC<I9SupportingDocumentsDetailDra
   loading,
   error,
   requestedForEntityId,
+  employmentEntityKey,
 }) => {
   return (
     <Drawer
@@ -44,7 +47,7 @@ const I9SupportingDocumentsDetailDrawer: React.FC<I9SupportingDocumentsDetailDra
           </IconButton>
         </Box>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.5 }}>
-          Open, approve, or reject uploads. New requests are created from the Employment tab (I-9 supporting documents).
+          {I9_DRAWER_REVIEW_HELPER}
         </Typography>
         <Divider sx={{ mb: 2 }} />
         <I9SupportingDocumentsWorkspace
@@ -55,6 +58,7 @@ const I9SupportingDocumentsDetailDrawer: React.FC<I9SupportingDocumentsDetailDra
           externalLoading={loading}
           externalError={error}
           requestedForEntityId={requestedForEntityId}
+          employmentEntityKey={employmentEntityKey}
           showPageIntro={false}
           suppressStaffRequestButton
         />

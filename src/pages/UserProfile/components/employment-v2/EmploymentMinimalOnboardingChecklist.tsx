@@ -32,6 +32,7 @@ import { EmploymentOnboardingPathRowAction } from './EmploymentOnboardingPathRow
 import ExternalOnboardingVerificationControls from './ExternalOnboardingVerificationControls';
 import type { ExternalOnboardingStepKey } from '../../../../types/externalOnboardingSteps';
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
+import ProfileTabPointerAlert from '../../../../components/profile/ProfileTabPointerAlert';
 
 const resendPayrollInvite = httpsCallable<
   {
@@ -127,12 +128,19 @@ export interface EmploymentMinimalOnboardingChecklistProps {
   workAuthorizedStatus: WorkAuthorizedStatus;
   workAuthorizationAttestedAt?: unknown | null;
   employmentI9SectionFlash?: boolean;
-  onNavigateToProfileTab?: (tabLabel: string) => void;
   onOpenWorkerNotificationComposer?: (args: {
     channel: 'sms' | 'email';
     body: string;
     subject?: string;
   }) => void;
+  onSendWorkerNotificationDirect?: (args: {
+    channel: 'sms' | 'email';
+    body: string;
+    subject?: string;
+  }) => void | Promise<void>;
+  /** Worker self + screening open → one-line jump to Backgrounds (no duplicated checklist). */
+  showScreeningToBackgroundsPointer?: boolean;
+  onNavigateToProfileTab?: (tabLabel: string) => void;
 }
 
 const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboardingChecklistProps> = ({
@@ -145,8 +153,10 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   workAuthorizedStatus,
   workAuthorizationAttestedAt,
   employmentI9SectionFlash = false,
-  onNavigateToProfileTab,
   onOpenWorkerNotificationComposer,
+  onSendWorkerNotificationDirect,
+  showScreeningToBackgroundsPointer = false,
+  onNavigateToProfileTab,
 }) => {
   const theme = useTheme();
   const [payrollBusy, setPayrollBusy] = useState(false);
@@ -202,7 +212,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   const showI9 = overview.workerType !== '1099';
   const taxExternalStepKey: ExternalOnboardingStepKey =
     overview.workerType === '1099' ? 'contractor_tax_form_w9' : 'tax_withholding_forms';
-  /** Recruiter can mark TempWorks-linked external steps complete (same gate for tax, handbook, policies, DD). */
+  /** Recruiter can mark externally linked HRIS steps complete (same gate for tax, handbook, policies, DD). */
   const showManualExternalStepVerify = actionContext.viewer === 'recruiter' && !historical;
   const showEverify =
     entityKey === 'select' &&
@@ -282,7 +292,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
       sx={{ mt: 0 }}
     >
       <ChecklistSection title="Payroll setup">
-        <Stack spacing={1}>
+        <Stack spacing={1.25}>
           {showPayrollResend ? (
             <Button
               variant="contained"
@@ -291,7 +301,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
               onClick={() => void handlePayrollResend()}
               sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
             >
-              {payrollBusy ? 'Sending…' : 'Resend payroll invite'}
+              {payrollBusy ? 'Sending…' : 'Resend payroll setup'}
             </Button>
           ) : null}
           {payrollErr ? (
@@ -302,6 +312,18 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
           <Typography variant="caption" color="text.secondary" display="block">
             {lastInviteSent ? `Last sent: ${formatChecklistTimestamp(lastInviteSent)}` : 'Last sent: —'}
           </Typography>
+          {showManualExternalStepVerify ? (
+            <ExternalOnboardingVerificationControls
+              ctx={actionContext}
+              entityKey={entityKey}
+              stepKey="direct_deposit"
+              workerOnboarding={overview.workerOnboarding ?? undefined}
+              onComplete={onRefresh}
+              suppress={false}
+            />
+          ) : (
+            <ChecklistLine label="Direct deposit completed" item={directDeposit} />
+          )}
         </Stack>
       </ChecklistSection>
 
@@ -320,6 +342,14 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
             : 'transparent',
         }}
       >
+        {showScreeningToBackgroundsPointer && onNavigateToProfileTab ? (
+          <Box sx={{ mb: 1.5 }}>
+            <ProfileTabPointerAlert
+              message="You have screening steps to complete. Go to Backgrounds & compliance."
+              onNavigate={() => onNavigateToProfileTab('Backgrounds')}
+            />
+          </Box>
+        ) : null}
         <ChecklistSection title="Tax and identity">
         <Stack spacing={1.25}>
           {employmentI9SectionFlash && showI9 && !i9.completed ? (
@@ -366,9 +396,12 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
             tenantId={tenantId}
             profileUserId={profileUserId}
             requestedForEntityId={hiringEntityId || null}
+            employmentEntityKey={entityKey}
+            workerEmploymentRecordId={overview.entityEmployment?.id?.trim() || `${profileUserId}__${entityKey}`}
+            hiringEntityDisplayName={overview.headerEntityName?.trim() || undefined}
             onRefresh={onRefresh}
             onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}
-            onNavigateToProfileTab={onNavigateToProfileTab}
+            onSendWorkerNotificationDirect={onSendWorkerNotificationDirect}
           />
         ) : null}
       </Box>
@@ -483,21 +516,6 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
             <ChecklistLine label="Policies signed" item={policies} />
           )}
         </Stack>
-      </ChecklistSection>
-
-      <ChecklistSection title="Payroll">
-        {showManualExternalStepVerify ? (
-          <ExternalOnboardingVerificationControls
-            ctx={actionContext}
-            entityKey={entityKey}
-            stepKey="direct_deposit"
-            workerOnboarding={overview.workerOnboarding ?? undefined}
-            onComplete={onRefresh}
-            suppress={false}
-          />
-        ) : (
-          <ChecklistLine label="Direct deposit completed" item={directDeposit} />
-        )}
       </ChecklistSection>
     </Stack>
   );

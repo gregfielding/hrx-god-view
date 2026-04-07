@@ -20,6 +20,8 @@ import WorkerReadinessBanner from './WorkerReadinessBanner';
 export interface EmploymentV2TabProps {
   uid: string;
   tenantId: string | null;
+  /** Switch profile tabs without a full navigation (worker cross-links). */
+  onNavigateToProfileTab?: (tabLabel: string) => void;
   /** Admin profile: worker name for third-person “who is handling this” labels. */
   workerDisplayName?: string | null;
   /** Security level ≥ 4 / recruiter tooling — enables on-call labor pool hire. */
@@ -29,24 +31,29 @@ export interface EmploymentV2TabProps {
   workAuthorizationAttestedAt?: unknown | null;
   /** Brief highlight on Tax & identity / I-9 (Readiness deep-link). */
   employmentI9SectionFlash?: boolean;
-  onNavigateToProfileTab?: (tabLabel: string) => void;
   onOpenWorkerNotificationComposer?: (args: {
     channel: 'sms' | 'email';
     body: string;
     subject?: string;
   }) => void;
+  onSendWorkerNotificationDirect?: (args: {
+    channel: 'sms' | 'email';
+    body: string;
+    subject?: string;
+  }) => void | Promise<void>;
 }
 
 function EmploymentV2Tab({
   uid,
   tenantId,
+  onNavigateToProfileTab,
   allowStartOnCallEmployment,
   workerDisplayName,
   workAuthorizedStatus,
   workAuthorizationAttestedAt,
   employmentI9SectionFlash = false,
-  onNavigateToProfileTab,
   onOpenWorkerNotificationComposer,
+  onSendWorkerNotificationDirect,
 }: EmploymentV2TabProps) {
   const [entityKey, setEntityKey] = useState<EmploymentEntityKey>('select');
   const [onCallOpen, setOnCallOpen] = useState(false);
@@ -54,7 +61,8 @@ function EmploymentV2Tab({
     targetEntity: EmploymentEntityKey;
     elementId: string;
   } | null>(null);
-  const { activeTenant } = useAuth();
+  const { activeTenant, user } = useAuth();
+  const viewerKind = user?.uid === uid ? ('worker' as const) : ('recruiter' as const);
   const tenantSlug =
     activeTenant && typeof activeTenant.slug === 'string' && activeTenant.slug.trim() !== ''
       ? activeTenant.slug.trim()
@@ -162,13 +170,15 @@ function EmploymentV2Tab({
             profileUserId={uid}
             tenantId={tenantId}
             tenantSlug={tenantSlug}
+            viewerKind={viewerKind}
+            onNavigateToProfileTab={onNavigateToProfileTab}
             onRefresh={refetch}
             workerDisplayName={workerDisplayName}
             workAuthorizedStatus={workAuthorizedStatus}
             workAuthorizationAttestedAt={workAuthorizationAttestedAt}
             employmentI9SectionFlash={employmentI9SectionFlash}
-            onNavigateToProfileTab={onNavigateToProfileTab}
             onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}
+            onSendWorkerNotificationDirect={onSendWorkerNotificationDirect}
           />
 
           {/*

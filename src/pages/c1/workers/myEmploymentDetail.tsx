@@ -86,6 +86,11 @@ import {
   workerPathCoversWorkAuthRows,
   type WorkerOnboardingBucketId,
 } from '../../../utils/workerOnboardingPathPresentation';
+import { useEntityEmploymentOverview } from '../../../hooks/useEntityEmploymentOverview';
+import EmploymentWorkerEmploymentHub from '../../UserProfile/components/employment-v2/EmploymentWorkerEmploymentHub';
+import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointerAlert';
+import { workerEmploymentShouldShowScreeningPointerAlert } from '../../../utils/workerEmploymentBackgroundsCrossLink';
+import { C1_WORKER_SCREENING_PATH } from '../../../constants/c1WorkerRoutes';
 
 interface EmploymentRecord {
   id: string;
@@ -103,6 +108,8 @@ interface EmploymentRecord {
   backgroundRequired?: boolean;
   drugScreenRequired?: boolean;
   employmentEntryMode?: string | null;
+  /** Denormalized from onboarding engine; aligns with Employment V2 `onboardingComplete`. */
+  onboardingComplete?: boolean;
 }
 
 const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]> = {
@@ -112,7 +119,7 @@ const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]>
   completed: [],
 };
 
-/** Entity-level TempWorks URLs: setup (`onboardingUrl`) vs login portal (`portalUrl`). */
+/** Entity-level payroll URLs: first-time setup vs returning worker portal. */
 const WorkerEntityPayrollLinkButtons: React.FC<{
   payrollSignupUrl: string | null;
   payrollPortalLoginUrl: string | null;
@@ -140,7 +147,7 @@ const WorkerEntityPayrollLinkButtons: React.FC<{
           rel="noopener noreferrer"
           component="a"
         >
-          Open payroll setup
+          Payroll setup
         </Button>
       ) : null}
       {loginWhileOnboardingHref ? (
@@ -153,7 +160,7 @@ const WorkerEntityPayrollLinkButtons: React.FC<{
           rel="noopener noreferrer"
           component="a"
         >
-          Already started? Sign in
+          View payroll
         </Button>
       ) : null}
       {portalAfterCompleteHref ? (
@@ -166,7 +173,7 @@ const WorkerEntityPayrollLinkButtons: React.FC<{
           rel="noopener noreferrer"
           component="a"
         >
-          Open payroll portal
+          View payroll
         </Button>
       ) : null}
     </Stack>
@@ -409,10 +416,15 @@ const MyEmploymentDetailPage: React.FC = () => {
   const tenantId = authTenantId || activeTenant?.id || null;
   const uid = user?.uid ?? null;
 
+  const { byEntityKey, loading: overviewLoading, refetch: refetchOverview } = useEntityEmploymentOverview({
+    userId: uid ?? undefined,
+    tenantId,
+  });
+
   const [loading, setLoading] = useState(true);
   const [employment, setEmployment] = useState<EmploymentRecord | null>(null);
   const [payrollAccount, setPayrollAccount] = useState<{ status: string; id: string } | null>(null);
-  /** Entity TempWorks first-time setup URL (`payrollSettings.onboardingUrl`). */
+  /** Entity payroll first-time setup URL (`payrollSettings.onboardingUrl`). */
   const [payrollSignupUrl, setPayrollSignupUrl] = useState<string | null>(null);
   /** Entity login / pay history URL (`payrollSettings.portalUrl`). */
   const [payrollPortalLoginUrl, setPayrollPortalLoginUrl] = useState<string | null>(null);
@@ -678,6 +690,16 @@ const MyEmploymentDetailPage: React.FC = () => {
     });
   }, [employment, headerPathCtx]);
 
+  const normalizedEntityKey = useMemo(() => {
+    if (!employment?.entityKey) return null;
+    return normalizeEntityKey(employment.entityKey);
+  }, [employment]);
+
+  const entityOverview = useMemo(() => {
+    if (!normalizedEntityKey) return null;
+    return byEntityKey[normalizedEntityKey] ?? null;
+  }, [byEntityKey, normalizedEntityKey]);
+
   const pathCoversPayroll = workerPathCoversPayrollRow(onboardingPathFlatRaw);
   const pathCoversWorkAuth = workerPathCoversWorkAuthRows(onboardingPathFlatRaw);
 
@@ -750,8 +772,21 @@ const MyEmploymentDetailPage: React.FC = () => {
     not_ready: 'Some items need to be completed',
   };
 
-  const showOnboardingPath = workerBuckets !== null && (isOnboarding || allPathRows.length > 0);
-  const showPayrollCard = Boolean(payrollAccount || hasEntityPayrollLinks || pathCoversPayroll);
+  const showWorkerEmploymentHub =
+    Boolean(normalizedEntityKey && entityOverview?.onboardingComplete) && !overviewLoading;
+
+  const showOnboardingScreeningPointer =
+    !showWorkerEmploymentHub &&
+    Boolean(
+      entityOverview &&
+        entityOverview.hasOpenOnboardingDemand &&
+        workerEmploymentShouldShowScreeningPointerAlert(entityOverview),
+    );
+
+  const showOnboardingPath =
+    !showWorkerEmploymentHub && workerBuckets !== null && (isOnboarding || allPathRows.length > 0);
+  const showPayrollCard =
+    !showWorkerEmploymentHub && Boolean(payrollAccount || hasEntityPayrollLinks || pathCoversPayroll);
   const payrollSetupDisplayLabel = workerPayrollSetupStatusLabel(payrollAccount?.status);
 
   return (
@@ -828,19 +863,38 @@ const MyEmploymentDetailPage: React.FC = () => {
           </CardContent>
         </Card>
 
-        {pathLoading && (
+        {showWorkerEmploymentHub && normalizedEntityKey && entityOverview ? (
+          <EmploymentWorkerEmploymentHub
+            entityKey={normalizedEntityKey}
+            overview={entityOverview}
+            tenantId={tenantId}
+            profileUserId={uid}
+            screeningPointerMessage="You have screening steps to complete. Go to Screening."
+            onNavigateToScreening={() => navigate(C1_WORKER_SCREENING_PATH)}
+            onRefresh={() => refetchOverview()}
+          />
+        ) : null}
+
+        {!showWorkerEmploymentHub && pathLoading && (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
             <CircularProgress size={22} />
           </Box>
         )}
 
-        {showOnboardingPath && workerBuckets && allPathRows.length === 0 && isOnboarding && (
+        {!showWorkerEmploymentHub && showOnboardingScreeningPointer ? (
+          <ProfileTabPointerAlert
+            message="You have screening steps to complete. Go to Screening."
+            onNavigate={() => navigate(C1_WORKER_SCREENING_PATH)}
+          />
+        ) : null}
+
+        {!showWorkerEmploymentHub && showOnboardingPath && workerBuckets && allPathRows.length === 0 && isOnboarding && (
           <Alert severity="info" variant="outlined">
             Your hiring team is still setting up your checklist. Check back soon.
           </Alert>
         )}
 
-        {showOnboardingPath && workerBuckets && (
+        {!showWorkerEmploymentHub && showOnboardingPath && workerBuckets && (
           <>
             {pathRelationshipHistorical ? (
               <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
@@ -857,17 +911,20 @@ const MyEmploymentDetailPage: React.FC = () => {
           </>
         )}
 
-        {tenantId &&
+        {!showWorkerEmploymentHub &&
+        tenantId &&
         uid &&
         !workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(employment.entityKey) ? (
           <WorkerEntityI9Section
             tenantId={tenantId}
             workerUserId={uid}
+            employmentRecordId={employment.id}
+            employmentEntityKey={employment.entityKey}
             requestedForEntityId={employment.entityId ?? null}
           />
         ) : null}
 
-        {showOnboardingPath && workerBuckets && (
+        {!showWorkerEmploymentHub && showOnboardingPath && workerBuckets && (
           <>
             <WorkerBucketCard
               title={pathRelationshipHistorical ? 'Record: previously with your hiring team' : 'Waiting on your hiring team'}
@@ -907,7 +964,7 @@ const MyEmploymentDetailPage: React.FC = () => {
           </>
         )}
 
-        {showPayrollCard && (
+        {!showWorkerEmploymentHub && showPayrollCard && (
           <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
             <CardContent>
               <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
@@ -938,7 +995,7 @@ const MyEmploymentDetailPage: React.FC = () => {
           </Card>
         )}
 
-        {complianceAttentionItems.length > 0 && (
+        {!showWorkerEmploymentHub && complianceAttentionItems.length > 0 && (
           <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
             <CardContent>
               <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
@@ -980,49 +1037,54 @@ const MyEmploymentDetailPage: React.FC = () => {
           </Card>
         )}
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-          <CardContent>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-              Documents & instructions
-            </Typography>
-            <Stack spacing={0.75}>
-              {!pathCoversWorkAuth && isOnboarding && employment.everifyStatus ? (
-                <Typography variant="body2" color="text.secondary">
-                  Employment verification: {String(employment.everifyStatus).replace(/_/g, ' ')}
-                </Typography>
-              ) : null}
-              {(employment.backgroundRequired || employment.drugScreenRequired) && (
-                <Typography variant="body2" color="text.secondary">
-                  {employment.backgroundRequired && 'A background check may be required. '}
-                  {employment.drugScreenRequired && 'A screening may be required. Follow any instructions sent to you by your hiring team.'}
-                </Typography>
-              )}
-              {!pathCoversWorkAuth &&
-                !employment.everifyStatus &&
-                !employment.backgroundRequired &&
-                !employment.drugScreenRequired && (
+        {!showWorkerEmploymentHub ? (
+          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <CardContent>
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                Documents & instructions
+              </Typography>
+              <Stack spacing={0.75}>
+                {!pathCoversWorkAuth && isOnboarding && employment.everifyStatus ? (
                   <Typography variant="body2" color="text.secondary">
-                    Your hiring team will share any forms or next steps with you.
+                    Employment verification: {String(employment.everifyStatus).replace(/_/g, ' ')}
+                  </Typography>
+                ) : null}
+                {(employment.backgroundRequired || employment.drugScreenRequired) && (
+                  <Typography variant="body2" color="text.secondary">
+                    {employment.backgroundRequired && 'A background check may be required. '}
+                    {employment.drugScreenRequired &&
+                      'A screening may be required. Follow any instructions sent to you by your hiring team.'}
                   </Typography>
                 )}
-            </Stack>
-          </CardContent>
-        </Card>
+                {!pathCoversWorkAuth &&
+                  !employment.everifyStatus &&
+                  !employment.backgroundRequired &&
+                  !employment.drugScreenRequired && (
+                    <Typography variant="body2" color="text.secondary">
+                      Your hiring team will share any forms or next steps with you.
+                    </Typography>
+                  )}
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : null}
 
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-          <CardContent>
-            <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-              Next steps
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {isOnboarding ? (
-                <>Finish the items above when asked. This page updates as things move forward.</>
-              ) : (
-                <>You’re set with this entity. Questions? Reach out to your hiring team.</>
-              )}
-            </Typography>
-          </CardContent>
-        </Card>
+        {!showWorkerEmploymentHub ? (
+          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
+            <CardContent>
+              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
+                Next steps
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {isOnboarding ? (
+                  <>Finish the items above when asked. This page updates as things move forward.</>
+                ) : (
+                  <>You’re set with this entity. Questions? Reach out to your hiring team.</>
+                )}
+              </Typography>
+            </CardContent>
+          </Card>
+        ) : null}
       </Stack>
     </Container>
   );

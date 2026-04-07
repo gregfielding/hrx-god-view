@@ -2,7 +2,7 @@
  * Shared I-9 supporting documents workspace: list, upload, request, review.
  * Used by Backgrounds (page) and Employment (drawer). Storage / callables unchanged.
  */
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -36,8 +36,10 @@ import AddIcon from '@mui/icons-material/Add';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import {
   Timestamp,
+  collection,
   doc,
   serverTimestamp,
+  setDoc,
   updateDoc,
 } from 'firebase/firestore';
 import { ref, uploadBytes } from 'firebase/storage';
@@ -69,6 +71,7 @@ import {
   callGetI9SupportingDocumentSignedUrl,
   callReviewWorkerI9SupportingDocument,
 } from '../../services/i9SupportingDocumentCallables';
+import { filterI9RowsForEntityEmployment } from '../../utils/workerEmploymentWorkerSurface';
 import { useWorkerI9SupportingDocumentsRows, type I9SupportingDocRow } from '../../hooks/useWorkerI9SupportingDocumentsRows';
 import type { I9DocumentExtractionBlock } from '../../types/i9SupportingDocumentV1';
 
@@ -169,7 +172,7 @@ function ExtractionReviewAssist({
 function statusChip(status: string): { label: string; color: 'default' | 'primary' | 'success' | 'warning' | 'error' } {
   switch (status) {
     case 'awaiting_upload':
-      return { label: 'Upload requested', color: 'warning' };
+      return { label: 'Not uploaded yet', color: 'default' };
     case 'pending_review':
       return { label: 'Under review', color: 'primary' };
     case 'approved':
@@ -185,6 +188,20 @@ const LIST_A_TYPES = I9_SUPPORTING_DOCUMENT_TYPE_OPTIONS.filter((o) => o.value.s
 const LIST_B_TYPES = I9_SUPPORTING_DOCUMENT_TYPE_OPTIONS.filter((o) => o.value.startsWith('list_b_'));
 const LIST_C_TYPES = I9_SUPPORTING_DOCUMENT_TYPE_OPTIONS.filter((o) => o.value.startsWith('list_c_'));
 
+function findReusableDocumentIdForListGroup(rows: I9SupportingDocRow[], group: 'a' | 'b' | 'c'): string | null {
+  const prefix = group === 'a' ? 'list_a_' : group === 'b' ? 'list_b_' : 'list_c_';
+  for (const r of rows) {
+    const dt = String(r.data.documentType || '');
+    if (!dt.startsWith(prefix)) continue;
+    const st = String(r.data.status || '');
+    const path = String(r.data.storagePath || '').trim();
+    if (st === 'awaiting_upload' && !path) return r.id;
+    if (st === 'rejected') return r.id;
+    if (st === 'pending_review') return r.id;
+  }
+  return null;
+}
+
 export interface I9SupportingDocumentsWorkspaceProps {
   tenantId: string;
   workerUserId: string;
@@ -198,6 +215,8 @@ export interface I9SupportingDocumentsWorkspaceProps {
   /** When true, hide "Request upload" (e.g. Employment drawer — requests come from compact subsection). */
   suppressStaffRequestButton?: boolean;
   onAfterRequestCreated?: (payload: { staffHint: string }) => void;
+  /** `entity_employments.entityKey` — used with `requestedForEntityId` to scope the document list for workers. */
+  employmentEntityKey?: string | null;
 }
 
 const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspaceProps> = ({
@@ -211,6 +230,7 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
   showPageIntro = true,
   suppressStaffRequestButton = false,
   onAfterRequestCreated,
+  employmentEntityKey,
 }) => {
   const useExternal = externalRows !== undefined;
   const internal = useWorkerI9SupportingDocumentsRows(tenantId, workerUserId, !useExternal);
@@ -227,6 +247,12 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
     [tenantId, workerUserId, viewerUid, isHRX, claimsRoles],
   );
   const workerSelf = viewerUid === workerUserId;
+
+  const sortedRows = rows;
+  const tableRows =
+    staffMode || !workerSelf || !requestedForEntityId
+      ? sortedRows
+      : filterI9RowsForEntityEmployment(sortedRows, { entityId: requestedForEntityId, entityKey: employmentEntityKey ?? null }, 99);
 
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -248,7 +274,21 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadTargetId, setUploadTargetId] = useState<string | null>(null);
 
-  const [workerPathChoice, setWorkerPathChoice] = useState<'a' | 'bc' | ''>('');
+  const [workerPathChoice, setWorkerPathChoice] = useState<'a' | 'bc'>('bc');
+  const [workerListAType, setWorkerListAType] = useState(LIST_A_TYPES[0]?.value ?? 'list_a_us_passport');
+  const [workerListBType, setWorkerListBType] = useState(LIST_B_TYPES[0]?.value ?? 'list_b_drivers_license');
+  const [workerListCType, setWorkerListCType] = useState(LIST_C_TYPES[0]?.value ?? 'list_c_ssn_card');
+  const pendingUploadNewGroupRef = useRef<'a' | 'b' | 'c' | null>(null);
+
+  useEffect(() => {
+    if (!workerSelf || loading) return;
+    if (rows.length === 0) return;
+    const hasA = rows.some((r) => String(r.data.documentType || '').startsWith('list_a_'));
+    const hasB = rows.some((r) => String(r.data.documentType || '').startsWith('list_b_'));
+    const hasC = rows.some((r) => String(r.data.documentType || '').startsWith('list_c_'));
+    if (hasA && !(hasB || hasC)) setWorkerPathChoice('a');
+    else if ((hasB || hasC) && !hasA) setWorkerPathChoice('bc');
+  }, [workerSelf, loading, rows]);
 
   const openPreview = useCallback(
     async (documentId: string) => {
@@ -333,18 +373,46 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
     }
   };
 
+  const NEW_UPLOAD_BUSY = '__new_i9_upload__';
+
   const triggerFilePick = (documentId: string) => {
+    pendingUploadNewGroupRef.current = null;
     setUploadTargetId(documentId);
     setActionError(null);
     fileInputRef.current?.click();
   };
 
+  const startWorkerListGroupUpload = useCallback(
+    (group: 'a' | 'b' | 'c') => {
+      if (!workerSelf) return;
+      setActionError(null);
+      const reuse = findReusableDocumentIdForListGroup(tableRows, group);
+      if (reuse) {
+        pendingUploadNewGroupRef.current = null;
+        setUploadTargetId(reuse);
+        fileInputRef.current?.click();
+        return;
+      }
+      if (!requestedForEntityId?.trim()) {
+        setActionError('Open Employment for this employer to upload I-9 documents.');
+        return;
+      }
+      pendingUploadNewGroupRef.current = group;
+      setUploadTargetId(null);
+      fileInputRef.current?.click();
+    },
+    [workerSelf, tableRows, requestedForEntityId],
+  );
+
   const onFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
+    const newGroup = pendingUploadNewGroupRef.current;
+    pendingUploadNewGroupRef.current = null;
     const documentId = uploadTargetId;
     setUploadTargetId(null);
-    if (!file || !documentId || !tenantId || !workerUserId) return;
+
+    if (!file || !tenantId || !workerUserId) return;
 
     if (file.size > MAX_BYTES) {
       setActionError('File must be 15 MB or smaller.');
@@ -354,6 +422,51 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
       setActionError('Only images and PDF files are allowed.');
       return;
     }
+
+    if (newGroup && workerSelf && viewerUid) {
+      if (!requestedForEntityId?.trim()) {
+        setActionError('Use your Employment page for this employer to start an I-9 upload.');
+        return;
+      }
+      const documentType =
+        newGroup === 'a' ? workerListAType : newGroup === 'b' ? workerListBType : workerListCType;
+      setUploadBusyId(NEW_UPLOAD_BUSY);
+      setActionError(null);
+      try {
+        const colRef = collection(db, p.workerI9SupportingDocuments(tenantId));
+        const newDocRef = doc(colRef);
+        const newId = newDocRef.id;
+        const storagePath = buildI9SupportingStorageObjectPath(tenantId, workerUserId, newId, file.name);
+        const storageRef = ref(storage, storagePath);
+        await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' });
+
+        await setDoc(newDocRef, {
+          tenantId,
+          userId: workerUserId,
+          documentType,
+          status: 'pending_review',
+          storagePath,
+          uploadedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          uploadedFileName: file.name,
+          uploadedContentType: file.type || null,
+          reviewedAt: null,
+          reviewedBy: null,
+          rejectionReason: null,
+          retainUntil: null,
+          createdByUid: viewerUid,
+          createdAt: serverTimestamp(),
+          requestedForEntityId: requestedForEntityId.trim(),
+        });
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : 'Upload failed');
+      } finally {
+        setUploadBusyId(null);
+      }
+      return;
+    }
+
+    if (!documentId) return;
 
     const row = rows.find((r) => r.id === documentId);
     const status = String(row?.data.status || '');
@@ -398,8 +511,6 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
       setUploadBusyId(null);
     }
   };
-
-  const sortedRows = rows;
 
   return (
     <Box sx={{ pt: variant === 'drawer' ? 0 : 0 }}>
@@ -461,6 +572,120 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
               {I9_WORKER_PATH_HINT_BC}
             </Typography>
           ) : null}
+          {requestedForEntityId?.trim() ? (
+            <>
+              {workerPathChoice === 'a' ? (
+                <Stack
+                  direction={{ xs: 'column', sm: 'row' }}
+                  spacing={1.5}
+                  alignItems={{ sm: 'flex-end' }}
+                  flexWrap="wrap"
+                  sx={{ mt: 1.5 }}
+                >
+                  <FormControl size="small" sx={{ minWidth: 240 }}>
+                    <InputLabel id="i9-w-list-a">List A document</InputLabel>
+                    <Select
+                      labelId="i9-w-list-a"
+                      label="List A document"
+                      value={workerListAType}
+                      onChange={(ev) => setWorkerListAType(ev.target.value)}
+                    >
+                      {LIST_A_TYPES.map((o) => (
+                        <MenuItem key={o.value} value={o.value}>
+                          {o.label}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    startIcon={
+                      uploadBusyId === NEW_UPLOAD_BUSY ? <CircularProgress size={16} color="inherit" /> : <UploadFileIcon />
+                    }
+                    disabled={Boolean(uploadBusyId)}
+                    onClick={() => startWorkerListGroupUpload('a')}
+                  >
+                    Upload List A
+                  </Button>
+                </Stack>
+              ) : (
+                <Stack spacing={1.5} sx={{ mt: 1.5 }}>
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1.5}
+                    alignItems={{ sm: 'flex-end' }}
+                    flexWrap="wrap"
+                  >
+                    <FormControl size="small" sx={{ minWidth: 240 }}>
+                      <InputLabel id="i9-w-list-b">List B document</InputLabel>
+                      <Select
+                        labelId="i9-w-list-b"
+                        label="List B document"
+                        value={workerListBType}
+                        onChange={(ev) => setWorkerListBType(ev.target.value)}
+                      >
+                        {LIST_B_TYPES.map((o) => (
+                          <MenuItem key={o.value} value={o.value}>
+                            {o.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      startIcon={<UploadFileIcon />}
+                      disabled={Boolean(uploadBusyId)}
+                      onClick={() => startWorkerListGroupUpload('b')}
+                    >
+                      Upload List B
+                    </Button>
+                  </Stack>
+                  <Stack
+                    direction={{ xs: 'column', sm: 'row' }}
+                    spacing={1.5}
+                    alignItems={{ sm: 'flex-end' }}
+                    flexWrap="wrap"
+                  >
+                    <FormControl size="small" sx={{ minWidth: 240 }}>
+                      <InputLabel id="i9-w-list-c">List C document</InputLabel>
+                      <Select
+                        labelId="i9-w-list-c"
+                        label="List C document"
+                        value={workerListCType}
+                        onChange={(ev) => setWorkerListCType(ev.target.value)}
+                      >
+                        {LIST_C_TYPES.map((o) => (
+                          <MenuItem key={o.value} value={o.value}>
+                            {o.label}
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      startIcon={<UploadFileIcon />}
+                      disabled={Boolean(uploadBusyId)}
+                      onClick={() => startWorkerListGroupUpload('c')}
+                    >
+                      Upload List C
+                    </Button>
+                  </Stack>
+                </Stack>
+              )}
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5, lineHeight: 1.45 }}>
+                Your employer will review uploads. You can replace a file from the table below while it&apos;s under review or
+                if it was rejected.
+              </Typography>
+            </>
+          ) : (
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1, lineHeight: 1.45 }}>
+              Use the <strong>Upload</strong> buttons in the table when rows exist, or open <strong>Employment</strong> for a
+              specific employer to upload I-9 documents there.
+            </Typography>
+          )}
         </Box>
       )}
 
@@ -480,16 +705,11 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
           {actionError}
         </Alert>
       )}
-
       {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
           <CircularProgress size={28} />
         </Box>
-      ) : sortedRows.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
-          No supporting documents on file{staffMode ? '. Use Request upload to add one.' : '.'}
-        </Typography>
-      ) : (
+      ) : tableRows.length > 0 ? (
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -503,7 +723,7 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
               </TableRow>
             </TableHead>
             <TableBody>
-              {sortedRows.map(({ id, data }) => {
+              {tableRows.map(({ id, data }) => {
                 const status = String(data.status || '');
                 const sc = statusChip(status);
                 const path = String(data.storagePath || '').trim();
@@ -617,7 +837,15 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
             </TableBody>
           </Table>
         </TableContainer>
-      )}
+      ) : !(workerSelf && requestedForEntityId?.trim()) ? (
+        <Typography variant="body2" color="text.secondary">
+          {staffMode
+            ? 'No supporting documents on file. Use Request upload to add one.'
+            : workerSelf
+              ? 'No I-9 documents on file yet.'
+              : 'No supporting documents on file.'}
+        </Typography>
+      ) : null}
 
       <Dialog open={createOpen} onClose={() => !createBusy && setCreateOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>Request supporting document upload</DialogTitle>

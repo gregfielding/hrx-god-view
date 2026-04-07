@@ -78,6 +78,8 @@ import {
   employmentOnboardingEverifyRowElementId,
 } from '../../utils/employmentOnboardingPath';
 import { EMPLOYMENT_I9_SECTION_ELEMENT_ID } from '../../utils/workerReadinessBannerModel';
+import { sendBulkSmsToWorkerUsers, sendNewEmailFromRecruiter } from '../../utils/sendWorkerQuickNotification';
+import { I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT } from '../../constants/i9SupportingDocumentsEmploymentStrings';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -179,6 +181,10 @@ const UserProfilePage = () => {
   const [sendingProfileUpdateReminder, setSendingProfileUpdateReminder] = useState(false);
   const [messageHistoryRefreshKey, setMessageHistoryRefreshKey] = useState(0);
   const [recordHeaderAvatarSaveError, setRecordHeaderAvatarSaveError] = useState<string | null>(null);
+  const [workerQuickNotify, setWorkerQuickNotify] = useState<{
+    message: string;
+    severity: 'success' | 'error';
+  } | null>(null);
 
   const canEditRecordAvatar = !!uid && (user?.uid === uid || (typeof securityLevel === 'string' && parseInt(securityLevel, 10) >= 4));
   const handleRecordHeaderAvatarClick = useCallback(() => {
@@ -939,6 +945,13 @@ const UserProfilePage = () => {
 
   const availableTabLabels = useMemo(() => availableTabs.map((t) => t.label), [availableTabs]);
 
+  const navigateProfileTab = useCallback(
+    (label: string) => {
+      if (availableTabLabels.includes(label)) setTabValue(label);
+    },
+    [availableTabLabels],
+  );
+
   // Handle tab query parameter - must be before early returns
   
   // Validate current tab is still available, reset if needed - MUST be before early returns (hook rules)
@@ -1082,6 +1095,58 @@ const UserProfilePage = () => {
       }
     },
     [],
+  );
+
+  const handleSendWorkerNotificationDirect = useCallback(
+    async (args: { channel: 'sms' | 'email'; body: string; subject?: string }) => {
+      const tid = (tenantId || authTenantId || activeTenant?.id || '').trim();
+      if (!user?.uid || !tid || !uid) {
+        setWorkerQuickNotify({
+          message: 'Cannot send: missing account, tenant, or profile.',
+          severity: 'error',
+        });
+        return;
+      }
+      try {
+        if (args.channel === 'sms') {
+          const token = await user.getIdToken();
+          const r = await sendBulkSmsToWorkerUsers({
+            idToken: token,
+            tenantId: tid,
+            initiatedByUserId: user.uid,
+            recipientUserIds: [uid],
+            body: args.body,
+          });
+          if (r.ok === false) {
+            setWorkerQuickNotify({ message: r.error, severity: 'error' });
+            return;
+          }
+          setWorkerQuickNotify({ message: 'Reminder SMS sent.', severity: 'success' });
+          return;
+        }
+        const to = email.trim();
+        if (!to) {
+          setWorkerQuickNotify({ message: 'This worker has no email on file.', severity: 'error' });
+          return;
+        }
+        const r = await sendNewEmailFromRecruiter({
+          tenantId: tid,
+          recruiterUserId: user.uid,
+          toEmails: [to],
+          subject: (args.subject || '').trim() || I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT,
+          bodyPlain: args.body,
+        });
+        if (r.ok === false) {
+          setWorkerQuickNotify({ message: r.error, severity: 'error' });
+          return;
+        }
+        setWorkerQuickNotify({ message: 'Email sent.', severity: 'success' });
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Send failed.';
+        setWorkerQuickNotify({ message: msg, severity: 'error' });
+      }
+    },
+    [user, tenantId, authTenantId, activeTenant?.id, uid, email],
   );
 
   const pathnameForEntityChips = location.pathname;
@@ -2439,6 +2504,7 @@ const UserProfilePage = () => {
                   <EmploymentV2Tab
                     uid={uid}
                     tenantId={tenantId || authTenantId || activeTenant?.id || null}
+                    onNavigateToProfileTab={navigateProfileTab}
                     allowStartOnCallEmployment={viewerSecurityLevel >= 4}
                     workerDisplayName={
                       `${firstName} ${lastName}`.trim() || preferredName?.trim() || null
@@ -2446,8 +2512,8 @@ const UserProfilePage = () => {
                     workAuthorizedStatus={workAuthorizedStatus}
                     workAuthorizationAttestedAt={workAuthorizationAttestedAt}
                     employmentI9SectionFlash={employmentI9SectionFlash}
-                    onNavigateToProfileTab={handleHeaderTabChange}
                     onOpenWorkerNotificationComposer={handleOpenWorkerNotificationComposer}
+                    onSendWorkerNotificationDirect={handleSendWorkerNotificationDirect}
                   />
                 );
               case 'Certifications':
@@ -2458,6 +2524,7 @@ const UserProfilePage = () => {
                     uid={uid}
                     tenantId={tenantId || authTenantId || activeTenant?.id || null}
                     highlightScreeningRowId={backgroundComplianceHighlightId}
+                    onNavigateToProfileTab={navigateProfileTab}
                   />
                 );
               case 'Reports & Insights':
@@ -2726,6 +2793,22 @@ const UserProfilePage = () => {
           sx={{ width: '100%' }}
         >
           {recordHeaderAvatarSaveError}
+        </Alert>
+      </Snackbar>
+
+      <Snackbar
+        open={workerQuickNotify !== null}
+        autoHideDuration={6000}
+        onClose={() => setWorkerQuickNotify(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setWorkerQuickNotify(null)}
+          severity={workerQuickNotify?.severity ?? 'success'}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {workerQuickNotify?.message}
         </Alert>
       </Snackbar>
     </Box>

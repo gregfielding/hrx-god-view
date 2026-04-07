@@ -9,6 +9,10 @@ import { I9_WORKER_ENTITY_EXAMPLES } from '../../../constants/i9SupportingDocume
 export interface WorkerEntityI9SectionProps {
   tenantId: string;
   workerUserId: string;
+  /** `entity_employments` doc id (same as URL segment / pipeline id). */
+  employmentRecordId: string;
+  /** `entity_employments.entityKey` (e.g. select, workforce). */
+  employmentEntityKey?: string | null;
   /** `entity_employments.entityId` — scopes requests when set. */
   requestedForEntityId?: string | null;
 }
@@ -16,6 +20,7 @@ export interface WorkerEntityI9SectionProps {
 const WorkerEntityI9Section: React.FC<WorkerEntityI9SectionProps> = ({
   tenantId,
   workerUserId,
+  employmentEntityKey,
   requestedForEntityId,
 }) => {
   return (
@@ -43,6 +48,7 @@ const WorkerEntityI9Section: React.FC<WorkerEntityI9SectionProps> = ({
             workerUserId={workerUserId}
             variant="page"
             requestedForEntityId={requestedForEntityId ?? null}
+            employmentEntityKey={employmentEntityKey ?? null}
             suppressStaffRequestButton
             showPageIntro={false}
           />

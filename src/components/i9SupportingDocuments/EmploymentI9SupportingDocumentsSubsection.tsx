@@ -7,16 +7,15 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
   FormControl,
   FormControlLabel,
   FormLabel,
   InputLabel,
-  Link,
   MenuItem,
   Radio,
   RadioGroup,
@@ -35,28 +34,48 @@ import { viewerCanStaffManageI9SupportingDocuments } from '../../utils/i9Support
 import { buildI9SupportingDocumentsEmploymentViewModel } from '../../utils/i9SupportingDocumentsViewModel';
 import { useWorkerI9SupportingDocumentsRows } from '../../hooks/useWorkerI9SupportingDocumentsRows';
 import {
+  I9_ADMIN_BTN_REVIEW_DOCUMENTS,
+  I9_ADMIN_MANUAL_ROW_TEXT,
+  I9_ADMIN_RESEND_LINK_EMAIL,
+  I9_ADMIN_SEND_REMINDER_SMS,
+  I9_DIALOG_BODY_ADD_I9_SLOTS,
+  I9_DIALOG_TITLE_ADD_I9_SLOTS,
+  I9_EMPLOYMENT_ADMIN_AUDIT_FOOTNOTE,
+  I9_EMPLOYMENT_ADMIN_INTRO,
   I9_EMPLOYMENT_PURPOSE,
   I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY,
+  I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY_DEEPLINK,
   I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT,
   I9_MESSAGE_REQUEST_UPLOAD_SMS,
-  I9_REQUEST_CREATED_STAFF_HINT,
+  I9_MESSAGE_REQUEST_UPLOAD_SMS_DEEPLINK,
+  I9_REQUEST_CREATED_STAFF_HINT_V2,
 } from '../../constants/i9SupportingDocumentsEmploymentStrings';
 import { callCreateWorkerI9SupportingDocumentRequest } from '../../services/i9SupportingDocumentCallables';
 import I9SupportingDocumentsDetailDrawer from './I9SupportingDocumentsDetailDrawer';
 import { LIST_A_TYPES, LIST_B_TYPES, LIST_C_TYPES } from './I9SupportingDocumentsWorkspace';
+import { filterI9RowsForEntityEmployment, workerMyEmploymentAbsoluteUrl } from '../../utils/workerEmploymentWorkerSurface';
 
 export interface EmploymentI9SupportingDocumentsSubsectionProps {
   tenantId: string;
   profileUserId: string;
   requestedForEntityId?: string | null;
+  /** Tab entity key (e.g. select / workforce) — scopes I-9 rows and suppresses C1 Events. */
+  employmentEntityKey?: string | null;
+  /** Firestore `entity_employments` doc id for worker My Employment deeplinks. */
+  workerEmploymentRecordId?: string | null;
+  hiringEntityDisplayName?: string | null;
   onRefresh?: () => void;
   onOpenWorkerNotificationComposer?: (args: {
     channel: 'sms' | 'email';
     body: string;
     subject?: string;
   }) => void;
-  /** Switch parent profile tab (e.g. Backgrounds). */
-  onNavigateToProfileTab?: (tabLabel: string) => void;
+  /** When set, I-9 reminder SMS/email send immediately (same APIs as MessageDrawer). */
+  onSendWorkerNotificationDirect?: (args: {
+    channel: 'sms' | 'email';
+    body: string;
+    subject?: string;
+  }) => void | Promise<void>;
 }
 
 function substatusChipColor(
@@ -67,12 +86,10 @@ function substatusChipColor(
       return 'success';
     case 'under_review':
       return 'primary';
-    case 'upload_requested':
-      return 'warning';
     case 'action_needed':
       return 'warning';
-    case 'rejected':
-      return 'error';
+    case 'not_started':
+      return 'default';
     default:
       return 'default';
   }
@@ -82,9 +99,12 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
   tenantId,
   profileUserId,
   requestedForEntityId,
+  employmentEntityKey,
+  workerEmploymentRecordId,
+  hiringEntityDisplayName,
   onRefresh,
   onOpenWorkerNotificationComposer,
-  onNavigateToProfileTab,
+  onSendWorkerNotificationDirect,
 }) => {
   const { user, isHRX, claimsRoles } = useAuth();
   const viewerUid = user?.uid;
@@ -96,7 +116,23 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
   const workerSelf = viewerUid === profileUserId;
 
   const { rows, loading, error } = useWorkerI9SupportingDocumentsRows(tenantId, profileUserId, true);
-  const vm = useMemo(() => buildI9SupportingDocumentsEmploymentViewModel(rows), [rows]);
+
+  const scopedRows = useMemo(() => {
+    if (!requestedForEntityId?.trim()) return rows;
+    return filterI9RowsForEntityEmployment(
+      rows,
+      { entityId: requestedForEntityId, entityKey: employmentEntityKey ?? null },
+      99,
+    );
+  }, [rows, requestedForEntityId, employmentEntityKey]);
+
+  const vm = useMemo(() => buildI9SupportingDocumentsEmploymentViewModel(scopedRows), [scopedRows]);
+
+  const workerEmploymentAbsoluteUrl = useMemo(() => {
+    const id = workerEmploymentRecordId?.trim();
+    if (!id || typeof window === 'undefined') return '';
+    return workerMyEmploymentAbsoluteUrl(window.location.origin, id);
+  }, [workerEmploymentRecordId]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [requestOpen, setRequestOpen] = useState(false);
@@ -107,9 +143,27 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
   const [requestBusy, setRequestBusy] = useState(false);
   const [requestErr, setRequestErr] = useState<string | null>(null);
   const [requestSuccess, setRequestSuccess] = useState<string | null>(null);
+  const [directSmsBusy, setDirectSmsBusy] = useState(false);
+  const [directEmailBusy, setDirectEmailBusy] = useState(false);
 
-  const openBackgroundsLink = () => {
-    onNavigateToProfileTab?.('Backgrounds');
+  const i9ReminderSmsBody = useMemo(() => {
+    return workerEmploymentAbsoluteUrl.trim().length > 0
+      ? I9_MESSAGE_REQUEST_UPLOAD_SMS_DEEPLINK(workerEmploymentAbsoluteUrl, hiringEntityDisplayName ?? undefined)
+      : I9_MESSAGE_REQUEST_UPLOAD_SMS;
+  }, [workerEmploymentAbsoluteUrl, hiringEntityDisplayName]);
+
+  const i9ReminderEmailBody = useMemo(() => {
+    return workerEmploymentAbsoluteUrl.trim().length > 0
+      ? I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY_DEEPLINK(
+          workerEmploymentAbsoluteUrl,
+          hiringEntityDisplayName ?? undefined,
+        )
+      : I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY;
+  }, [workerEmploymentAbsoluteUrl, hiringEntityDisplayName]);
+
+  const openAddSlotsDialog = () => {
+    setRequestErr(null);
+    setRequestOpen(true);
   };
 
   const submitRequest = async () => {
@@ -137,7 +191,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
         });
       }
       setRequestOpen(false);
-      setRequestSuccess(I9_REQUEST_CREATED_STAFF_HINT);
+      setRequestSuccess(I9_REQUEST_CREATED_STAFF_HINT_V2);
       onRefresh?.();
     } catch (e) {
       setRequestErr(formatFirebaseHttpsError(e));
@@ -146,13 +200,79 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
     }
   };
 
+  const runReminderSms = async () => {
+    if (onSendWorkerNotificationDirect) {
+      setDirectSmsBusy(true);
+      try {
+        await onSendWorkerNotificationDirect({ channel: 'sms', body: i9ReminderSmsBody });
+      } finally {
+        setDirectSmsBusy(false);
+      }
+      return;
+    }
+    if (onOpenWorkerNotificationComposer) {
+      onOpenWorkerNotificationComposer({ channel: 'sms', body: i9ReminderSmsBody });
+    }
+  };
+
+  const runReminderEmail = async () => {
+    if (onSendWorkerNotificationDirect) {
+      setDirectEmailBusy(true);
+      try {
+        await onSendWorkerNotificationDirect({
+          channel: 'email',
+          body: i9ReminderEmailBody,
+          subject: I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT,
+        });
+      } finally {
+        setDirectEmailBusy(false);
+      }
+      return;
+    }
+    if (onOpenWorkerNotificationComposer) {
+      onOpenWorkerNotificationComposer({
+        channel: 'email',
+        body: i9ReminderEmailBody,
+        subject: I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT,
+      });
+    }
+  };
+
+  const successAlertSmsEmail = () => {
+    if (!onSendWorkerNotificationDirect && !onOpenWorkerNotificationComposer) return null;
+    return (
+      <Stack direction="row" flexWrap="wrap" gap={1}>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<SmsIcon />}
+          disabled={directSmsBusy}
+          onClick={() => void runReminderSms()}
+        >
+          {I9_ADMIN_SEND_REMINDER_SMS}
+        </Button>
+        <Button
+          size="small"
+          variant="outlined"
+          startIcon={<EmailIcon />}
+          disabled={directEmailBusy}
+          onClick={() => void runReminderEmail()}
+        >
+          {I9_ADMIN_RESEND_LINK_EMAIL}
+        </Button>
+      </Stack>
+    );
+  };
+
+  const canNotifyWorker = Boolean(onSendWorkerNotificationDirect || onOpenWorkerNotificationComposer);
+
   return (
     <Box sx={{ mt: 1.5, pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
       <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
         I-9 supporting documents
       </Typography>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.5 }}>
-        {I9_EMPLOYMENT_PURPOSE}
+        {staffMode ? I9_EMPLOYMENT_ADMIN_INTRO : I9_EMPLOYMENT_PURPOSE}
       </Typography>
 
       {loading ? (
@@ -173,7 +293,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
               size="small"
               label={vm.substatusLabel}
               color={substatusChipColor(vm.substatus)}
-              variant={vm.substatus === 'not_requested' ? 'outlined' : 'filled'}
+              variant={vm.substatus === 'not_started' ? 'outlined' : 'filled'}
             />
           </Stack>
 
@@ -223,7 +343,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
               Last review: {vm.latestReviewedAtLabel}
             </Typography>
           </Stack>
-          {vm.latestRejectionReason && (vm.substatus === 'rejected' || vm.substatus === 'action_needed') ? (
+          {vm.latestRejectionReason && vm.substatus === 'action_needed' ? (
             <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
               Latest rejection: {vm.latestRejectionReason}
             </Typography>
@@ -235,87 +355,89 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
         <Alert severity="success" sx={{ mt: 1 }} onClose={() => setRequestSuccess(null)}>
           <Stack spacing={1}>
             <Typography variant="body2">{requestSuccess}</Typography>
-            {staffMode && onOpenWorkerNotificationComposer ? (
-              <Stack direction="row" flexWrap="wrap" gap={1}>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<SmsIcon />}
-                  onClick={() =>
-                    onOpenWorkerNotificationComposer({ channel: 'sms', body: I9_MESSAGE_REQUEST_UPLOAD_SMS })
-                  }
-                >
-                  Send SMS
-                </Button>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<EmailIcon />}
-                  onClick={() =>
-                    onOpenWorkerNotificationComposer({
-                      channel: 'email',
-                      body: I9_MESSAGE_REQUEST_UPLOAD_EMAIL_BODY,
-                      subject: I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT,
-                    })
-                  }
-                >
-                  Send email
-                </Button>
-              </Stack>
-            ) : null}
+            {staffMode ? successAlertSmsEmail() : null}
           </Stack>
         </Alert>
       )}
 
-      <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5 }} useFlexGap>
-        {staffMode && (
+      <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5 }} useFlexGap alignItems="center">
+        {staffMode ? (
+          <>
+            <Button
+              size="small"
+              variant="contained"
+              startIcon={<OpenInNewIcon />}
+              onClick={() => setDrawerOpen(true)}
+              disabled={loading || Boolean(error)}
+            >
+              {I9_ADMIN_BTN_REVIEW_DOCUMENTS}
+            </Button>
+            {canNotifyWorker ? (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={directSmsBusy ? <CircularProgress color="inherit" size={14} /> : <SmsIcon />}
+                  onClick={() => void runReminderSms()}
+                  disabled={loading || Boolean(error) || directSmsBusy || directEmailBusy}
+                >
+                  {I9_ADMIN_SEND_REMINDER_SMS}
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={directEmailBusy ? <CircularProgress color="inherit" size={14} /> : <EmailIcon />}
+                  onClick={() => void runReminderEmail()}
+                  disabled={loading || Boolean(error) || directSmsBusy || directEmailBusy}
+                >
+                  {I9_ADMIN_RESEND_LINK_EMAIL}
+                </Button>
+              </>
+            ) : null}
+            <Button
+              size="small"
+              variant="text"
+              color="inherit"
+              startIcon={<AddIcon />}
+              onClick={openAddSlotsDialog}
+              disabled={loading || Boolean(error)}
+              sx={{ fontSize: '0.75rem', textTransform: 'none' }}
+            >
+              {I9_ADMIN_MANUAL_ROW_TEXT}
+            </Button>
+          </>
+        ) : workerSelf ? (
           <Button
             size="small"
             variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => {
-              setRequestErr(null);
-              setRequestOpen(true);
-            }}
+            startIcon={<OpenInNewIcon />}
+            onClick={() => setDrawerOpen(true)}
+            disabled={loading || Boolean(error)}
           >
-            Request I-9 documents (List A or List B + C)
+            {I9_ADMIN_BTN_REVIEW_DOCUMENTS}
           </Button>
-        )}
-        <Button
-          size="small"
-          variant="outlined"
-          startIcon={<OpenInNewIcon />}
-          onClick={() => setDrawerOpen(true)}
-          disabled={loading || Boolean(error)}
-        >
-          View &amp; review
-        </Button>
-        {(staffMode || workerSelf) && (
-          <Link
-            component="button"
-            type="button"
-            variant="body2"
-            onClick={openBackgroundsLink}
-            sx={{ alignSelf: 'center', typography: 'caption' }}
-          >
-            Detailed history in Backgrounds &amp; compliance
-          </Link>
-        )}
+        ) : null}
       </Stack>
 
+      {(staffMode || workerSelf) && (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.25, lineHeight: 1.45 }}>
+          {I9_EMPLOYMENT_ADMIN_AUDIT_FOOTNOTE}
+        </Typography>
+      )}
+
       <Dialog open={requestOpen} onClose={() => !requestBusy && setRequestOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Request I-9 documents</DialogTitle>
+        <DialogTitle>{I9_DIALOG_TITLE_ADD_I9_SLOTS}</DialogTitle>
         <DialogContent>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Choose which documents the worker should upload. List B + C creates two requests (two uploads).
+            {I9_DIALOG_BODY_ADD_I9_SLOTS}
           </Typography>
           <FormControl component="fieldset" variant="standard" fullWidth sx={{ mb: 2 }}>
             <FormLabel component="legend" sx={{ typography: 'body2', fontWeight: 600 }}>
               Document path
             </FormLabel>
             <RadioGroup value={requestPath} onChange={(_, v) => setRequestPath(v as 'a' | 'bc')}>
-              <FormControlLabel value="a" control={<Radio size="small" />} label="List A (one request)" />
-              <FormControlLabel value="bc" control={<Radio size="small" />} label="List B + List C (two requests)" />
+              <FormControlLabel value="a" control={<Radio size="small" />} label="List A (one slot)" />
+              <FormControlLabel value="bc" control={<Radio size="small" />} label="List B + List C (two slots)" />
             </RadioGroup>
           </FormControl>
 
@@ -381,7 +503,7 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
             Cancel
           </Button>
           <Button variant="contained" onClick={() => void submitRequest()} disabled={requestBusy}>
-            {requestBusy ? 'Creating…' : 'Create request(s)'}
+            {requestBusy ? 'Creating…' : 'Create slot(s)'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -391,10 +513,11 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
         onClose={() => setDrawerOpen(false)}
         tenantId={tenantId}
         workerUserId={profileUserId}
-        rows={rows}
+        rows={scopedRows}
         loading={loading}
         error={error}
         requestedForEntityId={requestedForEntityId}
+        employmentEntityKey={employmentEntityKey}
       />
     </Box>
   );

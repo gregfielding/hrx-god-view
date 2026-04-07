@@ -69,3 +69,25 @@ export function callGetI9SupportingDocumentSignedUrl(
     'getI9SupportingDocumentSignedUrl',
   )(payload);
 }
+
+export type EnsureWorkerI9SlotsForMyEmploymentRecordInput = {
+  tenantId: string;
+  employmentRecordId: string;
+};
+
+export type EnsureWorkerI9SlotsForMyEmploymentRecordResult = {
+  ok: true;
+  skipped: boolean;
+  reason: string | null;
+  documentIds: string[] | null;
+};
+
+export function callEnsureWorkerI9SlotsForMyEmploymentRecord(
+  functions: Functions,
+  payload: EnsureWorkerI9SlotsForMyEmploymentRecordInput,
+) {
+  return httpsCallable<
+    EnsureWorkerI9SlotsForMyEmploymentRecordInput,
+    EnsureWorkerI9SlotsForMyEmploymentRecordResult
+  >(functions, 'ensureWorkerI9SlotsForMyEmploymentRecord')(payload);
+}

@@ -161,3 +161,75 @@ export const reviewWorkerI9SupportingDocument = onCall(
     return { ok: true as const, documentId, decision };
   },
 );
+
+export type EnsureWorkerI9SlotsForMyEmploymentRecordPayload = {
+  tenantId: string;
+  /** Same as URL / Firestore `entity_employments` doc id (`userId__entityKey`). */
+  employmentRecordId: string;
+};
+
+/**
+ * Worker self-serve: idempotently create default List B + List C `awaiting_upload` rows for this employment’s entity
+ * when none exist yet (same shape as pipeline auto-create). Verifies `entity_employments` belongs to the caller.
+ */
+export const ensureWorkerI9SlotsForMyEmploymentRecord = onCall(
+  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '256MiB' },
+  async (request) => {
+    if (!request.auth?.uid) {
+      throw new HttpsError('unauthenticated', 'Authentication required');
+    }
+    const caller = request.auth.uid;
+    const data = (request.data || {}) as EnsureWorkerI9SlotsForMyEmploymentRecordPayload;
+    const tenantId = typeof data.tenantId === 'string' ? data.tenantId.trim() : '';
+    const employmentRecordId = typeof data.employmentRecordId === 'string' ? data.employmentRecordId.trim() : '';
+    if (!tenantId || !employmentRecordId) {
+      throw new HttpsError('invalid-argument', 'tenantId and employmentRecordId are required');
+    }
+
+    const empRef = db.doc(`tenants/${tenantId}/entity_employments/${employmentRecordId}`);
+    const empSnap = await empRef.get();
+    if (!empSnap.exists) {
+      throw new HttpsError('not-found', 'Employment record not found');
+    }
+    const emp = empSnap.data() || {};
+    if (String(emp.userId || '').trim() !== caller) {
+      throw new HttpsError('permission-denied', 'Not your employment record');
+    }
+
+    const entityKey = String(emp.entityKey || '').trim().toLowerCase();
+    if (entityKey === 'events') {
+      return { ok: true as const, skipped: true, reason: 'c1_events_entity' as const };
+    }
+
+    const workerType = String(emp.workerType || 'w2').toLowerCase();
+    if (workerType === '1099') {
+      return { ok: true as const, skipped: true, reason: 'contractor_not_applicable' as const };
+    }
+
+    const entityId = String(emp.entityId || '').trim();
+    if (!entityId) {
+      throw new HttpsError('failed-precondition', 'Employment is missing entity linkage');
+    }
+
+    const { ensureListBandCI9RowsForEntityIfEmpty } = await import('./ensureWorkerI9SupportingRequestsOnPipelineCreate');
+    const assignmentId =
+      typeof emp.sourceAssignmentId === 'string' && emp.sourceAssignmentId.trim()
+        ? emp.sourceAssignmentId.trim()
+        : null;
+    const result = await ensureListBandCI9RowsForEntityIfEmpty({
+      tenantId,
+      userId: caller,
+      entityId,
+      createdByUid: caller,
+      assignmentId,
+      logContext: { pipelineId: employmentRecordId, source: 'worker_my_employment_ensure_slots' },
+    });
+
+    return {
+      ok: true as const,
+      skipped: result.skipped,
+      reason: result.reason ?? null,
+      documentIds: result.documentIds ?? null,
+    };
+  },
+);

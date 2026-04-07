@@ -289,6 +289,7 @@ export { getI9SupportingDocumentSignedUrl } from './onboarding/i9SupportingDocum
 export {
   createWorkerI9SupportingDocumentRequest,
   reviewWorkerI9SupportingDocument,
+  ensureWorkerI9SlotsForMyEmploymentRecord,
 } from './onboarding/i9SupportingDocumentWorkflowCallables';
 export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
 

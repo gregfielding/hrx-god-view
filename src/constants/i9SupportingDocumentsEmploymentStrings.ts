@@ -6,6 +6,41 @@
 export const I9_EMPLOYMENT_PURPOSE =
   'Upload and review List A or List B + C documents needed to complete the employer portion of the I-9.';
 
+/** Employment tab — admin-facing (system-driven onboarding). */
+export const I9_EMPLOYMENT_ADMIN_INTRO =
+  'Workers upload List A or List B + C from their Employment page as soon as I-9 applies — no separate “request” step. Use Review documents for approvals, or send a reminder below. Manual rows are only for rare recovery.';
+
+export const I9_EMPLOYMENT_ADMIN_AUDIT_FOOTNOTE =
+  'Optional: Backgrounds & compliance holds a broader audit trail; primary review happens here on Employment.';
+
+/** Employment drawer — avoids repeating the full admin intro above the fold. */
+export const I9_DRAWER_REVIEW_HELPER =
+  'Review and act on each row below (open file, approve, reject). Rows appear when the worker uploads or when you add a manual row for recovery.';
+
+export const I9_ADMIN_BTN_REVIEW_DOCUMENTS = 'Review documents';
+
+export const I9_ADMIN_BTN_ADD_SLOTS_RECOVERY = 'Add upload slots (recovery)';
+
+export const I9_ADMIN_BTN_ADD_DOCUMENT_REQUEST = 'Add document request';
+
+export const I9_ADMIN_MANUAL_ROW_TEXT = 'Manual row (recovery only)';
+
+export const I9_ADMIN_SEND_REMINDER_SMS = 'Send reminder (SMS)';
+
+export const I9_ADMIN_RESEND_LINK_EMAIL = 'Re-send worker link (email)';
+
+export const I9_DIALOG_TITLE_ADD_I9_SLOTS = 'Add I-9 upload slots';
+
+export const I9_DIALOG_BODY_ADD_I9_SLOTS =
+  'Use this when automatic slots were not created or you need an extra path (e.g. List A only). List B + C creates two upload rows.';
+
+/** @deprecated prefer I9_REQUEST_CREATED_STAFF_HINT_V2 */
+export const I9_REQUEST_CREATED_STAFF_HINT =
+  'Request created — tell the worker: My Profile → Employment → their employer → I-9 documents (or send a link to their employment page if you have it).';
+
+export const I9_REQUEST_CREATED_STAFF_HINT_V2 =
+  'Row created. Send a reminder with their employment link if they need a nudge — they can also upload without this row.';
+
 export const I9_WORKER_UPLOAD_HEADING = 'Upload your I-9 documents';
 
 export const I9_WORKER_PATH_CHOICE_TITLE = 'What are you uploading?';
@@ -81,10 +116,6 @@ export const I9_MESSAGE_APPROVED_EMAIL_SUBJECT = 'Your I-9 documents are approve
 
 export const I9_MESSAGE_APPROVED_EMAIL_BODY =
   'Your I-9 documents have been approved. No further action is needed for this step.';
-
-/** After staff creates request — in-app alert (not SMS). */
-export const I9_REQUEST_CREATED_STAFF_HINT =
-  'Request created — tell the worker: My Profile → Employment → their employer → I-9 documents (or send a link to their employment page if you have it).';
 
 export const I9_APPROVE_CONFIRM_BODY =
   'Approve this document? It counts toward the I-9 document requirement when the full set (List A or List B + C) is approved.';
