@@ -7,6 +7,18 @@ import type { I9EmploymentDocsSubstatus } from './i9SupportingDocumentsViewModel
 
 export interface EntityEmploymentRecordLike {
   entityId?: string | null;
+  /** When set, used to suppress worker I-9 supporting-doc UX for C1 Events (`events`). */
+  entityKey?: string | null;
+}
+
+/**
+ * C1 Events LLC (`entityKey` `events`) does not use the worker I-9 supporting-document upload flow.
+ * C1 Select / C1 Workforce (`select` / `workforce`) do.
+ */
+export function workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(
+  entityKey: string | null | undefined,
+): boolean {
+  return String(entityKey || '').trim().toLowerCase() === 'events';
 }
 
 /** Profile list + entity summary chip — plain language, no internal jargon. */
@@ -131,6 +143,9 @@ export function filterI9RowsForEntityEmployment<T extends { data: Record<string,
   rec: EntityEmploymentRecordLike,
   totalEmployments: number,
 ): T[] {
+  if (workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(rec.entityKey)) {
+    return [];
+  }
   const eid = String(rec.entityId || '').trim();
   if (eid) {
     const matched = rows.filter((r) => String(r.data.requestedForEntityId || '').trim() === eid);

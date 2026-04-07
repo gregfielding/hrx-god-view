@@ -55,11 +55,18 @@ export async function ensureWorkerI9SupportingRequestsOnPipelineCreate(args: {
   userId: string;
   pipelineId: string;
   entityId: string | null | undefined;
+  /** Pipeline entity key: `events` = C1 Events LLC — skip auto I-9 rows (Select / Workforce only). */
+  entityKey: string;
   workerTypeForEmployment: "w2" | "1099";
   entityData: { onboardingWorkflowSteps?: Record<string, boolean>; workerType?: string } | undefined;
   assignmentId?: string | null;
 }): Promise<EnsureWorkerI9SupportingRequestsResult> {
-  const { tenantId, userId, pipelineId, entityId, workerTypeForEmployment, entityData, assignmentId } = args;
+  const { tenantId, userId, pipelineId, entityId, entityKey, workerTypeForEmployment, entityData, assignmentId } =
+    args;
+
+  if (String(entityKey || "").trim().toLowerCase() === "events") {
+    return { skipped: true, reason: "c1_events_entity" };
+  }
 
   if (
     !shouldAutoCreateI9SupportingRequests({

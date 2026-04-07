@@ -43,6 +43,7 @@ import { getWorkerPayrollAccount } from '../../../utils/workerPayrollAccount';
 import WorkerEntityI9Section from '../../../components/worker/employment/WorkerEntityI9Section';
 import {
   omitWorkerPayrollChecklistRows,
+  workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments,
   workerEmploymentEntityPageHeadline,
   workerEmploymentSurfaceStatusLabel,
   workerPayrollSetupStatusLabel,
@@ -856,7 +857,9 @@ const MyEmploymentDetailPage: React.FC = () => {
           </>
         )}
 
-        {tenantId && uid ? (
+        {tenantId &&
+        uid &&
+        !workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(employment.entityKey) ? (
           <WorkerEntityI9Section
             tenantId={tenantId}
             workerUserId={uid}

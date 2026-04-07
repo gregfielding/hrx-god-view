@@ -84,6 +84,7 @@ const AUTOMATION_CONTEXT_TEMPLATE_KEYS = [
   'hiringEntityName',
   'onboardingPipelineId',
   'workerEntityEmploymentUrl',
+  'i9SupportingDocumentsApplicable',
   'payrollOnboardingUrl',
   'payrollSignupUrl',
   'payrollPortalLoginUrl',

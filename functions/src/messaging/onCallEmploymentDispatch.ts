@@ -34,6 +34,7 @@ export async function dispatchOnCallEmploymentStarted(args: {
   }
 
   const workerEntityEmploymentUrl = buildWorkerEntityEmploymentUrl(args.pipelineId);
+  const i9SupportingDocumentsApplicable = String(args.entityKey || '').trim().toLowerCase() !== 'events';
 
   const result = await dispatchSystemMessage({
     tenantId: args.tenantId,
@@ -45,6 +46,7 @@ export async function dispatchOnCallEmploymentStarted(args: {
       onboardingPipelineId: args.pipelineId,
       entityKey: args.entityKey,
       workerEntityEmploymentUrl,
+      i9SupportingDocumentsApplicable,
       onCallEmployment: 'true',
       initiatedByUid: args.initiatedByUid,
     },

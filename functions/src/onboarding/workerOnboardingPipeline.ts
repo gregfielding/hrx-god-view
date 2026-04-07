@@ -504,6 +504,7 @@ export async function ensureWorkerOnboardingPipeline(args: {
         userId,
         pipelineId,
         entityId: entityContext.entityId,
+        entityKey: entityContext.entityKey,
         workerTypeForEmployment,
         entityData: entityContext.entityData,
         assignmentId: assignmentId ?? null,

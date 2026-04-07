@@ -47,6 +47,7 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
   }
 
   const workerEntityEmploymentUrl = buildWorkerEntityEmploymentUrl(pipelineId);
+  const i9SupportingDocumentsApplicable = String(entityKey || '').trim().toLowerCase() !== 'events';
 
   const result = await dispatchSystemMessage({
     tenantId,
@@ -58,6 +59,7 @@ export async function dispatchWorkerOnboardingPipelineStarted(args: {
       onboardingPipelineId: pipelineId,
       entityKey,
       workerEntityEmploymentUrl,
+      i9SupportingDocumentsApplicable,
       ...(assignmentId ? { assignmentId } : {}),
       ...(jobOrderId ? { jobOrderId } : {}),
       onboardingTriggerSource: triggerSource,

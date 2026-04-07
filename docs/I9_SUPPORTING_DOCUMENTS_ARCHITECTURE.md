@@ -108,6 +108,7 @@ When `ensureWorkerOnboardingPipeline` creates the pipeline doc (`created === tru
 | **Idempotency** | If **any** row exists in `worker_i9_supporting_documents` for this `userId` with `requestedForEntityId === entityId`, **skip** (staff may have created List A–only or custom rows). |
 | **v1 default shape** | **Two** rows: List B `list_b_drivers_license` + List C `list_c_ssn_card` (aligned with `src/constants/i9SupportingDocumentUi.ts`). Same required fields as the staff callable; `createdByUid`: `system:worker_onboarding_pipeline`. |
 | **Manual UI** | Employment **Request I-9 documents** remains for List A paths, recovery, and extra requests. |
+| **C1 Events LLC** | Pipeline `entityKey` **`events`**: no auto-created rows, no worker entity-employment I-9 upload block, and automation context sets `i9SupportingDocumentsApplicable: false` so templates can omit I-9 copy. **C1 Select / C1 Workforce** (`select` / `workforce`) keep the flow. |
 
 **Worker re-upload after reject:** Client updates `storagePath`, `uploadedAt`, `status: pending_review`, optional `uploadedFileName` / `uploadedContentType`, and sets `rejectionReason`, `reviewedAt`, `reviewedBy` to **null** (Firestore rules allow this only for `rejected` → `pending_review`). Prefer explicit `null` values (not `deleteField`) so rules evaluate consistently.
 

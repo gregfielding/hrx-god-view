@@ -73,7 +73,7 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     aiAllowedToDraft: false,
     aiAllowedToAutoSend: true,
     description:
-      'First time a worker onboarding pipeline exists for a hiring entity. Use automation trigger worker_onboarding_pipeline_started. Variables include {{firstName}}, {{hiringEntityName}}, {{onboardingPipelineId}}, {{hiringEntityId}}, {{entityKey}}, {{workerEntityEmploymentUrl}} (deep link to worker entity employment / onboarding hub), and optionally {{assignmentId}}, {{jobOrderId}}, {{onboardingTriggerSource}}. {{link}} and {{url}} default to payroll URL when present, otherwise to {{workerEntityEmploymentUrl}}.',
+      'First time a worker onboarding pipeline exists for a hiring entity. Use automation trigger worker_onboarding_pipeline_started. Variables include {{firstName}}, {{hiringEntityName}}, {{onboardingPipelineId}}, {{hiringEntityId}}, {{entityKey}}, {{workerEntityEmploymentUrl}} (deep link to worker entity employment / onboarding hub), {{i9SupportingDocumentsApplicable}} (boolean; false for C1 Events / entityKey events — omit I-9 copy), and optionally {{assignmentId}}, {{jobOrderId}}, {{onboardingTriggerSource}}. {{link}} and {{url}} default to payroll URL when present, otherwise to {{workerEntityEmploymentUrl}}.',
     enabled: true,
   },
   {
@@ -88,7 +88,7 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     aiAllowedToDraft: false,
     aiAllowedToAutoSend: true,
     description:
-      'Sent when on-call / labor-pool employment is opened (no assignment). Trigger: on_call_employment_started. Variables: {{firstName}}, {{hiringEntityName}}, {{onboardingPipelineId}}, {{hiringEntityId}}, {{entityKey}}, {{workerEntityEmploymentUrl}}, {{onCallEmployment}}.',
+      'Sent when on-call / labor-pool employment is opened (no assignment). Trigger: on_call_employment_started. Variables: {{firstName}}, {{hiringEntityName}}, {{onboardingPipelineId}}, {{hiringEntityId}}, {{entityKey}}, {{workerEntityEmploymentUrl}}, {{i9SupportingDocumentsApplicable}} (false for entityKey events), {{onCallEmployment}}.',
     enabled: true,
   },
 
