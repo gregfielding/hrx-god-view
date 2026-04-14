@@ -18,6 +18,8 @@ import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { formatHourlyPayRateForDisplay } from '../../../utils/hourlyPayDisplay';
+import { getApplicationShiftIds } from '../../../utils/gigShiftState';
+import { getShiftTimeRangeLabel } from '../../../utils/shiftPickerLabel';
 
 interface Application {
   id: string;
@@ -30,6 +32,10 @@ interface Application {
   payRate?: number;
   status: string;
   submittedAt: Date;
+  /** From linked job order / posting: gig | career */
+  jobTypeLabel?: string;
+  /** Gig only: formatted shift time ranges from applied shift docs */
+  shiftTimesSummary?: string;
 }
 
 interface UserApplicationsTabProps {
@@ -97,62 +103,106 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
           if (appSnap.exists()) {
             console.log('Application data loaded successfully for:', appId);
             const appData = appSnap.data();
-            
-            // Also fetch job posting details for display
+
             let jobTitle = '';
             let postTitle = '';
             let companyName = '';
             let location = '';
-            let payRate = undefined;
+            let payRate: number | undefined = undefined;
 
-            // First, try to get cached data from user's applicationData
             const userRef = doc(db, 'users', userId);
             const userDoc = await getDoc(userRef);
             if (userDoc.exists()) {
               const userData = userDoc.data();
               const appDataMap = userData.applicationData || {};
-              
-              // Find this specific application in the map
-              for (const [key, value] of Object.entries(appDataMap)) {
-                const appData = value as any;
-                if (appData.jobId === jobId) {
-                  // Use cached data from application
-                  location = appData.location || '';
-                  companyName = appData.companyName || '';
-                  payRate = appData.payRate;
-                  jobTitle = appData.jobTitle || '';
-                  postTitle = appData.postTitle || '';
+              for (const [, value] of Object.entries(appDataMap)) {
+                const cached = value as Record<string, unknown>;
+                if (cached.jobId === jobId) {
+                  location = String(cached.location || '');
+                  companyName = String(cached.companyName || '');
+                  payRate = cached.payRate as number | undefined;
+                  jobTitle = String(cached.jobTitle || '');
+                  postTitle = String(cached.postTitle || '');
                   break;
                 }
               }
             }
 
-            // If not found in cache, fetch from job posting
-            if (!location || !jobTitle) {
-              try {
-                const jobRef = doc(db, 'tenants', appTenantId, 'job_postings', jobId);
-                const jobSnap = await getDoc(jobRef);
-                if (jobSnap.exists()) {
-                  const jobData = jobSnap.data();
-                  jobTitle = jobTitle || jobData.jobTitle || '';
-                  postTitle = postTitle || jobData.postTitle || '';
-                  companyName = companyName || jobData.companyName || '';
-                  payRate = payRate !== undefined ? payRate : jobData.payRate;
-                  
-                  // Try multiple location fields
-                  if (!location) {
-                    if (jobData.city && jobData.state) {
-                      location = `${jobData.city}, ${jobData.state}`;
-                    } else if (jobData.worksiteAddress?.city && jobData.worksiteAddress?.state) {
-                      location = `${jobData.worksiteAddress.city}, ${jobData.worksiteAddress.state}`;
-                    } else if (jobData.worksiteName) {
-                      location = jobData.worksiteName;
-                    }
+            let postingData: Record<string, unknown> | null = null;
+            try {
+              const postingRef = doc(db, 'tenants', appTenantId, 'job_postings', jobId);
+              const postingSnap = await getDoc(postingRef);
+              if (postingSnap.exists()) {
+                postingData = postingSnap.data() as Record<string, unknown>;
+                const jd = postingData;
+                jobTitle = jobTitle || String(jd.jobTitle || '');
+                postTitle = postTitle || String(jd.postTitle || '');
+                companyName = companyName || String(jd.companyName || '');
+                if (payRate === undefined && jd.payRate != null) payRate = Number(jd.payRate);
+                if (!location) {
+                  if (jd.city && jd.state) {
+                    location = `${jd.city}, ${jd.state}`;
+                  } else if (
+                    (jd.worksiteAddress as { city?: string; state?: string } | undefined)?.city &&
+                    (jd.worksiteAddress as { city?: string; state?: string }).state
+                  ) {
+                    const wa = jd.worksiteAddress as { city: string; state: string };
+                    location = `${wa.city}, ${wa.state}`;
+                  } else if (jd.worksiteName) {
+                    location = String(jd.worksiteName);
                   }
                 }
-              } catch (jobErr) {
-                console.warn('Could not load job details for', jobId, jobErr);
               }
+            } catch (jobErr) {
+              console.warn('Could not load job posting for', jobId, jobErr);
+            }
+
+            const jobOrderId =
+              (typeof appData.jobOrderId === 'string' && appData.jobOrderId.trim()) ||
+              (postingData && typeof postingData.jobOrderId === 'string' && String(postingData.jobOrderId).trim()) ||
+              '';
+
+            let jobTypeRaw = '';
+            if (jobOrderId) {
+              try {
+                const joSnap = await getDoc(doc(db, 'tenants', appTenantId, 'job_orders', jobOrderId));
+                if (joSnap.exists()) {
+                  jobTypeRaw = String(joSnap.data()?.jobType || '').toLowerCase();
+                }
+              } catch {
+                /* ignore */
+              }
+            }
+            if (!jobTypeRaw && postingData) {
+              jobTypeRaw = String(postingData.jobType || '').toLowerCase();
+            }
+            const jobTypeLabel =
+              jobTypeRaw === 'gig'
+                ? 'Gig'
+                : jobTypeRaw === 'career'
+                  ? 'Career'
+                  : jobTypeRaw
+                    ? jobTypeRaw.charAt(0).toUpperCase() + jobTypeRaw.slice(1)
+                    : '—';
+
+            let shiftTimesSummary = '—';
+            if (jobTypeRaw === 'gig' && jobOrderId) {
+              const shiftIds = getApplicationShiftIds(appData);
+              const ranges: string[] = [];
+              for (const sid of shiftIds.slice(0, 12)) {
+                try {
+                  const shSnap = await getDoc(
+                    doc(db, 'tenants', appTenantId, 'job_orders', jobOrderId, 'shifts', sid),
+                  );
+                  if (shSnap.exists()) {
+                    const r = getShiftTimeRangeLabel(shSnap.data() as Record<string, unknown>);
+                    if (r) ranges.push(r);
+                  }
+                } catch {
+                  /* ignore */
+                }
+              }
+              shiftTimesSummary = ranges.length > 0 ? ranges.join(' · ') : '—';
             }
 
             loadedApplications.push({
@@ -164,8 +214,10 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
               companyName,
               location,
               payRate,
-              status: appData.status || 'submitted',
-              submittedAt: appData.submittedAt?.toDate() || new Date(),
+              status: (appData.status as string) || 'submitted',
+              submittedAt: (appData.submittedAt as { toDate?: () => Date } | undefined)?.toDate?.() || new Date(),
+              jobTypeLabel,
+              shiftTimesSummary,
             });
           } else {
             console.warn('Application document does not exist:', `tenants/${appTenantId}/applications/${userId}_${jobId}`);
@@ -251,6 +303,8 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
                 <TableCell sx={{ fontWeight: 600 }}>Job Title</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Location</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Pay Rate</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Gig or career</TableCell>
+                <TableCell sx={{ fontWeight: 600 }}>Shift times</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Date Applied</TableCell>
                 <TableCell sx={{ fontWeight: 600 }}>Status</TableCell>
               </TableRow>
@@ -289,6 +343,16 @@ const UserApplicationsTab: React.FC<UserApplicationsTabProps> = ({ userId }) => 
                   <TableCell>
                     <Typography variant="body2" color="text.secondary">
                       {formatHourlyPayRateForDisplay(app.payRate) ?? 'N/A'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {app.jobTypeLabel ?? '—'}
+                    </Typography>
+                  </TableCell>
+                  <TableCell sx={{ maxWidth: 220 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: 'normal' }}>
+                      {app.shiftTimesSummary ?? '—'}
                     </Typography>
                   </TableCell>
                   <TableCell>

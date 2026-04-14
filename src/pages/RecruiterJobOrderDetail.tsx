@@ -111,6 +111,7 @@ import {
   applicationMatchesShift,
   isIsoGigDay,
 } from '../utils/gigShiftState';
+import { buildShiftPickerSecondLine } from '../utils/shiftPickerLabel';
 import { JobOrder } from '../types/recruiter/jobOrder';
 import PageHeader from '../components/PageHeader';
 import JobOrderForm from '../components/JobOrderForm';
@@ -229,8 +230,11 @@ interface ShiftOption {
   shiftDate: string | { toDate?: () => Date } | Date;
   shiftTitle?: string;
   defaultJobTitle?: string;
+  jobTitle?: string;
   startTime?: string;
   endTime?: string;
+  defaultStartTime?: string;
+  defaultEndTime?: string;
   /** Multi-day gig: per-date schedule (keys YYYY-MM-DD) */
   dateSchedule?: Record<string, { startTime?: string; endTime?: string; workersNeeded?: number; overstaff?: number }>;
   /** Multi-day gig: last date of shift range */
@@ -1337,41 +1341,37 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     setSelectedShiftId(e.target.value);
                     setSelectedDay('');
                   }}
+                  renderValue={(value) => {
+                    if (!value) {
+                      return <em>All shifts</em>;
+                    }
+                    const shift = shifts.find((s) => s.id === value);
+                    if (!shift) return '';
+                    return (
+                      <Box sx={{ lineHeight: 1.25, textAlign: 'left' }}>
+                        <Typography variant="body2" component="span" display="block">
+                          {shift.shiftTitle || 'Shift'}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" component="span" display="block">
+                          {buildShiftPickerSecondLine(shift, jobOrder?.jobTitle)}
+                        </Typography>
+                      </Box>
+                    );
+                  }}
                 >
                   <MenuItem value="">
                     <em>All shifts</em>
                   </MenuItem>
-                  {shifts.map((shift) => {
-                    const startDateStr = getCalendarDayLocal(shift.shiftDate);
-                    const endDateStr =
-                      shift.shiftMode === 'multi' &&
-                      shift.endDate &&
-                      getCalendarDayLocal(shift.endDate) !== startDateStr
-                        ? getCalendarDayLocal(shift.endDate)
-                        : null;
-                    const formatLocalGigDay = (dateStr: string) => {
-                      if (!isIsoGigDay(dateStr)) return dateStr || 'Unknown date';
-                      const [y, m, d] = dateStr.split('-').map(Number);
-                      return format(new Date(y, m - 1, d), 'EEE, MMM d, yyyy');
-                    };
-                    const formatted =
-                      startDateStr && endDateStr && startDateStr !== endDateStr
-                        ? `${formatLocalGigDay(startDateStr)} – ${formatLocalGigDay(endDateStr)}`
-                        : startDateStr
-                          ? formatLocalGigDay(startDateStr)
-                          : 'Unknown date';
-                    const jobTitle = shift.defaultJobTitle ?? shift.shiftTitle ?? '';
-                    return (
-                      <MenuItem key={shift.id} value={shift.id}>
-                        <Box>
-                          <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {formatted} {jobTitle ? `• ${jobTitle}` : ''}
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                    );
-                  })}
+                  {shifts.map((shift) => (
+                    <MenuItem key={shift.id} value={shift.id}>
+                      <Box>
+                        <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {buildShiftPickerSecondLine(shift, jobOrder?.jobTitle)}
+                        </Typography>
+                      </Box>
+                    </MenuItem>
+                  ))}
                 </Select>
               </FormControl>
               {isGigMultiDay && dayOptions.length > 0 && (

@@ -1,19 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Avatar, AvatarProps } from '@mui/material';
 
-/** LinkedIn CDN image URLs often 404 or expire; skip them to avoid console errors. */
-function isLikelyBrokenLinkedInImageUrl(url: string): boolean {
-  try {
-    const u = url.trim().toLowerCase();
-    return u.includes('media.licdn.com') || (u.includes('licdn.com') && u.includes('/dms/image'));
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Avatar that falls back to children (e.g. initials) when the image fails to load.
- * Skips known-bad URLs (e.g. LinkedIn CDN) and handles onError for others.
+ *
+ * We intentionally **do not** block LinkedIn CDN URLs up front: many CRM contacts store
+ * `avatar` as a LinkedIn `media.licdn.com` URL; those still load in plain MUI `Avatar`
+ * (e.g. location contact tables). Blocking them here made profile pages show initials
+ * while lists showed the photo. Expired/broken URLs are handled via `onError` only.
  */
 interface SafeAvatarProps extends Omit<AvatarProps, 'src'> {
   src?: string | null;
@@ -22,7 +16,7 @@ interface SafeAvatarProps extends Omit<AvatarProps, 'src'> {
 const SafeAvatar: React.FC<SafeAvatarProps> = ({ src, children, ...rest }) => {
   const [imgError, setImgError] = useState(false);
   useEffect(() => setImgError(false), [src]);
-  const skipUrl = !src || imgError || isLikelyBrokenLinkedInImageUrl(src);
+  const skipUrl = !src || imgError;
   const effectiveSrc = skipUrl ? undefined : src;
   return (
     <Avatar

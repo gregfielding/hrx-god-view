@@ -59,6 +59,7 @@ export const onUserCreatedScheduleApplyWizardReminder = onDocumentCreated(
   {
     document: 'users/{userId}',
     region: 'us-central1',
+    memory: '512MiB',
   },
   async (event) => {
     const snap = event.data;
@@ -78,6 +79,7 @@ export const processApplyWizardReminders = onSchedule(
   {
     schedule: 'every 10 minutes',
     region: 'us-central1',
+    memory: '512MiB',
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
     timeoutSeconds: 300,
   },

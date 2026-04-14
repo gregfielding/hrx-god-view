@@ -373,7 +373,7 @@ async function runAutoCloseCompletedAssignments(): Promise<SubtaskResult> {
         }
       } catch (err: any) {
         errors += 1;
-        logger.error('Error auto-closing completed assignments for tenant', {
+        logger.warn('Error auto-closing completed assignments for tenant', {
           tenantId,
           error: err?.message || String(err),
         });

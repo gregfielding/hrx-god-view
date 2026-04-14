@@ -175,7 +175,7 @@ export const onGigJobOrderShiftWritten = onDocumentWritten(
   {
     document: 'tenants/{tenantId}/job_orders/{jobOrderId}/shifts/{shiftId}',
     region: 'us-central1',
-    memory: '256MiB',
+    memory: '512MiB',
     timeoutSeconds: 60,
   },
   async (event) => {
@@ -192,7 +192,7 @@ export const onGigJobOrderShiftWritten = onDocumentWritten(
 export const syncGigJobOrderStatusFromShifts = onCall(
   {
     region: 'us-central1',
-    memory: '256MiB',
+    memory: '512MiB',
     timeoutSeconds: 60,
   },
   async (request) => {

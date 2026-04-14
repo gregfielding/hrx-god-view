@@ -876,6 +876,7 @@ export const slackEvents = onRequest(
   {
     maxInstances: 5,
     timeoutSeconds: 15,
+    memory: '512MiB',
     cors: false, // Slack doesn't need CORS
     secrets: [SLACK_SIGNING_SECRET, SLACK_BOT_TOKEN], // Grant access to secrets
   },

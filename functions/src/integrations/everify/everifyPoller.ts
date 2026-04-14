@@ -56,6 +56,8 @@ export const scheduledEverifyPoller = onSchedule(
     schedule: 'every 1 hours',
     timeZone: 'America/New_York',
     secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+    /** Cold start + tenant/case iteration exceeded default 256 MiB in production. */
+    memory: '512MiB',
   },
   async () => {
     const creds = getIcaCredentials();

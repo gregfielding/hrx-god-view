@@ -10,11 +10,17 @@ const serpApiKey = defineString('SERP_API_KEY');
 const app = !getApps().length ? initializeApp() : getApp();
 const db = getFirestore(app);
 
-export const fetchFollowedCompanyNews = onSchedule({
-  schedule: '0 */12 * * *', // Every 12 hours
-  timeZone: 'America/New_York',
-  retryCount: 3
-}, async (event) => {
+export const fetchFollowedCompanyNews = onSchedule(
+  {
+    schedule: '0 */12 * * *', // Every 12 hours
+    timeZone: 'America/New_York',
+    region: 'us-central1',
+    retryCount: 3,
+    /** Scans all users + SerpAPI; default 256 MiB OOM. */
+    memory: '512MiB',
+    timeoutSeconds: 540,
+  },
+  async (event) => {
   try {
     console.log('Starting scheduled news fetch for followed companies...');
     
@@ -114,4 +120,5 @@ export const fetchFollowedCompanyNews = onSchedule({
     console.error('Error in fetchFollowedCompanyNews:', error);
     throw error;
   }
-}); 
+  }
+);

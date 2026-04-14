@@ -62,7 +62,7 @@ export const updateExternalOnboardingStepVerification = onCall(
   {
     enforceAppCheck: false,
     cors: CALLABLE_BROWSER_CORS,
-    memory: '256MiB',
+    memory: '512MiB',
   },
   async (request) => {
     const auth = request.auth;

@@ -30,6 +30,8 @@ const ON_CALL_AUDIT_V = "v1";
 const onCallWithTwilioSms = {
   cors: true as const,
   secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  /** Twilio + onboarding graph; 256 MiB OOM seen in prod. */
+  memory: '512MiB' as const,
 };
 
 export interface StartOnCallEmploymentPayload {

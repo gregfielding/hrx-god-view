@@ -18,6 +18,8 @@ export const syncWorkerProfileReadinessV1 = onDocumentWritten(
     region: 'us-central1',
     maxInstances: 3,
     retry: false,
+    /** Cold start + readiness merge exceeds 256 MiB in production. */
+    memory: '512MiB',
   },
   async (event) => {
     const uid = event.params.uid as string;

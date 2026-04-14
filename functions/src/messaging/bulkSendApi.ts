@@ -81,7 +81,11 @@ const corsHandler = cors({ origin: true });
 function setCors(response: any) {
   response.set('Access-Control-Allow-Origin', '*');
   response.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  response.set(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, X-Requested-With, X-Firebase-AppCheck',
+  );
+  response.set('Access-Control-Max-Age', '3600');
 }
 
 async function verifyAuthAndTenant(
@@ -137,7 +141,9 @@ async function verifyAuthAndTenant(
  * POST /bulkSendEmailApi
  * Body: { tenantId, initiatedByUserId, recipientUserIds: string[], subject, bodyHtml, bodyPlain? }
  */
-export const bulkSendEmailApi = onRequest(async (request, response) => {
+export const bulkSendEmailApi = onRequest(
+  { memory: '512MiB' },
+  async (request, response) => {
   return corsHandler(request, response, async () => {
     setCors(response);
     if (request.method === 'OPTIONS') {
@@ -302,16 +308,19 @@ export const bulkSendEmailApi = onRequest(async (request, response) => {
       });
     }
   });
-});
+  }
+);
 
 /**
  * POST /bulkSendSmsApi
  * Body: { tenantId, initiatedByUserId, recipientUserIds: string[], body: string }
  */
+/** Manual CORS only (same as bulkSendEmailApi). `cors: true` here + cors middleware broke browser preflight for SMS. */
 export const bulkSendSmsApi = onRequest(
   {
-    cors: true,
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+    /** Default 256 MiB OOM on cold start (Twilio + admin). */
+    memory: '512MiB',
   },
   async (request, response) => {
   logger.info('bulkSendSmsApi invoked', {

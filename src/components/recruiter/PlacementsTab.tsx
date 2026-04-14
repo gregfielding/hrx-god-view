@@ -62,8 +62,6 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 
-import { format } from 'date-fns';
-
 import { db, functions } from '../../firebase';
 import { p } from '../../data/firestorePaths';
 import { getCalendarDayLocal } from '../../utils/dateUtils';
@@ -76,6 +74,7 @@ import {
   assignmentMatchesSelectedDay,
   isIsoGigDay,
 } from '../../utils/gigShiftState';
+import { buildShiftPickerSecondLine } from '../../utils/shiftPickerLabel';
 import MessageDrawer, { type MessageRecipient } from '../MessageDrawer';
 import { useAuth } from '../../contexts/AuthContext';
 import { logAssignmentUpdateActivity } from '../../utils/activityLogger';
@@ -902,14 +901,24 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         };
 
         // Career applicants are not shift-specific: show all in the labor pool regardless of selected shift.
-        // Gig applicants are shift-specific: filter by selected shift when using shift_applicants / shift_candidates.
+        // Gig "Shift Applicants" / "Shift Candidates": only users whose application lists this shift (shiftIds/selectedShifts).
+        // Job-level apps with no shift metadata belong in "All Applicants", not in shift-scoped pools.
+        const strictGigShiftPool =
+          isGig && (workforce === 'shift_applicants' || workforce === 'shift_candidates');
         const includeApplicantByShift = (data: any) => {
           if (isCareerJob) return true;
           const hasShift = applicationMatchesShift(data, selectedShiftId);
+          if (strictGigShiftPool) {
+            if (!selectedShiftId) return false;
+            if (!applicationHasShiftMetadata(data)) return false;
+            if (!hasShift) return false;
+            if (isSelectedShiftGigMultiDay && selectedDay) {
+              return hasSelectedDayApplication(data);
+            }
+            return true;
+          }
           const allowWithoutShift = !applicationHasShiftMetadata(data);
           if (!hasShift && !allowWithoutShift) return false;
-          // For multi-day gig with a specific day selected, only include applicants
-          // who explicitly applied for that selected day.
           if (isSelectedShiftGigMultiDay && selectedDay) {
             if (!hasShift) return false;
             return hasSelectedDayApplication(data);
@@ -2185,39 +2194,37 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               label="Shift"
               onChange={(e) => setSelectedShiftId(e.target.value)}
               disabled={loading}
+              renderValue={(value) => {
+                if (!value) {
+                  return <em>Select shift</em>;
+                }
+                const shift = shifts.find((s) => s.id === value);
+                if (!shift) return '';
+                return (
+                  <Box sx={{ lineHeight: 1.25, textAlign: 'left' }}>
+                    <Typography variant="body2" component="span" display="block">
+                      {shift.shiftTitle || 'Shift'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" component="span" display="block">
+                      {buildShiftPickerSecondLine(shift, (jobOrder as any)?.jobTitle)}
+                    </Typography>
+                  </Box>
+                );
+              }}
             >
               <MenuItem value="">
                 <em>Select shift</em>
               </MenuItem>
-              {shifts.map((shift) => {
-                const startDateStr = getCalendarDayLocal((shift as any).shiftDate);
-                const endDateStr =
-                  (shift as any).shiftMode === 'multi' && (shift as any).endDate && (shift as any).endDate !== (shift as any).shiftDate
-                    ? getCalendarDayLocal((shift as any).endDate)
-                    : null;
-                const formatLocalDate = (dateStr: string) => {
-                  if (!isIsoGigDay(dateStr)) return dateStr || 'Unknown date';
-                  const [y, m, d] = dateStr.split('-').map(Number);
-                  return format(new Date(y, m - 1, d), 'EEE, MMM d, yyyy');
-                };
-                const formatted =
-                  startDateStr && endDateStr && startDateStr !== endDateStr
-                    ? `${formatLocalDate(startDateStr)} – ${formatLocalDate(endDateStr)}`
-                    : startDateStr
-                      ? formatLocalDate(startDateStr)
-                      : 'Unknown date';
-                const jobTitle = (shift as any).defaultJobTitle ?? (shift as any).jobTitle ?? (jobOrder as any)?.jobTitle ?? '';
-                return (
-                  <MenuItem key={shift.id} value={shift.id}>
-                    <Box>
-                      <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {formatted} {jobTitle ? `• ${jobTitle}` : ''}
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                );
-              })}
+              {shifts.map((shift) => (
+                <MenuItem key={shift.id} value={shift.id}>
+                  <Box>
+                    <Typography variant="body2">{shift.shiftTitle || 'Shift'}</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {buildShiftPickerSecondLine(shift, (jobOrder as any)?.jobTitle)}
+                    </Typography>
+                  </Box>
+                </MenuItem>
+              ))}
             </Select>
           </FormControl>
         )}
@@ -2858,12 +2865,17 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                   {sameDayConflictByUserId.get(worker.id)?.length ? (
                                     <Tooltip
                                       title={
-                                        <Box>
-                                          <Typography variant="caption" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                                        <Box sx={{ color: 'common.white' }}>
+                                          <Typography
+                                            variant="caption"
+                                            fontWeight={600}
+                                            display="block"
+                                            sx={{ mb: 0.5, color: 'inherit' }}
+                                          >
                                             Already on a shift this day
                                           </Typography>
                                           {sameDayConflictByUserId.get(worker.id)?.map((c, i) => (
-                                            <Typography key={i} variant="caption" display="block">
+                                            <Typography key={i} variant="caption" display="block" sx={{ color: 'inherit' }}>
                                               {c.shiftTitle} ({c.type === 'placement' ? 'Placed' : c.type === 'assigned' ? 'Accepted' : 'Confirmed'})
                                             </Typography>
                                           ))}

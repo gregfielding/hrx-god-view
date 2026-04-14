@@ -164,6 +164,7 @@ export const scheduledScoringDistribution = onSchedule(
     schedule: '0 3 * * *', // 3 AM daily
     timeZone: 'America/New_York',
     maxInstances: 1,
+    memory: '512MiB',
   },
   async () => {
     const tenantsSnap = await db.collection('tenants').get();

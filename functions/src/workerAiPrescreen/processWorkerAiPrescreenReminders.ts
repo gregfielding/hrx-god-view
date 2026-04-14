@@ -42,10 +42,20 @@ function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record
 
 function phoneE164FromUser(data: Record<string, unknown>): string {
   const e = String(data.phoneE164 || '').trim();
-  if (/^\+[1-9]\d{7,14}$/.test(e)) return e;
+  if (/^\+[1-9]\d{7,14}$/.test(e)) {
+    if (e.startsWith('+1') && !/^\+1[2-9]\d{9}$/.test(e)) return '';
+    return e;
+  }
   const digits = String(data.phone || '').replace(/\D/g, '');
-  if (digits.length === 10) return `+1${digits}`;
-  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  if (digits.length === 10) {
+    if (digits[0] === '0' || digits[0] === '1') return '';
+    return `+1${digits}`;
+  }
+  if (digits.length === 11 && digits.startsWith('1')) {
+    const n = digits.slice(1);
+    if (n[0] === '0' || n[0] === '1') return '';
+    return `+1${n}`;
+  }
   return '';
 }
 
