@@ -352,7 +352,7 @@ export async function generateMenuItems(
     // Add basic menu items for HRX users (no role requirements)
     // ChatGPT moved to top bar navigation - removed from sidebar
     menuItems.push({
-      text: 'My Profile',
+      text: 'My Account',
       to: '/profile',
       icon: 'person',
       // No role requirements - available to all HRX users

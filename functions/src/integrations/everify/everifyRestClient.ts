@@ -17,6 +17,10 @@ import { logger } from 'firebase-functions/v2';
 import { httpJson, summarizeHttpErrorBody } from './everifyHttp';
 import { getAccessToken as getIcaAccessToken, type EverifyCredentials } from './everifyAuth';
 import { applyRestDraftPayloadNormalization } from './everifyI9Provider';
+import {
+  preflightI9CreateCasePayloadAfterNormalization,
+  summarizeI9PayloadForPreflightLog,
+} from './everifyI9Preflight';
 
 export interface EverifyCreateCaseRequest {
   tenantId: string;
@@ -210,6 +214,16 @@ export async function createDraftCase(
   assertEverifyEnvUrlConsistency();
   const body = payload as Record<string, unknown>;
   applyRestDraftPayloadNormalization(body);
+  try {
+    preflightI9CreateCasePayloadAfterNormalization(body);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    logger.warn('everify.preflight_rejected', {
+      ...summarizeI9PayloadForPreflightLog(body),
+      message: msg.slice(0, 400),
+    });
+    throw e;
+  }
   const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
   const url = `${baseUrl}/cases`;
   const token = await getIcaAccessToken(creds);

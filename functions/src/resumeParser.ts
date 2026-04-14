@@ -4,6 +4,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { getStorage } from 'firebase-admin/storage';
 import { getStorageBucketName } from './utils/storageBucket';
+import { getOrCreateFirebaseDownloadReadUrl } from './utils/firebaseStorageDownloadReadUrl';
 import { logger } from './utils/logger';
 import nlp from 'compromise';
 import OpenAI from 'openai';
@@ -438,35 +439,6 @@ async function archivePreviousResumes(userId: string, newUploadId: string): Prom
   if (!uploadsSnapshot.empty) {
     await batch.commit();
   }
-}
-
-/**
- * Firebase Storage read URL using firebaseStorageDownloadTokens — avoids GCS V4 signed URLs,
- * which call IAM signBlob and fail unless the runtime SA has iam.serviceAccounts.signBlob.
- * Same pattern as gmailIntegration (makeDownloadUrl + token metadata).
- */
-async function getOrCreateFirebaseDownloadReadUrl(storagePath: string): Promise<string> {
-  const bucket = getStorage().bucket(getStorageBucketName());
-  const bucketName = bucket.name;
-  const file = bucket.file(storagePath);
-  const [exists] = await file.exists();
-  if (!exists) {
-    throw new Error(`File does not exist at path: ${storagePath}`);
-  }
-  const [meta] = await file.getMetadata();
-  const existing = (meta.metadata || {}) as Record<string, string>;
-  const tokensRaw = String(existing.firebaseStorageDownloadTokens || '');
-  let token = tokensRaw.split(',')[0]?.trim();
-  if (!token) {
-    token = crypto.randomUUID();
-    await file.setMetadata({
-      metadata: {
-        ...existing,
-        firebaseStorageDownloadTokens: token,
-      },
-    });
-  }
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encodeURIComponent(storagePath)}?alt=media&token=${encodeURIComponent(token)}`;
 }
 
 /**
@@ -2100,30 +2072,4 @@ export const getResumeSignedUrl = functions.https.onCall(async (request, context
   }
 });
 
-/**
- * Get user's parsed resumes (legacy function - keeping for compatibility)
- */
-export const getUserParsedResumes = functions.https.onCall(async (request, context) => {
-  const { userId } = request.data;
-  
-  if (!request.auth) {
-    throw new functions.https.HttpsError('unauthenticated', 'User must be authenticated');
-  }
-  
-  try {
-    const resumesSnapshot = await db.collection('parsedResumes')
-      .where('userId', '==', userId)
-      .orderBy('uploadDate', 'desc')
-      .get();
-    
-    const resumes = resumesSnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data()
-    }));
-    
-    return { resumes };
-    
-  } catch (error) {
-    throw new functions.https.HttpsError('internal', 'Failed to get parsed resumes');
-  }
-}); 
+/** @see ./getUserParsedResumes.ts — moved out of this module to avoid loading heavy deps for a small callable. */

@@ -112,12 +112,30 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
   onSendWorkerNotificationDirect,
   i9EmployeeSectionComplete = false,
 }) => {
-  const { user, isHRX, claimsRoles } = useAuth();
+  const { user, isHRX, claimsRoles, tenantRolesFromProfile, legacyUserSecurityLevel, legacyUserRole } = useAuth();
   const viewerUid = user?.uid;
   const staffMode = useMemo(
     () =>
-      viewerCanStaffManageI9SupportingDocuments(tenantId, profileUserId, viewerUid, isHRX, claimsRoles),
-    [tenantId, profileUserId, viewerUid, isHRX, claimsRoles],
+      viewerCanStaffManageI9SupportingDocuments(
+        tenantId,
+        profileUserId,
+        viewerUid,
+        isHRX,
+        claimsRoles,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
+      ),
+    [
+      tenantId,
+      profileUserId,
+      viewerUid,
+      isHRX,
+      claimsRoles,
+      tenantRolesFromProfile,
+      legacyUserSecurityLevel,
+      legacyUserRole,
+    ],
   );
   const workerSelf = viewerUid === profileUserId;
 

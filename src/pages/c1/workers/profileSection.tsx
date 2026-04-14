@@ -433,7 +433,7 @@ const WorkerProfileSection: React.FC = () => {
             {activeSection === 'resume' && resumeOnFile ? (
               <Stack spacing={1} sx={{ mt: 1.5 }}>
                 <Typography variant="body2" color="text.secondary">
-                  Current resume: <strong>{resumeOnFile.fileName}</strong>
+                  {t('profile.resumeCurrentLabel')} <strong>{resumeOnFile.fileName}</strong>
                 </Typography>
                 <Button
                   variant="outlined"
@@ -442,7 +442,7 @@ const WorkerProfileSection: React.FC = () => {
                   onClick={() => openUserResumeInNewTab(resumeOnFile)}
                   sx={{ alignSelf: 'flex-start' }}
                 >
-                  View resume
+                  {t('profile.viewResumeButton')}
                 </Button>
               </Stack>
             ) : null}
@@ -665,10 +665,10 @@ const WorkerProfileSection: React.FC = () => {
                   {t('profile.resetPasswordEmailHelp')}
                 </Typography>
                 <Button variant="contained" onClick={handlePasswordReset} sx={{ alignSelf: 'flex-start' }}>
-                  Send reset email
+                  {t('profile.sendPasswordResetEmailButton')}
                 </Button>
                 <Button color="error" variant="outlined" onClick={() => void logout()} sx={{ alignSelf: 'flex-start' }}>
-                  Log out
+                  {t('nav.logOut')}
                 </Button>
               </Stack>
             </CardContent>

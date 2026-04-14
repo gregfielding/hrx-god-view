@@ -103,6 +103,28 @@ function normState2(raw: string | null | undefined): string | undefined {
   return undefined;
 }
 
+/** Coerce extraction/review dates to YYYY-MM-DD for E-Verify prefill. */
+function normalizeExpirationToYmd(raw: string | null | undefined): string | undefined {
+  const s = String(raw || '').trim();
+  if (!s) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const mm = slash[1].padStart(2, '0');
+    const dd = slash[2].padStart(2, '0');
+    return `${slash[3]}-${mm}-${dd}`;
+  }
+  const d = Date.parse(s);
+  if (!Number.isNaN(d)) {
+    const x = new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const day = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  return undefined;
+}
+
 /** USCIS REST snake_case partial for `i9Employee` / server merge (string fields only). */
 export type I9CaseFlatPartialFromSupporting = Record<string, string>;
 
@@ -215,8 +237,8 @@ export function i9SupportingApprovedToI9CaseFlatPartial(rows: I9SupportingDocLik
         out.alien_number = `A${rest}`;
       }
     }
-    const exp = String(f?.expirationDate || '').trim();
-    if (exp && /^\d{4}-\d{2}-\d{2}$/.test(exp)) out.expiration_date = exp;
+    const exp = normalizeExpirationToYmd(f?.expirationDate);
+    if (exp) out.expiration_date = exp;
     const st = normState2(f?.issuingState ?? null);
     if (st) out.us_state_code = st;
     if (dt === 'list_a_us_passport') {
@@ -242,10 +264,10 @@ export function i9SupportingApprovedToI9CaseFlatPartial(rows: I9SupportingDocLik
     const cNum = String(cf?.documentNumber || '').trim();
     if (bNum) out.document_bc_number = bNum;
     if (cNum) out.document_c_number = cNum;
-    const bExp = String(bf?.expirationDate || '').trim();
-    const cExp = String(cf?.expirationDate || '').trim();
+    const bExp = normalizeExpirationToYmd(bf?.expirationDate);
+    const cExp = normalizeExpirationToYmd(cf?.expirationDate);
     const exp = bExp || cExp;
-    if (exp && /^\d{4}-\d{2}-\d{2}$/.test(exp)) out.expiration_date = exp;
+    if (exp) out.expiration_date = exp;
     const st = normState2(bf?.issuingState ?? cf?.issuingState ?? null);
     if (st) out.us_state_code = st;
     pickIdentityFrom([b, c]);
@@ -255,10 +277,9 @@ export function i9SupportingApprovedToI9CaseFlatPartial(rows: I9SupportingDocLik
 }
 
 /**
- * Dialog field prefill from the same approved set. Caller should apply only where current inputs are empty.
+ * Map `i9_case_flat`-style string fields into StartEverifySelectDialog state (same rules as row-based prefill).
  */
-export function i9SupportingApprovedToDialogPrefill(rows: I9SupportingDocLike[]): EverifyDialogPrefillFromSupporting {
-  const flat = i9SupportingApprovedToI9CaseFlatPartial(rows);
+export function i9CaseFlatPartialToDialogPrefill(flat: I9CaseFlatPartialFromSupporting): EverifyDialogPrefillFromSupporting {
   const d = emptyDialogPrefill();
 
   if (flat.document_a_type_code) {
@@ -293,4 +314,37 @@ export function i9SupportingApprovedToDialogPrefill(rows: I9SupportingDocLike[])
   if (flat.date_of_birth) d.evWorkerDob = flat.date_of_birth;
 
   return d;
+}
+
+/** Prefer live I-9 rows; fill gaps from `users/{uid}.everifyI9SupportingPrefill` (server snapshot after review). */
+export function mergeEverifyDialogPrefill(
+  primary: EverifyDialogPrefillFromSupporting,
+  fallback: EverifyDialogPrefillFromSupporting,
+): EverifyDialogPrefillFromSupporting {
+  const hasPrimaryDocs =
+    Boolean(primary.evDocASelection) ||
+    (Boolean(primary.evDocBSelection) && Boolean(primary.evDocCSelection));
+  const pick = (a: string, b: string) => (a && String(a).trim() !== '' ? a : b);
+  return {
+    docMode: hasPrimaryDocs ? primary.docMode : fallback.docMode,
+    evDocASelection: pick(primary.evDocASelection, fallback.evDocASelection),
+    evDocANumberField: pick(primary.evDocANumberField as string, fallback.evDocANumberField as string) as EverifyListANumberField | '',
+    evDocANumberValue: pick(primary.evDocANumberValue, fallback.evDocANumberValue),
+    evDocExpiration: pick(primary.evDocExpiration, fallback.evDocExpiration),
+    evDocBSelection: pick(primary.evDocBSelection, fallback.evDocBSelection),
+    evDocCSelection: pick(primary.evDocCSelection, fallback.evDocCSelection),
+    evDocBNumber: pick(primary.evDocBNumber, fallback.evDocBNumber),
+    evDocCNumber: pick(primary.evDocCNumber, fallback.evDocCNumber),
+    evWorkerFirstName: pick(primary.evWorkerFirstName, fallback.evWorkerFirstName),
+    evWorkerLastName: pick(primary.evWorkerLastName, fallback.evWorkerLastName),
+    evWorkerDob: pick(primary.evWorkerDob, fallback.evWorkerDob),
+  };
+}
+
+/**
+ * Dialog field prefill from the same approved set. Caller should apply only where current inputs are empty.
+ */
+export function i9SupportingApprovedToDialogPrefill(rows: I9SupportingDocLike[]): EverifyDialogPrefillFromSupporting {
+  const flat = i9SupportingApprovedToI9CaseFlatPartial(rows);
+  return i9CaseFlatPartialToDialogPrefill(flat);
 }

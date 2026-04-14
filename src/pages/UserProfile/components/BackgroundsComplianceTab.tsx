@@ -115,7 +115,14 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   highlightScreeningRowId = null,
   onNavigateToProfileTab,
 }) => {
-  const { user, isHRX, claimsRoles } = useAuth();
+  const {
+    user,
+    isHRX,
+    claimsRoles,
+    tenantRolesFromProfile,
+    legacyUserSecurityLevel,
+    legacyUserRole,
+  } = useAuth();
   const [viewerUserDoc, setViewerUserDoc] = useState<Record<string, unknown> | null | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -183,8 +190,27 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
   }, [user?.uid]);
 
   const canManageEverify = useMemo(
-    () => canManageEverifyFromClaims(isHRX, tenantId, claimsRoles),
-    [isHRX, tenantId, claimsRoles]
+    () =>
+      canManageEverifyFromClaims(
+        isHRX,
+        tenantId,
+        claimsRoles,
+        user?.uid,
+        uid,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
+      ),
+    [
+      isHRX,
+      tenantId,
+      claimsRoles,
+      user?.uid,
+      uid,
+      tenantRolesFromProfile,
+      legacyUserSecurityLevel,
+      legacyUserRole,
+    ],
   );
 
   const canAccusourceAdmin = useMemo(() => {

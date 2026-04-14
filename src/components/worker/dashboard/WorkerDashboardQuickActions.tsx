@@ -1,5 +1,5 @@
 /**
- * Worker dashboard bottom nav — Find Work + My Profile only (mobile-first).
+ * Worker dashboard bottom nav — Find Work + My Account only (mobile-first).
  */
 
 import React from 'react';
@@ -11,7 +11,7 @@ import { useT } from '../../../i18n';
 
 const ACTIONS = [
   { key: 'nav.findWork', to: '/c1/jobs-board', icon: <WorkIcon fontSize="small" /> },
-  { key: 'nav.myProfile', to: '/c1/workers/profile', icon: <PersonIcon fontSize="small" /> },
+  { key: 'nav.myAccount', to: '/c1/workers/profile', icon: <PersonIcon fontSize="small" /> },
 ] as const;
 
 const WorkerDashboardQuickActions: React.FC = () => {

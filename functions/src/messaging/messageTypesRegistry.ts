@@ -361,7 +361,22 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
       'Sent when an assignment is confirmed or on-call employment starts and payroll setup is needed. Template variables: {{payrollOnboardingUrl}} (onboarding URL, else portal — legacy single link), {{payrollSignupUrl}}, {{payrollPortalLoginUrl}}, {{payrollProvider}}, {{entityName}}, {{hiringEntityId}}, {{jobTitle}}, {{firstName}}, {{message}}, {{_message}}, {{_subject}}.',
     enabled: true,
   },
-  
+  {
+    id: 'onboarding_reminder',
+    label: 'Onboarding reminder (automated)',
+    category: 'transactional',
+    defaultChannels: ['sms'],
+    critical: false,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: false,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Scheduled follow-up for on-call employment when I-9 or payroll is incomplete. Sent by processWorkerOnboardingReminders.',
+    enabled: true,
+  },
+
   // Compliance Messages
   {
     id: 'profile_incomplete_reminder',

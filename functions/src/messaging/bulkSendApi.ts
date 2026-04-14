@@ -15,6 +15,7 @@ import { getSmsProvider } from './smsProviderFactory';
 import { logMessage } from './messageLogging';
 import { getTenantSmsConsent } from './tenantConsent';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './twilioSecrets';
+import { workerHasTenantAssociation } from '../onboarding/onCallOnboardingGuards';
 
 const db = admin.firestore();
 
@@ -101,15 +102,21 @@ async function verifyAuthAndTenant(
     const decoded = await admin.auth().verifyIdToken(token);
     const uid = decoded.uid;
     const roles = (decoded as any).roles || {};
-    if (!roles[tenantId]) {
+    const hasJwtTenantRole = Boolean(roles[tenantId]);
+    const isHrx = Boolean((decoded as any).hrx);
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    const userData = userDoc.data();
+    const hasFirestoreTenantLink = workerHasTenantAssociation(userData, tenantId);
+
+    /** JWT roles map is not always populated; staff often have tenant linkage only on users/{uid}. */
+    if (!hasJwtTenantRole && !isHrx && !hasFirestoreTenantLink) {
       response.status(403).json({
         success: false,
         error: { code: 'FORBIDDEN', message: 'Not a member of this tenant' },
       });
       return null;
     }
-    const userDoc = await db.collection('users').doc(uid).get();
-    const userData = userDoc.data();
     const userName =
       [userData?.firstName, userData?.lastName].filter(Boolean).join(' ') ||
       userData?.displayName ||

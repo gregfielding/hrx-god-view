@@ -102,6 +102,28 @@ function normState2(raw: string | null | undefined): string | undefined {
   return undefined;
 }
 
+/** Coerce extraction/review dates to YYYY-MM-DD — keep in sync with `src/utils/i9SupportingToEverifyPrefill.ts`. */
+function normalizeExpirationToYmd(raw: string | null | undefined): string | undefined {
+  const s = String(raw || '').trim();
+  if (!s) return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const slash = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slash) {
+    const mm = slash[1].padStart(2, '0');
+    const dd = slash[2].padStart(2, '0');
+    return `${slash[3]}-${mm}-${dd}`;
+  }
+  const d = Date.parse(s);
+  if (!Number.isNaN(d)) {
+    const x = new Date(d);
+    const y = x.getFullYear();
+    const m = String(x.getMonth() + 1).padStart(2, '0');
+    const day = String(x.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+  return undefined;
+}
+
 function listADocCode(dt: string): { code: string } | null {
   switch (dt) {
     case 'list_a_us_passport':
@@ -175,8 +197,8 @@ export function i9SupportingApprovedToI9CaseFlatPartial(
         out.alien_number = `A${rest}`;
       }
     }
-    const exp = String(f?.expirationDate || '').trim();
-    if (exp && /^\d{4}-\d{2}-\d{2}$/.test(exp)) out.expiration_date = exp;
+    const exp = normalizeExpirationToYmd(f?.expirationDate);
+    if (exp) out.expiration_date = exp;
     const st = normState2(f?.issuingState ?? null);
     if (st) out.us_state_code = st;
     if (dt === 'list_a_us_passport') {
@@ -202,10 +224,10 @@ export function i9SupportingApprovedToI9CaseFlatPartial(
     const cNum = String(cf?.documentNumber || '').trim();
     if (bNum) out.document_bc_number = bNum;
     if (cNum) out.document_c_number = cNum;
-    const bExp = String(bf?.expirationDate || '').trim();
-    const cExp = String(cf?.expirationDate || '').trim();
+    const bExp = normalizeExpirationToYmd(bf?.expirationDate);
+    const cExp = normalizeExpirationToYmd(cf?.expirationDate);
     const exp = bExp || cExp;
-    if (exp && /^\d{4}-\d{2}-\d{2}$/.test(exp)) out.expiration_date = exp;
+    if (exp) out.expiration_date = exp;
     const st = normState2(bf?.issuingState ?? cf?.issuingState ?? null);
     if (st) out.us_state_code = st;
     pickIdentityFrom([b, c]);

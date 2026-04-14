@@ -33,6 +33,9 @@ import {
   Tab,
   TableSortLabel,
   CircularProgress,
+  FormControl,
+  InputLabel,
+  Select,
 } from '@mui/material';
 import { doc, getDoc, updateDoc, collection, getDocs, deleteDoc, where, documentId, query, deleteField } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
@@ -80,8 +83,20 @@ import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntit
 import { useRecruiterUsersEntityEmploymentChips } from '../../../hooks/useRecruiterUsersEntityEmploymentChips';
 import { useActiveAssignmentUserIds } from '../../../hooks/useActiveAssignmentUserIds';
 import { getWorkStatusColumnDisplay } from '../../../utils/workStatusColumnDisplay';
+import UserGroupHiringControlPanel from '../../../components/recruiter/userGroup/UserGroupHiringControlPanel';
+import {
+  formatEvaluateMembersOneClickSuccess,
+  runEvaluateMembersOneClick,
+} from '../../../utils/userGroupEvaluateMembersOneClick';
+import {
+  formatUserGroupHirePassedSuccess,
+  runUserGroupHirePassedExecute,
+} from '../../../utils/userGroupHirePassedOneClick';
 
 import AgencyProfileHeader from './AgencyProfileHeader';
+
+const userGroupLastEvaluatedStorageKey = (tid: string, gid: string) =>
+  `userGroupEvaluateLastAt:${tid}:${gid}`;
 
 const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   tenantId,
@@ -102,20 +117,32 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const [tabIndex, setTabIndex] = useState(7); // User Groups tab index
   const [agencyUsers, setAgencyUsers] = useState<any[]>([]);
   const [groupManagerIds, setGroupManagerIds] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState<'members' | 'details'>('members');
+  const [activeTab, setActiveTab] = useState<'members' | 'hiring' | 'details'>('members');
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [membersPage, setMembersPage] = useState(0);
   const [membersRowsPerPage, setMembersRowsPerPage] = useState(20);
   const [membersSortBy, setMembersSortBy] = useState<
-    'name' | 'workStatus' | 'score' | 'interview' | 'groupStatus' | 'skills' | 'lastLogin' | 'auth' | 'documented'
-  >('name');
-  const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('asc');
+    | 'hrxSignup'
+    | 'name'
+    | 'workStatus'
+    | 'score'
+    | 'interview'
+    | 'groupStatus'
+    | 'skills'
+    | 'lastLogin'
+    | 'auth'
+    | 'documented'
+  >('hrxSignup');
+  const [membersSortDirection, setMembersSortDirection] = useState<'asc' | 'desc'>('desc');
   const [groupStatusMenuAnchor, setGroupStatusMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
   const { isFavorite: isUserFavorite, toggleFavorite: toggleUserFavorite } = useFavorites('users');
   const { isFavorite: isGroupFavorite, toggleFavorite: toggleGroupFavorite } = useFavorites('userGroups');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [shareSnackbarOpen, setShareSnackbarOpen] = useState(false);
+  const [hirePassedBusy, setHirePassedBusy] = useState(false);
+  const [evaluateMembersBusy, setEvaluateMembersBusy] = useState(false);
+  const [lastEvaluatedAtIso, setLastEvaluatedAtIso] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [selectAllResults, setSelectAllResults] = useState(false);
   const [bulkDrawerOpen, setBulkDrawerOpen] = useState(false);
@@ -138,6 +165,15 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     fetchAgency();
     fetchAgencyUsers();
     // eslint-disable-next-line
+  }, [tenantId, groupId]);
+
+  useEffect(() => {
+    try {
+      const v = localStorage.getItem(userGroupLastEvaluatedStorageKey(tenantId, groupId));
+      setLastEvaluatedAtIso(v && v.trim() ? v.trim() : null);
+    } catch {
+      setLastEvaluatedAtIso(null);
+    }
   }, [tenantId, groupId]);
 
   const fetchGroup = async () => {
@@ -496,6 +532,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
   const sortedMembers = [...members].sort((a: any, b: any) => {
     let cmp = 0;
     switch (membersSortBy) {
+      case 'hrxSignup': {
+        cmp = toMillis(a?.createdAt) - toMillis(b?.createdAt);
+        break;
+      }
       case 'name': {
         cmp = getNameKey(a).localeCompare(getNameKey(b));
         break;
@@ -612,6 +652,51 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
     setSelectAllResults(false);
   }, []);
 
+  const handleEvaluateMembersForNextStep = useCallback(async () => {
+    if (!tenantId || !groupId) return;
+    setEvaluateMembersBusy(true);
+    try {
+      const result = await runEvaluateMembersOneClick({ tenantId, groupId });
+      const iso = new Date().toISOString();
+      try {
+        localStorage.setItem(userGroupLastEvaluatedStorageKey(tenantId, groupId), iso);
+      } catch {
+        /* ignore quota */
+      }
+      setLastEvaluatedAtIso(iso);
+      window.alert(formatEvaluateMembersOneClickSuccess(result));
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === 'object' && e !== null && 'message' in e
+            ? String((e as { message: unknown }).message)
+            : 'Evaluate members failed';
+      window.alert(msg);
+    } finally {
+      setEvaluateMembersBusy(false);
+    }
+  }, [tenantId, groupId]);
+
+  const handleHirePassedCandidates = useCallback(async () => {
+    if (!tenantId || !groupId) return;
+    setHirePassedBusy(true);
+    try {
+      const result = await runUserGroupHirePassedExecute({ tenantId, groupId });
+      window.alert(formatUserGroupHirePassedSuccess(result));
+    } catch (e: unknown) {
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === 'object' && e !== null && 'message' in e
+            ? String((e as { message: unknown }).message)
+            : 'Hire passed candidates failed';
+      window.alert(msg);
+    } finally {
+      setHirePassedBusy(false);
+    }
+  }, [tenantId, groupId]);
+
   const handleGroupAvatarClick = useCallback(() => {
     avatarFileInputRef.current?.click();
   }, []);
@@ -676,7 +761,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
       return;
     }
     setMembersSortBy(key);
-    // Match inbox/users behavior: name asc, everything else desc by default
+    // Match inbox/users behavior: name asc; HRX signup newest first; everything else desc by default
     setMembersSortDirection(key === 'name' ? 'asc' : 'desc');
     setMembersPage(0);
   };
@@ -948,6 +1033,48 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           <Stack direction="row" spacing={1.25} alignItems="center" sx={{ justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
             <Button
               variant="outlined"
+              color="secondary"
+              onClick={() => void handleHirePassedCandidates()}
+              disabled={hirePassedBusy}
+              sx={{ borderRadius: '999px', textTransform: 'none' }}
+            >
+              {hirePassedBusy ? (
+                <>
+                  <CircularProgress size={16} sx={{ mr: 1 }} color="inherit" />
+                  Working…
+                </>
+              ) : (
+                'Hire passed candidates'
+              )}
+            </Button>
+            <Stack alignItems="flex-start" spacing={0.25}>
+              <Button
+                variant="outlined"
+                color="secondary"
+                onClick={() => void handleEvaluateMembersForNextStep()}
+                disabled={evaluateMembersBusy}
+                sx={{ borderRadius: '999px', textTransform: 'none' }}
+              >
+                {evaluateMembersBusy ? (
+                  <>
+                    <CircularProgress size={16} sx={{ mr: 1 }} color="inherit" />
+                    Working…
+                  </>
+                ) : (
+                  'Evaluate members for next step'
+                )}
+              </Button>
+              {lastEvaluatedAtIso ? (
+                <Typography
+                  variant="caption"
+                  sx={{ color: 'rgba(0, 0, 0, 0.55)', maxWidth: 280, lineHeight: 1.35 }}
+                >
+                  Last Evaluated at: {new Date(lastEvaluatedAtIso).toLocaleString()}
+                </Typography>
+              ) : null}
+            </Stack>
+            <Button
+              variant="outlined"
               startIcon={<ContentCopyIcon />}
               onClick={async () => {
                 const link = `${window.location.origin}/c1/apply/group/${groupId}`;
@@ -987,6 +1114,7 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           <Box sx={{ display: 'flex', gap: 0.75 }}>
             {([
               { id: 'members' as const, label: 'Members' },
+              { id: 'hiring' as const, label: 'Hiring' },
               { id: 'details' as const, label: 'Details' },
             ]).map((t) => {
               const isActive = activeTab === t.id;
@@ -1018,14 +1146,50 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
           </Box>
 
           {activeTab === 'members' && (
-            <Button
-              variant="contained"
-              onClick={() => setAddMemberOpen(true)}
-              disabled={loading || availableWorkers.length === 0}
-              sx={{ borderRadius: '999px', textTransform: 'none' }}
-            >
-              Add Member
-            </Button>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <FormControl size="small" sx={{ minWidth: 220 }}>
+                <InputLabel id="user-group-member-order-label">Order members</InputLabel>
+                <Select
+                  labelId="user-group-member-order-label"
+                  label="Order members"
+                  value={
+                    membersSortBy === 'hrxSignup' || membersSortBy === 'name'
+                      ? `${membersSortBy}:${membersSortDirection}`
+                      : ''
+                  }
+                  displayEmpty
+                  renderValue={(v) => {
+                    if (v === 'hrxSignup:desc') return 'HRX signup (newest first)';
+                    if (v === 'hrxSignup:asc') return 'HRX signup (oldest first)';
+                    if (v === 'name:asc') return 'Name (A–Z)';
+                    if (v === 'name:desc') return 'Name (Z–A)';
+                    return 'Column sort (see headers)';
+                  }}
+                  onChange={(e) => {
+                    const raw = String(e.target.value);
+                    const [k, d] = raw.split(':') as ['hrxSignup' | 'name', 'asc' | 'desc'];
+                    if (k === 'hrxSignup' || k === 'name') {
+                      setMembersSortBy(k);
+                      setMembersSortDirection(d);
+                      setMembersPage(0);
+                    }
+                  }}
+                >
+                  <MenuItem value="hrxSignup:desc">HRX signup (newest first)</MenuItem>
+                  <MenuItem value="hrxSignup:asc">HRX signup (oldest first)</MenuItem>
+                  <MenuItem value="name:asc">Name (A–Z)</MenuItem>
+                  <MenuItem value="name:desc">Name (Z–A)</MenuItem>
+                </Select>
+              </FormControl>
+              <Button
+                variant="contained"
+                onClick={() => setAddMemberOpen(true)}
+                disabled={loading || availableWorkers.length === 0}
+                sx={{ borderRadius: '999px', textTransform: 'none' }}
+              >
+                Add Member
+              </Button>
+            </Box>
           )}
         </Box>
 
@@ -1140,9 +1304,10 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
                     <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
                     <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
                       <TableSortLabel
-                        active={membersSortBy === 'name'}
-                        direction={membersSortBy === 'name' ? membersSortDirection : 'asc'}
-                        onClick={() => handleMembersSort('name')}
+                        active={membersSortBy === 'hrxSignup'}
+                        direction={membersSortBy === 'hrxSignup' ? membersSortDirection : 'desc'}
+                        onClick={() => handleMembersSort('hrxSignup')}
+                        title="Sort by HRX account signup date (users/{id}.createdAt)"
                       >
                         Person
                       </TableSortLabel>
@@ -1486,6 +1651,25 @@ const UserGroupDetails: React.FC<{ tenantId: string; groupId: string }> = ({
               }}
             />
           </>
+        )}
+
+        {activeTab === 'hiring' && (
+          <Box sx={{ p: '16px', width: '100%', boxSizing: 'border-box' }}>
+            <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
+              Hiring control
+            </Typography>
+            <UserGroupHiringControlPanel
+              tenantId={tenantId}
+              groupId={groupId}
+              memberCount={memberIds.length}
+              memberProfiles={membersData.map((m: { id: string; aiProfileScore?: number; aiJobFitScore?: number }) => ({
+                userId: m.id,
+                aiProfileScore: m.aiProfileScore,
+                aiJobFitScore: m.aiJobFitScore,
+              }))}
+              onSaved={() => void fetchGroup()}
+            />
+          </Box>
         )}
 
         {activeTab === 'details' && (

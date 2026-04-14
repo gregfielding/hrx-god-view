@@ -6,8 +6,8 @@ export type WorkerAiPrescreenQuestionType = 'text' | 'single_select' | 'multi_se
 
 export type WorkerAiPrescreenStepId =
   | 'motivation'
-  | 'similar_experience'
   | 'experience_details'
+  | 'pressure_situation'
   | 'work_confidence'
   | 'attendance_issues'
   | 'attendance_explanation'
@@ -32,21 +32,18 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     id: 'motivation',
     type: 'text',
     prompt:
-      'What made you interested in this type of work, and what are you hoping to get from your next job?',
-  },
-  {
-    id: 'similar_experience',
-    type: 'single_select',
-    prompt: 'Have you done work similar to what you are applying for?',
-    options: [
-      { value: 'Yes', label: 'Yes' },
-      { value: 'No', label: 'No' },
-    ],
+      'What drew you to this type of work, and what are you hoping for in your next job? Include:\n' +
+      '- what kind of role or industry you want\n' +
+      '- one goal you have for the next 3–6 months',
   },
   {
     id: 'experience_details',
     type: 'text',
-    prompt: 'Briefly describe your most relevant experience.',
+    prompt:
+      'Describe your most relevant experience. Include:\n' +
+      '- where you worked (employer or type of workplace)\n' +
+      '- how long you were there (approximate is fine)\n' +
+      '- what your main responsibilities were',
   },
   {
     id: 'work_confidence',
@@ -63,6 +60,12 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     ],
   },
   {
+    id: 'pressure_situation',
+    type: 'text',
+    prompt:
+      'Tell us about a time you had to work under pressure or meet a tight deadline. What happened, what did you do, and how did it turn out?',
+  },
+  {
     id: 'attendance_issues',
     type: 'single_select',
     prompt: 'Have you had attendance or lateness issues at past jobs?',
@@ -74,7 +77,8 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
   {
     id: 'attendance_explanation',
     type: 'text',
-    prompt: 'If you answered Yes above, explain briefly. Otherwise you can skip or write “N/A”.',
+    prompt:
+      'If you answered Yes above, explain what happened and how you handle reliability now. If No, you may write “N/A”.',
   },
   {
     id: 'transportation_plan',
@@ -130,11 +134,14 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
   {
     id: 'supervisor_feedback',
     type: 'text',
-    prompt: 'What would your last supervisor say about your work?',
+    prompt:
+      'What would your last supervisor say about your work? Include:\n' +
+      '- one strength they might mention\n' +
+      '- one area you were working to improve (if any)',
   },
   {
     id: 'additional_notes',
     type: 'text',
-    prompt: 'Anything else you want us to know?',
+    prompt: 'Anything else you want us to know? (Optional — specific details help.)',
   },
 ];

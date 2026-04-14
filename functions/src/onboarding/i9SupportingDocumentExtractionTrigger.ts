@@ -7,6 +7,7 @@ import { DocumentProcessorServiceClient, protos } from '@google-cloud/documentai
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { getStorage } from 'firebase-admin/storage';
+import sharp from 'sharp';
 
 import { getStorageBucketName } from '../utils/storageBucket';
 import {
@@ -89,15 +90,51 @@ function terminalExtractionForPath(
   return TERMINAL.includes(st);
 }
 
+/**
+ * Document AI `rawDocument.mimeType` must be a real IANA type. Some clients send garbage
+ * (e.g. `media0.image/jp`) which yields `3 INVALID_ARGUMENT`.
+ */
 function mimeForUpload(contentType: unknown, storagePath: string): string {
   const c = String(contentType || '').trim().toLowerCase();
-  if (c && c !== 'application/octet-stream') return c;
-  const lower = storagePath.toLowerCase();
-  if (lower.endsWith('.pdf')) return 'application/pdf';
-  if (lower.endsWith('.png')) return 'image/png';
-  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
-  if (lower.endsWith('.webp')) return 'image/webp';
-  return 'application/pdf';
+  const fromPath = (): string => {
+    const lower = storagePath.toLowerCase();
+    if (lower.endsWith('.pdf')) return 'application/pdf';
+    if (lower.endsWith('.png')) return 'image/png';
+    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+    if (lower.endsWith('.webp')) return 'image/webp';
+    if (lower.endsWith('.heic')) return 'image/heic';
+    if (lower.endsWith('.heif')) return 'image/heif';
+    return 'application/pdf';
+  };
+
+  const malformed =
+    !c ||
+    c === 'application/octet-stream' ||
+    c.includes('.image/') ||
+    c === 'image/jp';
+
+  if (malformed) {
+    return fromPath();
+  }
+
+  if (c === 'image/jpeg' || c === 'image/jpg') return 'image/jpeg';
+  if (
+    c === 'application/pdf' ||
+    c === 'image/png' ||
+    c === 'image/webp' ||
+    c === 'image/heic' ||
+    c === 'image/heif' ||
+    c === 'image/gif'
+  ) {
+    return c;
+  }
+
+  if (c.startsWith('image/')) {
+    const sub = c.slice(6);
+    if (/^[a-z][a-z0-9.+_-]{0,60}$/.test(sub)) return c;
+  }
+
+  return fromPath();
 }
 
 export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
@@ -235,22 +272,78 @@ export const onWorkerI9SupportingDocumentExtract = onDocumentWritten(
     await docRef.set({ documentExtraction: pendingPayload, updatedAt: now }, { merge: true });
 
     try {
+      const mimeType = mimeForUpload(afterData.uploadedContentType, storagePath);
+
       const bucket = getStorage().bucket(getStorageBucketName());
       const [buf] = await bucket.file(storagePath).download();
-      const mimeType = mimeForUpload(afterData.uploadedContentType, storagePath);
+
+      // Document AI `rawDocument` does not accept HEIC/HEIF; convert server-side (sharp) when needed.
+      let processBuf: Buffer = buf;
+      let processMime = mimeType;
+      if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+        try {
+          processBuf = await sharp(buf).jpeg({ quality: 92 }).toBuffer();
+          processMime = 'image/jpeg';
+          logger.info('i9_supporting_extraction.heic_converted', {
+            tenantId,
+            documentId,
+            bytesIn: buf.length,
+            bytesOut: processBuf.length,
+          });
+        } catch (convErr) {
+          const cm = convErr instanceof Error ? convErr.message : String(convErr);
+          const failAt = admin.firestore.FieldValue.serverTimestamp();
+          await docRef.set(
+            {
+              documentExtraction: {
+                status: 'extraction_failed' as ExtractionStatus,
+                requestedAt: pendingPayload.requestedAt,
+                completedAt: failAt,
+                error: {
+                  code: 'heic_convert_failed',
+                  message: `Could not convert HEIC/HEIF to JPEG (${cm.slice(0, 200)}). Re-upload as JPEG/PNG or try from a different device.`,
+                },
+                processorType: processorKind,
+                processorResourceName: processorName,
+                sourceStoragePath: storagePath,
+                extractedFields: null,
+                extractedRawEntities: [],
+                extractionWarnings: [],
+                confidenceSummary: null,
+                documentAiProcessorVersion: null,
+                updatedAt: failAt,
+              },
+              updatedAt: failAt,
+            },
+            { merge: true },
+          );
+          logger.error('i9_supporting_extraction.heic_convert_failed', {
+            tenantId,
+            documentId,
+            error: cm.slice(0, 300),
+          });
+          return;
+        }
+      }
 
       const client = new DocumentProcessorServiceClient();
       const request: protos.google.cloud.documentai.v1.IProcessRequest = {
         name: processorName,
         rawDocument: {
-          content: buf,
-          mimeType,
+          content: processBuf,
+          mimeType: processMime,
         },
       };
 
       const [result] = await client.processDocument(request);
 
       const mapped = mapDocumentAiToExtractedFields(result.document, processorKind);
+      if (mimeType === 'image/heic' || mimeType === 'image/heif') {
+        mapped.extractionWarnings = [
+          ...mapped.extractionWarnings,
+          'Converted from HEIC/HEIF to JPEG for automated reading.',
+        ];
+      }
       const doneAt = admin.firestore.FieldValue.serverTimestamp();
 
       await docRef.set(

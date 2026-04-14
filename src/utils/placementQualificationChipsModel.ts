@@ -176,7 +176,10 @@ export type PlacementEmploymentChipModel = {
   tooltip?: string;
 };
 
-/** Maps `entity_employments` doc fields to one compact chip for placement rows (mirrors list/header tones). */
+/**
+ * Placement tiles: one chip per hiring entity from `entity_employments`.
+ * Colors: amber = onboarding / in progress / review-ish; green = active/ready; red = terminated/inactive; neutral = unknown.
+ */
 export function placementEmploymentChipFromEntityData(
   data: Record<string, unknown> | null | undefined
 ): PlacementEmploymentChipModel {
@@ -187,35 +190,96 @@ export function placementEmploymentChipFromEntityData(
       tooltip: 'No entity_employments document for this hiring entity.',
     };
   }
+
   const es = String(data.employmentState ?? '').trim().toLowerCase();
   const leg = String(data.status ?? '').trim().toLowerCase();
   const hasCanon = Boolean(es);
-  const s = hasCanon ? es : leg;
+  const primary = hasCanon ? es : leg;
 
-  if (!s || s === 'not_started' || s === 'none') {
+  if (!primary || primary === 'not_started' || primary === 'none') {
     return {
       label: 'No record',
       color: 'default',
-      tooltip: 'No active employment row for this hiring entity.',
+      tooltip: 'No employment state on file for this hiring entity.',
     };
   }
-  if (s === 'blocked') {
-    return { label: 'Blocked', color: 'error', tooltip: 'Employment is blocked for this entity.' };
+
+  if (primary === 'terminated') {
+    return {
+      label: 'Terminated',
+      color: 'error',
+      tooltip: 'Employment terminated for this entity.',
+    };
   }
-  if ((data.onboardingComplete === true || data.active === true) && s !== 'inactive' && s !== 'terminated') {
-    return { label: 'Active', color: 'success', tooltip: 'Entity onboarding complete (employment record).' };
+  if (primary === 'inactive') {
+    return {
+      label: 'Inactive',
+      color: 'error',
+      tooltip: 'Employment inactive for this entity.',
+    };
   }
-  if (s === 'onboarding') {
-    return { label: 'Onboarding', color: 'warning', tooltip: 'Entity onboarding not complete.' };
+
+  if (
+    (data.onboardingComplete === true || data.active === true) &&
+    primary !== 'inactive' &&
+    primary !== 'terminated'
+  ) {
+    return {
+      label: 'Active',
+      color: 'success',
+      tooltip: 'Entity onboarding complete (employment record).',
+    };
   }
-  if (s === 'active' || (!hasCanon && leg === 'ready')) {
+
+  if (primary === 'active' || (!hasCanon && leg === 'ready')) {
     return { label: 'Active', color: 'success', tooltip: 'Entity employment active.' };
   }
-  if (s === 'inactive') {
-    return { label: 'Inactive', color: 'default', tooltip: 'Employment inactive for this entity.' };
+  if (primary === 'employed' || leg === 'employed') {
+    return { label: 'Active', color: 'success', tooltip: 'Entity employment active.' };
   }
-  if (s === 'terminated') {
-    return { label: 'Terminated', color: 'default', tooltip: 'Employment terminated for this entity.' };
+
+  if (primary === 'onboarding') {
+    return { label: 'Onboarding', color: 'warning', tooltip: 'Entity onboarding not complete.' };
   }
-  return { label: 'Onboarding', color: 'warning', tooltip: 'Employment status pending completion.' };
+  if (primary === 'blocked') {
+    return { label: 'Blocked', color: 'warning', tooltip: 'Employment is blocked for this entity.' };
+  }
+
+  if (
+    primary === 'under_review' ||
+    primary === 'pending_review' ||
+    primary === 'in_review' ||
+    primary.endsWith('_review')
+  ) {
+    return { label: 'Under review', color: 'warning', tooltip: 'Employment under review for this entity.' };
+  }
+
+  if (
+    primary === 'in_progress' ||
+    primary === 'onboarding_in_progress' ||
+    leg === 'in_progress' ||
+    leg === 'onboarding_in_progress'
+  ) {
+    return { label: 'In progress', color: 'warning', tooltip: 'Employment onboarding in progress.' };
+  }
+
+  return {
+    label: 'Unknown',
+    color: 'default',
+    tooltip: `Employment state: ${primary || leg || 'unset'}`,
+  };
+}
+
+/** Prefix hiring entity legal name for placement tiles: "Acme LLC — Onboarding". */
+export function formatPlacementEmploymentChipWithEntityName(
+  chip: PlacementEmploymentChipModel,
+  hiringEntityName: string | null | undefined,
+): PlacementEmploymentChipModel {
+  const n = String(hiringEntityName || '').trim();
+  if (!n) return chip;
+  return {
+    ...chip,
+    label: `${n} — ${chip.label}`,
+    tooltip: chip.tooltip ? `${n}: ${chip.tooltip}` : `${n} (${chip.label})`,
+  };
 }

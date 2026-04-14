@@ -104,7 +104,8 @@ import {
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 
-import { db, storage } from '../firebase';
+import { db, storage, functions } from '../firebase';
+import { httpsCallable } from 'firebase/functions';
 import { LOCATION_FACILITY_TYPE_OPTIONS } from '../constants/locationFacilityTypeOptions';
 import { getDealCompanyIds } from '../utils/associationsAdapter';
 import { useAuth } from '../contexts/AuthContext';
@@ -1325,6 +1326,16 @@ const RecruiterAccountDetails: React.FC = () => {
   const [showAddLocationDialog, setShowAddLocationDialog] = useState(false);
   const [showNewJobOrderModal, setShowNewJobOrderModal] = useState(false);
   const [showAddSubAccountModal, setShowAddSubAccountModal] = useState(false);
+  const [nationalBackfillOpen, setNationalBackfillOpen] = useState(false);
+  const [nationalBackfillStep, setNationalBackfillStep] = useState<'confirm' | 'result'>('confirm');
+  const [nationalBackfillLoading, setNationalBackfillLoading] = useState(false);
+  const [nationalBackfillError, setNationalBackfillError] = useState<string | null>(null);
+  const [nationalBackfillSummary, setNationalBackfillSummary] = useState<{
+    locationsProcessed: number;
+    created: number;
+    skipped_duplicate: number;
+    skipped_idempotent: number;
+  } | null>(null);
   const [parentCompanyIds, setParentCompanyIds] = useState<string[]>([]);
   const [parentAccountLogoUrl, setParentAccountLogoUrl] = useState<string | null>(null);
   const [orderDefaultsSubView, setOrderDefaultsSubView] = useState<'staffInstructions' | 'orderDetails'>('staffInstructions');
@@ -2022,6 +2033,10 @@ const RecruiterAccountDetails: React.FC = () => {
             }
           : undefined,
         integrations: qb != null ? { quickbooks: qb } : undefined,
+        autoCreateChildAccountsForLocations: data?.autoCreateChildAccountsForLocations === true,
+        autoCreatedFromCompanyLocation: data?.autoCreatedFromCompanyLocation === true,
+        companyId: data?.companyId ?? undefined,
+        companyLocationId: data?.companyLocationId ?? undefined,
       });
 
       const d = data?.defaults;
@@ -2408,6 +2423,34 @@ const RecruiterAccountDetails: React.FC = () => {
       if (isMountedRef.current) setChildAccountsLoading(false);
     }
   }, [tenantId, account?.id]);
+
+  const runNationalBackfillChildAccounts = useCallback(async () => {
+    if (!tenantId || !account?.id) return;
+    setNationalBackfillLoading(true);
+    setNationalBackfillError(null);
+    try {
+      const fn = httpsCallable(functions, 'backfillNationalAccountChildAccountsFromLocations');
+      const res = await fn({ tenantId, nationalAccountId: account.id });
+      const d = res.data as Record<string, unknown>;
+      setNationalBackfillSummary({
+        locationsProcessed: Number(d.locationsProcessed) || 0,
+        created: Number(d.created) || 0,
+        skipped_duplicate: Number(d.skipped_duplicate) || 0,
+        skipped_idempotent: Number(d.skipped_idempotent) || 0,
+      });
+      setNationalBackfillStep('result');
+      void loadAccount();
+      await fetchChildAccounts();
+    } catch (e: unknown) {
+      const msg =
+        e && typeof e === 'object' && 'message' in e
+          ? String((e as { message?: string }).message)
+          : 'Request failed';
+      setNationalBackfillError(msg);
+    } finally {
+      setNationalBackfillLoading(false);
+    }
+  }, [tenantId, account?.id, fetchChildAccounts]);
 
   useEffect(() => {
     if (((tabValue === 3 && isNationalAccount) || tabValue === 5) && account?.id) {
@@ -3235,6 +3278,23 @@ const RecruiterAccountDetails: React.FC = () => {
                       size="small"
                     />
                   )}
+                  {account.accountType === 'national' && companyIds.length > 0 && (
+                    <Tooltip title="Create a child account for each company location under your linked companies. Skips locations that already have a child account.">
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        onClick={() => {
+                          setNationalBackfillStep('confirm');
+                          setNationalBackfillError(null);
+                          setNationalBackfillSummary(null);
+                          setNationalBackfillOpen(true);
+                        }}
+                        sx={{ textTransform: 'none', flexShrink: 0, ml: 0.5 }}
+                      >
+                        Locations → children
+                      </Button>
+                    </Tooltip>
+                  )}
                 </Box>
                 {tabValue === 7 && (
                   <Button
@@ -4057,6 +4117,82 @@ const RecruiterAccountDetails: React.FC = () => {
         defaultParentAccountId={account?.id ?? null}
       />
 
+      <Dialog
+        open={nationalBackfillOpen}
+        onClose={() => {
+          if (nationalBackfillLoading) return;
+          setNationalBackfillOpen(false);
+          setNationalBackfillStep('confirm');
+          setNationalBackfillError(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Locations → child accounts</DialogTitle>
+        <DialogContent>
+          {nationalBackfillStep === 'confirm' ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
+              <Typography variant="body2" color="text.secondary">
+                This creates one child account per company location for all CRM companies linked to this national account.
+                Locations that already have a matching child account are skipped (same rules as automatic creation).
+              </Typography>
+              {nationalBackfillError ? (
+                <Alert severity="error" onClose={() => setNationalBackfillError(null)}>
+                  {nationalBackfillError}
+                </Alert>
+              ) : null}
+            </Box>
+          ) : nationalBackfillSummary ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+              <Typography variant="body2">
+                Processed {nationalBackfillSummary.locationsProcessed} location(s).
+              </Typography>
+              <Typography variant="body2">
+                Created {nationalBackfillSummary.created} new child account(s).
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                Skipped {nationalBackfillSummary.skipped_duplicate + nationalBackfillSummary.skipped_idempotent} (already
+                present or idempotent).
+              </Typography>
+            </Box>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          {nationalBackfillStep === 'confirm' ? (
+            <>
+              <Button
+                onClick={() => {
+                  setNationalBackfillOpen(false);
+                  setNationalBackfillError(null);
+                }}
+                disabled={nationalBackfillLoading}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="contained"
+                onClick={() => void runNationalBackfillChildAccounts()}
+                disabled={nationalBackfillLoading}
+                startIcon={nationalBackfillLoading ? <CircularProgress size={16} /> : undefined}
+              >
+                {nationalBackfillLoading ? 'Running…' : 'Run'}
+              </Button>
+            </>
+          ) : (
+            <Button
+              variant="contained"
+              onClick={() => {
+                setNationalBackfillOpen(false);
+                setNationalBackfillStep('confirm');
+                setNationalBackfillSummary(null);
+              }}
+            >
+              Done
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+
       <AddJobOrderModal
         open={showNewJobOrderModal}
         onClose={() => setShowNewJobOrderModal(false)}
@@ -4080,6 +4216,7 @@ const RecruiterAccountDetails: React.FC = () => {
             : null
         }
         recruiterAccountId={accountId ?? null}
+        requireAccountSelection
       />
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden', pt: 2, pb: 2 }}>
@@ -4175,6 +4312,26 @@ const RecruiterAccountDetails: React.FC = () => {
                         }
                         label="Active"
                       />
+                      {account.accountType === 'national' ? (
+                        <Box>
+                          <FormControlLabel
+                            control={
+                              <Switch
+                                checked={account.autoCreateChildAccountsForLocations === true}
+                                onChange={(e) =>
+                                  updateAccountField('autoCreateChildAccountsForLocations', e.target.checked)
+                                }
+                                disabled={saving}
+                              />
+                            }
+                            label="Auto-create child accounts for new company locations"
+                          />
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ pl: 4.5, maxWidth: 520 }}>
+                            When enabled, each new location added to this account's connected company will automatically create a
+                            child account linked to that location. Future locations only.
+                          </Typography>
+                        </Box>
+                      ) : null}
                     </Box>
                   ) : (
                     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
@@ -4227,6 +4384,20 @@ const RecruiterAccountDetails: React.FC = () => {
                           variant={account.active ? 'filled' : 'outlined'}
                         />
                       </Box>
+                      {account.accountType === 'national' ? (
+                        <Box sx={{ mt: 0.5 }}>
+                          <Typography variant="body2" color="text.secondary" display="block">
+                            Auto-create child accounts for new company locations
+                          </Typography>
+                          <Typography variant="body2">
+                            {account.autoCreateChildAccountsForLocations === true ? 'On' : 'Off'}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ maxWidth: 520 }}>
+                            When enabled, each new location added to this account's connected company will automatically create a
+                            child account linked to that location. Future locations only.
+                          </Typography>
+                        </Box>
+                      ) : null}
                       {account.createdAt && (
                         <Typography variant="caption" color="text.secondary">
                           Created {account.createdAt?.toDate?.()?.toLocaleString?.() ?? '—'}

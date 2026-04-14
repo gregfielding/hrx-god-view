@@ -5,13 +5,39 @@
 
 import { Timestamp } from 'firebase/firestore';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
+import type { TenantRole } from '../../../contexts/AuthContext';
+import type { Role, SecurityLevel } from '../../../utils/AccessRoles';
+import { viewerCanStaffManageI9SupportingDocuments } from '../../../utils/i9SupportingDocumentsUi';
 
-/** Mirrors functions/src/integrations/everify/everifyCallables.ts canManageEverify (JWT claims). */
+/**
+ * Same rules as I-9 supporting docs + `canManageOnboarding` / E-Verify callables:
+ * JWT Recruiter/Manager/Admin or HRX; else Firestore `tenantIds[tenant]` role / securityLevel (≥ 4 includes 5–7).
+ *
+ * Pass `viewerUid` + `profileUserId` (and optional Firestore fallbacks) for full parity with the server.
+ * A legacy 3-arg call `(isHRX, tenantId, claimsRoles)` is treated as JWT role check only.
+ */
 export function canManageEverifyFromClaims(
   isHRX: boolean,
   tenantId: string | null | undefined,
-  claimsRoles: { [tid: string]: { role?: string } | undefined } | undefined
+  claimsRoles: { [tid: string]: TenantRole | undefined },
+  viewerUid?: string | undefined,
+  profileUserId?: string,
+  tenantRolesFromProfile?: { [tid: string]: { role: Role; securityLevel: SecurityLevel } } | null,
+  legacyUserSecurityLevel?: SecurityLevel | null,
+  legacyUserRole?: string | null,
 ): boolean {
+  if (profileUserId !== undefined && viewerUid !== undefined) {
+    return viewerCanStaffManageI9SupportingDocuments(
+      tenantId,
+      profileUserId,
+      viewerUid,
+      isHRX,
+      claimsRoles,
+      tenantRolesFromProfile ?? undefined,
+      legacyUserSecurityLevel ?? undefined,
+      legacyUserRole ?? undefined,
+    );
+  }
   if (isHRX) return true;
   if (!tenantId) return false;
   const tenantRole = claimsRoles?.[tenantId]?.role;

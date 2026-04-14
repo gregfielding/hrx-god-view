@@ -197,8 +197,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
       });
       onRefresh?.();
     } catch (e: unknown) {
-      const err = e as { message?: string };
-      setPayrollErr(err?.message || 'Could not resend payroll invite');
+      setPayrollErr(formatFirebaseHttpsError(e) || 'Could not resend payroll invite');
     } finally {
       setPayrollBusy(false);
     }

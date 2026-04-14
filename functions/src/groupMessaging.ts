@@ -11,13 +11,22 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-import { sendWorkerMessageInternal } from './twilio';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './messaging/twilioSecrets';
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
 
 /**
  * Send SMS to all members of a user group
  */
-export const sendGroupMessage = onCall(async (request) => {
+export const sendGroupMessage = onCall(
+  {
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (request) => {
   const start = Date.now();
 
   // Validate authentication

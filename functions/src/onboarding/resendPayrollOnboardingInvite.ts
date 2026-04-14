@@ -33,7 +33,8 @@ export const resendPayrollOnboardingInvite = onCall(
   {
     enforceAppCheck: false,
     cors: CALLABLE_BROWSER_CORS,
-    memory: '256MiB',
+    /** Cold start + Twilio + payrollInviteResend → sendMessage imports exceed 256MiB (seen ~267 MiB OOM). */
+    memory: '512MiB',
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request) => {

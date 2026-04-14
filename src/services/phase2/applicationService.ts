@@ -12,10 +12,30 @@ import {
   limit,
   serverTimestamp,
   collectionGroup,
+  type DocumentData,
 } from 'firebase/firestore';
 import { db } from '../../firebase';
 import { Application, ApplicationFormData, ApplicationFilters, ApplicationSortOptions } from '../../types/phase2';
 import { safeToDate } from '../../utils/dateUtils';
+import type { ApplicationHiringLifecycle } from '../../types/applicationHiringLifecycle';
+
+import {
+  applyHiringLifecycleTimestampMetadata,
+  buildHiringLifecycleOnApplicationCreate,
+  buildHiringLifecycleOnStageUpdate,
+} from '../../shared/hiringLifecyclePatch';
+import {
+  firestoreSafeHiringLifecycle,
+  hiringLifecycleCoreFromApplicationData,
+} from '../../utils/hiringLifecycleFirestoreHelpers';
+
+/** Optional inputs for dual-writing `hiringLifecycle` on create (defaults are conservative). */
+export type TenantApplicationLifecycleWriteOptions = {
+  aiPrescreenInterviewRequired?: boolean;
+  profileEligible?: boolean;
+  profileBlockerCodes?: string[];
+  workerAiPrescreenInterviewCompletedAt?: unknown | null;
+};
 
 /**
  * Sprint 3: canonical Firestore payload for new job-linked applications at
@@ -25,7 +45,8 @@ import { safeToDate } from '../../utils/dateUtils';
 export function buildJobLinkedTenantApplicationCreatePayload(
   tenantId: string,
   formData: ApplicationFormData,
-  createdBy: string
+  createdBy: string,
+  lifecycleOptions?: TenantApplicationLifecycleWriteOptions,
 ): Omit<Application, 'id'> {
   const jo = String(formData.jobOrderId || '').trim();
   if (!jo) {
@@ -90,7 +111,23 @@ export function buildJobLinkedTenantApplicationCreatePayload(
     (base as Application & { selectedShifts?: unknown[] }).selectedShifts = formData.selectedShifts;
   }
 
-  return base;
+  const { hiringLifecycle: hlCore } = buildHiringLifecycleOnApplicationCreate({
+    applicationStatus: String(formData.status ?? 'applied'),
+    aiPrescreenInterviewRequired: lifecycleOptions?.aiPrescreenInterviewRequired ?? false,
+    profileEligible: lifecycleOptions?.profileEligible ?? true,
+    profileBlockerCodes: lifecycleOptions?.profileBlockerCodes,
+    workerAiPrescreenInterviewCompletedAt: lifecycleOptions?.workerAiPrescreenInterviewCompletedAt,
+  });
+  const hiringLifecycleFull = applyHiringLifecycleTimestampMetadata({
+    core: hlCore,
+    previous: null,
+    nowIso: new Date().toISOString(),
+  });
+
+  return {
+    ...base,
+    hiringLifecycle: firestoreSafeHiringLifecycle(hiringLifecycleFull) as ApplicationHiringLifecycle,
+  };
 }
 
 export class ApplicationService {
@@ -109,14 +146,27 @@ export class ApplicationService {
   async createApplication(
     tenantId: string,
     formData: ApplicationFormData,
-    createdBy: string
+    createdBy: string,
+    lifecycleOptions?: TenantApplicationLifecycleWriteOptions,
   ): Promise<string> {
     try {
       let docRef;
       if (formData.jobOrderId) {
-        const payload = buildJobLinkedTenantApplicationCreatePayload(tenantId, formData, createdBy);
+        const payload = buildJobLinkedTenantApplicationCreatePayload(tenantId, formData, createdBy, lifecycleOptions);
         docRef = await addDoc(collection(db, 'tenants', tenantId, 'applications'), payload);
       } else {
+        const { hiringLifecycle: hlCore } = buildHiringLifecycleOnApplicationCreate({
+          applicationStatus: String(formData.status ?? 'applied'),
+          aiPrescreenInterviewRequired: lifecycleOptions?.aiPrescreenInterviewRequired ?? false,
+          profileEligible: lifecycleOptions?.profileEligible ?? true,
+          profileBlockerCodes: lifecycleOptions?.profileBlockerCodes,
+          workerAiPrescreenInterviewCompletedAt: lifecycleOptions?.workerAiPrescreenInterviewCompletedAt,
+        });
+        const hiringLifecycleFull = applyHiringLifecycleTimestampMetadata({
+          core: hlCore,
+          previous: null,
+          nowIso: new Date().toISOString(),
+        });
         const applicationData: Omit<Application, 'id'> = {
           ...formData,
           tenantId,
@@ -125,6 +175,7 @@ export class ApplicationService {
           createdBy,
           updatedAt: serverTimestamp(),
           updatedBy: createdBy,
+          hiringLifecycle: firestoreSafeHiringLifecycle(hiringLifecycleFull) as ApplicationHiringLifecycle,
         };
         docRef = await addDoc(collection(db, 'tenants', tenantId, 'applications'), applicationData);
       }
@@ -155,11 +206,26 @@ export class ApplicationService {
         throw new Error(`Application not found: ${applicationId}`);
       }
 
-      await updateDoc(applicationRef, {
+      const prevData = snap.data() as Record<string, unknown>;
+      const payload: Record<string, unknown> = {
         ...updates,
         updatedAt: serverTimestamp(),
         updatedBy,
-      });
+      };
+      if (updates.status !== undefined) {
+        const prevCore = hiringLifecycleCoreFromApplicationData(prevData);
+        const { hiringLifecycle: core } = buildHiringLifecycleOnStageUpdate({
+          nextLegacyStatus: String(updates.status),
+        });
+        const full = applyHiringLifecycleTimestampMetadata({
+          core,
+          previous: prevCore,
+          nowIso: new Date().toISOString(),
+        });
+        payload.hiringLifecycle = firestoreSafeHiringLifecycle(full);
+      }
+
+      await updateDoc(applicationRef, payload as DocumentData);
     } catch (error) {
       console.error('Error updating application:', error);
       throw error;
@@ -185,11 +251,23 @@ export class ApplicationService {
         throw new Error(`Application not found: ${applicationId}`);
       }
 
+      const prevData = snap.data() as Record<string, unknown>;
+      const prevCore = hiringLifecycleCoreFromApplicationData(prevData);
+      const { hiringLifecycle: core } = buildHiringLifecycleOnStageUpdate({
+        nextLegacyStatus: String(newStage),
+      });
+      const full = applyHiringLifecycleTimestampMetadata({
+        core,
+        previous: prevCore,
+        nowIso: new Date().toISOString(),
+      });
+
       await updateDoc(applicationRef, {
         status: newStage,
         stageChangedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         updatedBy,
+        hiringLifecycle: firestoreSafeHiringLifecycle(full),
       });
     } catch (error) {
       console.error('Error updating application stage:', error);

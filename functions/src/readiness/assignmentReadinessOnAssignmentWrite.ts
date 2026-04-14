@@ -2,6 +2,7 @@ import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
 import { persistAssignmentReadinessV1IfChanged } from './assignmentReadinessPersist';
+import { shouldRecomputeNoShowRiskForAssignmentWrite } from './noShowRiskAssignmentWriteGate';
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -49,6 +50,22 @@ export const syncAssignmentReadinessV1OnAssignmentWrite = onDocumentWritten(
         assignmentId,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+
+    const beforeData = event.data?.before?.exists ? (event.data.before.data() as Record<string, unknown>) : null;
+    const afterData = event.data?.after?.exists ? (event.data.after.data() as Record<string, unknown>) : null;
+    if (shouldRecomputeNoShowRiskForAssignmentWrite({ before: beforeData, after: afterData })) {
+      try {
+        // Lazy-load persist so this trigger does not synchronously require the full no-show module graph at cold start.
+        const { recomputeNoShowRiskPredictionForAssignment } = await import('./persistNoShowRiskPredictionForAssignment');
+        await recomputeNoShowRiskPredictionForAssignment(db, tenantId, assignmentId);
+      } catch (error) {
+        logger.error('failed to sync noShowRiskPredictionV1 (assignment write)', {
+          tenantId,
+          assignmentId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 );

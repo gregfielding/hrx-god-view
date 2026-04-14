@@ -5,7 +5,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Box, Tab, Tabs, Typography } from '@mui/material';
+import { Box, Button, Stack, Tab, Tabs, Typography } from '@mui/material';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -13,6 +13,7 @@ import {
   StaffOnboardingEverifyTab,
   StaffOnboardingBackgroundTab,
 } from '../components/staffOnboarding/StaffOnboardingQueueTables';
+import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 
 function TabPanel(props: { children?: React.ReactNode; index: number; value: number }) {
   const { children, value, index, ...other } = props;
@@ -28,6 +29,7 @@ function TabPanel(props: { children?: React.ReactNode; index: number; value: num
 const StaffOnboardingCenter: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(0);
+  const [i9ReminderOpen, setI9ReminderOpen] = useState(false);
   const { activeTenant } = useAuth();
 
   useEffect(() => {
@@ -51,9 +53,19 @@ const StaffOnboardingCenter: React.FC = () => {
         boxSizing: 'border-box',
       }}
     >
-      <PageHeader
-        title="Onboarding"
-        subtitle="Recruiter queues for tax and payroll milestones, C1 Select E-Verify, and background screening."
+      <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems={{ sm: 'flex-start' }} justifyContent="space-between">
+        <PageHeader
+          title="Onboarding"
+          subtitle="Recruiter queues for tax and payroll milestones, C1 Select E-Verify, and background screening."
+        />
+        <Button variant="outlined" size="small" sx={{ mt: { xs: 0, sm: 1 }, flexShrink: 0 }} onClick={() => setI9ReminderOpen(true)}>
+          Remind incomplete I-9 uploads
+        </Button>
+      </Stack>
+      <OnCallI9SupportingReminderDialog
+        open={i9ReminderOpen}
+        onClose={() => setI9ReminderOpen(false)}
+        tenantId={tenantId}
       />
       <Box sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)} aria-label="Onboarding queues">

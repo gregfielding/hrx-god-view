@@ -23,8 +23,21 @@ import { EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD } from './everifySecrets';
 import { getEverifyAuthArchitectureDiagnostics } from './everifyConfig';
 import { createEverifyCase } from './everifyCases';
 import { EverifySoapEmployeeDataSchema, EverifySoapError } from './everifyTypes';
+import { canManageOnboarding } from '../../onboarding/workerOnboardingPipeline';
 
 const db = admin.firestore();
+
+/**
+ * Gen2 options for admin-only E-Verify callables (no ICA secrets on the handler).
+ * Aligns with everifyListCases — default 256MiB + cold-start can fail Cloud Run health checks during deploy.
+ */
+const EVERIFY_ADMIN_ONCALL_OPTS = {
+  enforceAppCheck: false as const,
+  cors: CALLABLE_BROWSER_CORS,
+  region: 'us-central1' as const,
+  memory: '512MiB' as const,
+  timeoutSeconds: 60,
+};
 
 function getIcaCredentials(): { username: string; password: string } | null {
   try {
@@ -35,15 +48,6 @@ function getIcaCredentials(): { username: string; password: string } | null {
     // secrets not configured
   }
   return null;
-}
-
-function canManageEverify(auth: { token?: { roles?: Record<string, { role?: string }>; hrx?: boolean } } | null | undefined, tenantId: string): boolean {
-  if (!auth) return false;
-  const roles = (auth as { token?: { roles?: Record<string, { role?: string }> } }).token?.roles || {};
-  const tenantRole = roles[tenantId]?.role;
-  if (tenantRole && ['Recruiter', 'Manager', 'Admin'].includes(String(tenantRole))) return true;
-  if ((auth as { token?: { hrx?: boolean } }).token?.hrx === true) return true;
-  return false;
 }
 
 export const everifyCreateCase = onCall(
@@ -75,7 +79,7 @@ export const everifyCreateCase = onCall(
 
     const { tenantId, entityId, userEmploymentId, assignmentId, i9Employee } = parsed.data;
 
-    if (!canManageEverify(auth as any, tenantId)) {
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
 
@@ -186,7 +190,12 @@ export const everifyCreateCase = onCall(
 );
 
 export const everifyCheckEligibility = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  {
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
+    // Match everifyCreateCase: Gen2 cold-start loads the full functions bundle; 256MiB global default can OOM / miss healthcheck.
+    memory: '512MiB',
+  },
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
@@ -200,7 +209,7 @@ export const everifyCheckEligibility = onCall(
 
     const { tenantId, entityId, userEmploymentId, assignmentId } = parsed.data;
 
-    if (!canManageEverify(auth as any, tenantId)) {
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
 
@@ -228,7 +237,10 @@ export const everifyCheckEligibility = onCall(
 
 /** Internal: verify ICA REST login only (no case create). HRX/admin only. Returns authArchitecture for ops. */
 export const everifyPingAuth = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD] },
+  {
+    ...EVERIFY_ADMIN_ONCALL_OPTS,
+    secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+  },
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
@@ -319,13 +331,16 @@ export const everifyDryRunCreateAndSubmit = onCall(
 
 /** Admin: list/filter E-Verify cases */
 export const everifyListCases = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  {
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
+    region: 'us-central1',
+    memory: '512MiB',
+    timeoutSeconds: 60,
+  },
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
-    if (!canManageEverify(auth as any, (request.data?.tenantId as string) || '')) {
-      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
-    }
     const { tenantId, status, limit = 50, startAfter } = (request.data || {}) as {
       tenantId: string;
       status?: string | string[];
@@ -333,6 +348,9 @@ export const everifyListCases = onCall(
       startAfter?: string;
     };
     if (!tenantId) throw new HttpsError('invalid-argument', 'tenantId required');
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
 
     let q: admin.firestore.Query = db
       .collection('tenants')
@@ -371,6 +389,7 @@ export const everifyRetryCase = onCall(
     enforceAppCheck: false,
     cors: CALLABLE_BROWSER_CORS,
     secrets: [EVERIFY_WS_USERNAME, EVERIFY_WS_PASSWORD],
+    memory: '512MiB',
   },
   async (request) => {
     const auth = request.auth;
@@ -381,7 +400,7 @@ export const everifyRetryCase = onCall(
       userEmploymentId?: string;
     };
     if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
-    if (!canManageEverify(auth as any, tenantId)) {
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
     const caseRef = db.collection('tenants').doc(tenantId).collection('everify_cases').doc(caseId);
@@ -444,7 +463,7 @@ export const everifyRetryCase = onCall(
 
 /** Admin: exception action (e.g. mark for manual review, close) */
 export const everifyExceptionAction = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
@@ -455,7 +474,7 @@ export const everifyExceptionAction = onCall(
       note?: string;
     };
     if (!tenantId || !caseId || !action) throw new HttpsError('invalid-argument', 'tenantId, caseId, action required');
-    if (!canManageEverify(auth as any, tenantId)) {
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
       throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
     }
     const caseRef = db.collection('tenants').doc(tenantId).collection('everify_cases').doc(caseId);
@@ -513,13 +532,15 @@ async function everifyCaseAction(
 
 /** Admin: mark employee notified (TNC workflow) */
 export const everifyMarkEmployeeNotified = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
     const { tenantId, caseId } = (request.data || {}) as { tenantId: string; caseId: string };
     if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
-    if (!canManageEverify(auth as any, tenantId)) throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
     const actor = (auth.token?.email as string) || 'admin';
     await everifyCaseAction(tenantId, caseId, 'EMPLOYEE_NOTIFIED', { employeeNotifiedAt: admin.firestore.FieldValue.serverTimestamp() }, actor);
     return { ok: true, message: 'Employee notified recorded' };
@@ -528,13 +549,15 @@ export const everifyMarkEmployeeNotified = onCall(
 
 /** Admin: mark employee contests (TNC workflow) */
 export const everifyMarkContested = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
     const { tenantId, caseId } = (request.data || {}) as { tenantId: string; caseId: string };
     if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
-    if (!canManageEverify(auth as any, tenantId)) throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
     const actor = (auth.token?.email as string) || 'admin';
     await everifyCaseAction(tenantId, caseId, 'CONTESTED', { employeeContests: true }, actor);
     return { ok: true, message: 'Contested recorded' };
@@ -543,13 +566,15 @@ export const everifyMarkContested = onCall(
 
 /** Admin: mark referral initiated (TNC workflow) */
 export const everifyMarkReferralInitiated = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
     const { tenantId, caseId } = (request.data || {}) as { tenantId: string; caseId: string };
     if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
-    if (!canManageEverify(auth as any, tenantId)) throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
     const actor = (auth.token?.email as string) || 'admin';
     await everifyCaseAction(tenantId, caseId, 'REFERRAL_INITIATED', { referralInitiatedAt: admin.firestore.FieldValue.serverTimestamp() }, actor);
     return { ok: true, message: 'Referral initiated recorded' };
@@ -558,13 +583,15 @@ export const everifyMarkReferralInitiated = onCall(
 
 /** Admin: close case manually (TNC workflow); also sets status and closedAt */
 export const everifyCloseCaseManual = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
+  EVERIFY_ADMIN_ONCALL_OPTS,
   async (request) => {
     const auth = request.auth;
     if (!auth) throw new HttpsError('unauthenticated', 'Must be authenticated');
     const { tenantId, caseId, note } = (request.data || {}) as { tenantId: string; caseId: string; note?: string };
     if (!tenantId || !caseId) throw new HttpsError('invalid-argument', 'tenantId and caseId required');
-    if (!canManageEverify(auth as any, tenantId)) throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    if (!(await canManageOnboarding(auth as any, tenantId, auth.uid))) {
+      throw new HttpsError('permission-denied', EverifyErrorCode.UNAUTHORIZED);
+    }
     const caseRef = db.collection('tenants').doc(tenantId).collection('everify_cases').doc(caseId);
     const snap = await caseRef.get();
     if (!snap.exists) throw new HttpsError('not-found', 'Case not found');

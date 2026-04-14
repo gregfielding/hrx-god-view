@@ -43,14 +43,30 @@ export const EmploymentOnboardingPathRowAction: React.FC<EmploymentOnboardingPat
 }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isHRX, claimsRoles } = useAuth();
+  const {
+    user,
+    isHRX,
+    claimsRoles,
+    tenantRolesFromProfile,
+    legacyUserSecurityLevel,
+    legacyUserRole,
+  } = useAuth();
   const [inlineError, setInlineError] = useState<string | null>(null);
   const [startEverifyDialogOpen, setStartEverifyDialogOpen] = useState(false);
 
   const resolved = useMemo(() => resolveEmploymentV2PrimaryAction(row, ctx), [row, ctx]);
   const phase1 = Boolean(resolved && PHASE_1_ACTION_KEYS.has(resolved.actionKey));
 
-  const canEverify = canManageEverifyFromClaims(isHRX, ctx.tenantId, claimsRoles);
+  const canEverify = canManageEverifyFromClaims(
+    isHRX,
+    ctx.tenantId,
+    claimsRoles,
+    user?.uid,
+    ctx.userId,
+    tenantRolesFromProfile,
+    legacyUserSecurityLevel,
+    legacyUserRole,
+  );
 
   const runNavigate = useCallback(
     (path: string) => {

@@ -1,5 +1,7 @@
 import { FieldValue } from 'firebase/firestore';
 
+import type { ApplicationHiringLifecycle } from '../applicationHiringLifecycle';
+
 export interface JobOrder {
   id: string;
   jobOrderSeq: number; // Raw auto-increment per tenant
@@ -51,6 +53,9 @@ export interface JobOrder {
   /** Recruiter client account (`tenants/{tid}/accounts/{id}`). Used for Account → Job Orders (especially child/sub-accounts). */
   recruiterAccountId?: string | null;
 
+  /** CRM contact id for decision maker (Company Contacts on job order form). */
+  decisionMaker?: string;
+
   // Job Details
   jobTitle: string;
   jobDescription?: string;
@@ -67,7 +72,10 @@ export interface JobOrder {
   workersCompRate?: number;
   checkInInstructions?: string;
   timesheetCollectionMethod: TimesheetMethod;
-  
+
+  /** Gig: notify these user groups (SMS + push) when new shifts are posted; 15 min cooldown per recipient. */
+  autoMessagingUserGroupIds?: string[];
+
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
   visibility: JobsBoardVisibility; // Alias for consistency
@@ -153,7 +161,8 @@ export interface JobOrder {
   drugScreeningPanels?: string[];
   additionalScreenings?: string[];
   eVerifyRequired?: boolean;
-  dressCode?: string;
+  /** Uniform requirement library selections (multi-select); may be string in legacy data. */
+  dressCode?: string | string[];
   timeclockSystem?: string;
   disciplinePolicy?: string;
   poRequired?: boolean;
@@ -188,9 +197,32 @@ export interface JobOrder {
   createdBy: string;
   dealId?: string; // Link back to originating CRM deal
 
+  /**
+   * Hiring workflow config (container overrides tenant `hiringConfig` in Cloud Functions).
+   * Interview slice is merged in `aiHiringPolicyResolution.ts`.
+   */
+  hiringConfig?: HiringConfig;
+
+  /** Job-order AI hiring overrides (merged with tenant `aiHiring`). Edited in Job Order → Hiring tab. */
+  aiHiring?: Record<string, unknown>;
+
+  /**
+   * When true, Cloud Functions treat automation as off for this job order (phase 6 / auto-advance / gig fallback),
+   * regardless of tenant defaults. Set from the hiring control panel until launch.
+   */
+  hiringAutomationPaused?: boolean;
+
   // Placements tab: last workforce group selected via "Choose Group" (for quick re-select)
   placementsLastGroup?: { id: string; groupName: string };
 }
+
+/** Persisted on job orders / tenant / groups; merged tenant → posting → container. */
+export type HiringConfig = {
+  interview?: {
+    interviewType?: 'worker_ai_prescreen';
+    workerAiPrescreenRequired?: boolean;
+  };
+};
 
 export interface JobOrderContact {
   id: string;
@@ -262,6 +294,9 @@ export interface JobOrderFormData {
   checkInInstructions?: string;
   timesheetCollectionMethod: TimesheetMethod;
 
+  /** Gig: notify these user groups (SMS + push) when new shifts are posted; 15 min cooldown per recipient. */
+  autoMessagingUserGroupIds?: string[];
+
   // Jobs Board Options
   jobsBoardVisibility: JobsBoardVisibility;
   visibility?: JobsBoardVisibility; // Optional in form, defaults to 'hidden'
@@ -322,6 +357,8 @@ export interface JobApplication {
   createdBy: string;
   createdAt: Date;
   updatedAt: Date;
+  /** Optional canonical hiring funnel snapshot when persisted on the application doc. */
+  hiringLifecycle?: ApplicationHiringLifecycle;
 }
 
 export interface Candidate {

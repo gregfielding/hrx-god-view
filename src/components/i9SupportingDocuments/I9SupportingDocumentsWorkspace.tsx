@@ -16,8 +16,10 @@ import {
   FormControl,
   FormControlLabel,
   FormLabel,
+  Grid,
   InputLabel,
   MenuItem,
+  Paper,
   Radio,
   RadioGroup,
   Select,
@@ -53,6 +55,7 @@ import {
   buildI9SupportingStorageObjectPath,
   viewerCanStaffManageI9SupportingDocuments,
 } from '../../utils/i9SupportingDocumentsUi';
+import { ensureJpegForUpload } from '../../utils/heicToJpegBrowser';
 import {
   I9_SUPPORTING_DOCUMENT_TYPE_OPTIONS,
   labelForI9SupportingDocumentType,
@@ -93,6 +96,10 @@ import {
   shouldShowStaffExtractionPanel,
   verifiedFieldsSnapshotFromCurrentDisplay,
 } from '../../utils/i9SupportingDocumentReviewDisplay';
+import {
+  InlineDocumentPreviewBlock,
+  classifyUploadedFileForPreview,
+} from './I9SupportingDocumentsDrawerReviewLayout';
 
 const MAX_BYTES = 15 * 1024 * 1024;
 const ALLOWED_TYPES = /^image\/.+|application\/pdf$/i;
@@ -203,6 +210,12 @@ function ExtractionReviewAssist({
   );
 }
 
+function truncateReaderError(msg: string, maxLen: number): string {
+  const t = msg.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, maxLen).trim()}…`;
+}
+
 function StaffAiExtractedDataPanel({
   ext,
   review,
@@ -211,6 +224,7 @@ function StaffAiExtractedDataPanel({
   reviewBusyDocId,
   onOpenEdit,
   onConfirmValues,
+  layout = 'table',
 }: {
   ext: I9DocumentExtractionBlock | undefined;
   review: I9DocumentReviewBlock | undefined;
@@ -219,6 +233,7 @@ function StaffAiExtractedDataPanel({
   reviewBusyDocId: string | null;
   onOpenEdit: () => void;
   onConfirmValues: () => void;
+  layout?: 'table' | 'stack';
 }) {
   if (!shouldShowStaffExtractionPanel(ext)) return null;
 
@@ -229,88 +244,51 @@ function StaffAiExtractedDataPanel({
   const lowConf = isLowConfidenceExtraction(ext);
   const partial = hasPartialExtractedUsableFields(ext);
   const busy = reviewBusyDocId === docId;
+  const stack = layout === 'stack';
 
-  return (
-    <Box
-      sx={{
-        mt: 1,
-        p: 1,
-        borderRadius: 1,
-        border: '1px solid',
-        borderColor: 'divider',
-        bgcolor: 'action.hover',
-        maxHeight: 320,
-        overflow: 'auto',
-      }}
-    >
-      <Typography variant="caption" color="text.secondary" fontWeight={700} display="block" sx={{ mb: 0.75 }}>
-        AI extracted data
-      </Typography>
-
-      {st === 'extraction_unsupported' ? (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
-          AI extraction isn&apos;t available for this document type. Review the file manually.
-        </Typography>
-      ) : null}
-
-      {st === 'extraction_failed' ? (
-        <Alert severity="error" sx={{ py: 0, mb: 0.75 }}>
-          <Typography variant="caption" display="block">
-            {ext?.error?.message || 'Extraction failed — use the document image/PDF for review.'}
-          </Typography>
-        </Alert>
-      ) : null}
-
-      {st === 'extraction_pending' ? (
-        <Typography variant="caption" color="warning.main" display="block" sx={{ mb: 0.75 }}>
-          Reader is still running… refresh in a moment or open the file to review manually.
-        </Typography>
-      ) : null}
-
-      {(st === 'extraction_complete' || partial) && (warns.length > 0 || lowConf) ? (
-        <Alert severity="warning" sx={{ py: 0.25, mb: 0.75, '& .MuiAlert-message': { width: '100%' } }}>
-          <Typography variant="caption" component="div" fontWeight={600}>
-            Check these before relying on extracted text
-          </Typography>
-          <Box component="ul" sx={{ m: 0, pl: 2, mb: 0 }}>
-            {warns.slice(0, 8).map((w) => (
-              <Typography key={w} variant="caption" component="li" display="list-item">
-                {w}
-              </Typography>
-            ))}
-            {lowConf ? (
-              <Typography variant="caption" component="li" display="list-item">
-                Average field confidence is low — compare to the document.
-              </Typography>
-            ) : null}
-          </Box>
-        </Alert>
-      ) : null}
-
-      {ef?.extractedDocumentTypeLabel ? (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-          <strong>Type (reader)</strong>: {ef.extractedDocumentTypeLabel}
-        </Typography>
-      ) : null}
-
-      {categoryHints.length > 0 ? (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75 }}>
-          <strong>Category / codes</strong>: {categoryHints.join(' · ')}
-        </Typography>
-      ) : null}
-
-      {typeof ext?.confidenceSummary?.overall === 'number' && Number.isFinite(ext.confidenceSummary.overall) ? (
-        <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75 }}>
-          <strong>Reader confidence (avg)</strong>:{' '}
-          {ext.confidenceSummary.overall <= 1
-            ? `${Math.round(ext.confidenceSummary.overall * 100)}%`
-            : `${Math.round(ext.confidenceSummary.overall)}%`}
-        </Typography>
-      ) : null}
-
-      {st === 'extraction_complete' || partial ? (
-        <>
-          <Divider sx={{ my: 0.75 }} />
+  const fieldsBlock =
+    st === 'extraction_complete' || partial ? (
+      <>
+        {stack ? (
+          <Stack spacing={0} sx={{ mt: 0.5 }}>
+            {I9_REVIEW_EDITABLE_FIELD_KEYS.map((key) => {
+              const { text, source } = displayReviewField(key, ext, review);
+              return (
+                <Box
+                  key={key}
+                  sx={{
+                    display: 'flex',
+                    flexDirection: { xs: 'column', sm: 'row' },
+                    gap: { xs: 0.25, sm: 1.5 },
+                    py: 1,
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    '&:last-of-type': { borderBottom: 0 },
+                  }}
+                >
+                  <Typography
+                    variant="subtitle2"
+                    color="text.secondary"
+                    sx={{ minWidth: { sm: 160 }, flexShrink: 0, fontWeight: 600 }}
+                  >
+                    {labelForI9ReviewField(key)}
+                  </Typography>
+                  <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.75} sx={{ flex: 1, minWidth: 0 }}>
+                    <Typography variant="body2" sx={{ wordBreak: 'break-word' }}>
+                      {text === '—' ? <em style={{ opacity: 0.7 }}>—</em> : text}
+                    </Typography>
+                    {source === 'verified' ? (
+                      <Chip size="small" label="Verified" color="success" variant="outlined" sx={{ height: 22 }} />
+                    ) : null}
+                    {source === 'extracted' ? (
+                      <Chip size="small" label="Reader" variant="outlined" sx={{ height: 22 }} />
+                    ) : null}
+                  </Stack>
+                </Box>
+              );
+            })}
+          </Stack>
+        ) : (
           <Table size="small" sx={{ '& td': { border: 0, py: 0.35, verticalAlign: 'top' } }}>
             <TableBody>
               {I9_REVIEW_EDITABLE_FIELD_KEYS.map((key) => {
@@ -340,22 +318,384 @@ function StaffAiExtractedDataPanel({
               })}
             </TableBody>
           </Table>
-          {review?.reviewedExtractionAt ? (
-            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-              Last verified/edited: {formatTs(review.reviewedExtractionAt)}
-            </Typography>
-          ) : null}
-          <Stack direction="row" spacing={0.75} sx={{ mt: 1 }} flexWrap="wrap" useFlexGap>
-            <Button size="small" variant="outlined" disabled={busy || !viewerUid} onClick={onOpenEdit}>
-              Edit / verify
-            </Button>
-            <Button size="small" variant="text" disabled={busy || !viewerUid} onClick={onConfirmValues}>
-              Confirm values
-            </Button>
+        )}
+        {review?.reviewedExtractionAt ? (
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+            Last verified/edited: {formatTs(review.reviewedExtractionAt)}
+          </Typography>
+        ) : null}
+        <Stack direction="row" spacing={0.75} sx={{ mt: 1.25 }} flexWrap="wrap" useFlexGap>
+          <Button size="small" variant="outlined" disabled={busy || !viewerUid} onClick={onOpenEdit}>
+            Edit / verify
+          </Button>
+          <Button size="small" variant="text" disabled={busy || !viewerUid} onClick={onConfirmValues}>
+            Confirm values
+          </Button>
+        </Stack>
+      </>
+    ) : null;
+
+  return (
+    <Box
+      sx={{
+        mt: stack ? 0 : 1,
+        p: stack ? 0 : 1,
+        borderRadius: stack ? 0 : 1,
+        border: stack ? 0 : '1px solid',
+        borderColor: 'divider',
+        bgcolor: stack ? 'transparent' : 'action.hover',
+        maxHeight: stack ? 'none' : 320,
+        overflow: stack ? 'visible' : 'auto',
+      }}
+    >
+      <Typography
+        variant={stack ? 'subtitle2' : 'caption'}
+        color="text.secondary"
+        fontWeight={700}
+        display="block"
+        sx={{ mb: stack ? 1.25 : 0.75 }}
+      >
+        Extracted data
+      </Typography>
+
+      {st === 'extraction_unsupported' ? (
+        <Alert severity="info" variant={stack ? 'outlined' : 'standard'} sx={{ py: stack ? 1 : 0.5, mb: 1.5 }}>
+          <Typography variant="body2">Automatic reading isn&apos;t available for this format. Use the preview or open the file.</Typography>
+        </Alert>
+      ) : null}
+
+      {st === 'extraction_failed' ? (
+        <Alert severity="warning" variant="outlined" sx={{ py: 1, mb: 1.5 }}>
+          <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+            Reader couldn&apos;t parse this file
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+            {truncateReaderError(
+              ext?.error?.message || 'Compare against the document image or PDF and approve manually if appropriate.',
+              stack ? 220 : 400,
+            )}
+          </Typography>
+        </Alert>
+      ) : null}
+
+      {st === 'extraction_pending' ? (
+        <Alert severity="info" variant="outlined" sx={{ py: 1, mb: 1.5 }}>
+          <Typography variant="body2">Reader is still running — check back shortly or review the file directly.</Typography>
+        </Alert>
+      ) : null}
+
+      {(st === 'extraction_complete' || partial) && (warns.length > 0 || lowConf) ? (
+        <Alert severity="warning" variant="outlined" sx={{ py: 1, mb: 1.5 }}>
+          <Typography variant="body2" fontWeight={600} sx={{ mb: 0.75 }}>
+            Review before relying on extracted text
+          </Typography>
+          <Stack component="ul" spacing={0.5} sx={{ m: 0, pl: 2.25, mb: 0 }}>
+            {warns.slice(0, 6).map((w) => (
+              <Typography key={w} variant="body2" component="li">
+                {w}
+              </Typography>
+            ))}
+            {lowConf ? (
+              <Typography variant="body2" component="li">
+                Average field confidence is low — compare to the document.
+              </Typography>
+            ) : null}
           </Stack>
+        </Alert>
+      ) : null}
+
+      {ef?.extractedDocumentTypeLabel ? (
+        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 1 }}>
+          <Typography variant="body2" color="text.secondary" fontWeight={600}>
+            Document type (reader)
+          </Typography>
+          <Typography variant="body2">{ef.extractedDocumentTypeLabel}</Typography>
+        </Stack>
+      ) : null}
+
+      {categoryHints.length > 0 ? (
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+          <strong>Category hints:</strong> {categoryHints.join(' · ')}
+        </Typography>
+      ) : null}
+
+      {typeof ext?.confidenceSummary?.overall === 'number' && Number.isFinite(ext.confidenceSummary.overall) ? (
+        <Stack direction="row" spacing={1} sx={{ mb: 1.5 }}>
+          <Typography variant="body2" color="text.secondary" fontWeight={600}>
+            Reader confidence
+          </Typography>
+          <Typography variant="body2">
+            {ext.confidenceSummary.overall <= 1
+              ? `${Math.round(ext.confidenceSummary.overall * 100)}%`
+              : `${Math.round(ext.confidenceSummary.overall)}%`}
+          </Typography>
+        </Stack>
+      ) : null}
+
+      {st === 'extraction_complete' || partial ? (
+        <>
+          {stack ? <Divider sx={{ my: 1 }} /> : <Divider sx={{ my: 0.75 }} />}
+          {fieldsBlock}
         </>
+      ) : !partial && st !== 'extraction_pending' && st !== 'extraction_unsupported' && st !== 'extraction_failed' ? (
+        <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+          No extracted data available yet.
+        </Typography>
       ) : null}
     </Box>
+  );
+}
+
+type DrawerPreviewEntry = { url?: string; loading: boolean };
+
+/** Stacked review card for drawer variant (staff + worker layouts). */
+function I9DrawerDocumentReviewCard(props: {
+  row: I9SupportingDocRow;
+  staffMode: boolean;
+  workerSelf: boolean;
+  viewerUid: string | undefined;
+  extractionChip: (ext: I9DocumentExtractionBlock | undefined) => {
+    label: string;
+    color: 'default' | 'primary' | 'success' | 'warning' | 'error' | 'info';
+  };
+  reviewBusyDocId: string | null;
+  previewBusyId: string | null;
+  approveBusyId: string | null;
+  uploadBusyId: string | null;
+  drawerPreview: DrawerPreviewEntry | undefined;
+  onOpenPreview: (id: string) => void;
+  onApprove: (id: string) => void;
+  onReject: (id: string) => void;
+  onOpenEdit: (id: string, ext: I9DocumentExtractionBlock | undefined, review: I9DocumentReviewBlock | undefined) => void;
+  onConfirmValues: (id: string) => void;
+  triggerFilePick: (id: string) => void;
+}) {
+  const {
+    row: { id, data },
+    staffMode,
+    workerSelf,
+    viewerUid,
+    extractionChip: ecFn,
+    reviewBusyDocId,
+    previewBusyId,
+    approveBusyId,
+    uploadBusyId,
+    drawerPreview,
+    onOpenPreview,
+    onApprove,
+    onReject,
+    onOpenEdit,
+    onConfirmValues,
+    triggerFilePick,
+  } = props;
+
+  const status = String(data.status || '');
+  const sc = statusChip(status);
+  const path = String(data.storagePath || '').trim();
+  const canPreview = Boolean(path);
+  const showUpload =
+    workerSelf && (status === 'awaiting_upload' || status === 'rejected' || status === 'pending_review');
+  const ext = data.documentExtraction as I9DocumentExtractionBlock | undefined;
+  const review = data.documentReview as I9DocumentReviewBlock | undefined;
+  const ec = ecFn(ext);
+  const fileName = data.uploadedFileName ? String(data.uploadedFileName) : '—';
+  const contentType = String(data.uploadedContentType || '');
+  const cat = classifyUploadedFileForPreview(
+    typeof data.uploadedContentType === 'string' ? data.uploadedContentType : String(data.uploadedContentType ?? ''),
+    data.uploadedFileName != null ? String(data.uploadedFileName) : undefined,
+  );
+  const canStaffReview = staffMode && status === 'pending_review';
+
+  return (
+    <Paper
+      elevation={0}
+      variant="outlined"
+      sx={{
+        borderRadius: 2,
+        /* overflow: visible so sticky header works inside drawer scroll; do not use hidden */
+        overflow: 'visible',
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+      }}
+    >
+      <Box
+        sx={{
+          px: { xs: 2, sm: 2.5 },
+          py: 2,
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          bgcolor: 'grey.50',
+          position: 'sticky',
+          top: 0,
+          zIndex: 2,
+          boxShadow: '0 1px 0 rgba(0,0,0,0.06)',
+        }}
+      >
+        <Stack
+          direction={{ xs: 'column', sm: 'row' }}
+          spacing={1.5}
+          alignItems={{ xs: 'flex-start', sm: 'flex-start' }}
+          justifyContent="space-between"
+        >
+          <Box sx={{ flex: 1, minWidth: 0, maxWidth: '100%' }}>
+            <Typography variant="subtitle1" fontWeight={700} sx={{ lineHeight: 1.3 }}>
+              {labelForI9SupportingDocumentType(String(data.documentType || ''))}
+            </Typography>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              display="block"
+              sx={{ mt: 0.5, wordBreak: 'break-word' }}
+            >
+              {fileName}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block">
+              Uploaded {formatTs(data.uploadedAt)}
+              {contentType ? ` · ${contentType}` : ''}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
+              Document ID: {id}
+            </Typography>
+            <Stack direction="row" flexWrap="wrap" gap={0.75} sx={{ mt: 1 }}>
+              <Chip size="small" label={sc.label} color={sc.color} variant={sc.color === 'default' ? 'outlined' : 'filled'} />
+              {path ? <Chip size="small" label={ec.label} color={ec.color} variant="outlined" /> : null}
+            </Stack>
+          </Box>
+          <Stack
+            direction="row"
+            flexWrap="wrap"
+            gap={0.75}
+            justifyContent={{ xs: 'flex-start', sm: 'flex-end' }}
+            sx={{ flexShrink: 0, width: { xs: '100%', sm: 'auto' }, maxWidth: '100%' }}
+          >
+            {staffMode ? (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={!canPreview || previewBusyId === id}
+                  startIcon={previewBusyId === id ? <CircularProgress size={14} /> : <OpenInNewIcon />}
+                  onClick={() => onOpenPreview(id)}
+                >
+                  Open file
+                </Button>
+                <Button
+                  size="small"
+                  color="success"
+                  variant="contained"
+                  disabled={!canStaffReview || approveBusyId === id}
+                  onClick={() => onApprove(id)}
+                >
+                  Approve
+                </Button>
+                <Button size="small" color="error" variant="outlined" disabled={!canStaffReview} onClick={() => onReject(id)}>
+                  Reject
+                </Button>
+              </>
+            ) : null}
+            {workerSelf && canPreview ? (
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={previewBusyId === id}
+                startIcon={previewBusyId === id ? <CircularProgress size={14} /> : <OpenInNewIcon />}
+                onClick={() => onOpenPreview(id)}
+              >
+                Open file
+              </Button>
+            ) : null}
+            {workerSelf && showUpload ? (
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={uploadBusyId === id ? <CircularProgress size={14} /> : <UploadFileIcon />}
+                disabled={uploadBusyId === id}
+                onClick={() => triggerFilePick(id)}
+              >
+                {status === 'awaiting_upload' ? 'Upload' : 'Replace file'}
+              </Button>
+            ) : null}
+          </Stack>
+        </Stack>
+        {status === 'pending_review' && staffMode ? (
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.5, maxWidth: 720 }}>
+            The worker can replace this file while you review. Use Open file again to see the latest version.
+          </Typography>
+        ) : null}
+        {status === 'rejected' && data.rejectionReason ? (
+          <Alert severity="warning" variant="outlined" sx={{ mt: 1.5, py: 0.5 }}>
+            <Typography variant="body2">{String(data.rejectionReason)}</Typography>
+          </Alert>
+        ) : null}
+      </Box>
+
+      {staffMode && path ? (
+        <Box sx={{ p: { xs: 2, sm: 2.5 }, minWidth: 0, maxWidth: '100%' }}>
+          <Grid container spacing={2.5} sx={{ minWidth: 0 }}>
+            <Grid item xs={12} md={7} sx={{ minWidth: 0 }}>
+              <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ display: 'block', mb: 1 }}>
+                Document preview
+              </Typography>
+              <InlineDocumentPreviewBlock
+                category={cat}
+                signedUrl={drawerPreview?.url ?? null}
+                loading={Boolean(drawerPreview?.loading)}
+                fileLabel={fileName}
+                mimeHint={contentType || undefined}
+                onOpenFull={() => onOpenPreview(id)}
+                onRetry={() => onOpenPreview(id)}
+              />
+            </Grid>
+            <Grid item xs={12} md={5} sx={{ minWidth: 0 }}>
+              <Paper
+                variant="outlined"
+                sx={{ p: 2, borderRadius: 2, height: '100%', bgcolor: 'background.paper', minWidth: 0, overflow: 'hidden' }}
+              >
+                <StaffAiExtractedDataPanel
+                  ext={ext}
+                  review={review}
+                  docId={id}
+                  viewerUid={viewerUid}
+                  reviewBusyDocId={reviewBusyDocId}
+                  onOpenEdit={() => onOpenEdit(id, ext, review)}
+                  onConfirmValues={() => onConfirmValues(id)}
+                  layout="stack"
+                />
+              </Paper>
+            </Grid>
+          </Grid>
+        </Box>
+      ) : staffMode && !path ? (
+        <Box sx={{ px: 2.5, py: 2 }}>
+          <Typography variant="body2" color="text.secondary">
+            No file uploaded yet.
+          </Typography>
+        </Box>
+      ) : !staffMode ? (
+        <Box sx={{ p: 2.5, minWidth: 0, maxWidth: '100%' }}>
+          {path ? (
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" color="text.secondary" fontWeight={700} sx={{ display: 'block', mb: 1 }}>
+                Document preview
+              </Typography>
+              <InlineDocumentPreviewBlock
+                category={cat}
+                signedUrl={drawerPreview?.url ?? null}
+                loading={Boolean(drawerPreview?.loading)}
+                fileLabel={fileName}
+                mimeHint={contentType || undefined}
+                onOpenFull={() => onOpenPreview(id)}
+              />
+            </Box>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No file uploaded yet.
+            </Typography>
+          )}
+        </Box>
+      ) : null}
+    </Paper>
   );
 }
 
@@ -407,6 +747,8 @@ export interface I9SupportingDocumentsWorkspaceProps {
   onAfterRequestCreated?: (payload: { staffHint: string }) => void;
   /** `entity_employments.entityKey` — used with `requestedForEntityId` to scope the document list for workers. */
   employmentEntityKey?: string | null;
+  /** Employment page: no grey inset panel around worker upload controls (parent already provides card chrome). */
+  flatWorkerUploadSurface?: boolean;
 }
 
 const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspaceProps> = ({
@@ -421,6 +763,7 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
   suppressStaffRequestButton = false,
   onAfterRequestCreated,
   employmentEntityKey,
+  flatWorkerUploadSurface = false,
 }) => {
   const useExternal = externalRows !== undefined;
   const internal = useWorkerI9SupportingDocumentsRows(tenantId, workerUserId, !useExternal);
@@ -428,13 +771,31 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
   const loading = useExternal ? Boolean(externalLoading) : internal.loading;
   const listError = useExternal ? externalError ?? null : internal.error;
 
-  const { user, isHRX, claimsRoles } = useAuth();
+  const { user, isHRX, claimsRoles, tenantRolesFromProfile, legacyUserSecurityLevel, legacyUserRole } = useAuth();
   const viewerUid = user?.uid;
 
   const staffMode = React.useMemo(
     () =>
-      viewerCanStaffManageI9SupportingDocuments(tenantId, workerUserId, viewerUid, isHRX, claimsRoles),
-    [tenantId, workerUserId, viewerUid, isHRX, claimsRoles],
+      viewerCanStaffManageI9SupportingDocuments(
+        tenantId,
+        workerUserId,
+        viewerUid,
+        isHRX,
+        claimsRoles,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
+      ),
+    [
+      tenantId,
+      workerUserId,
+      viewerUid,
+      isHRX,
+      claimsRoles,
+      tenantRolesFromProfile,
+      legacyUserSecurityLevel,
+      legacyUserRole,
+    ],
   );
   const workerSelf = viewerUid === workerUserId;
 
@@ -474,6 +835,76 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
   const [workerListCType, setWorkerListCType] = useState(LIST_C_TYPES[0]?.value ?? 'list_c_ssn_card');
   const pendingUploadNewGroupRef = useRef<'a' | 'b' | 'c' | null>(null);
 
+  const [drawerInlinePreviewById, setDrawerInlinePreviewById] = useState<Record<string, DrawerPreviewEntry>>({});
+
+  const drawerPreviewDeps = React.useMemo(
+    () =>
+      variant === 'drawer'
+        ? tableRows
+            .map(({ id, data }) => {
+              const path = String(data.storagePath || '').trim();
+              const cat = classifyUploadedFileForPreview(
+                String(data.uploadedContentType || ''),
+                data.uploadedFileName != null ? String(data.uploadedFileName) : '',
+              );
+              return `${id}:${path}:${cat}`;
+            })
+            .join('|')
+        : '',
+    [variant, tableRows],
+  );
+
+  React.useEffect(() => {
+    if (variant !== 'drawer') {
+      setDrawerInlinePreviewById({});
+      return;
+    }
+    if (!drawerPreviewDeps) return;
+    let cancelled = false;
+    const load = async () => {
+      const targets = tableRows.filter(({ data }) => {
+        const path = String(data.storagePath || '').trim();
+        if (!path) return false;
+        const cat = classifyUploadedFileForPreview(
+          String(data.uploadedContentType || ''),
+          data.uploadedFileName != null ? String(data.uploadedFileName) : '',
+        );
+        return cat === 'pdf' || cat === 'image';
+      });
+      setDrawerInlinePreviewById((prev) => {
+        const next = { ...prev };
+        for (const { id } of targets) {
+          next[id] = { loading: true };
+        }
+        return next;
+      });
+      await Promise.all(
+        targets.map(async ({ id }) => {
+          try {
+            const res = await callGetI9SupportingDocumentSignedUrl(functions, { tenantId, documentId: id });
+            const data = res.data as { url?: string };
+            if (cancelled) return;
+            setDrawerInlinePreviewById((prev) => ({
+              ...prev,
+              [id]: { url: data?.url, loading: false },
+            }));
+          } catch {
+            if (!cancelled) {
+              setDrawerInlinePreviewById((prev) => ({
+                ...prev,
+                [id]: { loading: false },
+              }));
+            }
+          }
+        }),
+      );
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [variant, tenantId, drawerPreviewDeps, tableRows]);
+
   useEffect(() => {
     if (!workerSelf || loading) return;
     if (rows.length === 0) return;
@@ -492,9 +923,9 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
         const res = await callGetI9SupportingDocumentSignedUrl(functions, { tenantId, documentId });
         const data = res.data as { url?: string };
         if (data?.url) window.open(data.url, '_blank', 'noopener,noreferrer');
-        else setActionError('This link expires quickly — click Open again.');
-      } catch {
-        setActionError('This link expires quickly — click Open again.');
+        else setActionError('Could not get preview link — try again.');
+      } catch (e) {
+        setActionError(formatFirebaseHttpsError(e));
       } finally {
         setPreviewBusyId(null);
       }
@@ -660,12 +1091,22 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
 
     if (!file || !tenantId || !workerUserId) return;
 
-    if (file.size > MAX_BYTES) {
-      setActionError('File must be 15 MB or smaller.');
-      return;
-    }
     if (!ALLOWED_TYPES.test(file.type || '')) {
       setActionError('Only images and PDF files are allowed.');
+      return;
+    }
+
+    let fileToUpload: File;
+    try {
+      fileToUpload = await ensureJpegForUpload(file);
+    } catch {
+      setActionError(
+        'Could not convert this iPhone photo to JPEG. Try exporting JPEG from Photos, or use Settings → Camera → Formats → Most Compatible.',
+      );
+      return;
+    }
+    if (fileToUpload.size > MAX_BYTES) {
+      setActionError('File must be 15 MB or smaller.');
       return;
     }
 
@@ -682,9 +1123,9 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
         const colRef = collection(db, p.workerI9SupportingDocuments(tenantId));
         const newDocRef = doc(colRef);
         const newId = newDocRef.id;
-        const storagePath = buildI9SupportingStorageObjectPath(tenantId, workerUserId, newId, file.name);
+        const storagePath = buildI9SupportingStorageObjectPath(tenantId, workerUserId, newId, fileToUpload.name);
         const storageRef = ref(storage, storagePath);
-        await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' });
+        await uploadBytes(storageRef, fileToUpload, { contentType: fileToUpload.type || 'application/octet-stream' });
 
         await setDoc(newDocRef, {
           tenantId,
@@ -694,8 +1135,8 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
           storagePath,
           uploadedAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-          uploadedFileName: file.name,
-          uploadedContentType: file.type || null,
+          uploadedFileName: fileToUpload.name,
+          uploadedContentType: fileToUpload.type || null,
           reviewedAt: null,
           reviewedBy: null,
           rejectionReason: null,
@@ -728,9 +1169,9 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
     setUploadBusyId(documentId);
     setActionError(null);
     try {
-      const storagePath = buildI9SupportingStorageObjectPath(tenantId, workerUserId, documentId, file.name);
+      const storagePath = buildI9SupportingStorageObjectPath(tenantId, workerUserId, documentId, fileToUpload.name);
       const storageRef = ref(storage, storagePath);
-      await uploadBytes(storageRef, file, { contentType: file.type || 'application/octet-stream' });
+      await uploadBytes(storageRef, fileToUpload, { contentType: fileToUpload.type || 'application/octet-stream' });
 
       const docRef = doc(db, p.workerI9SupportingDocument(tenantId, documentId));
       const basePatch: Record<string, unknown> = {
@@ -738,8 +1179,8 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
         uploadedAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         status: 'pending_review',
-        uploadedFileName: file.name,
-        uploadedContentType: file.type || null,
+        uploadedFileName: fileToUpload.name,
+        uploadedContentType: fileToUpload.type || null,
       };
       if (status === 'rejected') {
         await updateDoc(docRef, {
@@ -792,7 +1233,13 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
       )}
 
       {workerSelf && (
-        <Box sx={{ mb: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }}>
+        <Box
+          sx={
+            flatWorkerUploadSurface
+              ? { mb: 2, pt: 2, borderTop: '1px solid', borderColor: 'divider' }
+              : { mb: 2, p: 1.5, bgcolor: 'action.hover', borderRadius: 1 }
+          }
+        >
           <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
             {I9_WORKER_UPLOAD_HEADING}
           </Typography>
@@ -821,14 +1268,8 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
           {requestedForEntityId?.trim() ? (
             <>
               {workerPathChoice === 'a' ? (
-                <Stack
-                  direction={{ xs: 'column', sm: 'row' }}
-                  spacing={1.5}
-                  alignItems={{ sm: 'flex-end' }}
-                  flexWrap="wrap"
-                  sx={{ mt: 1.5 }}
-                >
-                  <FormControl size="small" sx={{ minWidth: 240 }}>
+                <Stack direction="column" spacing={2} alignItems="stretch" sx={{ mt: 1.5 }}>
+                  <FormControl size="small" fullWidth>
                     <InputLabel id="i9-w-list-a">List A document</InputLabel>
                     <Select
                       labelId="i9-w-list-a"
@@ -851,19 +1292,15 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                     }
                     disabled={Boolean(uploadBusyId)}
                     onClick={() => startWorkerListGroupUpload('a')}
+                    sx={{ alignSelf: 'flex-start' }}
                   >
                     Upload List A
                   </Button>
                 </Stack>
               ) : (
-                <Stack spacing={1.5} sx={{ mt: 1.5 }}>
-                  <Stack
-                    direction={{ xs: 'column', sm: 'row' }}
-                    spacing={1.5}
-                    alignItems={{ sm: 'flex-end' }}
-                    flexWrap="wrap"
-                  >
-                    <FormControl size="small" sx={{ minWidth: 240 }}>
+                <Stack spacing={2} sx={{ mt: 1.5 }}>
+                  <Stack direction="column" spacing={2} alignItems="stretch">
+                    <FormControl size="small" fullWidth>
                       <InputLabel id="i9-w-list-b">List B document</InputLabel>
                       <Select
                         labelId="i9-w-list-b"
@@ -884,17 +1321,13 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                       startIcon={<UploadFileIcon />}
                       disabled={Boolean(uploadBusyId)}
                       onClick={() => startWorkerListGroupUpload('b')}
+                      sx={{ alignSelf: 'flex-start' }}
                     >
                       Upload List B
                     </Button>
                   </Stack>
-                  <Stack
-                    direction={{ xs: 'column', sm: 'row' }}
-                    spacing={1.5}
-                    alignItems={{ sm: 'flex-end' }}
-                    flexWrap="wrap"
-                  >
-                    <FormControl size="small" sx={{ minWidth: 240 }}>
+                  <Stack direction="column" spacing={2} alignItems="stretch">
+                    <FormControl size="small" fullWidth>
                       <InputLabel id="i9-w-list-c">List C document</InputLabel>
                       <Select
                         labelId="i9-w-list-c"
@@ -915,6 +1348,7 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
                       startIcon={<UploadFileIcon />}
                       disabled={Boolean(uploadBusyId)}
                       onClick={() => startWorkerListGroupUpload('c')}
+                      sx={{ alignSelf: 'flex-start' }}
                     >
                       Upload List C
                     </Button>
@@ -956,6 +1390,34 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
           <CircularProgress size={28} />
         </Box>
       ) : tableRows.length > 0 ? (
+        variant === 'drawer' ? (
+          <Stack spacing={3} sx={{ minWidth: 0, width: '100%' }}>
+            {tableRows.map((row) => (
+              <I9DrawerDocumentReviewCard
+                key={row.id}
+                row={row}
+                staffMode={staffMode}
+                workerSelf={workerSelf}
+                viewerUid={viewerUid}
+                extractionChip={extractionChip}
+                reviewBusyDocId={reviewBusyDocId}
+                previewBusyId={previewBusyId}
+                approveBusyId={approveBusyId}
+                uploadBusyId={uploadBusyId}
+                drawerPreview={drawerInlinePreviewById[row.id]}
+                onOpenPreview={(docId) => void openPreview(docId)}
+                onApprove={(docId) => setApproveConfirmDocId(docId)}
+                onReject={(docId) => openReject(docId)}
+                onOpenEdit={(docId, ext, review) => {
+                  setReviewForm(initialFormValuesFromRow(ext, review));
+                  setReviewEditDocId(docId);
+                }}
+                onConfirmValues={(docId) => void handleConfirmReviewValues(docId)}
+                triggerFilePick={triggerFilePick}
+              />
+            ))}
+          </Stack>
+        ) : (
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -1096,6 +1558,7 @@ const I9SupportingDocumentsWorkspace: React.FC<I9SupportingDocumentsWorkspacePro
             </TableBody>
           </Table>
         </TableContainer>
+        )
       ) : !(workerSelf && requestedForEntityId?.trim()) ? (
         <Typography variant="body2" color="text.secondary">
           {staffMode

@@ -15,6 +15,13 @@ const tasksClient = new CloudTasksClient();
 const PROJECT = process.env.GCLOUD_PROJECT || process.env.GCP_PROJECT || '';
 const LOCATION = process.env.FUNCTIONS_REGION || 'us-central1';
 
+/** Gen2 Firestore triggers: full bundle cold start — explicit memory avoids Cloud Run deploy healthcheck flakes. */
+const EVERIFY_FS_TRIGGER_OPTS = {
+  region: LOCATION,
+  memory: '512MiB' as const,
+  timeoutSeconds: 300,
+};
+
 /** Get worker URL: config-driven (EVERIFY_WORKER_URL) or default v2 pattern */
 function getWorkerUrl(): string | null {
   const configured = getEverifyWorkerUrl();
@@ -60,7 +67,7 @@ export async function enqueueEverifyTask(tenantId: string, userEmploymentId: str
 export const onUserEmploymentUpdatedEverify = onDocumentUpdated(
   {
     document: 'tenants/{tenantId}/user_employments/{employmentId}',
-    region: LOCATION,
+    ...EVERIFY_FS_TRIGGER_OPTS,
   },
   async (event) => {
     const before = event.data?.before?.data();
@@ -102,7 +109,7 @@ export const onUserEmploymentUpdatedEverify = onDocumentUpdated(
 export const onEverifyCaseUpdatedSyncOnboarding = onDocumentUpdated(
   {
     document: 'tenants/{tenantId}/everify_cases/{caseId}',
-    region: LOCATION,
+    ...EVERIFY_FS_TRIGGER_OPTS,
   },
   async (event) => {
     const before = event.data?.before?.data();

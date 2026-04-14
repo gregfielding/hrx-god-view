@@ -77,6 +77,16 @@ import { autoAddUserToApplyConfiguredGroups } from '../../utils/applyWizardGroup
 import { isValidUsPhone10, normalizeUsPhoneDigits } from '../../utils/usPhoneValidation';
 import { normalizeLast4SsnDigits, isEmptyOrValidLast4Ssn } from '../../utils/last4Ssn';
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
+import { mergeResolvedHiringInterview } from '../../utils/mergeResolvedHiringInterview';
+import {
+  applyHiringLifecycleTimestampMetadata,
+  buildHiringLifecycleOnApplicationCreate,
+} from '../../shared/hiringLifecyclePatch';
+import { deriveProfileEligibilityForHiringLifecycle } from '../../shared/profileEligibilityForHiringLifecycle';
+import {
+  firestoreSafeHiringLifecycle,
+  hiringLifecycleCoreFromApplicationData,
+} from '../../utils/hiringLifecycleFirestoreHelpers';
 
 type WizardProps = {
   tenantId: string;
@@ -665,6 +675,16 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
         if (!isLocalDev && tenantId && jobId && uid) {
           const tidAppId = `${uid}_${jobId}`;
           const tRef = doc(db, 'tenants', tenantId, 'applications', tidAppId);
+          const { hiringLifecycle: hlInProgress } = buildHiringLifecycleOnApplicationCreate({
+            applicationStatus: 'in_progress',
+            aiPrescreenInterviewRequired: false,
+            profileEligible: true,
+          });
+          const hiringLifecycleInProgress = applyHiringLifecycleTimestampMetadata({
+            core: hlInProgress,
+            previous: null,
+            nowIso: new Date().toISOString(),
+          });
           await setDoc(
             tRef,
             {
@@ -674,6 +694,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               appliedAt: serverTimestamp(),
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
+              hiringLifecycle: firestoreSafeHiringLifecycle(hiringLifecycleInProgress),
             },
             { merge: true },
           );
@@ -2493,15 +2514,15 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               if (joSnap.exists()) requirementPackId = (joSnap.data() as any)?.requirementPackId;
             } catch (_) {}
           }
+          let userData: any = {};
+          try {
+            const userRef = doc(db, 'users', effectiveUid);
+            const userSnap = await getDoc(userRef);
+            if (userSnap.exists()) userData = userSnap.data() || {};
+          } catch (_) {}
+          const qual = formData?.qualifications || {};
           let jobScoreSummaryPayload: any = undefined;
           if (requirementPackId) {
-            let userData: any = {};
-            try {
-              const userRef = doc(db, 'users', effectiveUid);
-              const userSnap = await getDoc(userRef);
-              if (userSnap.exists()) userData = userSnap.data() || {};
-            } catch (_) {}
-            const qual = formData?.qualifications || {};
             const prefs = formData?.preferences || {};
             const scorePhoneRaw =
               personal.phone && isValidUsPhone10(String(personal.phone))
@@ -2536,6 +2557,104 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
                 jobScoreSummaryPayload = { ...summary, computedAt: serverTimestamp() };
             }
           }
+
+          let existingForLifecycle: Record<string, unknown> | null = null;
+          try {
+            const exSnap = await getDoc(tRef);
+            existingForLifecycle = exSnap.exists() ? (exSnap.data() as Record<string, unknown>) : null;
+          } catch {
+            /* best-effort */
+          }
+          let tenantData: Record<string, unknown> = {};
+          try {
+            const ts = await getDoc(doc(db, 'tenants', tenantId));
+            if (ts.exists()) tenantData = ts.data() as Record<string, unknown>;
+          } catch {
+            /* best-effort */
+          }
+          let containerData: Record<string, unknown> | null = null;
+          if (effectiveJobOrderId) {
+            try {
+              const jos = await getDoc(doc(db, 'tenants', tenantId, 'job_orders', effectiveJobOrderId));
+              if (jos.exists()) containerData = jos.data() as Record<string, unknown>;
+            } catch {
+              /* best-effort */
+            }
+          }
+          const { workerAiPrescreenRequired } = mergeResolvedHiringInterview(tenantData, containerData);
+          const ap = tenantData.aiPrescreen as Record<string, unknown> | undefined;
+          const te = (ap?.eligibility as Record<string, unknown>) || {};
+          const profileEligOpts = {
+            requireResumeOrSkill: te.requireResumeOrSkill !== false && te.requireResumeOrWorkHistory !== false,
+            requirePhone: te.requirePhone !== false,
+            requireLocation: te.requireLocation !== false,
+            requireWorkAuthorization: te.requireWorkAuthorization !== false,
+          };
+          const eligForm = eligibility;
+          const isC1EventsContractor = hiringEntityName != null && /C1 Events LLC/i.test(hiringEntityName);
+          const authorizedToWorkUS =
+            isC1EventsContractor ||
+            (typeof eligForm.workAuthorized === 'boolean' ? !!eligForm.workAuthorized : false);
+          const addrSrc = personal;
+          const mergedAddressInfo: Record<string, unknown> = {
+            ...(typeof userData.addressInfo === 'object' && userData.addressInfo
+              ? (userData.addressInfo as Record<string, unknown>)
+              : {}),
+            ...(addrSrc.street ? { streetAddress: String(addrSrc.street).trim() } : {}),
+            ...(addrSrc.unit ? { unitNumber: String(addrSrc.unit).trim() } : {}),
+            ...(addrSrc.city ? { city: String(addrSrc.city).trim() } : {}),
+            ...(addrSrc.state ? { state: String(addrSrc.state).trim() } : {}),
+            ...(addrSrc.zip ? { zip: String(addrSrc.zip).trim() } : {}),
+            ...(addrSrc.homeLat !== undefined && addrSrc.homeLng !== undefined
+              ? { homeLat: Number(addrSrc.homeLat), homeLng: Number(addrSrc.homeLng) }
+              : {}),
+          };
+          const eligibilityPhoneRaw =
+            personal.phone && isValidUsPhone10(String(personal.phone))
+              ? normalizeUsPhoneDigits(String(personal.phone))
+              : userData.phone;
+          const prevAtt = (userData.workEligibilityAttestation || {}) as Record<string, unknown>;
+          const workEligibilityAttestation: Record<string, unknown> = {
+            ...prevAtt,
+            authorizedToWorkUS,
+            requireSponsorship:
+              typeof eligForm.requireSponsorship === 'boolean'
+                ? eligForm.requireSponsorship
+                : prevAtt.requireSponsorship,
+          };
+          const userDocForEligibility: Record<string, unknown> = {
+            ...userData,
+            workEligibility: authorizedToWorkUS,
+            workAuthorization: authorizedToWorkUS,
+            phone: eligibilityPhoneRaw,
+            phoneE164: userData.phoneE164,
+            skills: qual.skills ?? userData.skills,
+            workExperience: qual.workExperience ?? userData.workExperience ?? userData.workHistory,
+            workHistory: qual.workExperience ?? userData.workHistory,
+            resume: formData?.requirements?.uploaded ?? userData.resume,
+            addressInfo: mergedAddressInfo,
+            city: addrSrc.city ?? userData.city,
+            state: addrSrc.state ?? userData.state,
+            zip: addrSrc.zip ?? userData.zipCode,
+            workEligibilityAttestation,
+          };
+          const { profileEligible, profileBlockerCodes } = deriveProfileEligibilityForHiringLifecycle(
+            userDocForEligibility,
+            profileEligOpts,
+          );
+          const { hiringLifecycle: hlSubmitted } = buildHiringLifecycleOnApplicationCreate({
+            applicationStatus: 'submitted',
+            aiPrescreenInterviewRequired: workerAiPrescreenRequired,
+            profileEligible,
+            profileBlockerCodes: profileEligible ? undefined : profileBlockerCodes,
+            workerAiPrescreenInterviewCompletedAt: existingForLifecycle?.workerAiPrescreenInterviewCompletedAt ?? null,
+          });
+          const hiringLifecycleSubmitted = applyHiringLifecycleTimestampMetadata({
+            core: hlSubmitted,
+            previous: hiringLifecycleCoreFromApplicationData(existingForLifecycle ?? undefined),
+            nowIso: new Date().toISOString(),
+          });
+
           await setDoc(
             tRef,
             {
@@ -2547,6 +2666,7 @@ const Wizard: React.FC<WizardProps> = ({ tenantId, tenantSlug, tenantName, jobId
               appliedAt: serverTimestamp(),
               submittedAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
+              hiringLifecycle: firestoreSafeHiringLifecycle(hiringLifecycleSubmitted),
               data: safeFormData,
               applicant: {
                 firstName: personal.firstName || null,

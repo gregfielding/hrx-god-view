@@ -10,6 +10,11 @@ export const CALLABLE_BROWSER_CORS: Array<string | RegExp> = [
   // Explicit production origins (string match avoids any RegExp edge cases in the cors middleware / bundling).
   'https://hrxone.com',
   'https://www.hrxone.com',
+  // CRA / Vite / common dev ports — explicit strings avoid Gen2 callable CORS regressions with RegExp (firebase-functions 6.4+).
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
   /^http:\/\/localhost(?::\d+)?$/,
   /^http:\/\/127\.0\.0\.1(?::\d+)?$/,
   /^https:\/\/.+\.firebaseapp\.com$/,

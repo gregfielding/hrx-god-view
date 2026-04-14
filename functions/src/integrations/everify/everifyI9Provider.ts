@@ -168,6 +168,20 @@ function normalizeAlienNumberInI9Payload(data: Record<string, unknown>): void {
   if (norm) data.alien_number = norm;
 }
 
+/**
+ * ICA create-draft expects a conventional US phone pattern; bare 10-digit strings are normalized to ###-###-####.
+ * Non-US or non-10-digit values are left unchanged for provider validation to surface.
+ */
+function normalizeCaseCreatorPhoneForEverifyRest(data: Record<string, unknown>): void {
+  const v = data.case_creator_phone_number;
+  if (v === undefined || v === null) return;
+  const raw = typeof v === 'string' ? v.trim() : String(v);
+  let d = raw.replace(/\D/g, '');
+  if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+  if (d.length !== 10) return;
+  data.case_creator_phone_number = `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+}
+
 /** E-Verify returns ATTRIBUTE_EXTRANEOUS_FIELD for no_expiration_date on FORM_I551 cases. */
 function omitNoExpirationDateForFormI551(data: Record<string, unknown>): void {
   const docA = data.document_a_type_code;
@@ -208,6 +222,7 @@ export function applyRestDraftPayloadNormalization(data: Record<string, unknown>
   ensureI551NumberForFormI551(data);
   normalizeI551NumberInI9Payload(data);
   omitNoExpirationDateForFormI551(data);
+  normalizeCaseCreatorPhoneForEverifyRest(data);
 }
 
 function parseEnvI9FixtureJson(): Record<string, unknown> | null {

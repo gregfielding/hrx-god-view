@@ -23,6 +23,7 @@ import WorkerQuickNav from '../../../components/worker/WorkerQuickNav';
 import WorkerDashboardActionItems from '../../../components/worker/home/WorkerDashboardActionItems';
 import type { UpcomingShift } from '../../../components/worker/dashboard/WorkerDashboardHero';
 import { buildWorkerDashboardActionItems } from '../../../utils/workerDashboardActionItems';
+import { useWorkerAiPrescreenSurfaceSignals } from '../../../hooks/useWorkerAiPrescreenSurfaceSignals';
 import { deriveWorkerComplianceSignals } from '../../../utils/workerComplianceActionDerivers';
 import {
   assignmentDocNeedsWorkerConfirmation,
@@ -107,6 +108,11 @@ const WorkerDashboard: React.FC = () => {
   const [jobSignals, setJobSignals] = useState<WorkerDashboardJobSignals | null>(null);
   const tenantId = activeTenant?.id ?? C1_TENANT_ID;
 
+  const { workerAiPrescreenItems, refreshPrescreenSignals } = useWorkerAiPrescreenSurfaceSignals(
+    tenantId,
+    user?.uid ?? null,
+  );
+
   useEffect(() => {
     if (!user?.uid) return;
     void getDoc(doc(db, 'users', user.uid)).then((snap) => {
@@ -117,11 +123,12 @@ const WorkerDashboard: React.FC = () => {
   const refreshAfterDashboardAction = useCallback(() => {
     setSmsSnoozeTick((n) => n + 1);
     setJobContextTick((n) => n + 1);
+    refreshPrescreenSignals();
     if (!user?.uid) return;
     void getDoc(doc(db, 'users', user.uid)).then((snap) => {
       setUserDoc(snap.exists() ? (snap.data() as Record<string, unknown>) : null);
     });
-  }, [user?.uid]);
+  }, [user?.uid, refreshPrescreenSignals]);
 
   const smsSnoozedUntilMs = useMemo(() => {
     if (!user?.uid) return 0;
@@ -201,8 +208,9 @@ const WorkerDashboard: React.FC = () => {
         authAvatarUrl: avatarUrl || user?.photoURL || null,
         smsSnoozedUntilMs,
         jobSignals,
+        workerAiPrescreenItems,
       }),
-    [userDoc, avatarUrl, user?.photoURL, smsSnoozedUntilMs, jobSignals]
+    [userDoc, avatarUrl, user?.photoURL, smsSnoozedUntilMs, jobSignals, workerAiPrescreenItems]
   );
 
   useEffect(() => {

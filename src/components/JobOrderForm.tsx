@@ -250,7 +250,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     companyIds: string[];
     hiringEntityId: string | null;
     parentAccountId: string | null;
+    /** Child account worksites from associations.locations (companyId + locationId). */
+    linkedLocations: Array<{ companyId: string; locationId: string }>;
   };
+  /** Full list (e.g. optional “Linked recruiter account” on edit can include national parents). */
+  const [recruiterAccountsAll, setRecruiterAccountsAll] = useState<PickerAccount[]>([]);
   const [recruiterAccountsForPicker, setRecruiterAccountsForPicker] = useState<PickerAccount[]>([]);
   const [pickedRecruiterAccountId, setPickedRecruiterAccountId] = useState<string | null>(null);
 
@@ -268,9 +272,11 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   const recruiterAccountHiringEntityId = useMemo(() => {
     const accId = effectiveRecruiterAccountId;
     if (!accId) return null;
-    const acc = recruiterAccountsForPicker.find((a) => a.id === accId);
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === accId) ||
+      recruiterAccountsAll.find((a) => a.id === accId);
     return acc?.hiringEntityId ? String(acc.hiringEntityId) : null;
-  }, [effectiveRecruiterAccountId, recruiterAccountsForPicker]);
+  }, [effectiveRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
 
   /** Hiring Entity (Employer of Record): E-Verify comes from here (read-only downstream). */
   const hiringEntityIdForForm = useMemo(
@@ -495,7 +501,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           .map((d) => {
             const data = d.data() as Record<string, unknown>;
             if (data.active === false) return null;
-            const assoc = data.associations as { companyIds?: string[] } | undefined;
+            const assoc = data.associations as
+              | { companyIds?: string[]; locations?: unknown[] }
+              | undefined;
             let companyIds = Array.isArray(assoc?.companyIds)
               ? assoc!.companyIds!.filter((x): x is string => typeof x === 'string' && !!x.trim())
               : [];
@@ -515,6 +523,23 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               ? String(byId.get(parentAccountId)?.data()?.name ?? '').trim()
               : '';
             const label = parentName ? `${name} — ${parentName}` : name;
+            const locRaw = assoc?.locations;
+            const linkedLocations = Array.isArray(locRaw)
+              ? locRaw
+                  .filter(
+                    (x: unknown): x is { companyId: string; locationId: string } =>
+                      !!x &&
+                      typeof x === 'object' &&
+                      typeof (x as { companyId?: unknown }).companyId === 'string' &&
+                      typeof (x as { locationId?: unknown }).locationId === 'string' &&
+                      String((x as { companyId: string }).companyId).trim() !== '' &&
+                      String((x as { locationId: string }).locationId).trim() !== '',
+                  )
+                  .map((x) => ({
+                    companyId: String(x.companyId).trim(),
+                    locationId: String(x.locationId).trim(),
+                  }))
+              : [];
             return {
               id: d.id,
               name,
@@ -522,13 +547,36 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               companyIds,
               hiringEntityId: he != null && String(he).trim() ? String(he) : null,
               parentAccountId,
+              linkedLocations,
             };
           })
           .filter((x): x is PickerAccount => x != null);
-        setRecruiterAccountsForPicker(list);
+
+        const accountIdsThatAreParents = new Set<string>();
+        snap.docs.forEach((docSnap) => {
+          const pid = (docSnap.data() as { parentAccountId?: unknown }).parentAccountId;
+          if (typeof pid === 'string' && pid.trim()) accountIdsThatAreParents.add(pid.trim());
+        });
+
+        const listForNewJobRequiredAccount = list.filter((row) => {
+          if (accountIdsThatAreParents.has(row.id)) return false;
+          const raw = byId.get(row.id)?.data() as
+            | { childAccountIds?: unknown; accountType?: unknown }
+            | undefined;
+          const childIds = raw?.childAccountIds;
+          if (Array.isArray(childIds) && childIds.length > 0) return false;
+          if (raw?.accountType === 'national') return false;
+          return true;
+        });
+
+        setRecruiterAccountsAll(list);
+        setRecruiterAccountsForPicker(listForNewJobRequiredAccount);
       } catch (e) {
         console.error('JobOrderForm: load recruiter accounts', e);
-        if (!cancelled) setRecruiterAccountsForPicker([]);
+        if (!cancelled) {
+          setRecruiterAccountsAll([]);
+          setRecruiterAccountsForPicker([]);
+        }
       }
     })();
     return () => {
@@ -536,7 +584,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     };
   }, [tenantId]);
 
-  const showOptionalRecruiterAccountLink = isEditing || !requireAccountSelection;
+  /** Optional bottom link only when creating without required account pick; edit mode uses Account in Basic Information instead. */
+  const showOptionalRecruiterAccountLink = !isEditing && !requireAccountSelection;
 
   // Load companies (only when not provided, e.g. from account-scoped modal) and company defaults
   useEffect(() => {
@@ -571,17 +620,64 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     });
   }, [companies]);
 
+  /**
+   * Account driving Company/Worksite when Account-first flow is on: explicit picker choice, or page context
+   * (e.g. Account Details → New Order) when that account is a valid picker option (child/standalone, not national-only).
+   */
+  const scopeRecruiterAccountId = useMemo(() => {
+    if (pickedRecruiterAccountId) return pickedRecruiterAccountId;
+    if (
+      requireAccountSelection &&
+      !isEditing &&
+      propRecruiterAccountId &&
+      recruiterAccountsForPicker.some((a) => a.id === propRecruiterAccountId)
+    ) {
+      return propRecruiterAccountId;
+    }
+    return null;
+  }, [pickedRecruiterAccountId, requireAccountSelection, isEditing, propRecruiterAccountId, recruiterAccountsForPicker]);
+
   const accountLinkedCompanyIds = useMemo(() => {
-    if (!requireAccountSelection || isEditing || !pickedRecruiterAccountId) return null;
-    const acc = recruiterAccountsForPicker.find((a) => a.id === pickedRecruiterAccountId);
-    const ids = (acc?.companyIds || []).filter(Boolean);
+    if (!scopeRecruiterAccountId) return null;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) ||
+      recruiterAccountsAll.find((a) => a.id === scopeRecruiterAccountId);
+    if (!acc) return null;
+    const accountDrivesCompany =
+      (requireAccountSelection && !isEditing) || isEditing;
+    if (!accountDrivesCompany) return null;
+    if (acc.parentAccountId && acc.linkedLocations.length === 1) {
+      return [acc.linkedLocations[0].companyId];
+    }
+    const ids = (acc.companyIds || []).filter(Boolean);
     return ids.length ? ids : null;
-  }, [requireAccountSelection, isEditing, pickedRecruiterAccountId, recruiterAccountsForPicker]);
+  }, [
+    requireAccountSelection,
+    isEditing,
+    scopeRecruiterAccountId,
+    recruiterAccountsForPicker,
+    recruiterAccountsAll,
+  ]);
 
   const singleCompanyIdForAccount = useMemo(
     () => (accountLinkedCompanyIds?.length === 1 ? accountLinkedCompanyIds[0] : null),
     [accountLinkedCompanyIds]
   );
+
+  const accountOptions = useMemo(
+    () => (recruiterAccountsAll.length ? recruiterAccountsAll : recruiterAccountsForPicker),
+    [recruiterAccountsAll, recruiterAccountsForPicker],
+  );
+
+  /** Child account with exactly one linked worksite on the account record — user cannot pick a different worksite. */
+  const childWorksiteLocked = useMemo(() => {
+    if (!scopeRecruiterAccountId) return false;
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) ||
+      recruiterAccountsAll.find((a) => a.id === scopeRecruiterAccountId);
+    if (!acc?.parentAccountId) return false;
+    return acc.linkedLocations.length === 1;
+  }, [scopeRecruiterAccountId, recruiterAccountsForPicker, recruiterAccountsAll]);
 
   const companiesForCompanyField = useMemo(() => {
     if (!requireAccountSelection || isEditing) return companiesDeduped;
@@ -591,16 +687,32 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   }, [requireAccountSelection, isEditing, companiesDeduped, accountLinkedCompanyIds]);
 
   useEffect(() => {
-    if (!requireAccountSelection || isEditing) return;
-    if (!pickedRecruiterAccountId) {
+    const accountDrivesCompanyWorksite =
+      (requireAccountSelection && !isEditing) || isEditing;
+    if (!accountDrivesCompanyWorksite) return;
+    if (!scopeRecruiterAccountId) {
+      if (isEditing) return;
       setFormData((prev) => {
         if (!prev.companyId && !prev.worksiteId) return prev;
         return { ...prev, companyId: '', worksiteId: '' };
       });
       return;
     }
-    const acc = recruiterAccountsForPicker.find((a) => a.id === pickedRecruiterAccountId);
+    const acc =
+      recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) ||
+      recruiterAccountsAll.find((a) => a.id === scopeRecruiterAccountId);
     if (!acc) return;
+
+    // Child venue account: use the single CRM worksite linked on the account (associations.locations).
+    if (acc.parentAccountId && acc.linkedLocations.length === 1) {
+      const { companyId: cid, locationId: lid } = acc.linkedLocations[0];
+      setFormData((prev) => {
+        if (prev.companyId === cid && prev.worksiteId === lid) return prev;
+        return { ...prev, companyId: cid, worksiteId: lid };
+      });
+      return;
+    }
+
     const ids = acc.companyIds.filter(Boolean);
     setFormData((prev) => {
       if (ids.length === 1) {
@@ -614,7 +726,13 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       }
       return { ...prev, companyId: '', worksiteId: '' };
     });
-  }, [requireAccountSelection, isEditing, pickedRecruiterAccountId, recruiterAccountsForPicker]);
+  }, [
+    requireAccountSelection,
+    isEditing,
+    scopeRecruiterAccountId,
+    recruiterAccountsForPicker,
+    recruiterAccountsAll,
+  ]);
 
   // National → child account → location_defaults → pre-fill compliance when creating a job order
   useEffect(() => {
@@ -1175,7 +1293,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             ? (data as any).additionalScreenings
             : (stageData.scoping?.compliance?.additionalScreenings || []),
           eVerifyRequired: stageData.scoping?.compliance?.eVerify || false,
-          dressCode: stageData.scoping?.uniformRequirements || [],
+          dressCode: Array.isArray((data as any).dressCode)
+            ? (data as any).dressCode
+            : stageData.scoping?.uniformRequirements || [],
           customUniformRequirements: (data as any).customUniformRequirements || stageData.scoping?.customUniformRequirements || '',
           showCustomUniformRequirements: (data as any).showCustomUniformRequirements || stageData.scoping?.showCustomUniformRequirements || false,
           timeclockSystem: stageData.scoping?.timeclockSystem || '',
@@ -1654,16 +1774,24 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     
     try {
       if (!isEditing && requireAccountSelection) {
-        if (!pickedRecruiterAccountId) {
+        if (!scopeRecruiterAccountId) {
           setError('Please select an account.');
           setSaving(false);
           return;
         }
-        const accPick = recruiterAccountsForPicker.find((a) => a.id === pickedRecruiterAccountId);
-        const allowedIds = new Set((accPick?.companyIds || []).filter(Boolean));
+        const accPick = recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId);
+        if (!accPick) {
+          setError('Please select an account.');
+          setSaving(false);
+          return;
+        }
+        const allowedIds = new Set((accPick.companyIds || []).filter(Boolean));
+        accPick.linkedLocations.forEach((l) => {
+          if (l.companyId) allowedIds.add(l.companyId);
+        });
         if (allowedIds.size === 0) {
           setError(
-            'This account has no linked companies. Link at least one company on the account before creating a job order.'
+            'This account has no linked companies or worksites. Link at least one company on the account before creating a job order.'
           );
           setSaving(false);
           return;
@@ -1887,6 +2015,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         
         // HR Contact
         hrContactId: formData.hrContactId || '',
+
+        /** Decision maker contact (Company Contacts section). */
+        decisionMaker: formData.decisionMaker || '',
         
         // Additional Contact Roles
         operationsContactId: formData.operationsContactId || '',
@@ -1960,6 +2091,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               ? ''
               : undefined,
         showCustomUniformRequirements: formData.showCustomUniformRequirements,
+        /** Uniform Requirements multi-select (library titles); also mirrored in deal.stageData when from a deal. */
+        dressCode: Array.isArray(formData.dressCode) ? formData.dressCode : [],
         requirementPackId: formData.requirementPackId || undefined,
         screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
         screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
@@ -2162,7 +2295,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                     options={recruiterAccountsForPicker}
                     getOptionLabel={(option) => option.label || option.name}
                     isOptionEqualToValue={(a, b) => a.id === b.id}
-                    value={recruiterAccountsForPicker.find((a) => a.id === pickedRecruiterAccountId) || null}
+                    value={recruiterAccountsForPicker.find((a) => a.id === scopeRecruiterAccountId) || null}
                     onChange={(_, newValue) => {
                       setPickedRecruiterAccountId(newValue?.id ?? null);
                     }}
@@ -2171,7 +2304,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         {...params}
                         label="Account"
                         required
-                        helperText="Select the client account. Company and worksites follow from linked companies."
+                        helperText="Select a client account (venue child or standalone). National parent accounts with sub-accounts are not listed. Company and worksite follow linked CRM data."
                       />
                     )}
                   />
@@ -2179,49 +2312,93 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
               )}
 
               <Grid item xs={12} md={6}>
-                <Autocomplete
-                  fullWidth
-                  options={companiesForCompanyField}
-                  getOptionLabel={(option) => option.companyName || option.name || ''}
-                  value={companiesForCompanyField.find((company) => company.id === formData.companyId) || null}
-                  onChange={(event, newValue) => {
-                    handleInputChange('companyId', newValue?.id || '');
-                    if (newValue?.id) {
-                      handleFieldBlur('companyId', newValue.id);
+                {isEditing ? (
+                  <Autocomplete
+                    fullWidth
+                    options={accountOptions}
+                    getOptionLabel={(option) => option.label || option.name}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    value={
+                      accountOptions.find(
+                        (a) => a.id === (pickedRecruiterAccountId || propRecruiterAccountId || null),
+                      ) || null
                     }
-                  }}
-                  disabled={
-                    requireAccountSelection &&
-                    !isEditing &&
-                    (!pickedRecruiterAccountId ||
-                      !accountLinkedCompanyIds?.length ||
-                      singleCompanyIdForAccount !== null)
-                  }
-                  renderOption={(props, option) => (
-                    <li {...props} key={option.id}>
-                      {option.companyName || option.name || ''}
-                    </li>
-                  )}
-                  renderInput={(params) => (
-                    <TextField
-                      {...params}
-                      label="Company"
-                      required
-                      helperText={
-                        requireAccountSelection && !isEditing && pickedRecruiterAccountId && !accountLinkedCompanyIds?.length
-                          ? 'No companies linked to this account. Add companies on the account record.'
-                          : requireAccountSelection && !isEditing && singleCompanyIdForAccount
-                            ? 'Set automatically from the selected account.'
-                            : undefined
-                      }
-                      onBlur={(e) => {
-                        if (formData.companyId) {
-                          handleFieldBlur('companyId', formData.companyId);
+                    onChange={async (_, newValue) => {
+                      const nextId = newValue?.id ?? null;
+                      setPickedRecruiterAccountId(nextId);
+                      if (jobOrderId && tenantId && user?.uid) {
+                        try {
+                          const jobOrderRef = doc(db, p.jobOrder(tenantId, jobOrderId));
+                          await updateDoc(jobOrderRef, {
+                            updatedAt: new Date(),
+                            updatedBy: user.uid,
+                            recruiterAccountId: nextId ? nextId : deleteField(),
+                          } as any);
+                          setLoadedJobOrderData((prev: any) =>
+                            prev ? { ...prev, recruiterAccountId: nextId || undefined } : prev,
+                          );
+                          setSuccess('Account updated.');
+                          setTimeout(() => setSuccess(null), 3000);
+                        } catch (e) {
+                          console.error('JobOrderForm: recruiter account', e);
+                          setError('Could not save account. Try again.');
+                          setTimeout(() => setError(null), 5000);
                         }
-                      }}
-                    />
-                  )}
-                />
+                      }
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Account"
+                        required
+                        helperText="Client account (same as New Job Order). Child accounts use the linked worksite below."
+                      />
+                    )}
+                  />
+                ) : (
+                  <Autocomplete
+                    fullWidth
+                    options={companiesForCompanyField}
+                    getOptionLabel={(option) => option.companyName || option.name || ''}
+                    value={companiesForCompanyField.find((company) => company.id === formData.companyId) || null}
+                    onChange={(event, newValue) => {
+                      handleInputChange('companyId', newValue?.id || '');
+                      if (newValue?.id) {
+                        handleFieldBlur('companyId', newValue.id);
+                      }
+                    }}
+                    disabled={
+                      requireAccountSelection &&
+                      (!scopeRecruiterAccountId ||
+                        !accountLinkedCompanyIds?.length ||
+                        singleCompanyIdForAccount !== null)
+                    }
+                    renderOption={(props, option) => (
+                      <li {...props} key={option.id}>
+                        {option.companyName || option.name || ''}
+                      </li>
+                    )}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Company"
+                        required
+                        helperText={
+                          requireAccountSelection && scopeRecruiterAccountId && !accountLinkedCompanyIds?.length
+                            ? 'No companies linked to this account. Add companies on the account record.'
+                            : requireAccountSelection && singleCompanyIdForAccount
+                              ? 'Set automatically from the selected account.'
+                              : undefined
+                        }
+                        onBlur={(e) => {
+                          if (formData.companyId) {
+                            handleFieldBlur('companyId', formData.companyId);
+                          }
+                        }}
+                      />
+                    )}
+                  />
+                )}
               </Grid>
             
               <Grid item xs={12} md={6}>
@@ -2236,11 +2413,16 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                       handleFieldBlur('worksiteId', newValue.id);
                     }
                   }}
-                  disabled={!formData.companyId}
+                  disabled={!formData.companyId || childWorksiteLocked}
                   renderInput={(params) => (
                     <TextField
                       {...params}
                       label="Worksite"
+                      helperText={
+                        childWorksiteLocked
+                          ? 'Set from the selected child account (linked worksite).'
+                          : undefined
+                      }
                       onBlur={(e) => {
                         if (formData.worksiteId) {
                           handleFieldBlur('worksiteId', formData.worksiteId);
@@ -2255,12 +2437,12 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 <Grid item xs={12}>
                   <Autocomplete
                     fullWidth
-                    options={recruiterAccountsForPicker}
+                    options={accountOptions}
                     getOptionLabel={(option) => option.label || option.name}
                     isOptionEqualToValue={(a, b) => a.id === b.id}
                     value={
-                      recruiterAccountsForPicker.find(
-                        (a) => a.id === (pickedRecruiterAccountId || propRecruiterAccountId || null)
+                      accountOptions.find(
+                        (a) => a.id === (pickedRecruiterAccountId || propRecruiterAccountId || null),
                       ) || null
                     }
                     onChange={async (_, newValue) => {
@@ -2302,7 +2484,7 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                 </Grid>
               )}
 
-              {/* Gig: estimated event window (below Company / Worksite) */}
+              {/* Gig: estimated event window (below Account or Company / Worksite) */}
               {formData.jobType === 'gig' && (
                 <>
                   <Grid item xs={12} md={6}>

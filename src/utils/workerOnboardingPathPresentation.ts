@@ -9,7 +9,51 @@ import type {
   EmploymentOnboardingRowStatus,
   OnboardingPathGroup,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
+import type { WorkerEmploymentTranslateFn } from './workerEmploymentWorkerSurface';
 import { isOnboardingPathRowBlocker, isOnboardingPathRowDone } from './employmentOnboardingPath';
+
+function tx(
+  tr: WorkerEmploymentTranslateFn | undefined,
+  key: string,
+  en: string,
+  params?: Record<string, string | number>,
+): string {
+  if (!tr) {
+    if (!params) return en;
+    return en.replace(/\{(\w+)\}/g, (_, k) =>
+      params[k] !== undefined ? String(params[k]) : `{${k}}`,
+    );
+  }
+  const v = tr(key, params);
+  if (v !== key) return v;
+  if (!params) return en;
+  return en.replace(/\{(\w+)\}/g, (_, k) =>
+    params[k] !== undefined ? String(params[k]) : `{${k}}`,
+  );
+}
+
+/** Known merged bundle titles from `bundleTitleForPipelineStep` / group fallbacks — translate for worker locale. */
+const WORKER_BUNDLE_LABEL_EN_TO_I18N: Record<string, string> = {
+  'Forms and tax documents': 'workerEmploymentDetail.bundleFormsTax',
+  'Payroll setup': 'workerEmploymentDetail.bundlePayrollSetup',
+  'Work authorization': 'workerEmploymentDetail.bundleWorkAuth',
+  'Employment verification': 'workerEmploymentDetail.bundleEmploymentVerification',
+  'Background check': 'workerEmploymentDetail.bundleBackgroundCheck',
+  Screening: 'workerEmploymentDetail.bundleScreening',
+  Screenings: 'workerEmploymentDetail.bundleScreenings',
+  Payroll: 'workerEmploymentDetail.bundlePayroll',
+} as const satisfies Record<string, string>;
+
+export function translateWorkerOnboardingBundleLabel(
+  label: string,
+  tr?: WorkerEmploymentTranslateFn,
+): string {
+  if (!tr) return label;
+  const key = WORKER_BUNDLE_LABEL_EN_TO_I18N[label];
+  if (!key) return label;
+  const v = tr(key);
+  return v !== key ? v : label;
+}
 
 export type WorkerOnboardingBucketId = 'your_tasks' | 'waiting_team' | 'behind_scenes' | 'completed';
 
@@ -165,57 +209,61 @@ export function partitionWorkerOnboardingRows(rows: EmploymentOnboardingRow[]): 
 /**
  * Worker-facing requirement line (no “blocking” wording). Omitted when the step is already done.
  */
-export function workerOnboardingRequirementLabel(row: EmploymentOnboardingRow): string | null {
+export function workerOnboardingRequirementLabel(
+  row: EmploymentOnboardingRow,
+  tr?: WorkerEmploymentTranslateFn,
+): string | null {
   if (isOnboardingPathRowDone(row.status)) return null;
-  if (row.blocking) return 'Required before you start';
-  if (row.required) return 'Required for onboarding';
-  return 'Optional';
+  if (row.blocking) return tx(tr, 'workerEmploymentDetail.reqBeforeStart', 'Required before you start');
+  if (row.required) return tx(tr, 'workerEmploymentDetail.reqForOnboarding', 'Required for onboarding');
+  return tx(tr, 'workerEmploymentDetail.optional', 'Optional');
 }
 
 /** Primary line under title — no internal jargon. */
-export function workerOnboardingSubtitle(row: EmploymentOnboardingRow): string {
+export function workerOnboardingSubtitle(row: EmploymentOnboardingRow, tr?: WorkerEmploymentTranslateFn): string {
   if (row.status === 'satisfied_by_existing_record') {
-    return 'Already on file';
+    return tx(tr, 'workerEmploymentDetail.subtitleAlreadyOnFile', 'Already on file');
   }
   if (row.status === 'error') {
-    return 'Something went wrong. Your hiring team can help.';
+    return tx(tr, 'workerEmploymentDetail.subtitleError', 'Something went wrong. Your hiring team can help.');
   }
   if (row.status === 'completed') {
-    return 'Done';
+    return tx(tr, 'workerEmploymentDetail.subtitleDone', 'Done');
   }
   if (row.actionableBy === 'recruiter') {
-    return 'Waiting on your hiring team';
+    return tx(tr, 'workerEmploymentDetail.subtitleWaitingTeam', 'Waiting on your hiring team');
   }
   if (row.actionableBy === 'none' && row.owner === 'vendor') {
-    return 'In progress with our screening partner';
+    return tx(tr, 'workerEmploymentDetail.subtitleVendorProgress', 'In progress with our screening partner');
   }
   if (row.actionableBy === 'none' && row.owner === 'system') {
-    return 'In progress with our verification partner';
+    return tx(tr, 'workerEmploymentDetail.subtitleSystemProgress', 'In progress with our verification partner');
   }
   if ((row.actionableBy === 'worker' || row.actionableBy === 'either') && row.required) {
     if (isOnboardingPathRowBlocker(row)) {
       return '';
     }
-    return 'Action needed';
+    return tx(tr, 'workerEmploymentDetail.subtitleActionNeeded', 'Action needed');
   }
   if (row.status === 'in_progress') {
-    return 'In progress';
+    return tx(tr, 'workerEmploymentDetail.subtitleInProgress', 'In progress');
   }
   if (row.status === 'not_started') {
-    return 'Not started yet';
+    return tx(tr, 'workerEmploymentDetail.subtitleNotStartedYet', 'Not started yet');
   }
   return '';
 }
 
 /** Optional status chip for worker — short, friendly. */
-export function workerOnboardingStatusChip(row: EmploymentOnboardingRow): string {
-  if (row.status === 'satisfied_by_existing_record') return 'On file';
-  if (row.status === 'error') return 'Needs attention';
-  if (row.status === 'completed') return 'Done';
-  if (isOnboardingPathRowDone(row.status)) return 'Done';
-  if (row.status === 'in_progress') return 'In progress';
-  if (row.status === 'not_started') return 'Waiting';
-  return 'In progress';
+export function workerOnboardingStatusChip(row: EmploymentOnboardingRow, tr?: WorkerEmploymentTranslateFn): string {
+  if (row.status === 'satisfied_by_existing_record')
+    return tx(tr, 'workerEmploymentDetail.chipOnFile', 'On file');
+  if (row.status === 'error') return tx(tr, 'workerEmploymentDetail.chipNeedsAttention', 'Needs attention');
+  if (row.status === 'completed') return tx(tr, 'workerEmploymentDetail.chipDone', 'Done');
+  if (isOnboardingPathRowDone(row.status)) return tx(tr, 'workerEmploymentDetail.chipDone', 'Done');
+  if (row.status === 'in_progress') return tx(tr, 'workerEmploymentDetail.chipInProgress', 'In progress');
+  if (row.status === 'not_started') return tx(tr, 'workerEmploymentDetail.chipWaiting', 'Waiting');
+  return tx(tr, 'workerEmploymentDetail.chipInProgress', 'In progress');
 }
 
 export function workerPathCoversPayrollRow(rows: EmploymentOnboardingRow[]): boolean {

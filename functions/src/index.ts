@@ -5,12 +5,14 @@ import { setGlobalOptions } from 'firebase-functions/v2';
 
 // CHANGE: Hardening per cost-control policy
 // - Global safe defaults for region/limits
+// - `memory` applies to all v2 functions unless they set `memory` themselves (many imports still OOM at 256MiB cold start).
+//   Raising the default reduces one-off patches; tune per-function down where profiling shows headroom (saves $).
 setGlobalOptions({
   region: 'us-central1',
   minInstances: 0,
   maxInstances: 2,
   timeoutSeconds: 240,
-  memory: '256MiB',
+  memory: '512MiB',
   concurrency: 40
 });
 import { onDocumentCreated, onDocumentUpdated, onDocumentDeleted } from 'firebase-functions/v2/firestore';
@@ -24,7 +26,8 @@ import { logger } from './utils/logger';
 import { TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN } from './messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from './twilio';
 import { normalizeUserPhoneToE164 } from './utils/phoneE164Normalize';
-import { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
+import { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl } from './resumeParser';
+import { getUserParsedResumes } from './getUserParsedResumes';
 import { logMobileAppError, monitorMobileAppErrors, getMobileErrorStats } from './mobileErrorMonitoring';
 import {
   getSSOConfig, updateSSOConfig, testSSOConnection,
@@ -53,6 +56,8 @@ export {
   backfillMyJobOrderChecklistTasks,
   backfillChecklistTasksForTenantAdmins,
 } from './jobOrderChecklistTasks';
+
+export { jobOrderAutoMessagingOnShiftCreated } from './jobOrderAutoMessaging';
 
 // Dashboard internal notifications (recruiter signals)
 export {
@@ -88,13 +93,19 @@ import { triggerAISummaryUpdate } from './triggerAISummaryUpdate';
 import { dealCoachAnalyze, dealCoachChat, dealCoachAction, dealCoachAnalyzeCallable, dealCoachChatCallable, dealCoachActionCallable, dealCoachStartNewCallable, dealCoachLoadConversationCallable, dealCoachFeedbackCallable, analyzeDealOutcomeCallable, dealCoachProactiveCallable } from './dealCoach';
 import { associationsIntegrityReport, associationsIntegrityNightly } from './telemetry/metrics';
 import { rebuildDealAssociations, rebuildEntityReverseIndex } from './rebuilders';
-import { onCompanyLocationCreated, onCompanyLocationDeleted, rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp, companyLocationMirrorStats } from './locationMirror';
+import {
+  onCompanyLocationCreated,
+  onCompanyLocationUpdated,
+  onCompanyLocationDeleted,
+  rebuildCompanyLocationMirror,
+  rebuildCompanyLocationMirrorHttp,
+  companyLocationMirrorStats,
+} from './locationMirror';
 import {
   backfillMetroMasterFromLocations,
   backfillMetroMasterFromLocationsHttp,
   cleanupTenantStandaloneMetros,
 } from './metroMasterAutoSync';
-import { onCompanyLocationUpdated } from './onCompanyLocationUpdatedDisabled';
 import { deleteDuplicateCompanies } from './deleteDuplicateCompanies';
 import { cleanupContactCompanyAssociations, cleanupContactCompanyAssociationsHttp } from './cleanupContactCompanyAssociations';
 import { cleanupUndefinedValues } from './cleanupUndefinedValues';
@@ -186,6 +197,7 @@ export { backfillShiftIdsInApplications };
 export { archiveAllCrmDeals };
 export { backfillJobPostingLocations } from './backfillJobPostingLocations';
 export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
+export { onGigJobOrderShiftWritten, syncGigJobOrderStatusFromShifts } from './jobOrders/gigJobOrderStatusSync';
 export { onJobOrderShiftCancelledCascadeAssignments } from './shiftAssignmentCascades';
 export { onApplicationWithdrawnOrDeletedCascadeAssignments } from './shiftAssignmentCascades';
 export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
@@ -200,6 +212,7 @@ export { autoWithdrawApplicationsOnHire } from './autoWithdrawApplicationsOnHire
 export { enrichCompanyOnCreate, enrichCompanyOnDemand, enrichCompanyWeekly, getEnrichmentStats, enrichCompanyBatch };
 export { enrichContactOnDemand };
 export { onCompanyLocationCreated, onCompanyLocationUpdated, onCompanyLocationDeleted };
+export { backfillNationalAccountChildAccountsFromLocations } from './backfillNationalAccountChildAccountsCallable';
 export { updateCompanyLocationMirrorCallable, batchUpdateCompanyLocationMirrorsCallable } from './companyLocationUpdateOptimized';
 export { updateCompanyPipelineTotalsCallable, batchUpdateCompanyPipelineTotalsCallable } from './pipelineTotalsOptimized';
 export { rebuildCompanyLocationMirror, rebuildCompanyLocationMirrorHttp };
@@ -212,6 +225,8 @@ export {
   onUserCreatedScheduleApplyWizardReminder,
   processApplyWizardReminders,
 } from './applyWizardReminder';
+export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWorkerAiPrescreenReminders';
+export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';
 export {
@@ -293,6 +308,13 @@ export {
 } from './onboarding/i9SupportingDocumentWorkflowCallables';
 export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
 export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
+export { getWorkerAiPrescreenInterviewPlan } from './workerAiPrescreen/getWorkerAiPrescreenInterviewPlan';
+export { userGroupHirePassedCandidates } from './recruiter/userGroupHirePassedCandidates';
+export { userGroupEvaluateMembersNextStep } from './recruiter/userGroupEvaluateMembersNextStep';
+export { userGroupInterviewInviteSend } from './recruiter/userGroupInterviewInviteSend';
+export { userGroupProfileReminderSend } from './recruiter/userGroupProfileReminderSend';
+export { onCallI9SupportingReminder } from './onboarding/onCallI9SupportingReminderCallable';
+export { processWorkerOnboardingReminders } from './onboarding/processWorkerOnboardingReminders';
 
 // Auth Functions
 export { setTenantRole } from './auth/setTenantRole';
@@ -5276,8 +5298,9 @@ export const validatePromptConsistency = onCall(async (request) => {
   }
 });
 
-// Resume Parser Functions
-export { parseResumeHttp, getResumeParsingStatus, getUserParsedResumes, getUserResumeUploads, getResumeSignedUrl };
+// Resume Parser Functions (getUserParsedResumes is in getUserParsedResumes.ts — small bundle, higher memory)
+export { parseResumeHttp, getResumeParsingStatus, getUserResumeUploads, getResumeSignedUrl };
+export { getUserParsedResumes };
 
 // Phase 1C: Documents + E-Sign Infrastructure
 export {

@@ -9,10 +9,12 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Box, Button } from '@mui/material';
+import { Box, Button, Tooltip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
+import { useAuth } from '../contexts/AuthContext';
+import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import {
@@ -41,6 +43,8 @@ const UsersLayout: React.FC = () => {
   const location = useLocation();
   const pathname = location.pathname;
   const activeTab = getActiveUsersTab(pathname);
+  const { activeTenant } = useAuth();
+  const [i9MasterReminderOpen, setI9MasterReminderOpen] = useState(false);
 
   const persisted = loadUsersLayoutPersisted();
   const [usersSearch, setUsersSearch] = useState(persisted.usersListSearch);
@@ -88,6 +92,17 @@ const UsersLayout: React.FC = () => {
   const rightActions =
     isUsersTab ? (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        <Tooltip title="Temporary: SMS workers in W-2 onboarding who still need I-9 supporting uploads (not on-call only). Preview first.">
+          <Button
+            variant="outlined"
+            color="warning"
+            size="small"
+            onClick={() => setI9MasterReminderOpen(true)}
+            sx={{ textTransform: 'none', whiteSpace: 'nowrap', flexShrink: 0 }}
+          >
+            I-9 reminders (all onboarding)
+          </Button>
+        </Tooltip>
         <InboxSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
@@ -163,6 +178,12 @@ const UsersLayout: React.FC = () => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
+      <OnCallI9SupportingReminderDialog
+        open={i9MasterReminderOpen}
+        onClose={() => setI9MasterReminderOpen(false)}
+        tenantId={activeTenant?.id}
+        audience="all_w2_onboarding"
+      />
       <PageHeader
         title="Users"
         subtitle="All users, groups, and smart groups"

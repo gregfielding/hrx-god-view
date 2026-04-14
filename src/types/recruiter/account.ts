@@ -183,6 +183,18 @@ export interface RecruiterAccount {
   };
   /** For list display only: E-Verify required (from defaults.eVerify.eVerifyRequired). */
   eVerifyRequired?: boolean;
+  /**
+   * National accounts only: when true, new locations added under a linked CRM company auto-create a child account (backend trigger).
+   */
+  autoCreateChildAccountsForLocations?: boolean;
+  /** Set by automation when this child account was created from a company location. */
+  autoCreatedFromCompanyLocation?: boolean;
+  /** Location display name at auto-create time (nickname else name); used for safe rename matching. */
+  autoCreatedFromLocationDisplayName?: string;
+  /** CRM company id when this account is tied to a single location (e.g. auto-created child). */
+  companyId?: string | null;
+  /** `crm_companies/{companyId}/locations/{locationId}` location id when tied to a worksite. */
+  companyLocationId?: string | null;
 }
 
 export interface RecruiterAccountFormData {

@@ -30,6 +30,7 @@ import {
   OpenInNew as OpenInNewIcon,
   Checkroom as CheckroomIcon,
   Engineering as EngineeringIcon,
+  CalendarMonth as CalendarMonthIcon,
 } from '@mui/icons-material';
 import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -43,6 +44,7 @@ import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { parseCalendarDateLocal } from '../utils/dateUtils';
 import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
 import { format } from 'date-fns';
+import { downloadAssignmentIcs } from '../utils/assignmentCalendarIcs';
 
 interface AssignmentDetails {
   id: string;
@@ -101,6 +103,13 @@ interface AssignmentDetails {
   showBackgroundChecks?: boolean;
   showDrugScreening?: boolean;
   eVerifyRequired?: boolean;
+  /** Assignment-level rules-based prediction (`assignments.*.noShowRiskPredictionV1`). */
+  noShowRiskPredictionV1?: {
+    score?: number;
+    band?: string;
+    reasons?: string[];
+    recommendedAction?: string;
+  };
 }
 
 type StaffInstructionSection = { text?: unknown; files?: any[] };
@@ -158,6 +167,28 @@ const toIsoDayLocal = (date: Date | undefined): string => {
 };
 
 const STAFF_CLAIMS_ROLES: ClaimsRole[] = ['Admin', 'Manager', 'Recruiter'];
+
+function normalizeNoShowRiskPredictionV1(raw: unknown): AssignmentDetails['noShowRiskPredictionV1'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  return {
+    score: typeof o.score === 'number' ? o.score : undefined,
+    band: typeof o.band === 'string' ? o.band : undefined,
+    reasons: Array.isArray(o.reasons) ? (o.reasons as string[]) : undefined,
+    recommendedAction: typeof o.recommendedAction === 'string' ? o.recommendedAction : undefined,
+  };
+}
+
+function noShowRiskBandMuiColor(
+  band: string | undefined,
+): 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' {
+  const b = String(band || '').toLowerCase();
+  if (b === 'critical') return 'error';
+  if (b === 'high') return 'warning';
+  if (b === 'moderate') return 'info';
+  if (b === 'low') return 'success';
+  return 'default';
+}
 
 /** Tenant staff (not the assigned worker) may open placements for candidates in their active / member tenant. */
 function canViewAssignmentAsTenantStaff(
@@ -702,6 +733,7 @@ const AssignmentDetails: React.FC = () => {
         showBackgroundChecks: Boolean(data.showBackgroundChecks ?? data.backgroundCheckRequired),
         showDrugScreening: Boolean(data.showDrugScreening ?? data.drugScreenRequired),
         eVerifyRequired: Boolean(data.eVerifyRequired),
+        noShowRiskPredictionV1: normalizeNoShowRiskPredictionV1(data.noShowRiskPredictionV1),
       });
       console.debug('[AssignmentDetails] fetch success', {
         assignmentId: assignmentSnap.id,
@@ -982,6 +1014,7 @@ const AssignmentDetails: React.FC = () => {
         showBackgroundChecks: Boolean(sourceData.showBackgroundChecks ?? jobOrderData.showBackgroundChecks ?? jobOrderData.backgroundCheckRequired),
         showDrugScreening: Boolean(sourceData.showDrugScreening ?? jobOrderData.showDrugScreening ?? jobOrderData.drugScreenRequired),
         eVerifyRequired: Boolean(sourceData.eVerifyRequired ?? jobOrderData.eVerifyRequired),
+        noShowRiskPredictionV1: normalizeNoShowRiskPredictionV1(sourceData.noShowRiskPredictionV1),
       });
     } catch (err: any) {
       console.error('Error loading job order:', err);
@@ -1067,6 +1100,44 @@ const AssignmentDetails: React.FC = () => {
   const effectiveStartTime = assignment?.startTime || assignmentDateScheduleEntry?.startTime || scheduleShift?.defaultStartTime || '';
   const effectiveEndTime = assignment?.endTime || assignmentDateScheduleEntry?.endTime || scheduleShift?.defaultEndTime || '';
 
+  const canAddToCalendar = Boolean(assignment?.startDate);
+
+  const handleAddToCalendar = React.useCallback(() => {
+    if (!assignment?.startDate) return;
+    downloadAssignmentIcs({
+      assignmentId: assignment.id,
+      title: assignment.jobTitle || t('assignment.title'),
+      description: [
+        resolvedCompanyName || assignment.companyName,
+        resolvedWorksiteName || assignment.worksiteName || assignment.location,
+      ]
+        .filter((s) => typeof s === 'string' && s.trim().length > 0)
+        .join('\n'),
+      location: worksiteAddressStr || undefined,
+      startDate: assignment.startDate,
+      endDate: assignment.endDate,
+      startTime: effectiveStartTime || undefined,
+      endTime: effectiveEndTime || undefined,
+    });
+  }, [
+    assignment,
+    t,
+    resolvedCompanyName,
+    resolvedWorksiteName,
+    worksiteAddressStr,
+    effectiveStartTime,
+    effectiveEndTime,
+  ]);
+
+  const shiftSpecificDetailsText = useMemo(
+    () => getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage).trim(),
+    [scheduleShift, preferredLanguage],
+  );
+  const shiftEmailIntroText = useMemo(
+    () => getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage).trim(),
+    [scheduleShift, preferredLanguage],
+  );
+
   const criticalRequirementLabels = [
     assignment?.showBackgroundChecks ? 'Background check' : null,
     assignment?.showDrugScreening ? 'Drug screening' : null,
@@ -1117,7 +1188,7 @@ const AssignmentDetails: React.FC = () => {
         <SmsWarningBanner />
       </Box>
       {/* Header */}
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }}>
+      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }} flexWrap="wrap" useFlexGap>
         <Typography variant="h4" sx={{ flexGrow: 1, fontWeight: 700 }}>
           {t('assignment.detailsTitle')}
         </Typography>
@@ -1127,6 +1198,14 @@ const AssignmentDetails: React.FC = () => {
           color={getStatusColor(assignment.status)}
           size="medium"
         />
+        <Button
+          variant="outlined"
+          startIcon={<CalendarMonthIcon />}
+          onClick={handleAddToCalendar}
+          disabled={!canAddToCalendar}
+        >
+          {t('assignment.addToCalendar')}
+        </Button>
         <Button
           startIcon={<ArrowBackIcon />}
           onClick={() => navigate(-1)}
@@ -1275,6 +1354,57 @@ const AssignmentDetails: React.FC = () => {
           </CardContent>
         </Card>
 
+        {assignment.noShowRiskPredictionV1 &&
+        (assignment.noShowRiskPredictionV1.score != null || assignment.noShowRiskPredictionV1.band) ? (
+          <Card elevation={0} sx={{ borderRadius: 0 }}>
+            <CardContent>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 2 }}>
+                No-show risk (assignment)
+              </Typography>
+              <Stack spacing={1.5}>
+                <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
+                  {assignment.noShowRiskPredictionV1.band ? (
+                    <Chip
+                      size="small"
+                      label={String(assignment.noShowRiskPredictionV1.band).charAt(0).toUpperCase() + String(assignment.noShowRiskPredictionV1.band).slice(1)}
+                      color={noShowRiskBandMuiColor(assignment.noShowRiskPredictionV1.band)}
+                      variant="filled"
+                    />
+                  ) : null}
+                  {typeof assignment.noShowRiskPredictionV1.score === 'number' ? (
+                    <Typography variant="body1" sx={{ fontWeight: 600 }}>
+                      Score {Math.round(assignment.noShowRiskPredictionV1.score)}/100
+                    </Typography>
+                  ) : null}
+                </Stack>
+                {assignment.noShowRiskPredictionV1.recommendedAction ? (
+                  <Alert severity="info" sx={{ py: 0.5 }}>
+                    <Typography variant="body2" component="span" fontWeight={600}>
+                      Recommended:{' '}
+                    </Typography>
+                    <Typography variant="body2" component="span">
+                      {assignment.noShowRiskPredictionV1.recommendedAction.replace(/_/g, ' ')}
+                    </Typography>
+                  </Alert>
+                ) : null}
+                {Array.isArray(assignment.noShowRiskPredictionV1.reasons) &&
+                assignment.noShowRiskPredictionV1.reasons.length > 0 ? (
+                  <Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75 }}>
+                      Top reasons
+                    </Typography>
+                    <Stack direction="row" flexWrap="wrap" gap={0.5} useFlexGap>
+                      {assignment.noShowRiskPredictionV1.reasons.slice(0, 8).map((r) => (
+                        <Chip key={r} size="small" label={r.replace(/_/g, ' ')} variant="outlined" />
+                      ))}
+                    </Stack>
+                  </Box>
+                ) : null}
+              </Stack>
+            </CardContent>
+          </Card>
+        ) : null}
+
         {/* Schedule */}
         <Card elevation={0} sx={{ borderRadius: 0 }}>
           <CardContent>
@@ -1337,19 +1467,20 @@ const AssignmentDetails: React.FC = () => {
                 </>
               )}
 
-              {getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage).trim() && (
+              {/* Shift-Specific Details / Job Description from tenants/.../job_orders/.../shifts/{shiftId} (ShiftSetupTab) */}
+              {shiftSpecificDetailsText ? (
                 <Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftDetailsOrJobDescription')}</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{getShiftDisplayText(scheduleShift ?? undefined, 'shiftDescription', preferredLanguage)}</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{shiftSpecificDetailsText}</Typography>
                 </Box>
-              )}
+              ) : null}
 
-              {getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage).trim() && (
+              {shiftEmailIntroText ? (
                 <Box>
                   <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>{t('assignment.shiftInfoToEmailStaff')}</Typography>
-                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{getShiftDisplayText(scheduleShift ?? undefined, 'emailIntro', preferredLanguage)}</Typography>
+                  <Typography variant="body1" sx={{ whiteSpace: 'pre-wrap' }}>{shiftEmailIntroText}</Typography>
                 </Box>
-              )}
+              ) : null}
             </Stack>
           </CardContent>
         </Card>

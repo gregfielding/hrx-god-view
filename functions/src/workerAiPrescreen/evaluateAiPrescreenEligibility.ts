@@ -98,6 +98,18 @@ export function userDocHasMeaningfulWorkHistory(userDoc: Record<string, unknown>
   });
 }
 
+/** At least one non-empty skill (string or `{ name }`) on `users/{uid}.skills`. */
+export function userDocHasAtLeastOneSkill(userDoc: Record<string, unknown> | null | undefined): boolean {
+  if (!userDoc || typeof userDoc !== 'object') return false;
+  const raw = userDoc.skills;
+  if (!Array.isArray(raw) || raw.length === 0) return false;
+  return raw.some((item) => {
+    const name =
+      typeof item === 'string' ? norm(item) : norm((item as Record<string, unknown>)?.name);
+    return name.length > 0;
+  });
+}
+
 /**
  * Spec §1.D: enough work-authorization signal from existing profile fields.
  */
@@ -110,40 +122,100 @@ export function userDocHasWorkAuthorizationBaseline(userDoc: Record<string, unkn
   return false;
 }
 
+export type EvaluateAiPrescreenEligibilityOptions = {
+  /**
+   * When false, resume and skills are not required for invite eligibility.
+   * Default true. Replaces legacy `requireResumeOrWorkHistory` (resume or work history); v2 is resume or ≥1 skill.
+   */
+  requireResumeOrSkill?: boolean;
+  /** @deprecated Use `requireResumeOrSkill`. Honored if present for older call sites. */
+  requireResumeOrWorkHistory?: boolean;
+  /** Default true — same checks as legacy v1 when unset. */
+  requirePhone?: boolean;
+  requireLocation?: boolean;
+  requireWorkAuthorization?: boolean;
+};
+
 /**
  * Evaluate whether the worker’s profile meets v1 pre-screen **invitation** thresholds.
  */
 export function evaluateAiPrescreenEligibility(
   userDoc: Record<string, unknown> | null | undefined,
+  options?: EvaluateAiPrescreenEligibilityOptions,
 ): AiPrescreenEligibilityResult {
+  const requireResumeOrSkill =
+    options?.requireResumeOrSkill !== false && options?.requireResumeOrWorkHistory !== false;
+  const requirePhone = options?.requirePhone !== false;
+  const requireLocation = options?.requireLocation !== false;
+  const requireWorkAuthorization = options?.requireWorkAuthorization !== false;
+
   const missingFields: string[] = [];
 
   const phoneOk = userDocHasUsablePhone(userDoc);
-  if (!phoneOk) missingFields.push('phone');
+  if (requirePhone && !phoneOk) missingFields.push('phone');
 
   const locOk = userDocHasBasicLocation(userDoc);
-  if (!locOk) missingFields.push('location');
+  if (requireLocation && !locOk) missingFields.push('location');
 
   const resumeOk = userDocHasStoredResume(userDoc);
-  const historyOk = userDocHasMeaningfulWorkHistory(userDoc);
-  if (!resumeOk && !historyOk) missingFields.push('resume_or_work_history');
+  const skillOk = userDocHasAtLeastOneSkill(userDoc);
+  if (requireResumeOrSkill && !resumeOk && !skillOk) {
+    missingFields.push('resume_or_skill');
+  }
 
   const authOk = userDocHasWorkAuthorizationBaseline(userDoc);
-  if (!authOk) missingFields.push('work_authorization');
+  if (requireWorkAuthorization && !authOk) missingFields.push('work_authorization');
 
   if (missingFields.length === 0) {
     return { eligibleForInterview: true, reason: 'eligible', missingFields: [] };
   }
 
   let reason: AiPrescreenEligibilityResult['reason'] = 'incomplete_profile';
-  if (!phoneOk) reason = 'missing_contact';
-  else if (!locOk) reason = 'missing_location';
-  else if (!resumeOk && !historyOk) reason = 'missing_experience_signal';
-  else if (!authOk) reason = 'missing_work_auth_baseline';
+  if (requirePhone && !phoneOk) reason = 'missing_contact';
+  else if (requireLocation && !locOk) reason = 'missing_location';
+  else if (requireResumeOrSkill && !resumeOk && !skillOk) reason = 'missing_experience_signal';
+  else if (requireWorkAuthorization && !authOk) reason = 'missing_work_auth_baseline';
 
   return {
     eligibleForInterview: false,
     reason,
     missingFields,
   };
+}
+
+/** Raw profile primitives aligned with `evaluateAiPrescreenEligibility` inputs (policy-agnostic). */
+export type AiPrescreenEligibilityPrimitiveFlags = {
+  phoneOk: boolean;
+  locationOk: boolean;
+  experienceOk: boolean;
+  workAuthOk: boolean;
+};
+
+export function getAiPrescreenEligibilityPrimitiveFlags(
+  userDoc: Record<string, unknown> | null | undefined,
+): AiPrescreenEligibilityPrimitiveFlags {
+  return {
+    phoneOk: userDocHasUsablePhone(userDoc),
+    locationOk: userDocHasBasicLocation(userDoc),
+    experienceOk: userDocHasStoredResume(userDoc) || userDocHasAtLeastOneSkill(userDoc),
+    workAuthOk: userDocHasWorkAuthorizationBaseline(userDoc),
+  };
+}
+
+/**
+ * True when at least one primitive flips false→true (profile improvement toward invite eligibility).
+ * Used to schedule a bounded follow-up invite after an `ineligible_nudge` SMS.
+ */
+export function hasAiPrescreenEligibilityFalseToTrueTransition(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown> | null | undefined,
+): boolean {
+  const b = getAiPrescreenEligibilityPrimitiveFlags(before);
+  const a = getAiPrescreenEligibilityPrimitiveFlags(after);
+  return (
+    (!b.phoneOk && a.phoneOk) ||
+    (!b.locationOk && a.locationOk) ||
+    (!b.experienceOk && a.experienceOk) ||
+    (!b.workAuthOk && a.workAuthOk)
+  );
 }

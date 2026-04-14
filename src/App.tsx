@@ -196,7 +196,7 @@ function UsersRedirect() {
   return <Navigate to={`/users/${uid}`} replace />;
 }
 
-/** For /c1/users/:uid: workers (securityLevel null or 0–4) go to My Profile; higher levels see UserProfile. */
+/** For /c1/users/:uid: workers (securityLevel null or 0–4) go to My Account; higher levels see UserProfile. */
 function C1UserProfileOrRedirect() {
   const { user, securityLevel } = useAuth();
   const level = securityLevel != null ? Number.parseInt(String(securityLevel), 10) : 0;

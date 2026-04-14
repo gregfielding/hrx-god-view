@@ -1,6 +1,6 @@
 /**
  * Worker Job Readiness — Basic Identity card: avatar (upload/replace), name, contact, DOB, home address.
- * Persists to users/{uid}. Replaces need for separate "My Profile" for workers.
+ * Persists to users/{uid}. Replaces need for separate "My Account" hub for workers.
  */
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';

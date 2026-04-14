@@ -1,5 +1,11 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from './messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from './twilio';
 import { buildWorkerProfileUrl } from './utils/workerUrls';
 
@@ -19,7 +25,12 @@ function getMaxSecurityLevel(userData: any): number {
   return levels.length > 0 ? Math.max(...levels) : 0;
 }
 
-export const sendProfileUpdateReminder = onCall({ cors: true }, async (request) => {
+export const sendProfileUpdateReminder = onCall(
+  {
+    cors: true,
+    secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
+  },
+  async (request) => {
   const actorUid = request.auth?.uid;
   const targetUid = String(request.data?.uid || '').trim();
   const tenantId = String(request.data?.tenantId || '').trim();
@@ -103,4 +114,5 @@ export const sendProfileUpdateReminder = onCall({ cors: true }, async (request) 
     success: true,
     sentAt: sentAt.toDate().toISOString(),
   };
-});
+  },
+);

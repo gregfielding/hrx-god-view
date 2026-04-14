@@ -1,4 +1,6 @@
 import { FieldValue } from 'firebase/firestore';
+import type { AssignmentAttendanceOutcome, NoShowRiskPredictionV1 } from './noShowRisk';
+import type { ApplicationHiringLifecycle } from './applicationHiringLifecycle';
 
 /**
  * Phase 2 Application Types
@@ -55,6 +57,9 @@ export type Application = {
 
   // Audit
   source?: 'job_board' | 'manual' | 'referral' | 'import' | 'career_page';
+
+  /** Dual-written funnel snapshot (canonical stages in `shared/hiringLifecycleTypes.ts`). */
+  hiringLifecycle?: ApplicationHiringLifecycle;
 };
 
 export type ApplicationFormData = {
@@ -162,6 +167,13 @@ export interface Assignment {
   updatedAt: Date | FieldValue;
   updatedBy?: string;
   notes?: string;
+
+  /** Rules-based assignment-level no-show risk (see Cloud Functions `computeNoShowRiskForAssignment`). */
+  noShowRiskPredictionV1?: NoShowRiskPredictionV1;
+  /** Recorded attendance for reporting and model training; default in UI is `unknown`. */
+  attendanceOutcome?: AssignmentAttendanceOutcome;
+  attendanceRecordedAt?: Date | FieldValue;
+  attendanceRecordedBy?: string;
 }
 
 export interface AssignmentFormData {

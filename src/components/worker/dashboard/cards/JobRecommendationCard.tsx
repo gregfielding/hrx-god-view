@@ -15,9 +15,15 @@ export interface JobRecommendationCardProps {
   onTap?: () => void;
   /** When false, rail uses single primary CTA (Apply Now). */
   showApplyButton?: boolean;
+  /** When set (e.g. application already submitted), show status styling instead of Apply Now. */
+  statusButtonOverride?: { label: string; backgroundColor: string; color: string };
 }
 
-const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, onTap }) => {
+const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({
+  payload,
+  onTap,
+  statusButtonOverride,
+}) => {
   const navigate = useNavigate();
   const t = useT();
   const { bg, contrast } = CARD_THEMES.job[payload.category];
@@ -72,20 +78,25 @@ const JobRecommendationCard: React.FC<JobRecommendationCardProps> = ({ payload, 
           variant="contained"
           fullWidth
           size="medium"
-          onClick={handleApply}
+          onClick={statusButtonOverride ? (e) => e.stopPropagation() : handleApply}
           sx={{
             mt: 1.5,
             py: 1,
-            bgcolor: contrast,
-            color: '#fff',
+            bgcolor: statusButtonOverride?.backgroundColor ?? contrast,
+            color: statusButtonOverride?.color ?? '#fff',
             borderRadius: 2,
             fontSize: '0.875rem',
             textTransform: 'none',
             fontWeight: 600,
-            '&:hover': { bgcolor: contrast, opacity: 0.92 },
+            cursor: statusButtonOverride ? 'default' : undefined,
+            pointerEvents: statusButtonOverride ? 'none' : undefined,
+            '&:hover': {
+              bgcolor: statusButtonOverride?.backgroundColor ?? contrast,
+              opacity: statusButtonOverride ? 1 : 0.92,
+            },
           }}
         >
-          {t('dashboard.cardApplyNow')}
+          {statusButtonOverride?.label ?? t('dashboard.cardApplyNow')}
         </Button>
       </CardContent>
     </Card>

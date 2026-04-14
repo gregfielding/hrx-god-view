@@ -11,44 +11,32 @@ import {
   CardContent,
   Chip,
   CircularProgress,
-  Collapse,
   Container,
   Divider,
-  List,
-  ListItem,
-  ListItemText,
   Stack,
   Typography,
 } from '@mui/material';
+import IconButton from '@mui/material/IconButton';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import IconButton from '@mui/material/IconButton';
+import CheckCircleIcon from '@mui/icons-material/CheckCircle';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
+import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
 import { useAuth } from '../../../contexts/AuthContext';
-import { buildBlockersFromPipeline } from '../../../utils/employmentReadiness';
-import {
-  computeHasOpenOnboardingDemand,
-  deriveDominantActionableForHeader,
-  deriveEmploymentHeaderState,
-  deriveEmploymentHeaderStateWorkerListFallback,
-  employmentBlockerItemFromPathRow,
-  primaryAssignmentRowForHeader,
-} from '../../../utils/deriveEmploymentHeaderState';
+import { useT } from '../../../i18n';
+import { computeHasOpenOnboardingDemand } from '../../../utils/deriveEmploymentHeaderState';
 import { getWorkerPayrollAccount } from '../../../utils/workerPayrollAccount';
 import WorkerEntityI9Section from '../../../components/worker/employment/WorkerEntityI9Section';
 import {
   omitWorkerPayrollChecklistRows,
   workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments,
-  workerEmploymentEntityPageHeadline,
-  workerEmploymentSurfaceStatusLabel,
-  workerPayrollSetupStatusLabel,
 } from '../../../utils/workerEmploymentWorkerSurface';
-import { getComplianceTypeLabel, getComplianceStatusDisplayLabel } from '../../../types/compliance';
 import { getExpirationState, hasExpiredCompliance, hasExpiringSoonCompliance } from '../../../utils/complianceExpiration';
 import { getWorkerReadiness, type ReadinessStatus } from '../../../utils/workerReadiness';
 import type { WorkerComplianceItem } from '../../../types/compliance';
@@ -67,7 +55,6 @@ import {
 } from '../../../utils/employmentOnboardingPath';
 import {
   enrichOnboardingPathGroupsWithNarratives,
-  narrativeActorLabelForUi,
   automationDispatchBriefMatchesEntityTab,
   onboardingAutomationDispatchBriefFromRaw,
   onboardingNarrativeContextFromPathArgs,
@@ -76,16 +63,14 @@ import { filterOnboardingPathGroupsForWorkerUi } from '../../../utils/employment
 import { loadBuildOnboardingPathArgsForWorkerEmployment } from '../../../utils/workerEmploymentOnboardingLoad';
 import {
   dedupeWorkerOnboardingRows,
-  deriveWorkerGroupKey,
   flattenFilteredWorkerGroups,
   partitionWorkerOnboardingRows,
-  workerOnboardingRequirementLabel,
+  translateWorkerOnboardingBundleLabel,
   workerOnboardingStatusChip,
-  workerOnboardingSubtitle,
   workerPathCoversPayrollRow,
-  workerPathCoversWorkAuthRows,
   type WorkerOnboardingBucketId,
 } from '../../../utils/workerOnboardingPathPresentation';
+import { partitionEmploymentRowsForBridge, rowToChecklistUiStatus } from '../../../utils/workerMyEmploymentDetailPresentation';
 import { useEntityEmploymentOverview } from '../../../hooks/useEntityEmploymentOverview';
 import EmploymentWorkerEmploymentHub from '../../UserProfile/components/employment-v2/EmploymentWorkerEmploymentHub';
 import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointerAlert';
@@ -119,298 +104,10 @@ const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]>
   completed: [],
 };
 
-/** Entity-level payroll URLs: first-time setup vs returning worker portal. */
-const WorkerEntityPayrollLinkButtons: React.FC<{
-  payrollSignupUrl: string | null;
-  payrollPortalLoginUrl: string | null;
-  payrollComplete: boolean;
-}> = ({ payrollSignupUrl, payrollPortalLoginUrl, payrollComplete }) => {
-  const signup = payrollSignupUrl?.trim() || null;
-  const portal = payrollPortalLoginUrl?.trim() || null;
-  const same = Boolean(signup && portal && signup === portal);
-
-  const setupHref = !payrollComplete ? signup || portal || null : null;
-  const loginWhileOnboardingHref = !payrollComplete && portal && signup && !same ? portal : null;
-  const portalAfterCompleteHref = payrollComplete ? portal || signup || null : null;
-
-  if (!setupHref && !loginWhileOnboardingHref && !portalAfterCompleteHref) return null;
-
-  return (
-    <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} flexWrap="wrap" useFlexGap>
-      {setupHref ? (
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={<OpenInNewIcon />}
-          href={setupHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          component="a"
-        >
-          Payroll setup
-        </Button>
-      ) : null}
-      {loginWhileOnboardingHref ? (
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<OpenInNewIcon />}
-          href={loginWhileOnboardingHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          component="a"
-        >
-          View payroll
-        </Button>
-      ) : null}
-      {portalAfterCompleteHref ? (
-        <Button
-          variant={setupHref || loginWhileOnboardingHref ? 'outlined' : 'contained'}
-          size="small"
-          startIcon={<OpenInNewIcon />}
-          href={portalAfterCompleteHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          component="a"
-        >
-          View payroll
-        </Button>
-      ) : null}
-    </Stack>
-  );
-};
-
-/** Matches `employmentPathDebugEnv` / admin path card — inlined so worker bundle always resolves. */
-function workerEmploymentPathDebugEnabled(): boolean {
-  try {
-    return process.env.REACT_APP_EMPLOYMENT_ONBOARDING_PATH_DEBUG === 'true';
-  } catch {
-    return false;
-  }
-}
-
-function workerRequirementLabelHistorical(row: EmploymentOnboardingRow): string | null {
-  if (isOnboardingPathRowDone(row.status)) return null;
-  if (row.blocking) return 'From a prior assignment — not current required work here';
-  if (row.required) return 'Was part of a prior onboarding';
-  return null;
-}
-
-function workerSubtitleWithHistoricalContext(row: EmploymentOnboardingRow, pathHistorical: boolean): string {
-  const base = workerOnboardingSubtitle(row);
-  if (!pathHistorical || isOnboardingPathRowDone(row.status)) return base;
-  if (!base) return 'Prior onboarding activity on file';
-  if (base === 'Action needed') return 'Prior activity on file — no current action expected';
-  return `Prior activity: ${base}`;
-}
-
-function WorkerOnboardingPathRowItem({
-  row,
-  debugMode,
-  pathHistorical,
-}: {
-  row: EmploymentOnboardingRow;
-  debugMode: boolean;
-  /** When true, soften requirement lines and status chips so nothing reads as urgent current work. */
-  pathHistorical?: boolean;
-}) {
-  const [activityOpen, setActivityOpen] = useState(false);
-  const [detailOpen, setDetailOpen] = useState(false);
-  const details = row.workerGroupDetailRows;
-  const showExpand = Boolean(debugMode && details && details.length > 1);
-  const pipelineLabel = row.workerGroupPipelineStepId ?? row.sourceRef?.pipelineStepId;
-  const requirementLabel =
-    pathHistorical && !isOnboardingPathRowDone(row.status)
-      ? workerRequirementLabelHistorical(row)
-      : workerOnboardingRequirementLabel(row);
-  const subtitle = workerSubtitleWithHistoricalContext(row, Boolean(pathHistorical));
-  const done = isOnboardingPathRowDone(row.status);
-
-  return (
-    <Box>
-      <Stack direction="row" alignItems="flex-start" gap={0.5} flexWrap="nowrap">
-        {showExpand ? (
-          <IconButton
-            size="small"
-            aria-expanded={detailOpen}
-            aria-label={detailOpen ? 'Hide grouped steps' : 'Show grouped steps'}
-            onClick={() => setDetailOpen((v) => !v)}
-            sx={{ mt: -0.5, flexShrink: 0 }}
-          >
-            <ExpandMoreIcon
-              fontSize="small"
-              sx={{
-                transform: detailOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-                transition: 'transform 0.2s ease',
-              }}
-            />
-          </IconButton>
-        ) : null}
-        <Stack direction="row" alignItems="flex-start" justifyContent="space-between" gap={1} flexWrap="wrap" sx={{ flex: 1, minWidth: 0 }}>
-          <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography variant="body2" fontWeight={600}>
-              {row.label}
-            </Typography>
-            {requirementLabel ? (
-              <Typography
-                variant="caption"
-                color={pathHistorical || !row.blocking ? 'text.secondary' : 'text.primary'}
-                display="block"
-                sx={{ mt: 0.35, fontWeight: pathHistorical ? 500 : row.blocking ? 600 : 500 }}
-              >
-                {requirementLabel}
-              </Typography>
-            ) : null}
-            {subtitle ? (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
-                {subtitle}
-              </Typography>
-            ) : null}
-            {row.narrative?.summary?.trim() ? (
-              <Typography variant="body2" color="text.secondary" display="block" sx={{ mt: 0.75, lineHeight: 1.45 }}>
-                {row.narrative.summary.trim()}
-              </Typography>
-            ) : null}
-            {row.narrative?.events?.filter((e) => String(e.message || '').trim()).length ? (
-              <>
-                <Button
-                  size="small"
-                  onClick={() => setActivityOpen((o) => !o)}
-                  endIcon={
-                    <ExpandMoreIcon
-                      fontSize="small"
-                      sx={{ transform: activityOpen ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }}
-                    />
-                  }
-                  sx={{ mt: 0.5, px: 0, minWidth: 0, textTransform: 'none', alignSelf: 'flex-start' }}
-                >
-                  View activity
-                </Button>
-                <Collapse in={activityOpen}>
-                  <List dense disablePadding sx={{ mt: 0.5 }}>
-                    {row.narrative!.events!
-                      .filter((e) => String(e.message || '').trim())
-                      .map((ev, i) => (
-                        <ListItem key={i} disableGutters sx={{ py: 0.2, alignItems: 'flex-start' }}>
-                          <ListItemText
-                            primary={ev.message}
-                            secondary={
-                              ev.timestamp
-                                ? `${ev.timestamp.toLocaleString()}${
-                                    narrativeActorLabelForUi(ev.type, 'worker')
-                                      ? ` · ${narrativeActorLabelForUi(ev.type, 'worker')}`
-                                      : ''
-                                  }`
-                                : narrativeActorLabelForUi(ev.type, 'worker')
-                            }
-                            primaryTypographyProps={{
-                              variant: 'caption',
-                              color: 'text.primary',
-                              sx: { whiteSpace: 'pre-wrap' },
-                            }}
-                            secondaryTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
-                          />
-                        </ListItem>
-                      ))}
-                  </List>
-                </Collapse>
-              </>
-            ) : null}
-            {debugMode ? (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5, fontFamily: 'monospace' }}>
-                Group: {row.workerGroupKey ?? deriveWorkerGroupKey(row)}
-                {pipelineLabel ? ` · step: ${pipelineLabel}` : ''}
-              </Typography>
-            ) : null}
-          </Box>
-          <Chip
-            size="small"
-            label={pathHistorical && !done ? `Record · ${workerOnboardingStatusChip(row)}` : workerOnboardingStatusChip(row)}
-            variant="outlined"
-            sx={{ flexShrink: 0 }}
-          />
-        </Stack>
-      </Stack>
-      {showExpand ? (
-        <Collapse in={detailOpen}>
-          <Box
-            sx={{
-              mt: 1,
-              ml: showExpand ? 4.5 : 0,
-              pl: 1.5,
-              borderLeft: 2,
-              borderColor: 'divider',
-            }}
-          >
-            <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.75 }}>
-              Source rows ({details!.length})
-            </Typography>
-            <Stack spacing={1}>
-              {details!.map((m) => {
-                const memberReq = workerOnboardingRequirementLabel(m);
-                return (
-                  <Box key={m.rowId}>
-                    <Typography variant="caption" display="block" fontWeight={600}>
-                      {m.label}
-                    </Typography>
-                    {memberReq ? (
-                      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.15 }}>
-                        {memberReq}
-                      </Typography>
-                    ) : null}
-                    <Stack direction="row" alignItems="center" flexWrap="wrap" gap={0.5} sx={{ mt: 0.25 }}>
-                      <Chip size="small" label={workerOnboardingStatusChip(m)} variant="outlined" />
-                      <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace' }}>
-                        {m.rowId}
-                      </Typography>
-                    </Stack>
-                    {m.statusLabel ? (
-                      <Typography variant="caption" color="text.secondary" display="block">
-                        {m.statusLabel}
-                      </Typography>
-                    ) : null}
-                  </Box>
-                );
-              })}
-            </Stack>
-          </Box>
-        </Collapse>
-      ) : null}
-    </Box>
-  );
-}
-
-function WorkerBucketCard({
-  title,
-  rows,
-  debugMode,
-  pathHistorical,
-}: {
-  title: string;
-  rows: EmploymentOnboardingRow[];
-  debugMode: boolean;
-  pathHistorical?: boolean;
-}) {
-  if (rows.length === 0) return null;
-  return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-      <CardContent>
-        <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
-          {title}
-        </Typography>
-        <Stack spacing={1.25} divider={<Divider flexItem />}>
-          {rows.map((row) => (
-            <WorkerOnboardingPathRowItem key={row.rowId} row={row} debugMode={debugMode} pathHistorical={pathHistorical} />
-          ))}
-        </Stack>
-      </CardContent>
-    </Card>
-  );
-}
-
 const MyEmploymentDetailPage: React.FC = () => {
   const { employmentId } = useParams<{ employmentId: string }>();
   const { user, tenantId: authTenantId, activeTenant } = useAuth();
+  const t = useT();
   const workerDisplayName = user?.displayName?.trim() || undefined;
   const navigate = useNavigate();
   const tenantId = authTenantId || activeTenant?.id || null;
@@ -441,8 +138,6 @@ const MyEmploymentDetailPage: React.FC = () => {
     pathBlockingRows: EmploymentOnboardingRow[];
     entityKey: EmploymentEntityKey;
   } | null>(null);
-
-  const pathDebugMode = useMemo(() => workerEmploymentPathDebugEnabled(), []);
 
   useEffect(() => {
     if (!tenantId || !employmentId || !uid) {
@@ -633,53 +328,10 @@ const MyEmploymentDetailPage: React.FC = () => {
     ];
   }, [workerBuckets]);
 
-  const employmentHeaderState = useMemo(() => {
-    if (!employment) return 'not_started' as const;
-    const hasOpenOnboardingDemand = computeHasOpenOnboardingDemand({
-      assignments: headerPathCtx?.assignments,
-      entityEmploymentStatus: employment.status,
-      employmentEntryMode: employment.employmentEntryMode ?? null,
-    });
-    if (headerPathCtx) {
-      const pipelineBl = buildBlockersFromPipeline(
-        headerPathCtx.pipeline?.steps,
-        headerPathCtx.pipeline?.tasks,
-        headerPathCtx.entityKey
-      );
-      const pathBlockingRows = headerPathCtx.pathBlockingRows;
-      const synthetic = pathBlockingRows.map(employmentBlockerItemFromPathRow);
-      const merged = hasOpenOnboardingDemand ? [...pipelineBl, ...synthetic] : [];
-      const actionable = hasOpenOnboardingDemand
-        ? deriveDominantActionableForHeader(pathBlockingRows, pipelineBl)
-        : 'none';
-      const primary = primaryAssignmentRowForHeader(headerPathCtx.assignments);
-      return deriveEmploymentHeaderState({
-        onboardingPhase: employment.onboardingPhase ?? null,
-        blockers: merged,
-        actionableBy: actionable,
-        assignmentStatus: primary?.status ?? null,
-        entityEmploymentStatus: employment.status,
-        hasOpenOnboardingDemand,
-        employmentEntryMode: employment.employmentEntryMode ?? null,
-        hasNonTerminalAssignment: primary != null,
-      });
-    }
-    const openBuckets =
-      workerBuckets &&
-      workerBuckets.your_tasks.length + workerBuckets.waiting_team.length + workerBuckets.behind_scenes.length > 0;
-    const primary =
-      headerPathCtx?.assignments != null
-        ? primaryAssignmentRowForHeader(headerPathCtx.assignments)
-        : null;
-    return deriveEmploymentHeaderStateWorkerListFallback({
-      onboardingPhase: employment.onboardingPhase ?? null,
-      entityEmploymentStatus: employment.status,
-      pipelineIncomplete: Boolean(openBuckets),
-      hasOpenOnboardingDemand,
-      employmentEntryMode: employment.employmentEntryMode ?? null,
-      hasNonTerminalAssignment: primary != null,
-    });
-  }, [employment, headerPathCtx, workerBuckets]);
+  const bridgeBuckets = useMemo(
+    () => partitionEmploymentRowsForBridge(allPathRows),
+    [allPathRows],
+  );
 
   const pathRelationshipHistorical = useMemo(() => {
     if (!employment) return false;
@@ -701,10 +353,18 @@ const MyEmploymentDetailPage: React.FC = () => {
   }, [byEntityKey, normalizedEntityKey]);
 
   const pathCoversPayroll = workerPathCoversPayrollRow(onboardingPathFlatRaw);
-  const pathCoversWorkAuth = workerPathCoversWorkAuthRows(onboardingPathFlatRaw);
 
   const payrollComplete = payrollAccount?.status === 'complete';
-  const hasEntityPayrollLinks = Boolean(payrollSignupUrl?.trim() || payrollPortalLoginUrl?.trim());
+
+  const payrollSecondaryLoginHref = useMemo(() => {
+    const signup = payrollSignupUrl?.trim() || null;
+    const portal = payrollPortalLoginUrl?.trim() || null;
+    if (!portal && !signup) return null;
+    const same = Boolean(signup && portal && signup === portal);
+    if (payrollComplete) return portal || signup;
+    if (!payrollComplete && portal && signup && !same) return portal;
+    return null;
+  }, [payrollSignupUrl, payrollPortalLoginUrl, payrollComplete]);
 
   if (!uid || !tenantId) {
     return (
@@ -725,24 +385,18 @@ const MyEmploymentDetailPage: React.FC = () => {
   if (!employment) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">Employment record not found.</Alert>
+        <Alert severity="info">{t('workerEmploymentHub.detailNotFound')}</Alert>
         <Typography
           component="button"
           variant="body2"
           sx={{ mt: 1, textDecoration: 'underline', cursor: 'pointer' }}
-          onClick={() => navigate('/c1/workers/my-employment')}
+          onClick={() => navigate('/c1/workers/profile')}
         >
-          Back to My Employment
+          {t('workerEmploymentHub.detailBackToList')}
         </Typography>
       </Container>
     );
   }
-
-  const headerStatusLabel = workerEmploymentSurfaceStatusLabel(employmentHeaderState);
-  const headerHeadline = workerEmploymentEntityPageHeadline(employmentHeaderState, pathRelationshipHistorical);
-  const startedAt = employment.onboardingStartedAt?.toDate?.();
-  const hiredAt = employment.hiredAt?.toDate?.();
-  const isOnboarding = employment.status === 'onboarding';
 
   const pipelineId = employment.onboardingPipelineId ?? '';
   const readiness = getWorkerReadiness({
@@ -756,20 +410,14 @@ const MyEmploymentDetailPage: React.FC = () => {
     canonicalPathRows: workerBuckets !== null ? allPathRows : undefined,
   });
 
-  const complianceAttentionItems = complianceItems.filter((item) => {
-    if (!item.required) return false;
-    if (['not_started', 'pending', 'submitted', 'in_review'].includes(item.status)) return true;
-    const state = getExpirationState(item);
-    return state === 'expired' || state === 'expiring_soon';
-  });
   const showComplianceAlert = hasExpiredCompliance(complianceItems) || hasExpiringSoonCompliance(complianceItems);
 
   const readinessBannerMessage: Record<ReadinessStatus, string | null> = {
     ready: null,
-    onboarding: 'Complete onboarding to start working',
-    at_risk: 'Some items need attention soon',
-    blocked: 'You are not eligible to work right now',
-    not_ready: 'Some items need to be completed',
+    onboarding: t('workerEmploymentHub.readinessOnboardingShort'),
+    at_risk: t('workerEmploymentHub.readinessAtRisk'),
+    blocked: t('workerEmploymentHub.readinessBlocked'),
+    not_ready: t('workerEmploymentHub.readinessNotReady'),
   };
 
   const showWorkerEmploymentHub =
@@ -783,26 +431,89 @@ const MyEmploymentDetailPage: React.FC = () => {
         workerEmploymentShouldShowScreeningPointerAlert(entityOverview),
     );
 
-  const showOnboardingPath =
-    !showWorkerEmploymentHub && workerBuckets !== null && (isOnboarding || allPathRows.length > 0);
-  const showPayrollCard =
-    !showWorkerEmploymentHub && Boolean(payrollAccount || hasEntityPayrollLinks || pathCoversPayroll);
-  const payrollSetupDisplayLabel = workerPayrollSetupStatusLabel(payrollAccount?.status);
+  const renderEmploymentPathRow = (row: EmploymentOnboardingRow) => {
+    const ui = rowToChecklistUiStatus(row);
+    const label = translateWorkerOnboardingBundleLabel(row.label, t);
+    const done = isOnboardingPathRowDone(row.status);
+    const canAct = (row.actionableBy === 'worker' || row.actionableBy === 'either') && !done;
+    const pid = row.sourceRef?.pipelineStepId;
+    const rowCta = () => {
+      if (!canAct) return;
+      if (pid === 'everee' && !payrollComplete) {
+        const href = (payrollSignupUrl || payrollPortalLoginUrl || '').trim();
+        if (href) window.open(href, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      if (pid === 'i9' || row.groupId === 'work_authorization') {
+        document.getElementById('worker-employment-i9-anchor')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+      }
+      document.getElementById(`employment-checklist-${row.rowId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    const chipColor =
+      ui === 'complete'
+        ? 'success'
+        : ui === 'required'
+          ? 'error'
+          : ui === 'in_progress'
+            ? 'primary'
+            : 'default';
+    return (
+      <Stack
+        key={row.rowId}
+        id={`employment-checklist-${row.rowId}`}
+        direction="row"
+        spacing={1.5}
+        alignItems="flex-start"
+      >
+        <Box sx={{ pt: 0.25 }}>
+          {ui === 'complete' ? (
+            <CheckCircleIcon color="success" fontSize="small" />
+          ) : ui === 'required' ? (
+            <ErrorOutlineIcon color="error" fontSize="small" />
+          ) : ui === 'in_progress' ? (
+            <HourglassEmptyIcon color="primary" fontSize="small" />
+          ) : (
+            <RadioButtonUncheckedIcon color="disabled" fontSize="small" />
+          )}
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography variant="body2" fontWeight={600}>
+            {label}
+          </Typography>
+          <Chip
+            size="small"
+            label={workerOnboardingStatusChip(row, t)}
+            color={chipColor}
+            variant="outlined"
+            sx={{ mt: 0.5 }}
+          />
+        </Box>
+        {canAct ? (
+          <Button size="small" variant="outlined" onClick={rowCta}>
+            {row.status === 'not_started'
+              ? t('workerEmploymentDetail.checklistRowStart')
+              : t('workerEmploymentDetail.checklistRowContinue')}
+          </Button>
+        ) : null}
+      </Stack>
+    );
+  };
 
   return (
     <Container maxWidth="sm" sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Stack direction="row" alignItems="center" spacing={0.5}>
-          <IconButton size="small" onClick={() => navigate('/c1/workers/my-employment')} aria-label="Back">
+          <IconButton size="small" onClick={() => navigate('/c1/workers/profile')} aria-label={t('common.back')}>
             <ArrowBackIcon />
           </IconButton>
           <Typography
             variant="body2"
             color="text.secondary"
             sx={{ cursor: 'pointer' }}
-            onClick={() => navigate('/c1/workers/my-employment')}
+            onClick={() => navigate('/c1/workers/profile')}
           >
-            Back to My Employment
+            {t('workerEmploymentHub.detailBackToList')}
           </Typography>
         </Stack>
 
@@ -818,50 +529,10 @@ const MyEmploymentDetailPage: React.FC = () => {
         {showComplianceAlert && (
           <Alert severity={hasExpiredCompliance(complianceItems) ? 'error' : 'warning'} variant="outlined">
             {hasExpiredCompliance(complianceItems)
-              ? 'Action required: some of your documents need attention.'
-              : 'Some documents will expire soon.'}
+              ? t('workerEmploymentDetail.complianceDocActionRequired')
+              : t('workerEmploymentDetail.complianceDocExpiringSoon')}
           </Alert>
         )}
-
-        <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-          <CardContent>
-            <Typography variant="h6" fontWeight={600}>
-              {employment.entityName || employment.entityKey || 'Entity'}
-            </Typography>
-            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.75 }}>
-              {headerHeadline}
-            </Typography>
-            <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" sx={{ mt: 0.5 }}>
-              <Chip
-                label={headerStatusLabel}
-                size="small"
-                color={
-                  employmentHeaderState === 'terminated'
-                    ? 'error'
-                    : employmentHeaderState === 'inactive'
-                      ? 'default'
-                      : employmentHeaderState === 'ready' || employmentHeaderState === 'on_assignment'
-                        ? 'success'
-                        : employmentHeaderState === 'action_required'
-                          ? 'warning'
-                          : employmentHeaderState === 'waiting_on_company'
-                            ? 'info'
-                            : employmentHeaderState === 'in_progress'
-                              ? 'primary'
-                              : 'default'
-                }
-              />
-              {(employment.workerType === 'w2' || employment.workerType === '1099') && (
-                <Chip label={employment.workerType === '1099' ? '1099' : 'W-2'} size="small" variant="outlined" />
-              )}
-            </Stack>
-            {(startedAt || hiredAt) && (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                {hiredAt ? `Hired ${hiredAt.toLocaleDateString()}` : startedAt ? `Started ${startedAt.toLocaleDateString()}` : null}
-              </Typography>
-            )}
-          </CardContent>
-        </Card>
 
         {showWorkerEmploymentHub && normalizedEntityKey && entityOverview ? (
           <EmploymentWorkerEmploymentHub
@@ -869,222 +540,122 @@ const MyEmploymentDetailPage: React.FC = () => {
             overview={entityOverview}
             tenantId={tenantId}
             profileUserId={uid}
-            screeningPointerMessage="You have screening steps to complete. Go to Screening."
+            screeningPointerMessage={t('workerEmploymentDetail.screeningPointer')}
             onNavigateToScreening={() => navigate(C1_WORKER_SCREENING_PATH)}
             onRefresh={() => refetchOverview()}
           />
         ) : null}
 
         {!showWorkerEmploymentHub && pathLoading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
-            <CircularProgress size={22} />
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+            <CircularProgress size={28} />
           </Box>
         )}
 
-        {!showWorkerEmploymentHub && showOnboardingScreeningPointer ? (
-          <ProfileTabPointerAlert
-            message="You have screening steps to complete. Go to Screening."
-            onNavigate={() => navigate(C1_WORKER_SCREENING_PATH)}
-          />
-        ) : null}
-
-        {!showWorkerEmploymentHub && showOnboardingPath && workerBuckets && allPathRows.length === 0 && isOnboarding && (
-          <Alert severity="info" variant="outlined">
-            Your hiring team is still setting up your checklist. Check back soon.
-          </Alert>
-        )}
-
-        {!showWorkerEmploymentHub && showOnboardingPath && workerBuckets && (
+        {!showWorkerEmploymentHub && !pathLoading && workerBuckets && (
           <>
             {pathRelationshipHistorical ? (
               <Alert severity="info" variant="outlined" sx={{ borderRadius: 2 }}>
-                There is no active assignment onboarding for this entity right now. The steps below are a record of prior
-                relationship onboarding — they are not current required work unless you start a new assignment.
+                {t('workerEmploymentDetail.historicalPathAlertShort')}
               </Alert>
             ) : null}
-            <WorkerBucketCard
-              title={pathRelationshipHistorical ? 'Record: your past tasks' : 'What you need to do'}
-              rows={workerBuckets.your_tasks}
-              debugMode={pathDebugMode}
-              pathHistorical={pathRelationshipHistorical}
-            />
-          </>
-        )}
 
-        {!showWorkerEmploymentHub &&
-        tenantId &&
-        uid &&
-        !workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(employment.entityKey) ? (
-          <WorkerEntityI9Section
-            tenantId={tenantId}
-            workerUserId={uid}
-            employmentRecordId={employment.id}
-            employmentEntityKey={employment.entityKey}
-            requestedForEntityId={employment.entityId ?? null}
-          />
-        ) : null}
-
-        {!showWorkerEmploymentHub && showOnboardingPath && workerBuckets && (
-          <>
-            <WorkerBucketCard
-              title={pathRelationshipHistorical ? 'Record: previously with your hiring team' : 'Waiting on your hiring team'}
-              rows={workerBuckets.waiting_team}
-              debugMode={pathDebugMode}
-              pathHistorical={pathRelationshipHistorical}
-            />
-            <WorkerBucketCard
-              title={pathRelationshipHistorical ? 'Record: behind the scenes (past activity)' : 'In progress behind the scenes'}
-              rows={workerBuckets.behind_scenes}
-              debugMode={pathDebugMode}
-              pathHistorical={pathRelationshipHistorical}
-            />
-            <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-              <CardContent>
-                <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1.5 }}>
-                  {pathRelationshipHistorical ? 'Completed & resources (record)' : 'Completed items & resources'}
-                </Typography>
-                {workerBuckets.completed.length > 0 ? (
-                  <Stack spacing={1.25} divider={<Divider flexItem />}>
-                    {workerBuckets.completed.map((row) => (
-                      <WorkerOnboardingPathRowItem
-                        key={row.rowId}
-                        row={row}
-                        debugMode={pathDebugMode}
-                        pathHistorical={pathRelationshipHistorical}
-                      />
-                    ))}
-                  </Stack>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    Nothing completed yet. Finished items will show up here.
+            <Stack id="worker-employment-bridge-stack" spacing={2}>
+              <Card id="worker-employment-bridge-identity" variant="outlined" sx={{ borderRadius: 2 }}>
+                <CardContent>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
+                    {t('workerEmploymentDetail.bridgeSectionIdentity')}
                   </Typography>
-                )}
-              </CardContent>
-            </Card>
-          </>
-        )}
-
-        {!showWorkerEmploymentHub && showPayrollCard && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-            <CardContent>
-              <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1 }}>
-                Payroll setup
-              </Typography>
-              <Chip
-                label={payrollSetupDisplayLabel}
-                size="small"
-                variant="outlined"
-                color={payrollComplete ? 'success' : payrollSetupDisplayLabel === 'Not started' ? 'default' : 'primary'}
-              />
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.25, mb: 1 }}>
-                {payrollComplete
-                  ? 'You’re set up to get paid. Use the payroll portal when you need pay history or tax forms.'
-                  : 'Complete payroll and tax information with our payroll partner so you can get paid.'}
-              </Typography>
-              <WorkerEntityPayrollLinkButtons
-                payrollSignupUrl={payrollSignupUrl}
-                payrollPortalLoginUrl={payrollPortalLoginUrl}
-                payrollComplete={payrollComplete}
-              />
-              {!payrollComplete && !hasEntityPayrollLinks && pathCoversPayroll ? (
-                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
-                  Your hiring team will add a setup link when it’s ready.
-                </Typography>
-              ) : null}
-            </CardContent>
-          </Card>
-        )}
-
-        {!showWorkerEmploymentHub && complianceAttentionItems.length > 0 && (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-            <CardContent>
-              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                Compliance
-              </Typography>
-              <Stack spacing={0.75}>
-                {complianceAttentionItems.map((item) => {
-                  const label = item.title || getComplianceTypeLabel(item.type);
-                  const state = getExpirationState(item);
-                  const statusText =
-                    state === 'expired'
-                      ? 'Expired'
-                      : state === 'expiring_soon'
-                        ? 'Expiring soon'
-                        : getComplianceStatusDisplayLabel(item.status);
-                  return (
-                    <Stack
-                      key={item.id ?? item.type}
-                      direction="row"
-                      alignItems="center"
-                      justifyContent="space-between"
-                      flexWrap="wrap"
-                      gap={0.5}
-                    >
-                      <Typography variant="body2">{label}</Typography>
-                      <Chip
-                        size="small"
-                        label={statusText}
-                        color={
-                          state === 'expired' ? 'error' : state === 'expiring_soon' ? 'warning' : item.status === 'complete' ? 'success' : 'default'
-                        }
-                        variant="outlined"
-                      />
+                  {bridgeBuckets.identity.length > 0 ? (
+                    <Stack spacing={2} divider={<Divider flexItem />} sx={{ mb: 2 }}>
+                      {bridgeBuckets.identity.map((row) => renderEmploymentPathRow(row))}
                     </Stack>
-                  );
-                })}
-              </Stack>
-            </CardContent>
-          </Card>
-        )}
+                  ) : allPathRows.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      {t('workerEmploymentDetail.checklistEmptySettingUp')}
+                    </Typography>
+                  ) : null}
+                  {tenantId &&
+                  uid &&
+                  !workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(employment.entityKey) ? (
+                    <Box id="worker-employment-i9-anchor">
+                      <WorkerEntityI9Section
+                        tenantId={tenantId}
+                        workerUserId={uid}
+                        employmentRecordId={employment.id}
+                        employmentEntityKey={employment.entityKey}
+                        requestedForEntityId={employment.entityId ?? null}
+                      />
+                    </Box>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-        {!showWorkerEmploymentHub ? (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-            <CardContent>
-              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                Documents & instructions
-              </Typography>
-              <Stack spacing={0.75}>
-                {!pathCoversWorkAuth && isOnboarding && employment.everifyStatus ? (
-                  <Typography variant="body2" color="text.secondary">
-                    Employment verification: {String(employment.everifyStatus).replace(/_/g, ' ')}
+              <Card variant="outlined" sx={{ borderRadius: 2 }}>
+                <CardContent>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
+                    {t('workerEmploymentDetail.bridgeSectionPayroll')}
                   </Typography>
-                ) : null}
-                {(employment.backgroundRequired || employment.drugScreenRequired) && (
-                  <Typography variant="body2" color="text.secondary">
-                    {employment.backgroundRequired && 'A background check may be required. '}
-                    {employment.drugScreenRequired &&
-                      'A screening may be required. Follow any instructions sent to you by your hiring team.'}
-                  </Typography>
-                )}
-                {!pathCoversWorkAuth &&
-                  !employment.everifyStatus &&
-                  !employment.backgroundRequired &&
-                  !employment.drugScreenRequired && (
+                  {bridgeBuckets.payroll.length > 0 ? (
+                    <Stack spacing={2} divider={<Divider flexItem />}>
+                      {bridgeBuckets.payroll.map((row) => renderEmploymentPathRow(row))}
+                    </Stack>
+                  ) : (
                     <Typography variant="body2" color="text.secondary">
-                      Your hiring team will share any forms or next steps with you.
+                      {t('workerEmploymentDetail.bridgePayrollEmpty')}
                     </Typography>
                   )}
-              </Stack>
-            </CardContent>
-          </Card>
-        ) : null}
+                  {payrollSecondaryLoginHref ? (
+                    <Button
+                      variant="text"
+                      size="small"
+                      startIcon={<OpenInNewIcon fontSize="small" />}
+                      href={payrollSecondaryLoginHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      component="a"
+                      sx={{ alignSelf: 'flex-start', textTransform: 'none', mt: 1 }}
+                    >
+                      {t('workerEmploymentDetail.secondaryPayrollLoginExisting')}
+                    </Button>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-        {!showWorkerEmploymentHub ? (
-          <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-            <CardContent>
-              <Typography variant="subtitle2" fontWeight={600} sx={{ mb: 1 }}>
-                Next steps
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {isOnboarding ? (
-                  <>Finish the items above when asked. This page updates as things move forward.</>
-                ) : (
-                  <>You’re set with this entity. Questions? Reach out to your hiring team.</>
-                )}
-              </Typography>
-            </CardContent>
-          </Card>
-        ) : null}
+              <Card variant="outlined" sx={{ borderRadius: 2 }}>
+                <CardContent>
+                  <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 1.5 }}>
+                    {t('workerEmploymentDetail.bridgeSectionScreening')}
+                  </Typography>
+                  {bridgeBuckets.screening.length > 0 ? (
+                    <Stack spacing={2} divider={<Divider flexItem />} sx={{ mb: 2 }}>
+                      {bridgeBuckets.screening.map((row) => renderEmploymentPathRow(row))}
+                    </Stack>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: showOnboardingScreeningPointer ? 1.5 : 0 }}>
+                      {t('workerEmploymentDetail.bridgeScreeningEmpty')}
+                    </Typography>
+                  )}
+                  {showOnboardingScreeningPointer ? (
+                    <ProfileTabPointerAlert
+                      message={t('workerEmploymentDetail.screeningPointerShort')}
+                      onNavigate={() => navigate(C1_WORKER_SCREENING_PATH)}
+                    />
+                  ) : null}
+                </CardContent>
+              </Card>
+            </Stack>
+
+            <Button
+              variant="text"
+              size="small"
+              onClick={() => navigate('/c1/workers/support')}
+              sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+            >
+              {t('workerEmploymentDetail.bridgeHelpLink')}
+            </Button>
+          </>
+        )}
       </Stack>
     </Container>
   );

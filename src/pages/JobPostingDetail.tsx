@@ -101,6 +101,8 @@ const JobPostingDetail: React.FC = () => {
   const [shiftStatuses, setShiftStatuses] = useState<Record<string, string>>({}); // Map shiftId -> status
   const [appliedShiftsRefresh, setAppliedShiftsRefresh] = useState(0); // Increment to reload applied shifts (e.g. after cancel for day)
   const [applicationStatus, setApplicationStatus] = useState<string | null>(null);
+  /** Bumped after quick apply so application status is re-read while staying on this URL. */
+  const [applicationStatusReloadKey, setApplicationStatusReloadKey] = useState(0);
   const [applicationDocId, setApplicationDocId] = useState<string | null>(null);
   const [applicationJobScore, setApplicationJobScore] = useState<JobScoreSummaryStored | null>(null);
   const [acceptedAssignmentId, setAcceptedAssignmentId] = useState<string | null>(null);
@@ -533,7 +535,7 @@ const JobPostingDetail: React.FC = () => {
     };
 
     loadApplicationStatus();
-  }, [posting, user?.uid, resolvedTenantId, postId]);
+  }, [posting, user?.uid, resolvedTenantId, postId, applicationStatusReloadKey]);
 
   // Load user profile for requirement status (skills, languages, education, certs)
   useEffect(() => {
@@ -1031,16 +1033,8 @@ const JobPostingDetail: React.FC = () => {
           if (result.success) {
             const { emitWorkerCardSignal } = await import('../utils/workerCardSignals');
             emitWorkerCardSignal({ type: 'job_applied', entityId: postId! });
-            // Continuous feed: return to jobs board with confirmation and next job queue (no dead end)
-            const fromFeedState = location.state as { fromFeed?: boolean; feedQueue?: any[] } | null;
-            if (fromFeedState?.fromFeed && Array.isArray(fromFeedState.feedQueue)) {
-              navigate('/c1/jobs-board', {
-                state: { showApplicationConfirmation: true, feedQueue: fromFeedState.feedQueue },
-              });
-              return;
-            }
-            const tenantSlug = posting.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1';
-            navigate(`/${tenantSlug}/jobs-board`);
+            // Stay on this job URL and reload application status (yellow “submitted” UI, etc.)
+            setApplicationStatusReloadKey((k) => k + 1);
             return;
           } else {
             // Error - show alert and navigate to wizard

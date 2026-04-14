@@ -230,14 +230,14 @@ const Layout: React.FC = function Layout() {
         if (uidPart && user?.uid && uidPart !== user.uid) {
           return 'User Details';
         }
-        // If viewing your own profile, show "My Profile"
+        // If viewing your own profile, show "My Account"
         if (uidPart === user?.uid) {
-          return 'My Profile';
+          return 'My Account';
         }
         // Default to "User Details" if we can't determine (likely viewing someone else)
         return 'User Details';
       }
-      return 'My Profile';
+      return 'My Account';
     }
     
     // CRM routes
@@ -1179,7 +1179,7 @@ const Layout: React.FC = function Layout() {
               </ListItem>
             );
           })()}
-          {/* Jobs Board shortcut for security levels 0-4 (above My Profile) */}
+          {/* Jobs Board shortcut for security levels 0-4 (above My Account) */}
           {(() => {
             const secLevel = currentClaimsSecurityLevel || securityLevel;
             const isLowLevel = secLevel && ['0','1','2','3','4'].includes(secLevel);
@@ -1906,7 +1906,7 @@ const Layout: React.FC = function Layout() {
                 navigateSafe(profilePath);
                 setAvatarMenuAnchorEl(null);
               }}>
-                My Profile
+                My Account
               </MenuItem>
               <Divider />
               <MenuItem onClick={() => {

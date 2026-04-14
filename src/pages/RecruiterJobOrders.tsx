@@ -80,6 +80,7 @@ interface JobOrderWithDetails extends Omit<JobOrder, 'status'> {
   workersNeeded?: number;
   headcountFilled?: number;
   jobTitle?: string;
+  jobType?: 'gig' | 'career';
 }
 
 const PAGE_SIZE = 20;
@@ -905,9 +906,25 @@ const RecruiterJobOrders: React.FC<RecruiterJobOrdersProps> = ({
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25, minWidth: 0 }}>
-                        <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                          {jobOrder.jobOrderName}
-                        </Typography>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                            {jobOrder.jobOrderName}
+                          </Typography>
+                          <Chip
+                            label={jobOrder.jobType === 'gig' ? 'Gig' : 'Career'}
+                            size="small"
+                            variant="outlined"
+                            sx={{
+                              height: 22,
+                              fontSize: '0.7rem',
+                              fontWeight: 600,
+                              flexShrink: 0,
+                              ...(jobOrder.jobType === 'gig'
+                                ? { borderColor: 'secondary.main', color: 'secondary.dark' }
+                                : { borderColor: 'primary.main', color: 'primary.dark' }),
+                            }}
+                          />
+                        </Box>
                         {(() => {
                           const jobPosts = jobPostsByJobOrderId[jobOrder.id] || [];
                           const associatedContacts =

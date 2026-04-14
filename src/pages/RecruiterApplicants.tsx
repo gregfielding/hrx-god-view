@@ -29,6 +29,7 @@ import StarIcon from '@mui/icons-material/Star';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
+import { TENANT_LISTABLE_SECURITY_LEVELS } from '../constants/tenantWorkerSecurityLevels';
 import { collection, query, where, orderBy, getDocs, doc, getDoc } from 'firebase/firestore';
 import FavoriteButton from '../components/FavoriteButton';
 import FavoritesFilter from '../components/FavoritesFilter';
@@ -147,7 +148,7 @@ const RecruiterApplicants: React.FC = () => {
       const usersRef = collection(db, 'users');
       const q = query(
         usersRef,
-        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
+        where(`tenantIds.${tenantId}.securityLevel`, 'in', TENANT_LISTABLE_SECURITY_LEVELS)
       );
       
       console.log('🔍 RecruiterApplicants: Querying users with tenantIds.' + tenantId + '.securityLevel in:', ['0', '1', '2', '3', '4']);

@@ -1,5 +1,14 @@
-import React, { useState, Suspense, lazy } from 'react';
-import { Box, Typography, Button } from '@mui/material';
+import React, { useState, useMemo } from 'react';
+import {
+  Box,
+  Typography,
+  Button,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  useTheme,
+  useMediaQuery,
+} from '@mui/material';
 import SettingsIcon from '@mui/icons-material/Settings';
 import BusinessIcon from '@mui/icons-material/Business';
 import EmailIcon from '@mui/icons-material/Email';
@@ -19,7 +28,7 @@ import SenderManagementPage from './SenderManagementPage';
 import SlackAdminPage from '../Admin/SlackAdminPage';
 import WorkforceManagement from './WorkforceManagement';
 import EverifyAdminOpsPage from './EverifyAdminOpsPage';
-const SmartGroupsSettings = lazy(() => import('./SmartGroupsSettings'));
+import SmartGroupsSettings from './SmartGroupsSettings';
 import { useAuth } from '../../contexts/AuthContext';
 import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import DescriptionIcon from '@mui/icons-material/Description';
@@ -34,114 +43,42 @@ import CredentialTypesPlaceholder from './settings/CredentialTypesPlaceholder';
 import ScreeningTypesPlaceholder from './settings/ScreeningTypesPlaceholder';
 import BenefitsProgramsPlaceholder from './settings/BenefitsProgramsPlaceholder';
 import PayrollProvidersPlaceholder from './settings/PayrollProvidersPlaceholder';
-import AISignalsPlaceholder from './settings/AISignalsPlaceholder';
+import AISignalsSettings from './settings/AISignalsSettings';
+import {
+  SETTINGS_NAV_GROUPS,
+  findGroupForTab,
+  type SettingsTab,
+} from '../../config/settingsNavigation';
 
-type SettingsTab =
-  | 'company-setup'
-  | 'entities'
-  | 'onboarding-library'
-  | 'documents'
-  | 'messaging'
-  | 'senders'
-  | 'slack'
-  | 'workforce'
-  | 'smart-groups'
-  | 'everify-ops'
-  | 'compliance-library'
-  | 'credential-types'
-  | 'screening-types'
-  | 'benefits-programs'
-  | 'payroll-providers'
-  | 'ai-signals';
+const TAB_ICON_SX = { fontSize: 20 };
+
+const TAB_ICONS: Record<SettingsTab, React.ReactNode> = {
+  'company-setup': <BusinessIcon sx={TAB_ICON_SX} />,
+  entities: <AccountBalanceIcon sx={TAB_ICON_SX} />,
+  'onboarding-library': <LibraryBooksIcon sx={TAB_ICON_SX} />,
+  documents: <DescriptionIcon sx={TAB_ICON_SX} />,
+  messaging: <EmailIcon sx={TAB_ICON_SX} />,
+  senders: <PhoneAndroidIcon sx={TAB_ICON_SX} />,
+  slack: <ChatIcon sx={TAB_ICON_SX} />,
+  workforce: <PeopleIcon sx={TAB_ICON_SX} />,
+  'smart-groups': <GroupWorkIcon sx={TAB_ICON_SX} />,
+  'everify-ops': <AdminPanelSettingsIcon sx={TAB_ICON_SX} />,
+  'compliance-library': <VerifiedUserIcon sx={TAB_ICON_SX} />,
+  'credential-types': <BadgeIcon sx={TAB_ICON_SX} />,
+  'screening-types': <SecurityIcon sx={TAB_ICON_SX} />,
+  'benefits-programs': <LocalHospitalIcon sx={TAB_ICON_SX} />,
+  'payroll-providers': <AccountBalanceWalletIcon sx={TAB_ICON_SX} />,
+  'ai-signals': <PsychologyIcon sx={TAB_ICON_SX} />,
+};
 
 const SettingsLanding: React.FC = () => {
+  const theme = useTheme();
+  const isDesktopNav = useMediaQuery(theme.breakpoints.up('md'));
   const { tenantId, activeTenant } = useAuth();
   const effectiveTenantId = activeTenant?.id || tenantId;
   const [activeTab, setActiveTab] = useState<SettingsTab>('company-setup');
 
-  const settingsTabs = [
-    {
-      id: 'company-setup' as SettingsTab,
-      title: 'Company Setup',
-      icon: <BusinessIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'entities' as SettingsTab,
-      title: 'Entities',
-      icon: <AccountBalanceIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'onboarding-library' as SettingsTab,
-      title: 'Onboarding Library',
-      icon: <LibraryBooksIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'documents' as SettingsTab,
-      title: 'Documents & Signatures',
-      icon: <DescriptionIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'messaging' as SettingsTab,
-      title: 'Messaging',
-      icon: <EmailIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'senders' as SettingsTab,
-      title: 'Sender Management',
-      icon: <PhoneAndroidIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'slack' as SettingsTab,
-      title: 'Slack Integration',
-      icon: <ChatIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'workforce' as SettingsTab,
-      title: 'Workforce Management',
-      icon: <PeopleIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'smart-groups' as SettingsTab,
-      title: 'Smart Groups',
-      icon: <GroupWorkIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'everify-ops' as SettingsTab,
-      title: 'E-Verify Ops',
-      icon: <AdminPanelSettingsIcon sx={{ fontSize: 20 }} />,
-    },
-    // Phase 2 placeholders (see docs/PHASE2_SYSTEMS_ARCHITECTURE.md)
-    {
-      id: 'compliance-library' as SettingsTab,
-      title: 'Compliance Library',
-      icon: <VerifiedUserIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'credential-types' as SettingsTab,
-      title: 'Credential Types',
-      icon: <BadgeIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'screening-types' as SettingsTab,
-      title: 'Screening Types',
-      icon: <SecurityIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'benefits-programs' as SettingsTab,
-      title: 'Benefits Programs',
-      icon: <LocalHospitalIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'payroll-providers' as SettingsTab,
-      title: 'Payroll Providers',
-      icon: <AccountBalanceWalletIcon sx={{ fontSize: 20 }} />,
-    },
-    {
-      id: 'ai-signals' as SettingsTab,
-      title: 'AI Signals / Alerts',
-      icon: <PsychologyIcon sx={{ fontSize: 20 }} />,
-    },
-  ];
+  const activeGroup = useMemo(() => findGroupForTab(activeTab), [activeTab]);
 
   const renderTabContent = () => {
     switch (activeTab) {
@@ -162,15 +99,7 @@ const SettingsLanding: React.FC = () => {
       case 'workforce':
         return <WorkforceManagement />;
       case 'smart-groups':
-        return effectiveTenantId ? (
-          <Suspense fallback={
-            <Box sx={{ p: 3, display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200 }}>
-              <Typography color="text.secondary">Loading metros…</Typography>
-            </Box>
-          }>
-            <SmartGroupsSettings tenantId={effectiveTenantId} />
-          </Suspense>
-        ) : null;
+        return effectiveTenantId ? <SmartGroupsSettings tenantId={effectiveTenantId} /> : null;
       case 'everify-ops':
         return effectiveTenantId ? <EverifyAdminOpsPage tenantId={effectiveTenantId} /> : null;
       case 'compliance-library':
@@ -184,11 +113,124 @@ const SettingsLanding: React.FC = () => {
       case 'payroll-providers':
         return <PayrollProvidersPlaceholder />;
       case 'ai-signals':
-        return <AISignalsPlaceholder />;
+        return <AISignalsSettings />;
       default:
         return <CompanySetup />;
     }
   };
+
+  const navPillSx = (selected: boolean) => ({
+    textTransform: 'none' as const,
+    borderRadius: '999px',
+    fontSize: '14px',
+    fontWeight: selected ? 600 : 400,
+    color: selected ? theme.palette.primary.contrastText : theme.palette.text.primary,
+    bgcolor: selected ? theme.palette.primary.main : theme.palette.action.hover,
+    px: 1.5,
+    py: 0.75,
+    minWidth: 'auto',
+    whiteSpace: 'nowrap' as const,
+    border: '1px solid',
+    borderColor: selected ? theme.palette.primary.main : 'transparent',
+    '&:hover': {
+      bgcolor: selected ? theme.palette.primary.dark : theme.palette.action.selected,
+    },
+  });
+
+  const renderMobileGroupedPills = () => (
+    <Box sx={{ px: { xs: 2, md: 3 }, py: 2, borderBottom: 1, borderColor: 'divider' }}>
+      {SETTINGS_NAV_GROUPS.map((group) => (
+        <Box key={group.id} sx={{ mb: 2 }}>
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{
+              display: 'block',
+              letterSpacing: 0.8,
+              fontWeight: 700,
+              fontSize: '0.7rem',
+              mb: 1,
+            }}
+          >
+            {group.label}
+          </Typography>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            {group.items.map((item) => (
+              <Button
+                key={item.key}
+                variant="text"
+                startIcon={TAB_ICONS[item.key]}
+                onClick={() => setActiveTab(item.key)}
+                sx={navPillSx(activeTab === item.key)}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </Box>
+        </Box>
+      ))}
+    </Box>
+  );
+
+  const renderDesktopSideNav = () => (
+    <Box
+      component="nav"
+      aria-label="Settings sections"
+      sx={{
+        width: 280,
+        flexShrink: 0,
+        borderRight: 1,
+        borderColor: 'divider',
+        overflowY: 'auto',
+        px: 1.5,
+        py: 2,
+        bgcolor: 'background.default',
+      }}
+    >
+      {SETTINGS_NAV_GROUPS.map((group) => (
+        <Box key={group.id} sx={{ mb: 2.5 }}>
+          <Typography
+            variant="overline"
+            color="text.secondary"
+            sx={{
+              display: 'block',
+              letterSpacing: 0.8,
+              fontWeight: 700,
+              fontSize: '0.7rem',
+              px: 1,
+              mb: 0.75,
+            }}
+          >
+            {group.label}
+          </Typography>
+          {group.items.map((item) => (
+            <ListItemButton
+              key={item.key}
+              selected={activeTab === item.key}
+              onClick={() => setActiveTab(item.key)}
+              sx={{
+                borderRadius: 1,
+                py: 0.75,
+                mb: 0.25,
+                '&.Mui-selected': {
+                  bgcolor: 'primary.main',
+                  color: 'primary.contrastText',
+                  '&:hover': { bgcolor: 'primary.dark' },
+                  '& .MuiListItemIcon-root': { color: 'inherit' },
+                },
+              }}
+            >
+              <ListItemIcon sx={{ minWidth: 40, color: 'inherit' }}>{TAB_ICONS[item.key]}</ListItemIcon>
+              <ListItemText
+                primary={item.label}
+                primaryTypographyProps={{ variant: 'body2', fontWeight: activeTab === item.key ? 600 : 400 }}
+              />
+            </ListItemButton>
+          ))}
+        </Box>
+      ))}
+    </Box>
+  );
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -208,34 +250,22 @@ const SettingsLanding: React.FC = () => {
             </Typography>
           </Box>
         }
-        subtitle="Manage your organization's configuration and preferences"
-        filters={
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            {settingsTabs.map((tab) => (
-              <Button
-                key={tab.id}
-                variant="text"
-                startIcon={tab.icon}
-                onClick={() => setActiveTab(tab.id)}
-                sx={{
-                  textTransform: 'none',
-                  borderRadius: '999px',
-                  fontSize: '14px',
-                  fontWeight: activeTab === tab.id ? 500 : 400,
-                  color: activeTab === tab.id ? 'white' : 'rgba(0, 0, 0, 0.7)',
-                  bgcolor: activeTab === tab.id ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                  px: 1.5,
-                  py: 0.75,
-                  minWidth: 'auto',
-                  whiteSpace: 'nowrap',
-                  '&:hover': {
-                    bgcolor: activeTab === tab.id ? '#004a9f' : 'rgba(0, 0, 0, 0.08)',
-                  },
-                }}
-              >
-                {tab.title}
-              </Button>
-            ))}
+        subtitle={
+          <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+              Manage your organization&apos;s configuration and preferences
+            </Typography>
+            {activeGroup ? (
+              <Typography variant="body2" color="text.secondary" component="p" sx={{ m: 0 }}>
+                <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                  Settings
+                </Box>
+                {' / '}
+                <Box component="span" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                  {activeGroup.label}
+                </Box>
+              </Typography>
+            ) : null}
           </Box>
         }
       />
@@ -244,14 +274,25 @@ const SettingsLanding: React.FC = () => {
         sx={{
           flex: 1,
           minHeight: 0,
-          overflowY: 'auto',
-          overflowX: 'hidden',
           display: 'flex',
-          flexDirection: 'column',
+          flexDirection: { xs: 'column', md: 'row' },
+          overflow: 'hidden',
         }}
       >
-        <Box sx={{ flex: 1, minHeight: 0 }}>
-          {renderTabContent()}
+        {!isDesktopNav ? renderMobileGroupedPills() : null}
+        {isDesktopNav ? renderDesktopSideNav() : null}
+
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <Box sx={{ flex: 1, minHeight: 0 }}>{renderTabContent()}</Box>
         </Box>
       </Box>
     </Box>
@@ -259,4 +300,3 @@ const SettingsLanding: React.FC = () => {
 };
 
 export default SettingsLanding;
-

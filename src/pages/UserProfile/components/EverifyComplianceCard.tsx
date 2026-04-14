@@ -35,7 +35,15 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
   assignmentId,
   userEmploymentId,
 }) => {
-  const { activeTenant, isHRX, claimsRoles } = useAuth();
+  const {
+    activeTenant,
+    user,
+    isHRX,
+    claimsRoles,
+    tenantRolesFromProfile,
+    legacyUserSecurityLevel,
+    legacyUserRole,
+  } = useAuth();
   const effectiveTenantId = tenantId || activeTenant?.id;
   const [cardState, setCardState] = useState<'loading' | 'hidden' | 'ready'>('loading');
   const [i9Status, setI9Status] = useState<string>('');
@@ -46,8 +54,27 @@ export const EverifyComplianceCard: React.FC<EverifyComplianceCardProps> = ({
   const [createLoading, setCreateLoading] = useState(false);
 
   const canManageEverify = useMemo(
-    () => canManageEverifyFromClaims(isHRX, effectiveTenantId || null, claimsRoles),
-    [isHRX, effectiveTenantId, claimsRoles]
+    () =>
+      canManageEverifyFromClaims(
+        isHRX,
+        effectiveTenantId || null,
+        claimsRoles,
+        user?.uid,
+        userId,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
+      ),
+    [
+      isHRX,
+      effectiveTenantId,
+      claimsRoles,
+      user?.uid,
+      userId,
+      tenantRolesFromProfile,
+      legacyUserSecurityLevel,
+      legacyUserRole,
+    ],
   );
 
   const [resolvedAssignmentId, setResolvedAssignmentId] = useState<string | undefined>(undefined);

@@ -1,10 +1,10 @@
 /**
- * ~1h after apply-wizard account creation, SMS applicants who have not finished
+ * ~15m after apply-wizard account creation, SMS applicants who have not finished
  * with a link back to the correct wizard (job apply vs /c1/apply vs group signup).
  *
  * Flow:
  * - Wizard writes applyResumeSnapshot + applyWizardReminderPending on first user create.
- * - onUserCreatedScheduleApplyWizardReminder sets applyWizardReminderDueAt = now + 1h.
+ * - onUserCreatedScheduleApplyWizardReminder sets applyWizardReminderDueAt = now + 15m.
  * - processApplyWizardReminders (scheduled) sends SMS once, then clears pending flags.
  * - Successful wizard submit removes snapshot + pending (no SMS if they finished).
  */
@@ -27,7 +27,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const REMINDER_DELAY_MS = 60 * 60 * 1000;
+const REMINDER_DELAY_MS = 15 * 60 * 1000;
 const BATCH_LIMIT = 75;
 /** If phone not on profile yet, defer up to ~24h (48 × 30m). */
 const MAX_PHONE_DEFERRALS = 48;

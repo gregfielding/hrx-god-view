@@ -34,7 +34,9 @@ export type WorkerDashboardActionId =
   | 'background_check_issue_requires_action'
   | 'drug_screen_schedule_required'
   | 'drug_screen_reschedule_required'
-  | 'everify_action_required';
+  | 'everify_action_required'
+  | 'worker_ai_prescreen_interview'
+  | 'worker_ai_prescreen_complete_profile';
 
 export type WorkerDashboardPriorityTier = 'blocking' | 'important' | 'recommended' | 'snoozable';
 
@@ -70,6 +72,8 @@ export interface BuildWorkerDashboardActionItemsInput {
   smsSnoozedUntilMs: number;
   /** When omitted, only profile items are considered. */
   jobSignals?: WorkerDashboardJobSignals | null;
+  /** Post–SMS AI pre-screen follow-ups (eligible interview vs profile nudge). */
+  workerAiPrescreenItems?: WorkerDashboardActionItem[];
 }
 
 export type { WorkerDashboardJobSignals } from './workerJobRequirementSignals';
@@ -100,6 +104,8 @@ function globalPriorityScore(item: WorkerDashboardActionItem): number {
     complete_tempworks_onboarding: 800,
     background_check_action_required: 720,
     drug_screen_schedule_required: 700,
+    worker_ai_prescreen_interview: 550,
+    worker_ai_prescreen_complete_profile: 545,
     confirm_date_of_birth: 650,
     verify_phone_number: 640,
     add_tax_identity_last4: 610,
@@ -427,7 +433,10 @@ function buildWorkerProfileStackItems(input: BuildWorkerDashboardActionItemsInpu
 }
 
 export function buildWorkerDashboardActionItems(input: BuildWorkerDashboardActionItemsInput): WorkerDashboardActionItem[] {
-  const jobItems = buildWorkerJobRequirementActionItems(input.jobSignals ?? null);
+  const jobItems = [
+    ...buildWorkerJobRequirementActionItems(input.jobSignals ?? null),
+    ...(input.workerAiPrescreenItems ?? []),
+  ];
   const profileItems = buildWorkerProfileStackItems(input);
   const merged = mergeByGlobalPriority(jobItems, profileItems);
   logProfileActionItemsBuild(merged);

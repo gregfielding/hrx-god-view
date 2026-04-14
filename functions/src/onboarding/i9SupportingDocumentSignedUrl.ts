@@ -1,12 +1,14 @@
 /**
- * Callable: issue short-lived signed URLs for I-9 supporting document objects.
+ * Callable: issue short-lived read URLs for I-9 supporting document objects.
  * Staff do not use broad Storage read rules; Firestore metadata is authorization SoT.
+ *
+ * Uses Firebase download-token URLs (see ../utils/firebaseStorageDownloadReadUrl.ts), not GCS V4
+ * signed URLs, so the Cloud Functions SA does not need iam.serviceAccounts.signBlob.
  */
 import * as admin from 'firebase-admin';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import { getStorage } from 'firebase-admin/storage';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
-import { getStorageBucketName } from '../utils/storageBucket';
+import { getOrCreateFirebaseDownloadReadUrl } from '../utils/firebaseStorageDownloadReadUrl';
 import { canManageOnboarding } from './workerOnboardingPipeline';
 
 if (!admin.apps.length) {
@@ -14,7 +16,8 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
-const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
+/** Client hint for cache / refresh; token URLs remain valid until metadata changes. */
+const URL_HINT_TTL_MS = 15 * 60 * 1000;
 
 export interface GetI9SupportingDocumentSignedUrlPayload {
   tenantId: string;
@@ -26,7 +29,8 @@ function expectedPathPrefix(tenantId: string, userId: string): string {
 }
 
 export const getI9SupportingDocumentSignedUrl = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '256MiB' },
+  /** 512MiB: cold starts + Admin + importing `workerOnboardingPipeline` can exceed 256MiB (seen ~270MiB OOM). */
+  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '512MiB' },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
@@ -67,19 +71,18 @@ export const getI9SupportingDocumentSignedUrl = onCall(
       throw new HttpsError('permission-denied', 'Not authorized for this file');
     }
 
-    const bucket = getStorage().bucket(getStorageBucketName());
-    const file = bucket.file(storagePath);
-    const [exists] = await file.exists();
-    if (!exists) {
-      throw new HttpsError('not-found', 'Object not found in storage');
+    let url: string;
+    try {
+      url = await getOrCreateFirebaseDownloadReadUrl(storagePath);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes('does not exist')) {
+        throw new HttpsError('not-found', 'Object not found in storage');
+      }
+      throw new HttpsError('internal', `Could not build read URL: ${msg}`);
     }
 
-    const expires = Date.now() + SIGNED_URL_TTL_MS;
-    const [url] = await file.getSignedUrl({
-      action: 'read',
-      expires,
-      version: 'v4',
-    });
+    const expires = Date.now() + URL_HINT_TTL_MS;
 
     return {
       url,

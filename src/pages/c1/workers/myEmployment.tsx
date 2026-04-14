@@ -19,11 +19,13 @@ import WorkIcon from '@mui/icons-material/Work';
 import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../../../contexts/AuthContext';
+import { useT } from '../../../i18n';
 import { useWorkerMyEmploymentList } from '../../../hooks/useWorkerMyEmploymentList';
 import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmploymentListRowModel';
 
 const MyEmploymentPage: React.FC = () => {
   const { user, tenantId: authTenantId, activeTenant } = useAuth();
+  const t = useT();
   const navigate = useNavigate();
   const tenantId = authTenantId || activeTenant?.id || null;
   const uid = user?.uid ?? null;
@@ -34,7 +36,7 @@ const MyEmploymentPage: React.FC = () => {
   if (!uid) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">Sign in to view your employment.</Alert>
+        <Alert severity="info">{t('workerEmploymentHub.myEmploymentSignIn')}</Alert>
       </Container>
     );
   }
@@ -42,9 +44,7 @@ const MyEmploymentPage: React.FC = () => {
   if (!tenantId) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">
-          Your employment records will appear here once you’re linked to a C1 entity (for example, after accepting a role).
-        </Alert>
+        <Alert severity="info">{t('workerEmploymentHub.myEmploymentNeedEntity')}</Alert>
       </Container>
     );
   }
@@ -61,16 +61,14 @@ const MyEmploymentPage: React.FC = () => {
     <Container maxWidth="sm" sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          My Employment
+          {t('workerEmploymentHub.myEmploymentTitle')}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Your status with each C1 entity you work with.
+          {t('workerEmploymentHub.myEmploymentSubtitleShort')}
         </Typography>
 
         {records.length === 0 ? (
-          <Alert severity="info">
-            You don’t have any employment records yet. Records are created when you’re confirmed for a role or start onboarding with an entity.
-          </Alert>
+          <Alert severity="info">{t('workerEmploymentHub.myEmploymentEmptyList')}</Alert>
         ) : (
           <Stack spacing={1.5}>
             {records.map((rec) => {
@@ -78,6 +76,7 @@ const MyEmploymentPage: React.FC = () => {
                 i9EmployeeSectionComplete: Boolean(
                   rec.onboardingPipelineId && i9EmployeeSectionVerifiedByPipelineId[rec.onboardingPipelineId],
                 ),
+                tr: t,
               });
 
               return (
@@ -101,11 +100,11 @@ const MyEmploymentPage: React.FC = () => {
                           <Typography variant="subtitle1" fontWeight={600} noWrap>
                             {row.entityDisplayName}
                           </Typography>
-                          {row.progressText && (
-                            <Typography variant="caption" color="text.secondary" display="block">
-                              {row.progressText}
+                          {row.nextStepLine ? (
+                            <Typography variant="caption" color="text.secondary" display="block" noWrap title={row.nextStepLine}>
+                              {row.nextStepLine}
                             </Typography>
-                          )}
+                          ) : null}
                         </Box>
                       </Stack>
                       <Stack direction="row" alignItems="center" spacing={0.75} flexShrink={0}>

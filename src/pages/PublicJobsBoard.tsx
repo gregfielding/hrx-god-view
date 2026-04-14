@@ -1225,10 +1225,9 @@ const PublicJobsBoard: React.FC = () => {
           );
           
           if (result.success) {
-            // Success - redirect back to jobs board and close dialog
             handleCloseDialog();
-            const tenantSlug = job.tenantId === 'BCiP2bQ9CgVOCTfV6MhD' ? 'c1' : 'c1'; // Default to c1 for now
-            navigate(`/${tenantSlug}/jobs-board`);
+            // Open the job detail page so the worker sees updated status (same as applying from the posting page)
+            navigate(`/c1/jobs-board/${job.id}`, { replace: true });
             return;
           } else {
             // Error - show alert and navigate to wizard
@@ -1880,6 +1879,13 @@ const PublicJobsBoard: React.FC = () => {
               ? new Date(job.startDate).toLocaleDateString(displayLanguage === 'es' ? 'es' : 'en-US', { month: 'short', day: 'numeric', year: 'numeric' })
               : undefined;
             const category = getCategoryForTitle(job.postTitle) as JobCategory;
+            const applicationId = `${job.tenantId}_${job.id}`;
+            const hasAppliedDeck = userApplicationIds.includes(applicationId);
+            const deckStatus = userApplicationStatuses[applicationId] || 'submitted';
+            const canReapplyDeck =
+              deckStatus === 'withdrawn' || deckStatus === 'cancelled' || deckStatus === 'deleted';
+            const deckStatusOverride =
+              hasAppliedDeck && !canReapplyDeck ? getApplicationStatusButton(deckStatus) : null;
             return (
               <JobRecommendationCard
                 payload={{
@@ -1897,6 +1903,15 @@ const PublicJobsBoard: React.FC = () => {
                   category,
                 }}
                 showApplyButton={false}
+                statusButtonOverride={
+                  deckStatusOverride
+                    ? {
+                        label: deckStatusOverride.label,
+                        backgroundColor: deckStatusOverride.backgroundColor,
+                        color: deckStatusOverride.color,
+                      }
+                    : undefined
+                }
                 onTap={() => {
                   emitWorkerCardSignal({ type: 'job_expanded', entityId: job.id });
                   navigateToJobDetails(job, 'deck_card');
@@ -2020,17 +2035,48 @@ const PublicJobsBoard: React.FC = () => {
                     ) : null;
                   })()}
 
-                  <Button
-                    variant="contained"
-                    fullWidth
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      navigateToJobDetails(job, 'grid_card');
-                    }}
-                    sx={{ mt: 'auto', fontWeight: 700, py: 1.1 }}
-                  >
-                    {t('jobs.viewJob')}
-                  </Button>
+                  {(() => {
+                    const applicationId = `${job.tenantId}_${job.id}`;
+                    const hasApplied = userApplicationIds.includes(applicationId);
+                    const status = userApplicationStatuses[applicationId] || 'submitted';
+                    const canReapply =
+                      status === 'withdrawn' || status === 'cancelled' || status === 'deleted';
+                    if (hasApplied && !canReapply) {
+                      const buttonProps = getApplicationStatusButton(status);
+                      return (
+                        <Button
+                          variant="contained"
+                          fullWidth
+                          onClick={(e) => e.stopPropagation()}
+                          sx={{
+                            mt: 'auto',
+                            fontWeight: 700,
+                            py: 1.1,
+                            backgroundColor: buttonProps.backgroundColor,
+                            color: buttonProps.color,
+                            cursor: buttonProps.cursor,
+                            pointerEvents: buttonProps.pointerEvents,
+                            '&:hover': { backgroundColor: buttonProps.backgroundColor },
+                          }}
+                        >
+                          {buttonProps.label}
+                        </Button>
+                      );
+                    }
+                    return (
+                      <Button
+                        variant="contained"
+                        fullWidth
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigateToJobDetails(job, 'grid_card');
+                        }}
+                        sx={{ mt: 'auto', fontWeight: 700, py: 1.1 }}
+                      >
+                        {t('jobs.viewJob')}
+                      </Button>
+                    );
+                  })()}
                 </CardContent>
               </Card>
                 );

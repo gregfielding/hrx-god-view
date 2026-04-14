@@ -8,9 +8,11 @@ import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined';
 
 export interface WorkerApplicationListCardProps {
   jobTitle: string;
-  companyLine: string;
+  /** Omit or empty to hide the company row (no “N/A”). */
+  companyLine?: string;
   locationLine: string;
-  shiftDateLine: string;
+  /** Omit or empty to hide the shift/date row (no “N/A”). */
+  shiftDateLine?: string;
   payLine: string;
   dateAppliedLine: string;
   statusLabel: string;
@@ -57,12 +59,16 @@ const WorkerApplicationListCard: React.FC<WorkerApplicationListCardProps> = ({
         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
           {jobTitle}
         </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {companyLine}
-        </Typography>
-        <Typography variant="body1" sx={{ fontWeight: 500 }}>
-          {shiftDateLine}
-        </Typography>
+        {companyLine ? (
+          <Typography variant="body2" color="text.secondary">
+            {companyLine}
+          </Typography>
+        ) : null}
+        {shiftDateLine ? (
+          <Typography variant="body1" sx={{ fontWeight: 500 }}>
+            {shiftDateLine}
+          </Typography>
+        ) : null}
         {locationLine ? (
           <Typography variant="body2" color="text.secondary">
             {locationLine}

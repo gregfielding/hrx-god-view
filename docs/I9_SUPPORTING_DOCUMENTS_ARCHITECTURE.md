@@ -126,7 +126,7 @@ When `ensureWorkerOnboardingPipeline` creates the pipeline doc (`created === tru
 - **Path helpers:** `p.workerI9SupportingDocuments(tenantId)`, `p.workerI9SupportingDocument(tenantId, documentId)` in `src/data/firestorePaths.ts`.
 - **TS shape:** `src/types/i9SupportingDocumentV1.ts` — `I9SupportingDocumentV1Core` vs `I9SupportingDocumentV1OptionalContext` vs full `I9SupportingDocumentV1`.
 - **Storage rules:** `i9_docs/{tenantId}/{userId}/{documentId}/{allPaths=**}` in `storage.rules` — worker-only direct read/write/delete on own `userId` + tenant binding + upload type/size caps; no broad staff Storage read.
-- **Signed URLs (staff preview/download):** Callable `getI9SupportingDocumentSignedUrl` (`functions/src/onboarding/i9SupportingDocumentSignedUrl.ts`) — loads Firestore metadata, authorizes owner or `canManageOnboarding`, validates non-empty `storagePath` + prefix, issues v4 read URL (~15 min TTL).
+- **Read URLs (staff preview/download):** Callable `getI9SupportingDocumentSignedUrl` (`functions/src/onboarding/i9SupportingDocumentSignedUrl.ts`) — loads Firestore metadata, authorizes owner or `canManageOnboarding`, validates non-empty `storagePath` + prefix, returns a Firebase Storage download URL via `firebaseStorageDownloadTokens` (`functions/src/utils/firebaseStorageDownloadReadUrl.ts`). **Not** GCS V4 signed URLs (those require IAM `signBlob` on the runtime SA).
 - **Workflow callables:** `createWorkerI9SupportingDocumentRequest`, `reviewWorkerI9SupportingDocument` in `functions/src/onboarding/i9SupportingDocumentWorkflowCallables.ts`.
 - **Web wrappers:** `src/services/i9SupportingDocumentCallables.ts` (`callCreateWorkerI9SupportingDocumentRequest`, `callReviewWorkerI9SupportingDocument`, `callGetI9SupportingDocumentSignedUrl`).
 - **Web UI:** `src/components/i9SupportingDocuments/I9SupportingDocumentsSection.tsx`; document type labels `src/constants/i9SupportingDocumentUi.ts`; path helpers `src/utils/i9SupportingDocumentsUi.ts`.
@@ -194,7 +194,7 @@ When `ensureWorkerOnboardingPipeline` creates the pipeline doc (`created === tru
 
 - **Name:** `getI9SupportingDocumentSignedUrl`.
 - **Input:** `{ tenantId, documentId }`.
-- **Steps:** load `tenants/{tenantId}/worker_i9_supporting_documents/{documentId}`; validate metadata (see D); require `request.auth.uid === userId` **or** `canManageOnboarding(auth, tenantId, uid)`; verify object exists in default bucket; return `{ url, expiresAt, storagePath }`.
+- **Steps:** load `tenants/{tenantId}/worker_i9_supporting_documents/{documentId}`; validate metadata (see D); require `request.auth.uid === userId` **or** `canManageOnboarding(auth, tenantId, uid)`; verify object exists in default bucket; return `{ url, expiresAt, storagePath }` (download-token URL; `expiresAt` is a client hint, not token expiry).
 
 ### D. Minimum metadata validated before signing
 

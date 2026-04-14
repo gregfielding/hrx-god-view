@@ -12,6 +12,7 @@ import { shouldSendNotification } from './utils/notificationSettings';
 import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } from './utils/templateVariableResolver';
 import { sendApplicationStatusChangedNotification } from './messaging/unifiedWorkerNotifications';
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
+import { maybeScheduleWorkerAiPrescreenReminder } from './workerAiPrescreen/scheduleWorkerAiPrescreenReminder';
 import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 
@@ -87,13 +88,22 @@ const twilioMessagingPhoneNumber = defineSecret('TWILIO_MESSAGING_PHONE_NUMBER')
 const twilioA2PCampaign = defineSecret('TWILIO_A2P_CAMPAIGN');
 
 /**
+ * Gen2 Firestore triggers: same codebase as full index bundle — default memory + cold start can fail Cloud Run
+ * health checks during deploy. Match other high-traffic triggers (e.g. region + 512MiB).
+ */
+const APPLICATION_SMS_TRIGGER_OPTS = {
+  document: 'tenants/{tenantId}/applications/{applicationId}',
+  region: 'us-central1' as const,
+  memory: '512MiB' as const,
+  timeoutSeconds: 300,
+  secrets: [twilioAccountSid, twilioAuthToken, twilioMessagingPhoneNumber, twilioA2PCampaign],
+};
+
+/**
  * Firestore trigger: Send SMS when a new application is created
  */
 export const onApplicationCreated = onDocumentCreated(
-  {
-    document: 'tenants/{tenantId}/applications/{applicationId}',
-    secrets: [twilioAccountSid, twilioAuthToken, twilioMessagingPhoneNumber, twilioA2PCampaign],
-  },
+  APPLICATION_SMS_TRIGGER_OPTS,
   async (event) => {
     const applicationId = event.params.applicationId;
     const tenantId = event.params.tenantId;
@@ -127,6 +137,12 @@ export const onApplicationCreated = onDocumentCreated(
 
     try {
       logger.info(`New application created: ${applicationId} in tenant ${tenantId}`);
+
+      await maybeScheduleWorkerAiPrescreenReminder({
+        tenantId,
+        applicationId,
+        after: applicationData as Record<string, unknown>,
+      });
 
       // Get user ID from application (userId or candidateId)
       // Also try to extract from applicationId if it follows pattern: {userId}_{jobId}
@@ -299,10 +315,7 @@ export const onApplicationCreated = onDocumentCreated(
  * Firestore trigger: Send SMS when application status changes
  */
 export const onApplicationStatusChanged = onDocumentUpdated(
-  {
-    document: 'tenants/{tenantId}/applications/{applicationId}',
-    secrets: [twilioAccountSid, twilioAuthToken, twilioMessagingPhoneNumber, twilioA2PCampaign],
-  },
+  APPLICATION_SMS_TRIGGER_OPTS,
   async (event) => {
     const applicationId = event.params.applicationId;
     const tenantId = event.params.tenantId;
@@ -359,6 +372,13 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         );
         return { success: true };
       }
+
+      await maybeScheduleWorkerAiPrescreenReminder({
+        tenantId,
+        applicationId,
+        before: before as Record<string, unknown>,
+        after: after as Record<string, unknown>,
+      });
 
       logger.info(`Application ${applicationId} status changed from ${oldStatus} to ${newStatus}`);
 

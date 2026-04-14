@@ -14,6 +14,7 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../../../firebase';
+import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
 import type { EmploymentEntityOverview } from './employmentV2Types';
 const resendPayrollInvite = httpsCallable<
   {
@@ -80,8 +81,7 @@ const EmploymentSystemsSummaryCard: React.FC<EmploymentSystemsSummaryCardProps> 
       });
       onPayrollResendComplete?.();
     } catch (e: unknown) {
-      const err = e as { message?: string };
-      setPayrollResendError(err?.message || 'Could not resend payroll invite');
+      setPayrollResendError(formatFirebaseHttpsError(e) || 'Could not resend payroll invite');
     } finally {
       setPayrollResendBusy(false);
     }

@@ -5,6 +5,7 @@
  */
 
 import * as admin from 'firebase-admin';
+import { logger } from 'firebase-functions/v2';
 import { createCaseClient } from './everifyRestClient';
 import { createDraftCase, submitCase } from './everifyRestClient';
 import { buildCreateCaseRequest } from './everifyAdapter';
@@ -113,6 +114,84 @@ const DEFAULT_CASE_CREATOR = {
   phone10: '0000000000',
 };
 
+function digitsOnlyPhone(raw: string): string {
+  return String(raw || '').replace(/\D/g, '');
+}
+
+function isPlaceholderPhone10(d: string): boolean {
+  if (d.length !== 10) return true;
+  if (/^0{10}$/.test(d)) return true;
+  if (/^(\d)\1{9}$/.test(d)) return true;
+  return false;
+}
+
+/**
+ * Prefer auth/user caller phone; then entity `contacts.supportPhone`; then env EVERIFY_CASE_CREATOR_PHONE_FALLBACK.
+ * Logs when falling back to placeholder.
+ */
+async function resolveCaseCreatorForIca(params: {
+  tenantId: string;
+  entityId: string;
+  caseCreator?: { name: string; email: string; phone10: string; phoneExt?: string };
+}): Promise<{ name: string; email: string; phone10: string; phoneExt?: string }> {
+  const { tenantId, entityId, caseCreator: fromAuth } = params;
+  const fallbackEnv = String(process.env.EVERIFY_CASE_CREATOR_PHONE_FALLBACK || '').trim();
+
+  const try10 = (raw: string): string | null => {
+    let d = digitsOnlyPhone(raw);
+    if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
+    if (d.length === 10 && !isPlaceholderPhone10(d)) return d;
+    return null;
+  };
+
+  if (fromAuth) {
+    const d = try10(fromAuth.phone10 || '');
+    if (d) return { ...fromAuth, phone10: d };
+  }
+
+  try {
+    const entSnap = await db.doc(`tenants/${tenantId}/entities/${entityId}`).get();
+    const e = (entSnap.data() || {}) as Record<string, unknown>;
+    const contacts = (e.contacts || {}) as Record<string, unknown>;
+    const sp = String(contacts.supportPhone || '').trim();
+    const d = try10(sp);
+    if (d) {
+      return {
+        name: String(fromAuth?.name || e.name || DEFAULT_CASE_CREATOR.name),
+        email: String(fromAuth?.email || contacts.supportEmail || DEFAULT_CASE_CREATOR.email),
+        phone10: d,
+        phoneExt: fromAuth?.phoneExt,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const fd = try10(fallbackEnv);
+  if (fd) {
+    return {
+      name: fromAuth?.name || DEFAULT_CASE_CREATOR.name,
+      email: fromAuth?.email || DEFAULT_CASE_CREATOR.email,
+      phone10: fd,
+      phoneExt: fromAuth?.phoneExt,
+    };
+  }
+
+  logger.warn('everify.case_creator_phone_placeholder', {
+    tenantId,
+    entityId,
+    message:
+      'Using placeholder or weak case_creator phone; set entity.contacts.supportPhone or EVERIFY_CASE_CREATOR_PHONE_FALLBACK',
+  });
+  return (
+    fromAuth || {
+      name: DEFAULT_CASE_CREATOR.name,
+      email: DEFAULT_CASE_CREATOR.email,
+      phone10: DEFAULT_CASE_CREATOR.phone10,
+    }
+  );
+}
+
 /**
  * Canonical ICA case creation: create draft → submit → persist.
  * Uses fixture for I-9 payload in Stage; never logs payload.
@@ -136,7 +215,11 @@ export async function createAndSubmitCase(params: {
 }): Promise<{ caseId: string; everifyCaseNumber?: string; status: EverifyCaseStatus }> {
   const env = getEverifyEnv();
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const creator = params.caseCreator ?? DEFAULT_CASE_CREATOR;
+  const creator = await resolveCaseCreatorForIca({
+    tenantId: params.tenantId,
+    entityId: params.entityId,
+    caseCreator: params.caseCreator ?? undefined,
+  });
   const dateOfHire = params.startDate.split('T')[0] || params.startDate;
 
   if (getEverifyFakeProvider()) {

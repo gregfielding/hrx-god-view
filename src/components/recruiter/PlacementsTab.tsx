@@ -84,10 +84,17 @@ import { isExcludedFromPlacementsApplicantPool } from '../../utils/applicationSt
 import { deriveC1EntityKeyFromEntityName } from '../../utils/c1EntityWorkAuthorizationUi';
 import {
   placementEmploymentChipFromEntityData,
+  formatPlacementEmploymentChipWithEntityName,
   placementBlockerOptionsForRow,
   selectPlacementBlockerLabelsFromSnapshot,
   type PlacementEmploymentChipModel,
 } from '../../utils/placementQualificationChipsModel';
+import { buildPlacementJobFitMap } from '../../utils/placementApplicantJobFit';
+import {
+  buildPlacementApplicationNoShowRiskMap,
+  formatPlacementNoShowRiskCompact,
+  type PlacementApplicationNoShowRisk,
+} from '../../utils/placementNoShowRiskDisplay';
 import type { ReadinessSnapshotV1Firestore } from '../../shared/readinessSnapshotV1';
 
 interface PlacementsTabProps {
@@ -135,6 +142,12 @@ interface Worker {
   licenses?: any[];
   aiProfileScore?: number;
   aiJobFitScore?: number;
+  /** Denormalized: `users/{uid}.scoreSummary.interviewLastScore10` (0–10), most recent scored interview. */
+  interviewLastScore10?: number;
+  /** Per-application job match for this job/posting context (`applications.*.jobScoreSummary`). */
+  placementJobFitScore?: number;
+  /** Application- or assignment-level no-show risk for Placements tiles (`aiAutomation.noShowRisk` or assignment `noShowRiskPredictionV1`). */
+  placementNoShowRisk?: PlacementApplicationNoShowRisk & { source?: 'application' | 'assignment' };
   isAssignedToShift?: boolean; // In Assignments column (placed or assigned)
   isPlacementOnly?: boolean;   // Placed but not yet offered - no Assignment, no messages
   assignmentStatus?: string;
@@ -150,6 +163,12 @@ interface Worker {
 }
 
 const WORKER_DRAG_MIME = 'application/x-hrx-worker-id';
+
+/** `users/{uid}.scoreSummary.interviewLastScore10` — same source as Interview tab / recomputeInterviewScoreSummary. */
+function formatInterviewLastScore10(v: number | undefined): string | null {
+  if (v == null || !Number.isFinite(v)) return null;
+  return `${(Math.round(v * 10) / 10).toFixed(1)}/10`;
+}
 
 const placementQualChipSx = { height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } };
 
@@ -182,6 +201,77 @@ function PlacementQualificationChipsRow({
           <Chip size="small" label={bl} color="error" variant="outlined" sx={placementQualChipSx} />
         </Tooltip>
       ))}
+    </Box>
+  );
+}
+
+/**
+ * Worker pool + Assignments column tiles: row 1 name + interview /10, row 2 job fit /100, row 3 context, row 4 chips.
+ */
+function PlacementWorkerTileMainColumn({
+  worker,
+  hiringEntityName,
+  entityEmploymentByUserId,
+  placementEntityEmploymentLoading,
+  blockerLabels,
+  row3,
+  row4End,
+}: {
+  worker: Worker;
+  hiringEntityName: string | null | undefined;
+  entityEmploymentByUserId: Map<string, Record<string, unknown>>;
+  placementEntityEmploymentLoading: boolean;
+  blockerLabels: string[];
+  row3: React.ReactNode;
+  row4End?: React.ReactNode;
+}) {
+  const interviewLabel = formatInterviewLastScore10(worker.interviewLastScore10);
+  const jf = worker.placementJobFitScore;
+  const showJobFit = jf != null && Number.isFinite(jf);
+  const employmentChip = formatPlacementEmploymentChipWithEntityName(
+    placementEmploymentChipFromEntityData(entityEmploymentByUserId.get(worker.id)),
+    hiringEntityName,
+  );
+
+  return (
+    <Box sx={{ minWidth: 0, flex: 1, display: 'flex', flexDirection: 'column', gap: 0.35 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          gap: 0.5,
+          minWidth: 0,
+        }}
+      >
+        <Typography variant="body2" fontWeight={600} noWrap sx={{ flex: 1, minWidth: 0 }}>
+          {worker.displayName}
+        </Typography>
+        {interviewLabel ? (
+          <Typography variant="caption" color="primary" fontWeight={600} sx={{ flexShrink: 0, lineHeight: 1.2 }}>
+            {interviewLabel}
+          </Typography>
+        ) : null}
+      </Box>
+      {showJobFit ? (
+        <Typography variant="caption" color="text.secondary" display="block">
+          Job fit {Math.round(jf)}/100
+        </Typography>
+      ) : null}
+      {worker.placementNoShowRisk ? (
+        <Typography variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.25 }}>
+          {formatPlacementNoShowRiskCompact(worker.placementNoShowRisk)}
+        </Typography>
+      ) : null}
+      {row3}
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 0.5 }}>
+        <PlacementQualificationChipsRow
+          employmentLoading={placementEntityEmploymentLoading}
+          employmentChip={employmentChip}
+          blockerLabels={blockerLabels}
+        />
+        {row4End}
+      </Box>
     </Box>
   );
 }
@@ -228,9 +318,27 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   // Data state
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
+  /** Job-order-scoped application job scores (userId → jobScore); shared with assignment column tiles. */
+  const [placementJobFitByUserId, setPlacementJobFitByUserId] = useState<Map<string, number>>(() => new Map());
+  const [placementAppNoShowRiskByUserId, setPlacementAppNoShowRiskByUserId] = useState<
+    Map<string, PlacementApplicationNoShowRisk>
+  >(() => new Map());
   const [isAssignmentDragOver, setIsAssignmentDragOver] = useState(false);
   const [isWorkerPoolDragOver, setIsWorkerPoolDragOver] = useState(false);
-  type AssignmentRow = { userId: string; assignmentId: string; status: string; startDate: string; offerSentAt?: number; confirmedAt?: number };
+  type AssignmentRow = {
+    userId: string;
+    assignmentId: string;
+    status: string;
+    startDate: string;
+    offerSentAt?: number;
+    confirmedAt?: number;
+    noShowRiskPredictionV1?: {
+      score?: number;
+      band?: string;
+      reasons?: string[];
+      recommendedAction?: string;
+    };
+  };
   const [assignmentRows, setAssignmentRows] = useState<AssignmentRow[]>([]);
   const [placementUserIds, setPlacementUserIds] = useState<Set<string>>(new Set());
   const [userGroups, setUserGroups] = useState<Array<{ id: string; groupName: string }>>([]);
@@ -290,7 +398,12 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                           userData.parsedResume?.parsedData?.aiAnalysis?.overallScore || 
                           undefined;
     const aiJobFitScore = userData.aiJobFitScore || undefined;
-    
+    const ss = userData.scoreSummary as Record<string, unknown> | undefined;
+    const interviewLastScore10 =
+      typeof ss?.interviewLastScore10 === 'number' && Number.isFinite(ss.interviewLastScore10)
+        ? ss.interviewLastScore10
+        : undefined;
+
     return {
       id: userId,
       firstName: userData.firstName || '',
@@ -311,6 +424,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       licenses,
       aiProfileScore,
       aiJobFitScore,
+      interviewLastScore10,
     };
   };
 
@@ -767,6 +881,26 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           return tenantSnaps.map((d) => ({ id: d.id, data: d.data() }));
         };
 
+        let applicationDocsBundle: Array<{ id: string; data: any }> = [];
+        let jobFitMap = new Map<string, number>();
+        let appNoShowMap = new Map<string, PlacementApplicationNoShowRisk>();
+        if (!selectedWorkforce.startsWith('group_')) {
+          applicationDocsBundle = await loadApplicationDocs();
+          jobFitMap = buildPlacementJobFitMap(applicationDocsBundle);
+          appNoShowMap = buildPlacementApplicationNoShowRiskMap(applicationDocsBundle);
+        }
+        setPlacementJobFitByUserId(jobFitMap);
+        setPlacementAppNoShowRiskByUserId(appNoShowMap);
+
+        const mergePoolWorker = (base: Worker, uid: string): Worker => {
+          const jf = jobFitMap.get(uid);
+          const ns = appNoShowMap.get(uid);
+          let next: Worker = base;
+          if (jf !== undefined) next = { ...next, placementJobFitScore: jf };
+          if (ns) next = { ...next, placementNoShowRisk: { ...ns, source: 'application' } };
+          return next;
+        };
+
         // Career applicants are not shift-specific: show all in the labor pool regardless of selected shift.
         // Gig applicants are shift-specific: filter by selected shift when using shift_applicants / shift_candidates.
         const includeApplicantByShift = (data: any) => {
@@ -795,7 +929,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         };
 
         if (workforce === 'all_applicants' || workforce === 'shift_applicants') {
-          const applicationDocs = await loadApplicationDocs();
+          const applicationDocs = applicationDocsBundle;
           const userIds = new Set<string>();
           const filterByShift = workforce === 'shift_applicants';
           applicationDocs.forEach(({ data }) => {
@@ -809,13 +943,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
+            if (userSnap.exists()) return mergePoolWorker(extractWorkerData(userSnap.data(), userId), userId);
             return null;
           });
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
         } else if (workforce === 'all_candidates' || workforce === 'shift_candidates') {
-          const applicationDocs = await loadApplicationDocs();
+          const applicationDocs = applicationDocsBundle;
           const candidateUserIds = new Set<string>();
           const filterByShift = workforce === 'shift_candidates';
           applicationDocs.forEach(({ data }) => {
@@ -828,14 +962,14 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const userPromises = Array.from(candidateUserIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
+            if (userSnap.exists()) return mergePoolWorker(extractWorkerData(userSnap.data(), userId), userId);
             return null;
           });
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
         } else if (workforce === 'applicants') {
           // Non-Gig: applicants for this job order and selected shift
-          const applicationDocs = await loadApplicationDocs();
+          const applicationDocs = applicationDocsBundle;
           const userIds = new Set<string>();
           applicationDocs.forEach(({ data }) => {
             if (!data.userId) return;
@@ -847,13 +981,13 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const userPromises = Array.from(userIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
+            if (userSnap.exists()) return mergePoolWorker(extractWorkerData(userSnap.data(), userId), userId);
             return null;
           });
           const users = await Promise.all(userPromises);
           workforceUsers = users.filter((u): u is Worker => u !== null);
         } else if (workforce === 'candidates') {
-          const applicationDocs = await loadApplicationDocs();
+          const applicationDocs = applicationDocsBundle;
           const candidateUserIds = new Set<string>();
           applicationDocs.forEach(({ data }) => {
             if (!data.userId || data.candidate !== true) return;
@@ -864,7 +998,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const userPromises = Array.from(candidateUserIds).map(async (userId): Promise<Worker | null> => {
             const userRef = doc(db, 'users', userId);
             const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) return extractWorkerData(userSnap.data(), userId);
+            if (userSnap.exists()) return mergePoolWorker(extractWorkerData(userSnap.data(), userId), userId);
             return null;
           });
           const users = await Promise.all(userPromises);
@@ -948,7 +1082,26 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
           const assignedMs = toMs(data?.assignedAt);
           const offerSentAt = reminderMs ?? assignedMs;
           const confirmedAt = toMs(data?.confirmedAt);
-          rows.push({ userId, assignmentId: docSnap.id, status, startDate, offerSentAt, confirmedAt });
+          const predRaw = data?.noShowRiskPredictionV1;
+          let noShowRiskPredictionV1: AssignmentRow['noShowRiskPredictionV1'];
+          if (predRaw && typeof predRaw === 'object') {
+            const pr = predRaw as Record<string, unknown>;
+            noShowRiskPredictionV1 = {
+              score: typeof pr.score === 'number' ? pr.score : undefined,
+              band: typeof pr.band === 'string' ? pr.band : undefined,
+              reasons: Array.isArray(pr.reasons) ? (pr.reasons as string[]) : undefined,
+              recommendedAction: typeof pr.recommendedAction === 'string' ? pr.recommendedAction : undefined,
+            };
+          }
+          rows.push({
+            userId,
+            assignmentId: docSnap.id,
+            status,
+            startDate,
+            offerSentAt,
+            confirmedAt,
+            noShowRiskPredictionV1,
+          });
         });
         setAssignmentRows(rows);
       },
@@ -968,6 +1121,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     assignmentStartDateByUserId,
     assignmentOfferSentAtByUserId,
     assignmentConfirmedAtByUserId,
+    assignmentNoShowRiskByUserId,
   } = useMemo(() => {
     const selectedShift = shifts.find((s) => s.id === selectedShiftId);
     const isMultiDay =
@@ -984,6 +1138,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     const startDateByUser = new Map<string, string>();
     const offerSentAtByUser = new Map<string, number>();
     const confirmedAtByUser = new Map<string, number>();
+    const noShowByUser = new Map<
+      string,
+      { band: string; score: number; reasons: string[]; recommendedAction: string }
+    >();
     filtered.forEach((r) => {
       if (statusByUser.has(r.userId)) return;
       statusByUser.set(r.userId, r.status);
@@ -991,6 +1149,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       if (r.startDate) startDateByUser.set(r.userId, r.startDate);
       if (r.offerSentAt != null) offerSentAtByUser.set(r.userId, r.offerSentAt);
       if (r.confirmedAt != null) confirmedAtByUser.set(r.userId, r.confirmedAt);
+      const p = r.noShowRiskPredictionV1;
+      if (
+        p &&
+        typeof p.score === 'number' &&
+        typeof p.band === 'string' &&
+        !noShowByUser.has(r.userId)
+      ) {
+        noShowByUser.set(r.userId, {
+          band: p.band,
+          score: p.score,
+          reasons: Array.isArray(p.reasons) ? p.reasons : [],
+          recommendedAction: String(p.recommendedAction || ''),
+        });
+      }
     });
     return {
       assignmentStatusByUserId: statusByUser,
@@ -998,6 +1170,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       assignmentStartDateByUserId: startDateByUser,
       assignmentOfferSentAtByUserId: offerSentAtByUser,
       assignmentConfirmedAtByUserId: confirmedAtByUser,
+      assignmentNoShowRiskByUserId: noShowByUser,
     };
   }, [assignmentRows, selectedDay, shifts, selectedShiftId]);
 
@@ -1139,6 +1312,22 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
         const userSnap = await getDoc(userRef);
         if (!userSnap.exists() || cancelled) return null;
         const base = extractWorkerData(userSnap.data(), userId);
+        const jf = placementJobFitByUserId.get(userId);
+        const nsAssign = assignmentNoShowRiskByUserId.get(userId);
+        const nsApp = placementAppNoShowRiskByUserId.get(userId);
+        const placementNoShowRisk =
+          nsAssign && typeof nsAssign.score === 'number' && nsAssign.band
+            ? {
+                band: nsAssign.band as PlacementApplicationNoShowRisk['band'],
+                score: Math.round(nsAssign.score),
+                source: 'assignment' as const,
+              }
+            : nsApp
+              ? { ...nsApp, source: 'application' as const }
+              : undefined;
+        let withFit: Worker = base;
+        if (jf !== undefined) withFit = { ...withFit, placementJobFitScore: jf };
+        if (placementNoShowRisk) withFit = { ...withFit, placementNoShowRisk };
         const isPendingCancel = pendingAssignmentCancels.has(userId);
         const assignmentStatus = isPendingCancel ? undefined : assignmentStatusByUserId.get(userId);
         const hasPlacement = placementUserIds.has(userId);
@@ -1151,7 +1340,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
               ? 'accepted'
               : undefined;
         return {
-          ...base,
+          ...withFit,
           isAssignedToShift: true,
           isPlacementOnly,
           assignmentStatus,
@@ -1180,7 +1369,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [selectedShiftId, assignedUserIds, placementUserIds, assignmentStatusByUserId, assignmentIdByUserId, assignmentStartDateByUserId, assignmentOfferSentAtByUserId, assignmentConfirmedAtByUserId, pendingAssignmentCancels]);
+  }, [
+    selectedShiftId,
+    assignedUserIds,
+    placementUserIds,
+    assignmentStatusByUserId,
+    assignmentIdByUserId,
+    assignmentStartDateByUserId,
+    assignmentOfferSentAtByUserId,
+    assignmentConfirmedAtByUserId,
+    pendingAssignmentCancels,
+    placementJobFitByUserId,
+    placementAppNoShowRiskByUserId,
+    assignmentNoShowRiskByUserId,
+  ]);
 
   const workforceOptions = useMemo(() => getWorkforceOptions(), [jobOrder, userGroups]);
   const safeSelectedShiftId = shifts.some((s) => s.id === selectedShiftId) ? selectedShiftId : '';
@@ -2277,37 +2479,35 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               aria-label={`Select ${worker.displayName}`}
                               sx={{ py: 0, px: 0.5 }}
                             />
-                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                              <Typography variant="body2" fontWeight={600} noWrap>
-                                {worker.displayName}
-                              </Typography>
-                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                                <Typography variant="caption" color="text.secondary" noWrap>
-                                  Starts: {formatDateDisplay(worker.assignmentStartDate || shiftStartDateStr) || '—'}
-                                </Typography>
-                                {!isPlacementOnly && worker.assignmentId && (
-                                  <Tooltip title="Edit start date">
-                                    <IconButton
-                                      size="small"
-                                      sx={{ p: 0, color: 'text.secondary' }}
-                                      onClick={(e) => { e.stopPropagation(); handleOpenEditStartDate(worker); }}
-                                      aria-label="Edit start date"
-                                    >
-                                      <EditIcon sx={{ fontSize: 14 }} />
-                                    </IconButton>
-                                  </Tooltip>
-                                )}
-                              </Box>
-                              <Box sx={{ mt: 0.35, alignSelf: 'flex-start', maxWidth: '100%' }}>
-                                <PlacementQualificationChipsRow
-                                  employmentLoading={placementEntityEmploymentLoading}
-                                  employmentChip={placementEmploymentChipFromEntityData(
-                                    entityEmploymentByUserId.get(worker.id)
+                            <PlacementWorkerTileMainColumn
+                              worker={worker}
+                              hiringEntityName={hiringEntityName}
+                              entityEmploymentByUserId={entityEmploymentByUserId}
+                              placementEntityEmploymentLoading={placementEntityEmploymentLoading}
+                              blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                              row3={
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                                  <Typography variant="caption" color="text.secondary" noWrap>
+                                    Starts: {formatDateDisplay(worker.assignmentStartDate || shiftStartDateStr) || '—'}
+                                  </Typography>
+                                  {!isPlacementOnly && worker.assignmentId && (
+                                    <Tooltip title="Edit start date">
+                                      <IconButton
+                                        size="small"
+                                        sx={{ p: 0, color: 'text.secondary' }}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOpenEditStartDate(worker);
+                                        }}
+                                        aria-label="Edit start date"
+                                      >
+                                        <EditIcon sx={{ fontSize: 14 }} />
+                                      </IconButton>
+                                    </Tooltip>
                                   )}
-                                  blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
-                                />
-                              </Box>
-                            </Box>
+                                </Box>
+                              }
+                            />
                             <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25 }}>
                               <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                                 {!isPlacementOnly && !isDeclined && !isCancelled && (
@@ -2604,10 +2804,6 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                         const hasWorkHistory = worker.workHistory && worker.workHistory.length > 0;
                         const hasCerts = worker.certifications && worker.certifications.length > 0;
                         const hasLicenses = worker.licenses && worker.licenses.length > 0;
-                        const placementEmpChip = placementEmploymentChipFromEntityData(
-                          entityEmploymentByUserId.get(worker.id)
-                        );
-                        const placementBlockerLabels = placementBlockerLabelsForAssignmentId(worker.assignmentId);
 
                         return (
                           <Paper
@@ -2624,36 +2820,40 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                               cursor: 'grab',
                             }}
                           >
-                            <Box sx={{ minWidth: 0, flex: 1 }}>
-                              <Typography variant="body2" fontWeight={600} noWrap>
-                                    {worker.displayName}
-                                  </Typography>
-                              <Typography variant="caption" color="text.secondary" noWrap>
-                                {[worker.city, worker.state].filter(Boolean).join(', ') || worker.email || worker.phone || 'No contact info'}
-                                    </Typography>
-                              <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center', mt: 0.5, flexWrap: 'wrap' }}>
-                                <PlacementQualificationChipsRow
-                                  employmentLoading={placementEntityEmploymentLoading}
-                                  employmentChip={placementEmpChip}
-                                  blockerLabels={placementBlockerLabels}
-                                />
-                                {!!worker.skills?.length && (
-                                          <Chip
-                                            size="small"
-                                    label={`${worker.skills.length} skills`}
-                                    sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                  />
-                                )}
-                                {!!worker.languages?.length && (
-                                          <Chip
-                                            size="small"
-                                            variant="outlined"
-                                    label={`${worker.languages.length} langs`}
-                                    sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
-                                          />
-                                        )}
-                                      </Box>
-                                    </Box>
+                            <PlacementWorkerTileMainColumn
+                              worker={worker}
+                              hiringEntityName={hiringEntityName}
+                              entityEmploymentByUserId={entityEmploymentByUserId}
+                              placementEntityEmploymentLoading={placementEntityEmploymentLoading}
+                              blockerLabels={placementBlockerLabelsForAssignmentId(worker.assignmentId)}
+                              row3={
+                                <Typography variant="caption" color="text.secondary" noWrap>
+                                  {[worker.city, worker.state].filter(Boolean).join(', ') ||
+                                    worker.email ||
+                                    worker.phone ||
+                                    'No contact info'}
+                                </Typography>
+                              }
+                              row4End={
+                                <>
+                                  {!!worker.skills?.length && (
+                                    <Chip
+                                      size="small"
+                                      label={`${worker.skills.length} skills`}
+                                      sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                                    />
+                                  )}
+                                  {!!worker.languages?.length && (
+                                    <Chip
+                                      size="small"
+                                      variant="outlined"
+                                      label={`${worker.languages.length} langs`}
+                                      sx={{ height: 20, '& .MuiChip-label': { px: 0.75, fontSize: '0.65rem' } }}
+                                    />
+                                  )}
+                                </>
+                              }
+                            />
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.25 }}>
                                   {sameDayConflictByUserId.get(worker.id)?.length ? (
                                     <Tooltip

@@ -33,6 +33,7 @@ import {
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { DEFAULT_JOB_ORDER_DETAIL_TAB, jobOrderDetailTabStorageKey } from '../constants/recruiterJobOrderDetailTabs';
 import PageHeader from '../components/PageHeader';
 import { useMyTasks } from '../hooks/useMyTasks';
 import { useTaskFilters } from '../hooks/useTaskFilters';
@@ -209,8 +210,8 @@ const UnifiedTasksPage: React.FC = () => {
       (taskAny.sourceType === 'recruiting' ? taskAny.sourceId : undefined);
     if (typeof jobOrderId === 'string' && jobOrderId.trim().length > 0 && isChecklistTask) {
       try {
-        // RecruiterJobOrderDetail reads this key and defaults to 1 (Checklist).
-        localStorage.setItem(`recruiter_job_order_tab_${jobOrderId}`, '1');
+        // RecruiterJobOrderDetail opens the Checklist tab for checklist tasks (stable key, not index).
+        localStorage.setItem(jobOrderDetailTabStorageKey(jobOrderId), DEFAULT_JOB_ORDER_DETAIL_TAB);
       } catch {
         // ignore
       }

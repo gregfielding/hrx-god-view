@@ -5,6 +5,32 @@
 import type { EmploymentV2HeaderState } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import type { I9EmploymentDocsSubstatus } from './i9SupportingDocumentsViewModel';
 
+/** Optional `t` from `useT()` / `src/i18n` for worker-facing pages. */
+export type WorkerEmploymentTranslateFn = (
+  key: string,
+  params?: Record<string, string | number>,
+) => string;
+
+function tx(
+  tr: WorkerEmploymentTranslateFn | undefined,
+  key: string,
+  en: string,
+  params?: Record<string, string | number>,
+): string {
+  if (!tr) {
+    if (!params) return en;
+    return en.replace(/\{(\w+)\}/g, (_, k) =>
+      params[k] !== undefined ? String(params[k]) : `{${k}}`,
+    );
+  }
+  const v = tr(key, params);
+  if (v !== key) return v;
+  if (!params) return en;
+  return en.replace(/\{(\w+)\}/g, (_, k) =>
+    params[k] !== undefined ? String(params[k]) : `{${k}}`,
+  );
+}
+
 export interface EntityEmploymentRecordLike {
   entityId?: string | null;
   /** When set, used to suppress worker I-9 supporting-doc UX for C1 Events (`events`). */
@@ -22,25 +48,28 @@ export function workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(
 }
 
 /** Profile list + entity summary chip — plain language, no internal jargon. */
-export function workerEmploymentSurfaceStatusLabel(state: EmploymentV2HeaderState): string {
+export function workerEmploymentSurfaceStatusLabel(
+  state: EmploymentV2HeaderState,
+  tr?: WorkerEmploymentTranslateFn,
+): string {
   switch (state) {
     case 'not_started':
-      return 'Not started';
+      return tx(tr, 'workerEmploymentHub.statusNotStarted', 'Not started');
     case 'in_progress':
-      return 'Under review';
+      return tx(tr, 'workerEmploymentHub.statusUnderReview', 'Under review');
     case 'action_required':
-      return 'Action needed';
+      return tx(tr, 'workerEmploymentHub.statusActionNeeded', 'Action needed');
     case 'waiting_on_company':
-      return 'Waiting on employer';
+      return tx(tr, 'workerEmploymentHub.statusWaitingOnEmployer', 'Waiting on employer');
     case 'ready':
     case 'on_assignment':
-      return 'Complete';
+      return tx(tr, 'workerEmploymentHub.statusComplete', 'Complete');
     case 'terminated':
-      return 'Ended';
+      return tx(tr, 'workerEmploymentHub.statusEnded', 'Ended');
     case 'inactive':
-      return 'Inactive';
+      return tx(tr, 'workerEmploymentHub.statusInactive', 'Inactive');
     default:
-      return 'Under review';
+      return tx(tr, 'workerEmploymentHub.statusUnderReview', 'Under review');
   }
 }
 
@@ -62,40 +91,43 @@ export function i9SubstatusToWorkerHint(sub: I9EmploymentDocsSubstatus): WorkerI
 }
 
 /** One-line next step on profile employment row when I-9 is scoped to this entity. */
-export function workerEmploymentHubNextStepLine(args: {
-  headerState: EmploymentV2HeaderState;
-  i9Hint: WorkerI9AttentionHint;
-  hasOpenOnboardingDemand: boolean;
-  pipelineSummary: string | null;
-  /** When payroll I-9 is verified, supporting-document slots are optional — do not nudge upload here. */
-  i9EmployeeSectionComplete?: boolean;
-}): string | null {
+export function workerEmploymentHubNextStepLine(
+  args: {
+    headerState: EmploymentV2HeaderState;
+    i9Hint: WorkerI9AttentionHint;
+    hasOpenOnboardingDemand: boolean;
+    pipelineSummary: string | null;
+    /** When payroll I-9 is verified, supporting-document slots are optional — do not nudge upload here. */
+    i9EmployeeSectionComplete?: boolean;
+  },
+  tr?: WorkerEmploymentTranslateFn,
+): string | null {
   const { headerState, i9Hint, hasOpenOnboardingDemand, pipelineSummary, i9EmployeeSectionComplete } = args;
 
   if (i9Hint === 'upload' && i9EmployeeSectionComplete !== true) {
-    return 'Upload I-9 documents';
+    return tx(tr, 'workerEmploymentHub.nextUploadI9', 'Upload I-9 documents');
   }
   if (i9Hint === 'action_needed') {
-    return 'Finish or replace I-9 documents';
+    return tx(tr, 'workerEmploymentHub.nextFinishReplaceI9', 'Finish or replace I-9 documents');
   }
   if (i9Hint === 'rejected') {
-    return 'Replace a rejected I-9 document';
+    return tx(tr, 'workerEmploymentHub.nextReplaceRejectedI9', 'Replace a rejected I-9 document');
   }
   if (i9Hint === 'under_review') {
-    return 'I-9 documents under review';
+    return tx(tr, 'workerEmploymentHub.nextI9UnderReview', 'I-9 documents under review');
   }
 
   if (headerState === 'waiting_on_company') {
-    return 'Waiting for your employer';
+    return tx(tr, 'workerEmploymentHub.nextWaitingForEmployer', 'Waiting for your employer');
   }
   if (headerState === 'action_required' && hasOpenOnboardingDemand) {
-    return 'Finish tasks on this employment page';
+    return tx(tr, 'workerEmploymentHub.nextFinishTasks', 'Finish tasks on this employment page');
   }
   if (headerState === 'in_progress' && hasOpenOnboardingDemand) {
-    return pipelineSummary || 'Continue onboarding';
+    return pipelineSummary || tx(tr, 'workerEmploymentHub.nextContinueOnboarding', 'Continue onboarding');
   }
   if (headerState === 'not_started' && hasOpenOnboardingDemand) {
-    return 'Get started on this employment page';
+    return tx(tr, 'workerEmploymentHub.nextGetStarted', 'Get started on this employment page');
   }
   return null;
 }
@@ -112,10 +144,11 @@ export function omitWorkerPayrollChecklistRows<T extends { sourceRef?: { pipelin
   });
 }
 
-/** Worker-visible payroll step status (no “invite sent” wording). */
-export function workerPayrollSetupStatusLabel(payrollAccountStatus: string | undefined | null): 'Not started' | 'In progress' | 'Complete' {
+export function workerPayrollAccountPhase(
+  payrollAccountStatus: string | undefined | null,
+): 'not_started' | 'in_progress' | 'complete' {
   const s = String(payrollAccountStatus || '').toLowerCase();
-  if (s === 'complete') return 'Complete';
+  if (s === 'complete') return 'complete';
   if (
     s === 'invite_sent' ||
     s === 'account_created' ||
@@ -123,10 +156,21 @@ export function workerPayrollSetupStatusLabel(payrollAccountStatus: string | und
     s === 'pending' ||
     s === 'not_started'
   ) {
-    return s === 'not_started' ? 'Not started' : 'In progress';
+    return s === 'not_started' ? 'not_started' : 'in_progress';
   }
-  if (!s) return 'Not started';
-  return 'In progress';
+  if (!s) return 'not_started';
+  return 'in_progress';
+}
+
+/** Worker-visible payroll step status (no “invite sent” wording). */
+export function workerPayrollSetupStatusLabel(
+  payrollAccountStatus: string | undefined | null,
+  tr?: WorkerEmploymentTranslateFn,
+): string {
+  const phase = workerPayrollAccountPhase(payrollAccountStatus);
+  if (phase === 'complete') return tx(tr, 'workerEmploymentHub.payrollComplete', 'Complete');
+  if (phase === 'not_started') return tx(tr, 'workerEmploymentHub.payrollNotStarted', 'Not started');
+  return tx(tr, 'workerEmploymentHub.payrollInProgress', 'In progress');
 }
 
 export function workerMyEmploymentDetailPath(employmentRecordId: string): string {
@@ -159,27 +203,28 @@ export function filterI9RowsForEntityEmployment<T extends { data: Record<string,
 export function workerEmploymentEntityPageHeadline(
   state: EmploymentV2HeaderState,
   pathHistorical: boolean,
+  tr?: WorkerEmploymentTranslateFn,
 ): string {
   if (pathHistorical) {
-    return 'Past onboarding on file';
+    return tx(tr, 'workerEmploymentHub.headlinePastOnFile', 'Past onboarding on file');
   }
   switch (state) {
     case 'not_started':
-      return 'Onboarding';
+      return tx(tr, 'workerEmploymentHub.headlineOnboarding', 'Onboarding');
     case 'action_required':
-      return 'Your action is needed';
+      return tx(tr, 'workerEmploymentHub.headlineActionNeeded', 'Your action is needed');
     case 'in_progress':
-      return 'Onboarding in progress';
+      return tx(tr, 'workerEmploymentHub.headlineInProgress', 'Onboarding in progress');
     case 'waiting_on_company':
-      return 'Waiting on your employer';
+      return tx(tr, 'workerEmploymentHub.headlineWaitingEmployer', 'Waiting on your employer');
     case 'ready':
     case 'on_assignment':
-      return 'You’re in good shape';
+      return tx(tr, 'workerEmploymentHub.headlineGoodShape', 'You’re in good shape');
     case 'terminated':
-      return 'Employment ended';
+      return tx(tr, 'workerEmploymentHub.headlineEmploymentEnded', 'Employment ended');
     case 'inactive':
-      return 'Inactive';
+      return tx(tr, 'workerEmploymentHub.headlineInactive', 'Inactive');
     default:
-      return 'Onboarding';
+      return tx(tr, 'workerEmploymentHub.headlineOnboarding', 'Onboarding');
   }
 }

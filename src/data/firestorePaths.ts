@@ -89,6 +89,10 @@ export const p = {
   shifts: (tid: string, jobOrderId: string) => `tenants/${tid}/job_orders/${jobOrderId}/shifts`,
   shift: (tid: string, jobOrderId: string, shiftId: string) => `tenants/${tid}/job_orders/${jobOrderId}/shifts/${shiftId}`,
 
+  /** Gig auto-messaging: one doc per shift-notification batch (timestamps for recruiter UI). */
+  jobOrderAutoMessagingSendLog: (tid: string, jobOrderId: string) =>
+    `tenants/${tid}/job_orders/${jobOrderId}/autoMessagingSendLog`,
+
   /**
    * Job board postings (canonical Firestore collection — live app uses `job_postings`).
    * `jobBoardPosts` / `jobBoardPost` are deprecated aliases; prefer `jobPostings` / `jobPosting`.

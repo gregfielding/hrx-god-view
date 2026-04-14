@@ -3009,6 +3009,8 @@ export default function AccountLocationDetail() {
         onSaved={fetchLocationJobOrders}
         tenantId={tenantId ?? ''}
         userId={user?.uid ?? ''}
+        recruiterAccountId={accountId ?? null}
+        requireAccountSelection
         defaultHiringEntityId={account?.hiringEntityId ?? null}
         accountCompanies={
           accountCompaniesOptions.length

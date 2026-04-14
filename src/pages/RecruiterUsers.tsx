@@ -50,6 +50,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { db } from '../firebase';
 import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
+import { normalizeUsStateCode } from '../utils/usStateNormalize';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
 import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
@@ -69,6 +70,7 @@ import UserEntityOnboardingStatusCell from '../components/tables/UserEntityOnboa
 import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
 import { useActiveAssignmentUserIds } from '../hooks/useActiveAssignmentUserIds';
 import { getWorkStatusColumnDisplay } from '../utils/workStatusColumnDisplay';
+import { TENANT_LISTABLE_SECURITY_LEVELS } from '../constants/tenantWorkerSecurityLevels';
 
 type SecurityLevel =
   | '0'
@@ -85,6 +87,8 @@ interface RecruiterUser {
   id: string;
   firstName: string;
   lastName: string;
+  /** Profile display name when present (search + fallback when first/last missing). */
+  displayName?: string;
   email: string;
   phone?: string;
   city?: string;
@@ -124,8 +128,8 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
   const tenantData = userData.tenantIds?.[tenantId] || null;
   if (!tenantData) return null;
 
-  const securityLevel = tenantData.securityLevel || userData.securityLevel || '0';
-  if (!['0', '1', '2', '3', '4'].includes(String(securityLevel))) return null;
+  const securityLevel = String(tenantData.securityLevel ?? userData.securityLevel ?? '0');
+  if (!['0', '1', '2', '3', '4'].includes(securityLevel)) return null;
 
   const rawSkills = Array.isArray(userData.skills)
     ? userData.skills
@@ -155,10 +159,24 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
       (v: unknown) => typeof v === 'string' && String(v).trim().length > 0
     ) || '';
 
+  const rawDisplay = String(userData.displayName || '').trim();
+  let firstName = String(userData.firstName || '').trim();
+  let lastName = String(userData.lastName || '').trim();
+  if (!firstName && !lastName && rawDisplay) {
+    const parts = rawDisplay.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) {
+      firstName = parts[0];
+      lastName = parts.slice(1).join(' ');
+    } else if (parts.length === 1) {
+      firstName = parts[0];
+    }
+  }
+
   return {
     id: userDoc.id,
-    firstName: userData.firstName || '',
-    lastName: userData.lastName || '',
+    firstName,
+    lastName,
+    displayName: rawDisplay || undefined,
     email: String(resolvedEmail).trim(),
     phone: userData.phone || '',
     avatar: userData.avatar || tenantData.avatar,
@@ -180,7 +198,12 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     userGroupIds: tenantData.userGroupIds || userData.userGroupIds || [],
     skills: normalizedSkills,
     city: userData.city || userData.address?.city || (userData.addressInfo && (userData.addressInfo as any).city) || '',
-    state: userData.state || userData.address?.state || (userData.addressInfo && (userData.addressInfo as any).state) || '',
+    state: (() => {
+      const ai = userData.addressInfo && typeof userData.addressInfo === 'object' ? (userData.addressInfo as any) : null;
+      const ad = userData.address && typeof userData.address === 'object' ? (userData.address as any) : null;
+      const raw = userData.state || ad?.state || ai?.state || '';
+      return typeof raw === 'string' ? raw.trim() : '';
+    })(),
     workEligibility: userData.workEligibility,
     workEligibilityAttestation: userData.workEligibilityAttestation,
     comfortableEVerify: userData.comfortableEVerify,
@@ -196,12 +219,27 @@ function userMatchesSearchTerm(user: RecruiterUser, rawSearch: string): boolean 
   if (!q) return true;
 
   const fullName = `${user.firstName} ${user.lastName}`.trim().toLowerCase();
-  if (fullName.includes(q)) return true;
+  const displayLower = (user.displayName || '').trim().toLowerCase();
+
+  const fieldMatchesToken = (token: string) =>
+    fullName.includes(token) ||
+    (displayLower && displayLower.includes(token)) ||
+    (user.email || '').toLowerCase().includes(token) ||
+    (user.phone || '').toLowerCase().includes(token) ||
+    user.skills?.some((skill) => skill.toLowerCase().includes(token)) === true;
+
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length > 1) {
+    if (tokens.every((t) => fieldMatchesToken(t))) return true;
+  } else {
+    if (fullName.includes(q)) return true;
+    if (displayLower && displayLower.includes(q)) return true;
+  }
 
   const email = (user.email || '').trim();
   const emailLower = email.toLowerCase();
   if (emailLower) {
-    if (emailLower.includes(q)) return true;
+    if (tokens.length <= 1 && emailLower.includes(q)) return true;
     const compactEmail = emailLower.replace(/\s/g, '');
     const compactQ = q.replace(/\s/g, '');
     if (compactEmail.includes(compactQ)) return true;
@@ -212,12 +250,12 @@ function userMatchesSearchTerm(user: RecruiterUser, rawSearch: string): boolean 
     }
   }
 
-  if (user.phone?.toLowerCase().includes(q)) return true;
+  if (tokens.length <= 1 && user.phone?.toLowerCase().includes(q)) return true;
   const digits = (s: string) => s.replace(/\D/g, '');
   const qDigits = digits(q);
   if (qDigits.length >= 3 && user.phone && digits(user.phone).includes(qDigits)) return true;
 
-  if (user.skills?.some((skill) => skill.toLowerCase().includes(q))) return true;
+  if (tokens.length <= 1 && user.skills?.some((skill) => skill.toLowerCase().includes(q))) return true;
 
   return false;
 }
@@ -552,11 +590,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         return;
       }
       
-      // Build base query
-      let q = query(
-        usersRef,
-        where(`tenantIds.${tenantId}.securityLevel`, 'in', ['0', '1', '2', '3', '4'])
-      );
+      // Match both string and numeric security levels (Firestore `in` is type-sensitive).
+      let q = query(usersRef, where(`tenantIds.${tenantId}.securityLevel`, 'in', TENANT_LISTABLE_SECURITY_LEVELS));
 
       // Add ordering for pagination (required for startAfter)
       q = query(q, orderBy('createdAt', 'desc'));
@@ -615,6 +650,25 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (!activeTenant?.id || loadingMore || !hasMore) return;
     loadUsers(activeTenant.id, false);
   };
+
+  /** If search has no matches in the current batch, paginate Firestore until we find some or exhaust results (large tenants). */
+  const searchAutoLoadAttemptsRef = useRef(0);
+  useEffect(() => {
+    searchAutoLoadAttemptsRef.current = 0;
+  }, [searchTerm]);
+
+  useEffect(() => {
+    if (effectiveScope === 'my') return;
+    if (!activeTenant?.id) return;
+    const q = searchTerm.trim();
+    if (!q) return;
+    if (loading || loadingMore) return;
+    if (!hasMore) return;
+    if (users.some((u) => userMatchesSearchTerm(u, q))) return;
+    if (searchAutoLoadAttemptsRef.current >= 25) return;
+    searchAutoLoadAttemptsRef.current += 1;
+    loadUsers(activeTenant.id, false);
+  }, [searchTerm, users, hasMore, loading, loadingMore, effectiveScope, activeTenant?.id]);
 
   const getSecurityLevelLabel = (level: string): string => {
     switch (level) {
@@ -784,12 +838,16 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           return false;
         }
 
-        if (skillFilter !== 'all') {
-          return user.skills?.includes(skillFilter);
+        if (skillFilter !== 'all' && !user.skills?.includes(skillFilter)) {
+          return false;
         }
 
-        if (stateFilter !== 'all' && user.state !== stateFilter) {
-          return false;
+        if (stateFilter !== 'all') {
+          const selectedCode = normalizeUsStateCode(stateFilter);
+          const userCode = normalizeUsStateCode(user.state);
+          if (!selectedCode || userCode !== selectedCode) {
+            return false;
+          }
         }
 
         return userMatchesSearchTerm(user, searchTerm);

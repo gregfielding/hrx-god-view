@@ -1,7 +1,22 @@
 import type { TenantRole } from '../contexts/AuthContext';
+import type { Role, SecurityLevel } from './AccessRoles';
+
+function parseSec(raw: unknown): number {
+  const sec = parseInt(String(raw ?? '0'), 10);
+  return Number.isNaN(sec) ? 0 : sec;
+}
+
+function isPrivilegedStaffRole(raw: unknown): boolean {
+  const r = String(raw ?? '').trim().toLowerCase();
+  return r === 'admin' || r === 'recruiter' || r === 'manager';
+}
 
 /**
- * Client-side gate for staff-only UI (create request, approve/reject). Server callables enforce `canManageOnboarding`.
+ * Mirrors `canManageOnboarding` in `workerOnboardingPipeline.ts`:
+ * - JWT grants staff only via Admin / Recruiter / Manager (not numeric security in the first hop).
+ * - Otherwise Firestore `users/{uid}.tenantIds[tenantId]` and legacy `role` / `securityLevel`.
+ *
+ * Client-side gate for staff-only UI (create request, approve/reject). Server callables enforce the same rules.
  */
 export function viewerCanStaffManageI9SupportingDocuments(
   tenantId: string | null | undefined,
@@ -9,15 +24,24 @@ export function viewerCanStaffManageI9SupportingDocuments(
   viewerUid: string | undefined,
   isHRX: boolean,
   claimsRoles: { [k: string]: TenantRole },
+  tenantRolesFromProfile?: { [k: string]: { role: Role; securityLevel: SecurityLevel } } | null,
+  legacyUserSecurityLevel?: SecurityLevel | null,
+  legacyUserRole?: string | null,
 ): boolean {
   if (!tenantId || !viewerUid || viewerUid === workerUserId) return false;
   if (isHRX) return true;
+
   const tr = claimsRoles[tenantId];
-  if (!tr) return false;
-  const role = tr.role;
-  if (role === 'Admin' || role === 'Recruiter' || role === 'Manager') return true;
-  const sec = parseInt(String(tr.securityLevel ?? '0'), 10);
-  return !Number.isNaN(sec) && sec >= 4;
+  if (tr && (tr.role === 'Admin' || tr.role === 'Recruiter' || tr.role === 'Manager')) {
+    return true;
+  }
+
+  const fr = tenantRolesFromProfile?.[tenantId];
+  const roleStr = String(fr?.role ?? legacyUserRole ?? '').trim().toLowerCase();
+  if (isPrivilegedStaffRole(roleStr)) return true;
+
+  const secRaw = fr != null ? (fr.securityLevel ?? legacyUserSecurityLevel) : legacyUserSecurityLevel;
+  return parseSec(secRaw) >= 4;
 }
 
 const SAFE_NAME_RE = /[^a-zA-Z0-9._-]+/g;

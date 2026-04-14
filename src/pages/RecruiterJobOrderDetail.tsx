@@ -79,6 +79,7 @@ import {
   Sms as SmsIcon,
   Lock as LockedIcon,
   AccountBalance as AccountBalanceIcon,
+  Groups as GroupsIcon,
 } from '@mui/icons-material';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { format, formatDistanceToNow } from 'date-fns';
@@ -102,7 +103,7 @@ import {
 import { getFunctions, httpsCallable } from 'firebase/functions';
 
 import { useAuth } from '../contexts/AuthContext';
-import { db, storage } from '../firebase';
+import { db, storage, functions } from '../firebase';
 import { p } from '../data/firestorePaths';
 import { getDateScheduleEntriesWithHours, type DateSchedule } from '../utils/dateSchedule';
 import {
@@ -118,6 +119,7 @@ import ManageContactsDialog from '../components/ManageContactsDialog';
 import ManageSalespeopleDialog from '../components/ManageSalespeopleDialog';
 import StaffInstructionCard from '../components/recruiter/StaffInstructionCard';
 import ShiftSetupTab from '../components/recruiter/ShiftSetupTab';
+import JobOrderHiringTab from '../components/recruiter/JobOrderHiringTab';
 import CRMNotesTab from '../components/CRMNotesTab';
 // Jobs Board Visibility tab removed: all controls live in Jobs Board tab
 import PlacementsTab from '../components/recruiter/PlacementsTab';
@@ -133,10 +135,28 @@ import { getOrComputeJobScoreSummary } from '../utils/jobScore';
 import { getOrComputeJobScoreSummaryV1, computeJobScoreSummaryV1 } from '../utils/jobScoreV1';
 import { getRequirementPackV1 } from '../data/jobRequirementPacksV1';
 import { isExcludedFromPlacementsApplicantPool, normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
+import HiringLifecycleBadgeGroup from '../components/hiring/HiringLifecycleBadgeGroup';
+import { formatAiAutomationRecruiterTooltip } from '../utils/formatAiAutomationRecruiterTooltip';
+import {
+  countRecruiterLifecycleBuckets,
+  deriveRecruiterLifecycleBucket,
+  parseJobOrderApplicationsLifecycleParam,
+  RECRUITER_LIFECYCLE_BUCKET_LABELS,
+  RECRUITER_LIFECYCLE_BUCKET_ORDER,
+  RECRUITER_LIFECYCLE_BUCKET_SHORT_LABELS,
+  type RecruiterLifecycleFilterBucket,
+} from '../utils/recruiterApplicationLifecycleBucket';
+import {
+  RECRUITER_LIFECYCLE_FILTER_GUIDANCE,
+  summarizeNextActionsInApplicantList,
+} from '../utils/recruiterLifecycleRecruiterGuidance';
+import type { ApplicationHiringLifecycle } from '../types/applicationHiringLifecycle';
+import { parseApplicationHiringLifecycle } from '../utils/applicationHiringLifecycle';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import JobPostForm from '../components/JobPostForm';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
+import JobOrderAutoMessagingTab from '../components/recruiter/JobOrderAutoMessagingTab';
 import CreateTaskDialog from '../components/CreateTaskDialog';
 import LogActivityDialog from '../components/LogActivityDialog';
 import AddJobOrderNoteDialog from '../components/recruiter/AddJobOrderNoteDialog';
@@ -148,11 +168,19 @@ import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
+import {
+  DEFAULT_JOB_ORDER_DETAIL_TAB,
+  type JobOrderDetailTabKey,
+  JOB_ORDER_DETAIL_TAB_STRIP,
+  jobOrderDetailTabStorageKey,
+  parseJobOrderDetailTabQueryParam,
+  parseStoredJobOrderTab,
+} from '../constants/recruiterJobOrderDetailTabs';
 
 interface TabPanelProps {
   children?: React.ReactNode;
-  index: number;
-  value: number;
+  index: JobOrderDetailTabKey;
+  value: JobOrderDetailTabKey;
 }
 
 function TabPanel(props: TabPanelProps) {
@@ -235,6 +263,8 @@ interface Applicant {
   scoreSummary?: any;
   /** Job Score (per job); from application.jobScoreSummary or computed (v1 or legacy) */
   jobScoreSummary?: JobScoreSummaryStored | null;
+  /** Parsed from application doc when present (see `hiringLifecycle` field). */
+  hiringLifecycle?: ApplicationHiringLifecycle;
   /** v1.1: from users/{uid}.onboarding (when present) */
   compliancePercent?: number;
   complianceStatus?: 'compliant' | 'expiring_soon' | 'non_compliant' | 'incomplete';
@@ -271,6 +301,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   onCandidateCountChange,
 }) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -283,7 +314,13 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [shifts, setShifts] = useState<ShiftOption[]>([]);
   const [selectedShiftId, setSelectedShiftId] = useState<string>('');
   const [selectedDay, setSelectedDay] = useState<string>('');
+  const [lifecycleStageFilter, setLifecycleStageFilter] = useState<'all' | RecruiterLifecycleFilterBucket>('all');
   const appsStorageKey = `applications_shift_${tenantId}_${jobOrderId}`;
+
+  useEffect(() => {
+    const lc = parseJobOrderApplicationsLifecycleParam(searchParams.get('lifecycle'));
+    if (lc) setLifecycleStageFilter(lc);
+  }, [searchParams]);
 
   // Default sort by Job Score when this job has a requirement pack (once jobOrder is available)
   useEffect(() => {
@@ -413,6 +450,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             })(),
             selectedShifts: app.selectedShifts || [],
             shiftAssignments: app.shiftAssignments || {},
+            hiringLifecycle: parseApplicationHiringLifecycle(app.hiringLifecycle),
           };
         });
 
@@ -542,6 +580,41 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return applicationMatchesSelectedDay(app, selectedDay);
     });
   }, [filteredApplicants, selectedDay, isGigMultiDay]);
+
+  const lifecycleCounts = useMemo(
+    () =>
+      countRecruiterLifecycleBuckets(
+        filteredByShiftAndDay.map((a) => ({
+          hiringLifecycle: a.hiringLifecycle,
+          applicationStatus: a.applicationStatus,
+          rawApplicationStatus: a.applicationData?.status,
+        })),
+      ),
+    [filteredByShiftAndDay],
+  );
+
+  const filteredByLifecycle = useMemo(() => {
+    if (lifecycleStageFilter === 'all') return filteredByShiftAndDay;
+    return filteredByShiftAndDay.filter(
+      (a) =>
+        deriveRecruiterLifecycleBucket({
+          hiringLifecycle: a.hiringLifecycle,
+          applicationStatus: a.applicationStatus,
+          rawApplicationStatus: a.applicationData?.status,
+        }) === lifecycleStageFilter,
+    );
+  }, [filteredByShiftAndDay, lifecycleStageFilter]);
+
+  const lifecycleFilterEmpty =
+    lifecycleStageFilter !== 'all' && filteredByShiftAndDay.length > 0 && filteredByLifecycle.length === 0;
+
+  const lifecycleFilterNextActionSummary = React.useMemo(
+    () =>
+      lifecycleStageFilter === 'all'
+        ? []
+        : summarizeNextActionsInApplicantList(filteredByLifecycle),
+    [lifecycleStageFilter, filteredByLifecycle],
+  );
 
   const handleRefreshScores = useCallback(async () => {
     const requirementPackId = (jobOrder as any)?.requirementPackId;
@@ -701,7 +774,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
-      const data = [...filteredByShiftAndDay];
+      const data = [...filteredByLifecycle];
       data.sort((a, b) => {
         const aM = toMillis(a.scoreSummary?.interviewLastAt);
         const bM = toMillis(b.scoreSummary?.interviewLastAt);
@@ -711,7 +784,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'jobScore') {
-      const data = [...filteredByShiftAndDay];
+      const data = [...filteredByLifecycle];
       data.sort((a, b) => {
         const aScore = a.jobScoreSummary?.jobScore ?? -1;
         const bScore = b.jobScoreSummary?.jobScore ?? -1;
@@ -720,10 +793,10 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
-    return filteredByShiftAndDay;
-  }, [filteredByShiftAndDay, applicantsSortBy, applicantsSortDirection]);
+    return filteredByLifecycle;
+  }, [filteredByLifecycle, applicantsSortBy, applicantsSortDirection]);
 
-  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByShiftAndDay;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByLifecycle;
 
   // Notify parent of count changes (use displayed count)
   useEffect(() => {
@@ -1323,6 +1396,98 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               )}
             </Box>
           )}
+          <Box
+            sx={{
+              px: 2,
+              py: 1.5,
+              borderBottom: 1,
+              borderColor: 'divider',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              alignItems: 'center',
+            }}
+          >
+            <FormControl size="small" sx={{ minWidth: 280 }}>
+              <InputLabel>Lifecycle stage</InputLabel>
+              <Select
+                value={lifecycleStageFilter}
+                label="Lifecycle stage"
+                onChange={(e) =>
+                  setLifecycleStageFilter(e.target.value as 'all' | RecruiterLifecycleFilterBucket)
+                }
+              >
+                <MenuItem value="all">All stages ({filteredByShiftAndDay.length})</MenuItem>
+                {RECRUITER_LIFECYCLE_BUCKET_ORDER.map((b) => (
+                  <MenuItem key={b} value={b}>
+                    {RECRUITER_LIFECYCLE_BUCKET_LABELS[b]} ({lifecycleCounts[b]})
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <Stack direction="row" flexWrap="wrap" useFlexGap spacing={0.75} alignItems="center" sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ mr: 0.5 }}>
+                Counts (current shift/day filter):
+              </Typography>
+              {RECRUITER_LIFECYCLE_BUCKET_ORDER.map((b) => (
+                <Tooltip key={b} title={`${RECRUITER_LIFECYCLE_BUCKET_LABELS[b]} — click to filter`}>
+                  <Chip
+                    size="small"
+                    variant={lifecycleStageFilter === b ? 'filled' : 'outlined'}
+                    color={lifecycleStageFilter === b ? 'primary' : 'default'}
+                    onClick={() => setLifecycleStageFilter((prev) => (prev === b ? 'all' : b))}
+                    label={`${RECRUITER_LIFECYCLE_BUCKET_SHORT_LABELS[b]} · ${lifecycleCounts[b]}`}
+                    sx={{ cursor: 'pointer' }}
+                  />
+                </Tooltip>
+              ))}
+            </Stack>
+          </Box>
+          {lifecycleStageFilter !== 'all' && (
+            <Box
+              sx={{
+                px: 2,
+                py: 1.75,
+                borderBottom: 1,
+                borderColor: 'divider',
+                bgcolor: 'action.hover',
+              }}
+            >
+              <Typography variant="subtitle2" fontWeight={700} gutterBottom>
+                {RECRUITER_LIFECYCLE_BUCKET_LABELS[lifecycleStageFilter]}
+              </Typography>
+              <Typography variant="body2" color="text.primary" sx={{ mb: 1 }}>
+                {RECRUITER_LIFECYCLE_FILTER_GUIDANCE[lifecycleStageFilter].summary}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" component="div" sx={{ mb: lifecycleFilterNextActionSummary.length ? 1 : 0 }}>
+                <strong>Suggested next steps</strong>
+                <Box component="ul" sx={{ m: 0, pl: 2.5, mt: 0.5 }}>
+                  {RECRUITER_LIFECYCLE_FILTER_GUIDANCE[lifecycleStageFilter].suggestedCues.map((c) => (
+                    <li key={c}>
+                      <Typography variant="caption" component="span">
+                        {c}
+                      </Typography>
+                    </li>
+                  ))}
+                </Box>
+              </Typography>
+              {lifecycleFilterNextActionSummary.length > 0 ? (
+                <Typography variant="caption" color="text.secondary" display="block">
+                  <strong>Next actions in this list</strong> (from stored lifecycle data):{' '}
+                  {lifecycleFilterNextActionSummary.map((r, i) => (
+                    <React.Fragment key={r.key}>
+                      {i > 0 ? ' · ' : ''}
+                      {r.label} ({r.count})
+                    </React.Fragment>
+                  ))}
+                </Typography>
+              ) : (
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ fontStyle: 'italic' }}>
+                  No next-action hints stored on these rows yet—use the steps above and the Lifecycle column when present.
+                </Typography>
+              )}
+            </Box>
+          )}
           {isSomeSelected && (
             <Box
               sx={{
@@ -1436,6 +1601,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   </TableSortLabel>
                 </TableCell>
                 <TableCell>Compliance</TableCell>
+                <TableCell>Lifecycle</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell>Level</TableCell>
                 <TableCell align="right">Actions</TableCell>
@@ -1444,10 +1610,12 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
             <TableBody>
               {displayedApplicants.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={24} sx={{ py: 4, textAlign: 'center' }}>
+                  <TableCell colSpan={25} sx={{ py: 4, textAlign: 'center' }}>
                     <Alert severity="info" sx={{ justifyContent: 'center' }}>
                       {applicants.length === 0
                         ? 'No applications received yet for this job order.'
+                        : lifecycleFilterEmpty
+                          ? 'No applicants match this lifecycle filter. Choose "All stages" or tap another lifecycle chip.'
                         : isGigJob && selectedShiftId
                         ? selectedDay
                           ? 'No applicants for this shift and day. Try "All days" to see everyone who applied to this shift.'
@@ -1728,6 +1896,18 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     ) : (
                       <Typography variant="caption" color="text.secondary">—</Typography>
                     )}
+                  </TableCell>
+                  <TableCell onClick={(e) => e.stopPropagation()}>
+                    <HiringLifecycleBadgeGroup
+                      lifecycle={applicant.hiringLifecycle}
+                      legacyStatusLabel={(
+                        normalizeApplicationStatus(applicant.applicationStatus || 'submitted') ??
+                        applicant.applicationStatus ??
+                        'submitted'
+                      ).replace(/_/g, ' ')}
+                      aiAutomationSummary={formatAiAutomationRecruiterTooltip(applicant.applicationData)}
+                      compact
+                    />
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {(() => {
@@ -2719,8 +2899,9 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user, tenantId } = useAuth();
-  
-  
+  /** One syncGigJobOrderStatusFromShifts invoke per job order visit (ref avoids duplicate calls after auto status flip). */
+  const gigStatusSyncOnceRef = useRef<string | null>(null);
+
   // State
   const [jobOrder, setJobOrder] = useState<JobOrder | null>(null);
   const [company, setCompany] = useState<any>(null);
@@ -2730,43 +2911,55 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [linkedAccount, setLinkedAccount] = useState<{ id: string; name?: string; accountType?: string | null; hiringEntityId?: string | null; defaults?: { eVerify?: { eVerifyRequired?: boolean } } } | null>(null);
   const [loading, setLoading] = useState(true);
   
-  // Persist active tab in localStorage; URL ?tab=applications overrides and opens Applications tab (index 6)
-  const getStoredTab = () => {
-    if (!jobOrderId) return 0;
+  const getStoredTab = (): JobOrderDetailTabKey => {
+    if (!jobOrderId) return DEFAULT_JOB_ORDER_DETAIL_TAB;
     try {
-      const stored = localStorage.getItem(`recruiter_job_order_tab_${jobOrderId}`);
-      // Default to "Checklist" tab (index 1) when opening a job order record directly.
-      return stored ? parseInt(stored, 10) : 1;
+      const stored = localStorage.getItem(jobOrderDetailTabStorageKey(jobOrderId));
+      return parseStoredJobOrderTab(stored);
     } catch {
-      return 1;
+      return DEFAULT_JOB_ORDER_DETAIL_TAB;
     }
   };
-  
-  const [activeTab, setActiveTab] = useState(getStoredTab());
+
+  const [activeTab, setActiveTab] = useState<JobOrderDetailTabKey>(() => getStoredTab());
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [recruiterUsers, setRecruiterUsers] = useState<Array<{id: string; displayName: string; email?: string}>>([]);
   
-  // Reload stored tab when jobOrderId or URL tab param changes; ?tab=applications opens Applications tab
+  // Reload stored tab when jobOrderId or URL tab param changes; ?tab=<key> (e.g. applications) overrides
   useEffect(() => {
     if (!jobOrderId) return;
     const tabParam = searchParams.get('tab');
-    if (tabParam === 'applications') {
-      setActiveTab(6);
+    const fromUrl = parseJobOrderDetailTabQueryParam(tabParam);
+    if (fromUrl) {
+      setActiveTab(fromUrl);
       try {
-        localStorage.setItem(`recruiter_job_order_tab_${jobOrderId}`, '6');
+        localStorage.setItem(jobOrderDetailTabStorageKey(jobOrderId), fromUrl);
       } catch {
         // ignore
       }
       return;
     }
     try {
-      const stored = localStorage.getItem(`recruiter_job_order_tab_${jobOrderId}`);
-      const storedTab = stored ? parseInt(stored, 10) : 1;
-      setActiveTab(storedTab);
+      const stored = localStorage.getItem(jobOrderDetailTabStorageKey(jobOrderId));
+      setActiveTab(parseStoredJobOrderTab(stored));
     } catch {
-      setActiveTab(1);
+      setActiveTab(DEFAULT_JOB_ORDER_DETAIL_TAB);
     }
   }, [jobOrderId, searchParams]);
+
+  /** Gig-only tab: clear stored/URL tab if it is not valid for this job order type. */
+  useEffect(() => {
+    if (!jobOrderId || !jobOrder) return;
+    if (activeTab !== 'auto_messaging') return;
+    if ((jobOrder as any).jobType === 'gig') return;
+    setActiveTab(DEFAULT_JOB_ORDER_DETAIL_TAB);
+    try {
+      localStorage.setItem(jobOrderDetailTabStorageKey(jobOrderId), DEFAULT_JOB_ORDER_DETAIL_TAB);
+    } catch {
+      // ignore
+    }
+  }, [jobOrderId, jobOrder, activeTab]);
+
   const [associatedContacts, setAssociatedContacts] = useState<any[]>([]);
   const [associatedSalespeople, setAssociatedSalespeople] = useState<any[]>([]);
   const [connectedJobPosts, setConnectedJobPosts] = useState<JobsBoardPost[]>([]);
@@ -2804,8 +2997,15 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [deleteJobOrderDialogOpen, setDeleteJobOrderDialogOpen] = useState(false);
   const [deleteJobOrderSubmitting, setDeleteJobOrderSubmitting] = useState(false);
+  /** Resolved labels for auto-messaging user groups (gig header). */
+  const [autoMessagingUserGroupLabels, setAutoMessagingUserGroupLabels] = useState<string[]>([]);
 
   const { isFavorite: isJobOrderFavorite, toggleFavorite: toggleJobOrderFavorite } = useFavorites('jobOrders');
+
+  const autoMessagingUserGroupIdsKey = useMemo(
+    () => JSON.stringify(jobOrder?.autoMessagingUserGroupIds ?? null),
+    [jobOrder?.autoMessagingUserGroupIds],
+  );
 
   // Helper functions (defined before useEffect that uses them)
   const loadCompanyData = useCallback(async (companyId: string) => {
@@ -3018,6 +3218,56 @@ const RecruiterJobOrderDetail: React.FC = () => {
 
     fetchAssignmentsCount();
   }, [tenantId, jobOrderId]);
+
+  useEffect(() => {
+    if (!tenantId || !jobOrder || jobOrder.jobType !== 'gig') {
+      setAutoMessagingUserGroupLabels([]);
+      return;
+    }
+    const ids = jobOrder.autoMessagingUserGroupIds;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      setAutoMessagingUserGroupLabels([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const ordered: string[] = [];
+      for (const gid of ids) {
+        if (typeof gid !== 'string' || !gid.trim()) continue;
+        try {
+          const snap = await getDoc(doc(db, 'tenants', tenantId, 'userGroups', gid));
+          if (snap.exists()) {
+            const d = snap.data() as { groupName?: string; title?: string; name?: string };
+            ordered.push(d.groupName || d.title || d.name || gid);
+          } else {
+            ordered.push(gid);
+          }
+        } catch {
+          ordered.push(gid);
+        }
+      }
+      if (!cancelled) setAutoMessagingUserGroupLabels(ordered);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, jobOrder?.id, jobOrder?.jobType, autoMessagingUserGroupIdsKey]);
+
+  useEffect(() => {
+    gigStatusSyncOnceRef.current = null;
+  }, [jobOrderId]);
+
+  // Gig: auto open/on_hold from shift dates (server-side on shift writes; callable catches calendar rollover when opening the page)
+  useEffect(() => {
+    if (!tenantId || !jobOrderId || jobOrder?.jobType !== 'gig') return;
+    const s = jobOrder?.status;
+    if (s !== 'open' && s !== 'on_hold') return;
+    const key = `${tenantId}:${jobOrderId}`;
+    if (gigStatusSyncOnceRef.current === key) return;
+    gigStatusSyncOnceRef.current = key;
+    const fn = httpsCallable(functions, 'syncGigJobOrderStatusFromShifts');
+    void fn({ tenantId, jobOrderId }).catch(() => {});
+  }, [tenantId, jobOrderId, jobOrder?.jobType, jobOrder?.status]);
 
   const loadLocationData = useCallback(async (companyId: string, locationId: string) => {
     if (!companyId || !locationId || !tenantId) return;
@@ -3577,11 +3827,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
     );
   }
 
-  const setTabAndPersist = (newValue: number) => {
-    setActiveTab(newValue);
+  const setTabAndPersist = (key: JobOrderDetailTabKey) => {
+    setActiveTab(key);
     if (jobOrderId) {
       try {
-        localStorage.setItem(`recruiter_job_order_tab_${jobOrderId}`, String(newValue));
+        localStorage.setItem(jobOrderDetailTabStorageKey(jobOrderId), key);
       } catch {
         // ignore
       }
@@ -3595,6 +3845,11 @@ const RecruiterJobOrderDetail: React.FC = () => {
   const jobTypeRaw = (jobOrder as any).jobType;
   const jobTypeLabel =
     jobTypeRaw === 'gig' ? 'Gig' : jobTypeRaw === 'career' ? 'Career' : jobTypeRaw ? String(jobTypeRaw) : '';
+
+  const jobOrderDetailVisibleTabStrip =
+    jobTypeRaw === 'gig'
+      ? JOB_ORDER_DETAIL_TAB_STRIP
+      : JOB_ORDER_DETAIL_TAB_STRIP.filter((t) => t.key !== 'auto_messaging');
 
   const displayCompanyId = (jobOrder as any).companyId || jobOrder?.deal?.companyId || company?.id;
 
@@ -3852,6 +4107,18 @@ const RecruiterJobOrderDetail: React.FC = () => {
                     )}
                   </>
                 )}
+
+                {jobTypeRaw === 'gig' && autoMessagingUserGroupLabels.length > 0 && (
+                  <>
+                    <GroupsIcon sx={{ fontSize: 18, color: 'rgb(74, 144, 226)' }} />
+                    <Typography
+                      component="span"
+                      sx={{ fontSize: '0.875rem', fontWeight: 600, color: 'rgb(74, 144, 226)' }}
+                    >
+                      {autoMessagingUserGroupLabels.join(' · ')}
+                    </Typography>
+                  </>
+                )}
               </Stack>
 
               {/* Line 4: Checklist progress */}
@@ -3993,23 +4260,12 @@ const RecruiterJobOrderDetail: React.FC = () => {
         }
         filters={
           <Box sx={{ display: 'flex', gap: 0.5 }}>
-            {[
-              { label: 'Overview', index: 0 },
-              { label: 'Checklist', index: 1 },
-              { label: 'Defaults', index: 2 },
-              { label: 'Staff Instructions', index: 3 },
-              { label: 'Jobs Board', index: 4 },
-              { label: 'Shift Setup', index: 5 },
-              { label: 'Applications', index: 6 },
-              { label: 'Placements', index: 7 },
-              { label: 'Notes', index: 8 },
-              { label: 'Activity', index: 9 },
-            ].map((t) => {
-              const isActive = activeTab === t.index;
+            {jobOrderDetailVisibleTabStrip.map((t) => {
+              const isActive = activeTab === t.key;
                 return (
                 <Button
-                  key={t.label}
-                  onClick={() => setTabAndPersist(t.index)}
+                  key={t.key}
+                  onClick={() => setTabAndPersist(t.key)}
                   variant="text"
                   sx={{
                     textTransform: 'none',
@@ -4104,7 +4360,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
       </Dialog>
 
       {/* Tab Panels */}
-      <TabPanel value={activeTab} index={0}>
+      <TabPanel value={activeTab} index="overview">
         {/* Overview Tab - Job Order Form with Widgets */}
         <Grid container spacing={3}>
           {/* Left Column - Basic Information Card (70%) */}
@@ -4213,7 +4469,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
                                 <BusinessIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
                                 <Box sx={{ flex: 1, minWidth: 0 }}>
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                    Company
+                                    Account
                                   </Typography>
                                   <Typography variant="body1" sx={{ mt: 0.25 }}>
                                     {(jobOrder?.companyId || company?.id) ? (
@@ -4473,8 +4729,8 @@ const RecruiterJobOrderDetail: React.FC = () => {
           {/* Right Column - Widgets (30%) */}
           <Grid item xs={12} md={4}>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-              {/* Company Widget */}
-              <SectionCard title="Company" action={
+              {/* CRM company (client account) summary */}
+              <SectionCard title="Account" action={
                 <Button
                   variant="outlined"
                   size="small"
@@ -4768,7 +5024,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Grid>
       </TabPanel>
 
-      <TabPanel value={activeTab} index={1}>
+      <TabPanel value={activeTab} index="checklist">
         <JobOrderChecklist
           jobOrder={jobOrder}
           location={location}
@@ -4784,14 +5040,24 @@ const RecruiterJobOrderDetail: React.FC = () => {
           onEditLocation={handleEditLocation}
           onEditContacts={() => setManageContactsOpen(true)}
           onEditRecruiters={handleOpenManageRecruiters}
-          onOpenJobBoard={() => setActiveTab(4)}
+          onOpenJobBoard={() => setTabAndPersist('jobs_board')}
           onJobOrderUpdated={(updates) =>
             setJobOrder((prev) => (prev ? { ...prev, ...updates } : prev))
           }
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={2}>
+      <TabPanel value={activeTab} index="hiring">
+        <JobOrderHiringTab
+          jobOrder={jobOrder}
+          tenantId={tenantId || ''}
+          onSaved={() => {
+            fetchJobOrder();
+          }}
+        />
+      </TabPanel>
+
+      <TabPanel value={activeTab} index="defaults">
         <JobOrderDefaultsTab 
           jobOrder={jobOrder}
           tenantId={tenantId || ''}
@@ -4801,7 +5067,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={3}>
+      <TabPanel value={activeTab} index="staff_instructions">
         {/* Staff Instructions Tab */}
         <Grid container spacing={3}>
           {/* First Day Instructions */}
@@ -4911,7 +5177,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         </Grid>
       </TabPanel>
 
-      <TabPanel value={activeTab} index={4}>
+      <TabPanel value={activeTab} index="jobs_board">
         {/* Jobs Board Tab */}
         {jobOrder && (
           <JobOrderJobsBoardTab
@@ -4926,7 +5192,18 @@ const RecruiterJobOrderDetail: React.FC = () => {
         )}
       </TabPanel>
 
-      <TabPanel value={activeTab} index={5}>
+      <TabPanel value={activeTab} index="auto_messaging">
+        {jobOrder && tenantId && jobOrderId && (
+          <JobOrderAutoMessagingTab
+            tenantId={tenantId}
+            jobOrderId={jobOrderId}
+            jobOrder={jobOrder}
+            onJobOrderUpdated={fetchJobOrder}
+          />
+        )}
+      </TabPanel>
+
+      <TabPanel value={activeTab} index="shift_setup">
         {/* Shift Setup Tab */}
         <ShiftSetupTab 
           tenantId={tenantId}
@@ -4935,7 +5212,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={6}>
+      <TabPanel value={activeTab} index="applications">
         {/* Applications Tab */}
         <ApplicantsTable 
           jobOrderId={jobOrderId || ''} 
@@ -4947,7 +5224,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={7}>
+      <TabPanel value={activeTab} index="placements">
         {/* Placements Tab */}
         <PlacementsTab
           tenantId={tenantId || ''}
@@ -4959,7 +5236,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={8}>
+      <TabPanel value={activeTab} index="notes">
         {/* Notes Tab */}
         <CRMNotesTab
           entityId={jobOrderId || ''}
@@ -4969,7 +5246,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
         />
       </TabPanel>
 
-      <TabPanel value={activeTab} index={9}>
+      <TabPanel value={activeTab} index="activity">
         {/* Activity Tab */}
         <Card>
           <CardContent>

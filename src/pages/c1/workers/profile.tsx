@@ -150,7 +150,7 @@ const WorkerProfile: React.FC = () => {
     <Container maxWidth="md" sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Typography variant="h4" component="h1" sx={{ fontWeight: 600 }}>
-          {t('nav.myProfile')}
+          {t('nav.myAccount')}
         </Typography>
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
@@ -166,8 +166,11 @@ const WorkerProfile: React.FC = () => {
                 </Typography>
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.75 }}>
                   {isProfileComplete
-                    ? 'Profile complete'
-                    : `${completeSectionCount} of ${totalSections} sections complete`}
+                    ? t('profile.hubProfileComplete')
+                    : t('profile.hubSectionsProgress', {
+                        complete: completeSectionCount,
+                        total: totalSections,
+                      })}
                 </Typography>
               </Box>
               <Typography variant="caption" color="text.secondary">
@@ -179,12 +182,12 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Basic Info</Typography>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionProfile')}</Typography>
             <Divider />
             <List disablePadding>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/personal-details')}>
                 <ListItemText
-                  primary="Personal details"
+                  primary={t('profile.sectionPersonalDetailsTitle')}
                   secondary={t('profile.sectionPersonalDetailsHubSecondary')}
                 />
                 <ChevronRightIcon color="action" />
@@ -195,39 +198,39 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Work Profile</Typography>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionWorkProfile')}</Typography>
             <Divider />
             <List disablePadding>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/work-authorization')}>
-                <ListItemText primary="Work authorization" />
+                <ListItemText primary={t('profile.sectionWorkAuthorizationTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {hasWorkAuth ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/resume')}>
-                <ListItemText primary="Resume" />
+                <ListItemText primary={t('profile.sectionResumeTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {resumeComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/bio')}>
-                <ListItemText primary="Bio" />
+                <ListItemText primary={t('profile.sectionBioTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {bioComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/certifications')}>
-                <ListItemText primary="Certifications & Licenses" />
+                <ListItemText primary={t('profile.sectionCertificationsTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {certificationsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/work-history')}>
-                <ListItemText primary="Work experience" />
+                <ListItemText primary={t('profile.sectionWorkHistoryTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {workExperienceComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
@@ -241,21 +244,21 @@ const WorkerProfile: React.FC = () => {
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/languages')}>
-                <ListItemText primary="Languages" />
+                <ListItemText primary={t('profile.sectionLanguagesTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {languagesComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/skills')}>
-                <ListItemText primary="Skills" />
+                <ListItemText primary={t('profile.sectionSkillsTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {skillsComplete ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
                 </Stack>
               </ListItemButton>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/preferences')}>
-                <ListItemText primary="Availability and preferences" />
+                <ListItemText primary={t('profile.sectionPreferencesTitle')} />
                 <Stack direction="row" spacing={0.5} alignItems="center">
                   {availabilityPreferencesPresent ? <CheckCircleIcon color="success" sx={{ fontSize: 18 }} /> : null}
                   <ChevronRightIcon color="action" />
@@ -267,12 +270,12 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Employment</Typography>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionEmployment')}</Typography>
             <Divider />
             {!tenantId ? (
               <Box sx={{ px: 2, py: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                  Employment will appear here once you’re linked to a C1 entity.
+                  {t('profile.hubEmploymentNeedTenant')}
                 </Typography>
               </Box>
             ) : employmentLoading ? (
@@ -282,7 +285,7 @@ const WorkerProfile: React.FC = () => {
             ) : employmentRecords.length === 0 ? (
               <Box sx={{ px: 2, py: 2 }}>
                 <Typography variant="body2" color="text.secondary">
-                  No employment records yet. They’re added when you’re confirmed for a role or start onboarding.
+                  {t('profile.hubEmploymentEmpty')}
                 </Typography>
               </Box>
             ) : (
@@ -305,6 +308,7 @@ const WorkerProfile: React.FC = () => {
                         rec.onboardingPipelineId &&
                           i9EmployeeSectionVerifiedByPipelineId[rec.onboardingPipelineId],
                       ),
+                      tr: t,
                     },
                   );
                   return (
@@ -353,7 +357,9 @@ const WorkerProfile: React.FC = () => {
         {tenantId ? (
           <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
             <CardContent sx={{ p: 0 }}>
-              <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Screening</Typography>
+              <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>
+                {t('workerAccount.sectionPreEmploymentChecks')}
+              </Typography>
               <Divider />
               <List disablePadding>
                 <ListItemButton onClick={() => navigate(C1_WORKER_SCREENING_PATH)}>
@@ -361,8 +367,8 @@ const WorkerProfile: React.FC = () => {
                     <VerifiedUserIcon sx={{ color: 'text.secondary', fontSize: 22 }} />
                   </ListItemIcon>
                   <ListItemText
-                    primary="Screening status"
-                    secondary="Background checks, drug screen, and verification — not payroll or I-9."
+                    primary={t('workerAccount.preEmploymentChecksPrimary')}
+                    secondary={t('workerAccount.preEmploymentChecksSecondary')}
                   />
                   <ChevronRightIcon color="action" />
                 </ListItemButton>
@@ -373,11 +379,14 @@ const WorkerProfile: React.FC = () => {
 
         <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
           <CardContent sx={{ p: 0 }}>
-            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>Account</Typography>
+            <Typography sx={{ px: 2, py: 1.5, fontWeight: 700 }}>{t('workerAccount.sectionAccountSettings')}</Typography>
             <Divider />
             <List disablePadding>
               <ListItemButton onClick={() => navigate('/c1/workers/profile/reset-password')}>
-                <ListItemText primary="Reset password" secondary="Update your sign-in password." />
+                <ListItemText
+                  primary={t('profile.sectionResetPasswordTitle')}
+                  secondary={t('profile.sectionResetPasswordDescription')}
+                />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
               {/* Phone updates live under profile completion / verification flows; keep personal-details routable elsewhere if linked. */}
@@ -393,7 +402,7 @@ const WorkerProfile: React.FC = () => {
                 <ChevronRightIcon color="action" />
               </ListItemButton>
               <ListItemButton onClick={() => void logout()}>
-                <ListItemText primary="Log out" secondary="Sign out of this device securely." />
+                <ListItemText primary={t('nav.logOut')} secondary={t('profile.logOutSecureSecondary')} />
                 <ChevronRightIcon color="action" />
               </ListItemButton>
             </List>

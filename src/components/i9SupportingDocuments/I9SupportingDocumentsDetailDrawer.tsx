@@ -34,34 +34,61 @@ const I9SupportingDocumentsDetailDrawer: React.FC<I9SupportingDocumentsDetailDra
       open={open}
       onClose={onClose}
       PaperProps={{
-        sx: { width: { xs: '100%', sm: 520, md: 720 }, maxWidth: '100vw' },
+        sx: {
+          width: { xs: '100%', sm: 'min(1200px, 100vw)' },
+          maxWidth: '100vw',
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+        },
       }}
     >
-      <Box sx={{ p: 2, pb: 4 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
-          <Typography variant="h6" fontWeight={700}>
-            I-9 supporting documents
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          height: '100%',
+          minHeight: 0,
+        }}
+      >
+        <Box sx={{ flexShrink: 0, px: 2.5, pt: 2, pb: 1.5 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
+            <Typography variant="h6" fontWeight={700}>
+              I-9 supporting documents
+            </Typography>
+            <IconButton aria-label="Close" onClick={onClose} size="small">
+              <CloseIcon />
+            </IconButton>
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+            {I9_DRAWER_REVIEW_HELPER}
           </Typography>
-          <IconButton aria-label="Close" onClick={onClose} size="small">
-            <CloseIcon />
-          </IconButton>
+          <Divider sx={{ mt: 2 }} />
         </Box>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2, lineHeight: 1.5 }}>
-          {I9_DRAWER_REVIEW_HELPER}
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-        <I9SupportingDocumentsWorkspace
-          tenantId={tenantId}
-          workerUserId={workerUserId}
-          variant="drawer"
-          externalRows={rows}
-          externalLoading={loading}
-          externalError={error}
-          requestedForEntityId={requestedForEntityId}
-          employmentEntityKey={employmentEntityKey}
-          showPageIntro={false}
-          suppressStaffRequestButton
-        />
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            minWidth: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            px: 2.5,
+            pb: 3,
+          }}
+        >
+          <I9SupportingDocumentsWorkspace
+            tenantId={tenantId}
+            workerUserId={workerUserId}
+            variant="drawer"
+            externalRows={rows}
+            externalLoading={loading}
+            externalError={error}
+            requestedForEntityId={requestedForEntityId}
+            employmentEntityKey={employmentEntityKey}
+            showPageIntro={false}
+            suppressStaffRequestButton
+          />
+        </Box>
       </Box>
     </Drawer>
   );

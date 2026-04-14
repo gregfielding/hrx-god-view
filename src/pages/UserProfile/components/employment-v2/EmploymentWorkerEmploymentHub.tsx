@@ -20,6 +20,7 @@ import { buildTaxIdentityChecklistItems } from '../../../../utils/employmentMini
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
 import ProfileTabPointerAlert from '../../../../components/profile/ProfileTabPointerAlert';
 import { workerEmploymentShouldShowScreeningPointerAlert } from '../../../../utils/workerEmploymentBackgroundsCrossLink';
+import { useT } from '../../../../i18n';
 
 export interface EmploymentWorkerEmploymentHubProps {
   entityKey: EmploymentEntityKey;
@@ -43,7 +44,10 @@ export interface EmploymentWorkerEmploymentHubProps {
   }) => void | Promise<void>;
 }
 
-function payrollButtonRow(overview: EmploymentEntityOverview) {
+function payrollButtonRow(
+  overview: EmploymentEntityOverview,
+  tr: (key: string, params?: Record<string, string | number>) => string,
+) {
   const payroll = overview.systems.payroll;
   const payrollComplete = String(overview.workerPayrollAccount?.payrollStatus || '').toLowerCase() === 'complete';
   const signup = String(payroll?.entityOnboardingUrl || '').trim() || null;
@@ -70,7 +74,7 @@ function payrollButtonRow(overview: EmploymentEntityOverview) {
           component="a"
           sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
         >
-          Payroll setup
+          {tr('workerEmploymentDetail.payrollButtonSetup')}
         </Button>
       ) : null}
       {loginWhileOnboardingHref ? (
@@ -84,7 +88,7 @@ function payrollButtonRow(overview: EmploymentEntityOverview) {
           component="a"
           sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
         >
-          View payroll
+          {tr('workerEmploymentDetail.payrollButtonView')}
         </Button>
       ) : null}
       {viewHref ? (
@@ -98,7 +102,7 @@ function payrollButtonRow(overview: EmploymentEntityOverview) {
           component="a"
           sx={{ textTransform: 'none', alignSelf: 'flex-start' }}
         >
-          View payroll
+          {tr('workerEmploymentDetail.payrollButtonView')}
         </Button>
       ) : null}
     </Stack>
@@ -117,6 +121,7 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
   onOpenWorkerNotificationComposer,
   onSendWorkerNotificationDirect,
 }) => {
+  const t = useT();
   const { entityEmployment, headerEntityName } = overview;
   const showI9 = overview.workerType !== '1099';
   const skipI9Docs = workerEmploymentEntityKeySkipsWorkerI9SupportingDocuments(entityKey);
@@ -131,8 +136,7 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
     (Boolean(onNavigateToProfileTab) || Boolean(onNavigateToScreening)) &&
     workerEmploymentShouldShowScreeningPointerAlert(overview);
 
-  const screeningMessage =
-    screeningPointerMessage ?? 'You have screening steps to complete. Go to Backgrounds & compliance.';
+  const screeningMessage = screeningPointerMessage ?? t('workerEmploymentDetail.screeningPointerDefault');
 
   return (
     <Stack spacing={2}>
@@ -146,37 +150,40 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
       ) : null}
       <Alert severity="success" variant="outlined" sx={{ alignItems: 'flex-start' }}>
         <Typography variant="body2" fontWeight={600}>
-          You&apos;re all set
+          {t('workerEmploymentDetail.hubAllSetTitle')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, lineHeight: 1.45 }}>
-          Onboarding for this employer is complete. Use the sections below any time you need payroll, documents, or
-          employment details.
+          {t('workerEmploymentDetail.hubAllSetBodyShort')}
         </Typography>
       </Alert>
 
       <Card variant="outlined">
-        <CardHeader title="Your employment" titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }} sx={{ pb: 1 }} />
+        <CardHeader
+          title={t('workerEmploymentDetail.hubYourEmploymentShort')}
+          titleTypographyProps={{ variant: 'subtitle1', fontWeight: 700 }}
+          sx={{ pb: 1 }}
+        />
         <CardContent sx={{ pt: 0, '&:last-child': { pb: 2 } }}>
           <Stack spacing={2} divider={<Divider flexItem />}>
             <Box component="section">
               <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
-                Payroll
+                {t('workerEmploymentDetail.bridgeSectionPayroll')}
               </Typography>
-              {payrollButtonRow(overview) ?? (
+              {payrollButtonRow(overview, t) ?? (
                 <Typography variant="body2" color="text.secondary">
-                  Payroll links will appear here when your employer enables them.
+                  {t('workerEmploymentDetail.hubPayrollLinksPlaceholder')}
                 </Typography>
               )}
             </Box>
 
             <Box component="section">
               <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
-                Documents
+                {t('workerEmploymentDetail.bridgeSectionIdentity')}
               </Typography>
               {showI9 && !skipI9Docs ? (
                 <Stack spacing={1.5}>
                   <Button size="small" variant="outlined" onClick={scrollToI9} sx={{ textTransform: 'none', alignSelf: 'flex-start' }}>
-                    Jump to I-9 & supporting documents
+                    {t('workerEmploymentDetail.hubJumpToI9Short')}
                   </Button>
                   <Box
                     id={EMPLOYMENT_I9_SECTION_ELEMENT_ID}
@@ -200,33 +207,21 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
                 </Stack>
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  No I-9 document uploads are required for this employment type.
+                  {t('workerEmploymentDetail.hubNoI9Uploads')}
                 </Typography>
               )}
             </Box>
 
             <Box component="section">
-              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
-                Tax forms
+              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 0.5 }}>
+                {t('workerEmploymentDetail.bridgeSectionScreening')}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                Tax form summaries will appear here in a future update.
+                {headerEntityName?.trim() || t('workerEmploymentDetail.hubEmployerFallback')}
+                {entityEmployment
+                  ? ` · ${entityEmploymentStatusForDisplay(entityEmployment)} · ${employmentHeaderStateLabel(overview.employmentHeaderState)}`
+                  : ''}
               </Typography>
-            </Box>
-
-            <Box component="section">
-              <Typography variant="subtitle2" fontWeight={700} sx={{ mb: 1 }}>
-                Employment info
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                {headerEntityName?.trim() || 'Employer'}
-              </Typography>
-              {entityEmployment ? (
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-                  Record: {entityEmploymentStatusForDisplay(entityEmployment)} ·{' '}
-                  {employmentHeaderStateLabel(overview.employmentHeaderState)}
-                </Typography>
-              ) : null}
             </Box>
           </Stack>
         </CardContent>

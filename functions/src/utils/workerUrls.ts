@@ -21,6 +21,16 @@ export function buildWorkerProfileUrl(): string {
   return `${getWorkerWebBaseUrl()}/c1/workers/profile`;
 }
 
+/** AI pre-screen questionnaire; pass application id from application doc. */
+export function buildWorkerAiPrescreenUrl(applicationId: string): string {
+  const id = String(applicationId || '').trim();
+  const base = getWorkerWebBaseUrl();
+  if (!id) {
+    return `${base}/c1/workers/prescreen`;
+  }
+  return `${base}/c1/workers/prescreen?applicationId=${encodeURIComponent(id)}`;
+}
+
 /**
  * Worker entity employment onboarding hub. `employmentRecordId` is the `entity_employments` doc id
  * (same as `worker_onboarding` / pipeline id: `userId__entityKey`).

@@ -1,7 +1,7 @@
 /**
  * Shared "Start E-Verify (C1 Select)" dialog — Employment tab (C1 Select entity) and other call sites.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -33,6 +33,7 @@ import {
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   serverTimestamp,
   updateDoc,
   where,
@@ -64,7 +65,10 @@ import {
   normalizeI551NumberForEverifyApi,
 } from '../../../utils/everifyI551DocumentNumber';
 import {
+  i9CaseFlatPartialToDialogPrefill,
   i9SupportingApprovedToDialogPrefill,
+  mergeEverifyDialogPrefill,
+  type I9CaseFlatPartialFromSupporting,
   type I9SupportingDocLike,
 } from '../../../utils/i9SupportingToEverifyPrefill';
 
@@ -80,6 +84,20 @@ const EVERIFY_CITIZENSHIP_OPTIONS: { value: string; label: string }[] = [
 
 const everifyCheckEligibility = httpsCallable(functions, 'everifyCheckEligibility');
 const everifyCreateCase = httpsCallable(functions, 'everifyCreateCase');
+
+/** Stable fingerprint of approved I-9 supporting rows (for prefill refresh without clobbering unrelated state). */
+function i9ApprovedSignature(rows: I9SupportingDocLike[]): string {
+  const approved = rows.filter((r) => String(r.status || '').toLowerCase() === 'approved');
+  return approved
+    .map((r) => {
+      let ms = 0;
+      const ra = r.reviewedAt as { toMillis?: () => number } | undefined;
+      if (ra && typeof ra.toMillis === 'function') ms = ra.toMillis();
+      return `${String(r.documentType || '')}:${ms}`;
+    })
+    .sort()
+    .join('|');
+}
 
 function formatTime(value: unknown): string {
   if (value == null) return '—';
@@ -168,7 +186,7 @@ function mapEntityWorkerTypeToEmployment(workerType: 'W2' | '1099' | 'BOTH' | un
 }
 
 export const EVERIFY_SELECT_PERM_HINT =
-  'E-Verify actions require tenant role Recruiter, Manager, or Admin, or HRX access (matches server).';
+  'E-Verify actions require Recruiter/Manager/Admin, HRX, or tenant security level ≥ 4 (includes 5–7) per Firestore (matches server).';
 
 export interface StartEverifySelectDialogProps {
   open: boolean;
@@ -193,7 +211,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   dialogTitle,
   prefillEverifyCaseId,
 }) => {
-  const { isHRX, claimsRoles } = useAuth();
+  const { user, isHRX, claimsRoles, tenantRolesFromProfile, legacyUserSecurityLevel, legacyUserRole } = useAuth();
 
   const [userEmploymentIds, setUserEmploymentIds] = useState<
     Array<{ id: string; label: string; entityName: string; raw: Record<string, unknown> }>
@@ -239,8 +257,27 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   const [i9StatusSaving, setI9StatusSaving] = useState(false);
 
   const canManageEverify = useMemo(
-    () => canManageEverifyFromClaims(isHRX, tenantId, claimsRoles),
-    [isHRX, tenantId, claimsRoles]
+    () =>
+      canManageEverifyFromClaims(
+        isHRX,
+        tenantId,
+        claimsRoles,
+        user?.uid,
+        uid,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
+      ),
+    [
+      isHRX,
+      tenantId,
+      claimsRoles,
+      user?.uid,
+      uid,
+      tenantRolesFromProfile,
+      legacyUserSecurityLevel,
+      legacyUserRole,
+    ],
   );
 
   const listAFilteredPresets = useMemo(
@@ -283,7 +320,10 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
       evDocCSelection === EVERIFY_DOC_CUSTOM
         ? evDocCCustomCode.trim() !== ''
         : Boolean(evDocCSelection);
-    return bOk && cOk;
+    const listBcExpOk =
+      evDocNoExpiration ||
+      (evDocExpiration.trim() !== '' && /^\d{4}-\d{2}-\d{2}$/.test(evDocExpiration.trim()));
+    return bOk && cOk && listBcExpOk;
   }, [
     evCitizenshipCode,
     evDocMode,
@@ -295,6 +335,8 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     evDocCSelection,
     evDocCCustomCode,
     evDocANumberValue,
+    evDocExpiration,
+    evDocNoExpiration,
   ]);
 
   /** `i551_number` invalid while non-empty (custom List A only; Green Card preset uses Alien # only). */
@@ -397,6 +439,32 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     [tenantId]
   );
 
+  const lastI9PrefillSigRef = useRef<string | null>(null);
+
+  const applyI9SupportingEverifyPrefill = useCallback((wd: Record<string, unknown>, i9Rows: I9SupportingDocLike[]) => {
+    const rawPref = wd.everifyI9SupportingPrefill as { flatPartial?: Record<string, string> } | undefined;
+    const fp = rawPref?.flatPartial;
+    const userPre = i9CaseFlatPartialToDialogPrefill((fp || {}) as I9CaseFlatPartialFromSupporting);
+    const fromRows = i9SupportingApprovedToDialogPrefill(i9Rows);
+    const i9Pre = mergeEverifyDialogPrefill(fromRows, userPre);
+    setEvWorkerFirstName((String(wd.firstName || '').trim() || i9Pre.evWorkerFirstName).trim());
+    setEvWorkerLastName((String(wd.lastName || '').trim() || i9Pre.evWorkerLastName).trim());
+    setEvWorkerDob(toDateInputValue(wd.dob ?? wd.dateOfBirth) || i9Pre.evWorkerDob);
+    setEvWorkerSsn('');
+    setEvCitizenshipCode('');
+    if (i9Pre.evDocASelection || (i9Pre.evDocBSelection && i9Pre.evDocCSelection)) {
+      setEvDocMode(i9Pre.docMode);
+      if (i9Pre.evDocASelection) setEvDocASelection(i9Pre.evDocASelection);
+      if (i9Pre.evDocANumberField) setEvDocANumberField(i9Pre.evDocANumberField);
+      if (i9Pre.evDocANumberValue) setEvDocANumberValue(i9Pre.evDocANumberValue);
+      if (i9Pre.evDocBSelection) setEvDocBSelection(i9Pre.evDocBSelection);
+      if (i9Pre.evDocCSelection) setEvDocCSelection(i9Pre.evDocCSelection);
+      if (i9Pre.evDocBNumber) setEvDocBNumber(i9Pre.evDocBNumber);
+      if (i9Pre.evDocCNumber) setEvDocCNumber(i9Pre.evDocCNumber);
+      if (i9Pre.evDocExpiration) setEvDocExpiration(i9Pre.evDocExpiration);
+    }
+  }, []);
+
   const handleCreateUserEmployment = async () => {
     if (!tenantId || !everifyHiringEntityResolved || !newEmploymentStartIso) return;
     const entity = everifyHiringEntityResolved;
@@ -492,7 +560,9 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
           msgs.push('Complete the I-9 document section (List A type, numbers, and expiration rules).');
         }
       } else {
-        msgs.push('Complete List B and List C document types (and numbers if required).');
+        msgs.push(
+          'Complete List B and List C document types, List B identity document number (document_bc_number), and expiration (YYYY-MM-DD) or “no expiration” per ICA.',
+        );
       }
     }
     return msgs;
@@ -507,6 +577,8 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     evDocASelection,
     evDocANumberField,
     evDocANumberValue,
+    evDocExpiration,
+    evDocNoExpiration,
   ]);
 
   const handleUserEmploymentI9StatusChange = async (next: string) => {
@@ -533,6 +605,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   useEffect(() => {
     if (!open || !tenantId) return;
     let cancelled = false;
+    lastI9PrefillSigRef.current = null;
     setEvMessage(null);
     setSelectedEmpId('');
     setHireDateDisplayText('');
@@ -573,23 +646,8 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
         if (cancelled) return;
         const wd = workerSnap.exists() ? (workerSnap.data() as Record<string, unknown>) : {};
         const i9Rows: I9SupportingDocLike[] = i9SupportingSnap.docs.map((d) => d.data() as I9SupportingDocLike);
-        const i9Pre = i9SupportingApprovedToDialogPrefill(i9Rows);
-        setEvWorkerFirstName((String(wd.firstName || '').trim() || i9Pre.evWorkerFirstName).trim());
-        setEvWorkerLastName((String(wd.lastName || '').trim() || i9Pre.evWorkerLastName).trim());
-        setEvWorkerDob(toDateInputValue(wd.dob ?? wd.dateOfBirth) || i9Pre.evWorkerDob);
-        setEvWorkerSsn('');
-        setEvCitizenshipCode('');
-        if (i9Pre.evDocASelection || (i9Pre.evDocBSelection && i9Pre.evDocCSelection)) {
-          setEvDocMode(i9Pre.docMode);
-          if (i9Pre.evDocASelection) setEvDocASelection(i9Pre.evDocASelection);
-          if (i9Pre.evDocANumberField) setEvDocANumberField(i9Pre.evDocANumberField);
-          if (i9Pre.evDocANumberValue) setEvDocANumberValue(i9Pre.evDocANumberValue);
-          if (i9Pre.evDocBSelection) setEvDocBSelection(i9Pre.evDocBSelection);
-          if (i9Pre.evDocCSelection) setEvDocCSelection(i9Pre.evDocCSelection);
-          if (i9Pre.evDocBNumber) setEvDocBNumber(i9Pre.evDocBNumber);
-          if (i9Pre.evDocCNumber) setEvDocCNumber(i9Pre.evDocCNumber);
-          if (i9Pre.evDocExpiration) setEvDocExpiration(i9Pre.evDocExpiration);
-        }
+        applyI9SupportingEverifyPrefill(wd, i9Rows);
+        lastI9PrefillSigRef.current = i9ApprovedSignature(i9Rows);
         setEverifyHiringEntityResolved(resolveEverifyHiringEntity(entities));
         setUserEmploymentIds(opts);
         let pickEmpId = '';
@@ -627,7 +685,24 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     loadTenantEntitiesForTenant,
     loadEmploymentOptionsForUser,
     applyEmploymentSelection,
+    applyI9SupportingEverifyPrefill,
   ]);
+
+  useEffect(() => {
+    if (!open || !tenantId) return;
+    const q = query(collection(db, p.workerI9SupportingDocuments(tenantId)), where('userId', '==', uid));
+    const unsub = onSnapshot(q, (snap) => {
+      const i9Rows = snap.docs.map((d) => d.data() as I9SupportingDocLike);
+      const sig = i9ApprovedSignature(i9Rows);
+      if (sig === lastI9PrefillSigRef.current && lastI9PrefillSigRef.current !== null) return;
+      lastI9PrefillSigRef.current = sig;
+      getDoc(doc(db, 'users', uid)).then((workerSnap) => {
+        const wd = workerSnap.exists() ? (workerSnap.data() as Record<string, unknown>) : {};
+        applyI9SupportingEverifyPrefill(wd, i9Rows);
+      });
+    });
+    return () => unsub();
+  }, [open, tenantId, uid, applyI9SupportingEverifyPrefill]);
 
   const submitEverify = async () => {
     if (!canManageEverify) {
@@ -732,13 +807,21 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
       docFields.document_c_type_code = cCode;
       if (evDocBNumber.trim()) docFields.document_bc_number = evDocBNumber.trim();
       if (evDocCNumber.trim()) docFields.document_c_number = evDocCNumber.trim();
-      if (evDocExpiration.trim()) {
+      if (evDocNoExpiration) {
+        docFields.no_expiration_date = true;
+      } else if (evDocExpiration.trim()) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(evDocExpiration.trim())) {
-          setEvMessage('List B document expiration must be YYYY-MM-DD.');
+          setEvMessage('List B + C path: document expiration must be YYYY-MM-DD.');
           setEvSubmitting(false);
           return;
         }
         docFields.expiration_date = evDocExpiration.trim();
+      } else {
+        setEvMessage(
+          'List B + C: E-Verify requires expiration_date or no_expiration_date=true — enter the date or check “no expiration”.',
+        );
+        setEvSubmitting(false);
+        return;
       }
     }
     setEvSubmitting(true);
@@ -1251,6 +1334,29 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                           fullWidth
                           autoComplete="off"
                           helperText="ICA field name may differ; confirm in your ICA."
+                        />
+                        <TextField
+                          type="date"
+                          size="small"
+                          label="List B identity document expiration"
+                          value={evDocExpiration}
+                          onChange={(e) => setEvDocExpiration(e.target.value)}
+                          fullWidth
+                          InputLabelProps={{ shrink: true }}
+                          disabled={evDocNoExpiration}
+                          helperText="Required for List B + C (E-Verify ICA). Prefilled from I-9 document review / extraction when available (List B or List C date)."
+                        />
+                        <FormControlLabel
+                          control={
+                            <Checkbox
+                              checked={evDocNoExpiration}
+                              onChange={(_, v) => {
+                                setEvDocNoExpiration(v);
+                                if (v) setEvDocExpiration('');
+                              }}
+                            />
+                          }
+                          label="Document has no expiration (no_expiration_date)"
                         />
                         <FormControl fullWidth size="small" required>
                           <InputLabel id="ev-doc-c-label">List C document type</InputLabel>

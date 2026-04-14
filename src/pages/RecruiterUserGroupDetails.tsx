@@ -48,6 +48,7 @@ import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAut
 import { getEVerifyComfortStatusFromUserData, compareEVerifyComfort } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
+import UserGroupHiringControlPanel from '../components/recruiter/userGroup/UserGroupHiringControlPanel';
 
 type SecurityLevel =
   | '0'
@@ -56,6 +57,20 @@ type SecurityLevel =
   | '3'
   | '4'
   | 'all';
+
+function getAccountCreatedMillis(user: Pick<RecruiterUser, 'createdAt'>): number {
+  const t = user.createdAt as unknown;
+  if (t == null) return 0;
+  if (t instanceof Date) return t.getTime();
+  if (typeof t === 'number') return t;
+  if (typeof t === 'object' && t !== null) {
+    const o = t as { toMillis?: () => number; toDate?: () => Date; _seconds?: number };
+    if (typeof o.toMillis === 'function') return o.toMillis();
+    if (typeof o.toDate === 'function') return o.toDate().getTime();
+    if (typeof o._seconds === 'number') return o._seconds * 1000;
+  }
+  return 0;
+}
 
 interface RecruiterUser {
   id: string;
@@ -84,6 +99,7 @@ interface TenantUserGroup {
   id: string;
   title?: string;
   description?: string;
+  hiringConfig?: Record<string, unknown>;
 }
 
 const RecruiterUserGroupDetails: React.FC = () => {
@@ -100,11 +116,11 @@ const RecruiterUserGroupDetails: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>('all');
   const [skillFilter, setSkillFilter] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'auth' | 'documented'>(
-    'recentlyUpdated',
-  );
+  const [sortBy, setSortBy] = useState<
+    'accountCreated' | 'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'auth' | 'documented'
+  >('accountCreated');
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
-  const [activeTab, setActiveTab] = useState<'members' | 'settings'>('members');
+  const [activeTab, setActiveTab] = useState<'members' | 'hiring' | 'settings'>('members');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
 
@@ -302,6 +318,9 @@ const RecruiterUserGroupDetails: React.FC = () => {
       })
       .sort((a, b) => {
         switch (sortBy) {
+          case 'accountCreated': {
+            return getAccountCreatedMillis(b) - getAccountCreatedMillis(a);
+          }
           case 'recentlyUpdated': {
             const aTime =
               a.updatedAt instanceof Date
@@ -485,6 +504,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
           <Box sx={{ display: 'flex', gap: 0.5 }}>
             {[
               { label: 'Members', value: 'members' as const },
+              { label: 'Hiring', value: 'hiring' as const },
               { label: 'Settings', value: 'settings' as const },
             ].map((t) => {
               const isActive = activeTab === t.value;
@@ -517,7 +537,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
         }
         rightActions={
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-            {activeTab === 'members' && (
+            {activeTab === 'members' ? (
               <>
                 <FavoritesFilter
                   favoriteType="users"
@@ -542,7 +562,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                   placeholder="Search people..."
                 />
               </>
-            )}
+            ) : null}
 
             <Button
               variant="outlined"
@@ -581,6 +601,23 @@ const RecruiterUserGroupDetails: React.FC = () => {
                 Group ID: {group.id}
               </Typography>
             </Paper>
+          </Box>
+        ) : activeTab === 'hiring' && tenantId ? (
+          <Box sx={{ p: '16px', width: '100%', boxSizing: 'border-box' }}>
+            <Typography variant="h6" fontWeight={700} sx={{ mb: 2 }}>
+              Hiring control
+            </Typography>
+            <UserGroupHiringControlPanel
+              tenantId={tenantId}
+              groupId={group.id}
+              memberCount={members.length}
+              memberProfiles={members.map((m) => ({
+                userId: m.id,
+                aiProfileScore: m.aiProfileScore,
+                aiJobFitScore: m.aiJobFitScore,
+              }))}
+              onSaved={() => void loadGroup()}
+            />
           </Box>
         ) : (
           <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -636,6 +673,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
                     value={sortBy}
                     onChange={(event) => setSortBy(event.target.value as typeof sortBy)}
                   >
+                    <MenuItem value="accountCreated">HRX signup (newest first)</MenuItem>
                     <MenuItem value="recentlyUpdated">Recently Updated</MenuItem>
                     <MenuItem value="lastLogin">Last Login</MenuItem>
                     <MenuItem value="aiScore">AI Score</MenuItem>

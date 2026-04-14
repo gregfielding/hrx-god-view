@@ -3,10 +3,13 @@
  * Algorithm: `AI_PRESCREEN_SCORING_AND_ELIGIBILITY.md` §2–7 (v1).
  */
 
+import { prescreenTextHasConcreteDetail } from './prescreenTextAnswerQuality';
+import { normalizeDrugBackgroundAnswer } from './prescreenComplianceSemantics';
+
 export type WorkerAiPrescreenAnswers = {
   motivation?: string;
-  similar_experience?: string;
   experience_details?: string;
+  pressure_situation?: string;
   work_confidence?: string[];
   attendance_issues?: string;
   attendance_explanation?: string;
@@ -44,6 +47,8 @@ const MODERATE_FLAGS = new Set([
   'limited_relevant_experience',
   'drug_unknown',
   'background_unknown',
+  'low_effort_response',
+  'vague_response',
 ]);
 
 function norm(s: unknown): string {
@@ -73,13 +78,16 @@ function scoreExperience(answers: WorkerAiPrescreenAnswers): { pts: number; flag
   const flags: string[] = [];
   let pts = 0;
 
-  const similar = normLower(answers.similar_experience);
-  if (similar === 'yes') pts += 15;
-  else if (similar === 'no') pts += 5;
-
   const details = norm(answers.experience_details);
-  const detailsMeaningful = details.length > 20;
-  if (detailsMeaningful) pts += 5;
+  const detailsConcrete = prescreenTextHasConcreteDetail(details) || details.length >= 36;
+  if (detailsConcrete) pts += 16;
+  else if (details.length >= 20) pts += 11;
+  else if (details.length > 0) pts += 6;
+  else pts += 2;
+
+  const pressure = norm(answers.pressure_situation);
+  if (prescreenTextHasConcreteDetail(pressure) || pressure.length >= 40) pts += 6;
+  else if (pressure.length >= 22) pts += 3;
 
   const rawConf = answers.work_confidence;
   const selections = normalizeWorkConfidence(rawConf);
@@ -96,7 +104,8 @@ function scoreExperience(answers: WorkerAiPrescreenAnswers): { pts: number; flag
   pts = Math.min(25, pts);
 
   const confWeak = confPts === 0;
-  if (similar === 'no' || (!detailsMeaningful && confWeak)) {
+  const detailsWeak = details.length < 20 && !prescreenTextHasConcreteDetail(details);
+  if (detailsWeak && confWeak) {
     flags.push('limited_relevant_experience');
   }
 
@@ -148,29 +157,33 @@ function scoreTransportation(answers: WorkerAiPrescreenAnswers): { pts: number; 
   return { pts, flags };
 }
 
-function normDrugBg(s: unknown): string {
-  return normLower(s).replace(/\s+/g, '_');
-}
-
+/**
+ * Risk sub-score + compliance flags.
+ * `yes` = able to pass → full points, no compliance risk flags.
+ * `no` = concern → `*_risk` flag (major).
+ * `not_sure` / unknown → partial points + `*_unknown` (moderate).
+ */
 function scoreRisk(answers: WorkerAiPrescreenAnswers): { pts: number; flags: string[] } {
   const flags: string[] = [];
   let pts = 0;
 
-  const drug = normDrugBg(answers.drug_screen);
-  if (drug === 'no') pts += 10;
-  else if (drug === 'not_sure') {
+  const drug = normalizeDrugBackgroundAnswer(answers.drug_screen);
+  if (drug === 'yes') {
+    pts += 10;
+  } else if (drug === 'not_sure' || drug === 'unknown') {
     pts += 5;
     flags.push('drug_unknown');
-  } else if (drug === 'yes') {
+  } else if (drug === 'no') {
     flags.push('drug_risk');
   }
 
-  const bg = normDrugBg(answers.background_check);
-  if (bg === 'no') pts += 10;
-  else if (bg === 'not_sure') {
+  const bg = normalizeDrugBackgroundAnswer(answers.background_check);
+  if (bg === 'yes') {
+    pts += 10;
+  } else if (bg === 'not_sure' || bg === 'unknown') {
     pts += 5;
     flags.push('background_unknown');
-  } else if (bg === 'yes') {
+  } else if (bg === 'no') {
     flags.push('background_risk');
   }
 
@@ -228,7 +241,7 @@ function buildSummary(
   if (recommendation === 'decline') {
     if (hasDrug || hasBg) {
       return (
-        'Candidate disclosed a potential compliance issue or significant fit concern that may affect placement. ' +
+        'Compliance screening answers indicate uncertainty or an issue that may affect placement. ' +
         'Review before moving forward.'
       );
     }
@@ -251,7 +264,7 @@ function buildSummary(
     );
   }
   if (hasDrug || hasBg) {
-    return 'There are compliance-related unknowns or mixed signals. Recruiter review is recommended.';
+    return 'Drug/background answers are uncertain or indicate a possible issue. Recruiter review is recommended.';
   }
   return 'Pre-screen results are borderline; recruiter review is recommended before the next step.';
 }
@@ -260,18 +273,28 @@ function buildSummary(
  * Score from submitted answers (validated keys/values expected upstream).
  * Unknown enum values are scored conservatively (no throw).
  */
-export function scoreWorkerAiPrescreen(answers: WorkerAiPrescreenAnswers): AiPrescreenScoreResult {
+export function scoreWorkerAiPrescreen(
+  answers: WorkerAiPrescreenAnswers,
+  opts?: { answerQualityFlags?: string[]; scoreAdjustment?: number },
+): AiPrescreenScoreResult {
   const exp = scoreExperience(answers);
   const rel = scoreReliability(answers);
   const trans = scoreTransportation(answers);
   const risk = scoreRisk(answers);
   const phys = scorePhysical(answers);
 
-  const flagSet = [...exp.flags, ...rel.flags, ...trans.flags, ...risk.flags, ...phys.flags];
+  const flagSet = [
+    ...exp.flags,
+    ...rel.flags,
+    ...trans.flags,
+    ...risk.flags,
+    ...phys.flags,
+    ...(opts?.answerQualityFlags ?? []),
+  ];
   const flags = [...new Set(flagSet)];
 
   let overallScore =
-    exp.pts + rel.pts + trans.pts + risk.pts + phys.pts;
+    exp.pts + rel.pts + trans.pts + risk.pts + phys.pts + (opts?.scoreAdjustment ?? 0);
   overallScore = Math.max(0, Math.min(100, Math.round(overallScore)));
 
   const recommendation = recommendationFromScoreAndFlags(overallScore, flags);

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -65,6 +65,15 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Synchronous guard — state updates async, so double-clicks could otherwise fire two callable invocations. */
+  const submitInFlightRef = useRef(false);
+
+  useEffect(() => {
+    if (!open) {
+      submitInFlightRef.current = false;
+      setSubmitting(false);
+    }
+  }, [open]);
 
   const loadEntities = useCallback(async () => {
     setLoadingEntities(true);
@@ -100,11 +109,13 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
   }, [open, entities, entityKey]);
 
   const handleSubmit = async () => {
+    if (submitInFlightRef.current) return;
     setError(null);
     if (!entityId.trim()) {
       setError('Select a hiring entity.');
       return;
     }
+    submitInFlightRef.current = true;
     setSubmitting(true);
     try {
       await startOnCallFn({
@@ -128,6 +139,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             : 'Request failed';
       setError(msg);
     } finally {
+      submitInFlightRef.current = false;
       // Always reload employment overview after a round-trip: server may have written (messages sent) even if
       // the client sees an error (timeout / flaky HTTPS). Also heals teammates blocked on a single restricted read during refetch.
       void onSuccess();
@@ -149,7 +161,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             and message type On-call employment started if you want templated notifications.
           </Typography>
           {error ? <Alert severity="error">{error}</Alert> : null}
-          <FormControl fullWidth size="small" disabled={loadingEntities}>
+          <FormControl fullWidth size="small" disabled={loadingEntities || submitting}>
             <InputLabel id="oncall-entity-label">Hiring entity</InputLabel>
             <Select
               labelId="oncall-entity-label"
@@ -169,7 +181,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
               <CircularProgress size={24} />
             </Box>
           ) : null}
-          <FormControl fullWidth size="small">
+          <FormControl fullWidth size="small" disabled={submitting}>
             <InputLabel id="oncall-wt-label">Worker type</InputLabel>
             <Select
               labelId="oncall-wt-label"
@@ -188,6 +200,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             onChange={(e) => setPackageId(e.target.value)}
             size="small"
             fullWidth
+            disabled={submitting}
             helperText="AccuSource / SourceDirect package id — orders only when integration is enabled and you have access."
           />
           <TextField
@@ -196,6 +209,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             onChange={(e) => setPackageName(e.target.value)}
             size="small"
             fullWidth
+            disabled={submitting}
           />
           <TextField
             label="Internal note (optional)"
@@ -205,6 +219,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
             fullWidth
             multiline
             minRows={2}
+            disabled={submitting}
           />
           <Typography variant="caption" color="text.secondary">
             Entity tabs: {EMPLOYMENT_ENTITY_KEYS.join(', ')} — pick the legal entity that matches this worker&apos;s
@@ -216,8 +231,20 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
         <Button onClick={onClose} disabled={submitting}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={() => void handleSubmit()} disabled={submitting || !entityId}>
-          {submitting ? <CircularProgress size={22} /> : 'Start on-call employment'}
+        <Button
+          variant="contained"
+          onClick={() => void handleSubmit()}
+          disabled={submitting || !entityId}
+          aria-busy={submitting}
+        >
+          {submitting ? (
+            <>
+              <CircularProgress size={20} sx={{ mr: 1 }} color="inherit" />
+              Starting…
+            </>
+          ) : (
+            'Start on-call employment'
+          )}
         </Button>
       </DialogActions>
     </Dialog>

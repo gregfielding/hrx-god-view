@@ -2,7 +2,7 @@
  * Worker entity employment page — I-9 supporting uploads (same Firestore/rules as admin; worker-only actions).
  */
 import React from 'react';
-import { Box, Card, CardContent, Typography } from '@mui/material';
+import { Box, Typography } from '@mui/material';
 import I9SupportingDocumentsWorkspace from '../../i9SupportingDocuments/I9SupportingDocumentsWorkspace';
 import { I9_WORKER_ENTITY_EXAMPLES } from '../../../constants/i9SupportingDocumentsEmploymentStrings';
 
@@ -24,37 +24,32 @@ const WorkerEntityI9Section: React.FC<WorkerEntityI9SectionProps> = ({
   requestedForEntityId,
 }) => {
   return (
-    <Card variant="outlined" sx={{ borderRadius: 2, borderColor: 'divider', boxShadow: 'none' }}>
-      <CardContent>
-        <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>
-          I-9 supporting documents
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.5 }}>
-          Your employer needs identity and work-authorization documents for Form I-9. Upload{' '}
-          <strong>one List A</strong> document, <strong>or</strong> <strong>one List B</strong> and{' '}
-          <strong>one List C</strong> document.
-        </Typography>
-        <Typography
-          variant="caption"
-          color="text.secondary"
-          component="div"
-          sx={{ mb: 1.5, lineHeight: 1.5, whiteSpace: 'pre-line' }}
-        >
-          {I9_WORKER_ENTITY_EXAMPLES}
-        </Typography>
-        <Box sx={{ mt: 0.5 }}>
-          <I9SupportingDocumentsWorkspace
-            tenantId={tenantId}
-            workerUserId={workerUserId}
-            variant="page"
-            requestedForEntityId={requestedForEntityId ?? null}
-            employmentEntityKey={employmentEntityKey ?? null}
-            suppressStaffRequestButton
-            showPageIntro={false}
-          />
-        </Box>
-      </CardContent>
-    </Card>
+    <Box>
+      <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>
+        I-9 supporting documents
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+        Upload the documents your employer needs for Form I-9: one List A, or one List B plus one List C.
+      </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        component="div"
+        sx={{ mb: 1.25, lineHeight: 1.45, whiteSpace: 'pre-line', display: { xs: 'none', sm: 'block' } }}
+      >
+        {I9_WORKER_ENTITY_EXAMPLES}
+      </Typography>
+      <I9SupportingDocumentsWorkspace
+        tenantId={tenantId}
+        workerUserId={workerUserId}
+        variant="page"
+        requestedForEntityId={requestedForEntityId ?? null}
+        employmentEntityKey={employmentEntityKey ?? null}
+        suppressStaffRequestButton
+        showPageIntro={false}
+        flatWorkerUploadSurface
+      />
+    </Box>
   );
 };
 

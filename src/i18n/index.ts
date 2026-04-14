@@ -34,6 +34,8 @@ export function loadLocale(lang: UiLanguage): Promise<Messages> {
     })
     .then((data: Messages) => {
       setCached(lang, data);
+      // Same-language async load (e.g. preload) must re-render useT() subscribers; t() is a stable ref so memos would otherwise stay stale.
+      listeners.forEach((f) => f());
       return data;
     });
 }
@@ -95,10 +97,7 @@ export function setLanguage(lang: UiLanguage): void {
     if (prev !== lang) listeners.forEach((f) => f());
     return;
   }
-  loadLocale(lang).then(
-    () => listeners.forEach((f) => f()),
-    () => listeners.forEach((f) => f())
-  );
+  loadLocale(lang).catch(() => listeners.forEach((f) => f()));
 }
 
 /**

@@ -52,6 +52,15 @@ type AuthContextType = {
   recruiterEnabled?: boolean;
   jobsBoardEnabled?: boolean;
   setCreatingUserProfile: (creating: boolean) => void;
+  /**
+   * Per-tenant role/security from Firestore `users/{uid}.tenantIds` (object map).
+   * Hydrated even when JWT `roles` lists tenants — needed so UI matches server fallbacks (e.g. securityLevel 5–7 in Firestore).
+   */
+  tenantRolesFromProfile: { [tenantId: string]: { role: Role; securityLevel: SecurityLevel } };
+  /** Top-level `users/{uid}.securityLevel` — server uses this when tenant meta omits level. */
+  legacyUserSecurityLevel?: SecurityLevel;
+  /** Top-level `users/{uid}.role` — server uses with tenant meta for onboarding permission fallbacks. */
+  legacyUserRole?: string;
 };
 
 const AuthContext = createContext<AuthContextType>({
@@ -87,6 +96,9 @@ const AuthContext = createContext<AuthContextType>({
   setCreatingUserProfile: () => {
     console.warn('setCreatingUserProfile called on uninitialized context');
   },
+  tenantRolesFromProfile: {},
+  legacyUserSecurityLevel: undefined,
+  legacyUserRole: undefined,
 });
 
 export const useAuth = () => useContext(AuthContext);
@@ -170,8 +182,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [activeTenant, setActiveTenant] = useState<any | null>(null);
   const lastActiveTenantIdRef = useRef<string | undefined>(undefined);
   const lastWrittenActiveTenantIdRef = useRef<string | undefined>(undefined);
-  // Add new state for tenantRoles
-  const [tenantRoles, setTenantRoles] = useState<{ [tenantId: string]: { role: Role, securityLevel: SecurityLevel } }>({});
+  const [tenantRolesFromProfile, setTenantRolesFromProfile] = useState<{
+    [tenantId: string]: { role: Role; securityLevel: SecurityLevel };
+  }>({});
+  const [legacyUserSecurityLevel, setLegacyUserSecurityLevel] = useState<SecurityLevel | undefined>(undefined);
+  const [legacyUserRole, setLegacyUserRole] = useState<string | undefined>(undefined);
   
   // New claims-based state
   const [isHRX, setIsHRX] = useState<boolean>(false);
@@ -502,6 +517,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         setClaimsRoles({});
         setCurrentClaimsRole(undefined);
         setCurrentClaimsSecurityLevel(undefined);
+        setTenantRolesFromProfile({});
+        setLegacyUserSecurityLevel(undefined);
+        setLegacyUserRole(undefined);
         setCrmSalesEnabled(false);
         setRecruiterEnabled(false);
         setJobsBoardEnabled(false);
@@ -633,8 +651,12 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             const avatar = userData.avatar || userData.workerProfile?.photoUrl || '';
             const userOrgType = userData.orgType || 'HRX';
 
-            // --- NEW: Handle tenantRoles as a map ---
-            let tenantRolesMap: { [tenantId: string]: { role: Role, securityLevel: SecurityLevel } } = {};
+            // --- Per-tenant Firestore map (always hydrate when present; JWT may omit securityLevel) ---
+            let tenantRolesMap: { [tenantId: string]: { role: Role; securityLevel: SecurityLevel } } = {};
+            if (userData.tenantIds && typeof userData.tenantIds === 'object' && !Array.isArray(userData.tenantIds)) {
+              tenantRolesMap = userData.tenantIds;
+            }
+
             let userTenantIds: string[] = [];
             let primaryTenantId: string | undefined = undefined;
 
@@ -642,9 +664,8 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             if (claimsTenantIds.length > 0) {
               userTenantIds = claimsTenantIds;
               primaryTenantId = userData.activeTenantId || userTenantIds[0];
-            } else if (userData.tenantIds && typeof userData.tenantIds === 'object' && !Array.isArray(userData.tenantIds)) {
-              tenantRolesMap = userData.tenantIds;
-              userTenantIds = Object.keys(userData.tenantIds);
+            } else if (Object.keys(tenantRolesMap).length > 0) {
+              userTenantIds = Object.keys(tenantRolesMap);
               primaryTenantId = userData.activeTenantId || userData.tenantId || userTenantIds[0];
             } else if (Array.isArray(userData.tenantIds)) {
               // Legacy array format fallback
@@ -666,7 +687,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
               normalizeC1TenantIdTypo(userData.activeTenantId || primaryTenantId || undefined) ?? undefined,
             );
             setTenantIds(userTenantIds);
-            setTenantRoles(tenantRolesMap);
+            setTenantRolesFromProfile(tenantRolesMap);
+            setLegacyUserSecurityLevel(
+              userData.securityLevel != null && userData.securityLevel !== ''
+                ? (String(userData.securityLevel) as SecurityLevel)
+                : undefined,
+            );
+            setLegacyUserRole(
+              userData.role != null && userData.role !== '' ? String(userData.role) : undefined,
+            );
 
             // Set role/securityLevel based on claims (primary) or Firestore (fallback)
             const activeTenantId = userData.activeTenantId || primaryTenantId;
@@ -888,6 +917,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     setClaimsRoles({});
     setCurrentClaimsRole(undefined);
     setCurrentClaimsSecurityLevel(undefined);
+    setTenantRolesFromProfile({});
+    setLegacyUserSecurityLevel(undefined);
+    setLegacyUserRole(undefined);
     setCrmSalesEnabled(false);
     setRecruiterEnabled(false);
     setJobsBoardEnabled(false);
@@ -923,6 +955,9 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         recruiterEnabled,
         jobsBoardEnabled,
         setCreatingUserProfile,
+        tenantRolesFromProfile,
+        legacyUserSecurityLevel,
+        legacyUserRole,
       }}
     >
       {children}

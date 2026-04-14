@@ -1660,6 +1660,12 @@ service cloud.firestore {
           allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
           allow update: if request.auth != null && resource.data.userId == request.auth.uid;
         }
+
+        // Auto messaging (gig): send log readable by recruiters; writes are Cloud Functions only
+        match /autoMessagingSendLog/{logId} {
+          allow read: if isHRX() || isTenantAdmin(tenantId);
+          allow read: if isAssignedToTenant(tenantId) && hasRecruiterAccess();
+        }
       }
 
       // --- JOBS BOARD POSTS (Tenant Subcollection) ---

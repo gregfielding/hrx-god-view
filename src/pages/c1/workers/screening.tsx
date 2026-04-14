@@ -19,6 +19,7 @@ import {
 import { Timestamp, collection, getDocs, limit, query, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 
+import { useT } from '../../../i18n';
 import { db } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -54,6 +55,7 @@ function formatBgStatus(hrxStatus: string | undefined): string {
 
 const WorkerScreeningPage: React.FC = () => {
   const { user, tenantId: authTenantId, activeTenant } = useAuth();
+  const t = useT();
   const navigate = useNavigate();
   const tenantId = authTenantId || activeTenant?.id || null;
   const uid = user?.uid ?? null;
@@ -141,7 +143,7 @@ const WorkerScreeningPage: React.FC = () => {
   if (!uid) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">Sign in to view screening status.</Alert>
+        <Alert severity="info">{t('workerAccount.screeningSignInPrompt')}</Alert>
       </Container>
     );
   }
@@ -149,7 +151,7 @@ const WorkerScreeningPage: React.FC = () => {
   if (!tenantId) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">Select a workspace to view screening.</Alert>
+        <Alert severity="info">{t('workerAccount.screeningSelectWorkspace')}</Alert>
       </Container>
     );
   }
@@ -166,11 +168,10 @@ const WorkerScreeningPage: React.FC = () => {
     <Container maxWidth="sm" sx={{ py: 2 }}>
       <Stack spacing={2}>
         <Typography variant="h5" component="h1" sx={{ fontWeight: 600 }}>
-          Screening
+          {t('workerAccount.screeningPageTitle')}
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          Background checks, employment verification, and related screening for your assignments. This page is read-only;
-          your hiring team may contact you with next steps.
+          {t('workerAccount.screeningPageSubtitle')}
         </Typography>
 
         {showEmploymentPointer ? (

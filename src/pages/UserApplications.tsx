@@ -13,7 +13,29 @@ import { useAuth } from '../contexts/AuthContext';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useT, getLanguage } from '../i18n';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
+import { extractDateFromShiftDate } from '../utils/gigShiftApplicationLimits';
 import WorkerApplicationListCard from '../components/worker/applications/WorkerApplicationListCard';
+
+/** Combine YYYY-MM-DD with optional time (HH:mm string or Timestamp) for list display. */
+function combineShiftDateAndTime(shiftDateStr: string, startTime: unknown): Date | null {
+  const day = extractDateFromShiftDate(String(shiftDateStr || ''));
+  if (!day || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+  const [y, m, d] = day.split('-').map(Number);
+  let hh = 12;
+  let mm = 0;
+  if (startTime != null && startTime !== '') {
+    if (typeof startTime === 'string' && /^\d{1,2}:\d{2}/.test(startTime.trim())) {
+      const parts = startTime.trim().split(':');
+      hh = parseInt(parts[0], 10) || 0;
+      mm = parseInt(parts[1], 10) || 0;
+    } else if (typeof (startTime as { toDate?: () => Date }).toDate === 'function') {
+      const t = (startTime as { toDate: () => Date }).toDate();
+      hh = t.getHours();
+      mm = t.getMinutes();
+    }
+  }
+  return new Date(y, m - 1, d, hh, mm, 0, 0);
+}
 
 interface Application {
   id: string;
@@ -117,6 +139,60 @@ const UserApplications: React.FC = () => {
               }
             }
 
+            // Application doc (authoritative for gig shiftDate / shiftId)
+            if (typeof appData.companyName === 'string' && appData.companyName.trim()) {
+              companyName = companyName || appData.companyName.trim();
+            }
+            const appShiftDateRaw =
+              typeof appData.shiftDate === 'string' && appData.shiftDate.trim()
+                ? appData.shiftDate.trim()
+                : Array.isArray(appData.shiftDates) && appData.shiftDates.length > 0
+                  ? String(appData.shiftDates[0]).trim()
+                  : '';
+            if (appData.jobOrderId && appData.shiftId) {
+              try {
+                const shiftRef = doc(
+                  db,
+                  'tenants',
+                  tenantId,
+                  'job_orders',
+                  String(appData.jobOrderId),
+                  'shifts',
+                  String(appData.shiftId),
+                );
+                const shiftSnap = await getDoc(shiftRef);
+                if (shiftSnap.exists()) {
+                  const sh = shiftSnap.data();
+                  const dstr = String(sh.shiftDate || appShiftDateRaw || '').trim();
+                  const st = sh.startTime ?? sh.defaultStartTime;
+                  const combined = combineShiftDateAndTime(dstr, st);
+                  if (combined) shiftStart = combined;
+                }
+              } catch (shiftErr) {
+                console.warn('Could not load shift for application list', jobId, shiftErr);
+              }
+            }
+            if (!shiftStart && appShiftDateRaw) {
+              const fallback = combineShiftDateAndTime(appShiftDateRaw, undefined);
+              if (fallback) shiftStart = fallback;
+            }
+            if (!companyName && appData.jobOrderId) {
+              try {
+                const joRef = doc(db, 'tenants', tenantId, 'job_orders', String(appData.jobOrderId));
+                const joSnap = await getDoc(joRef);
+                if (joSnap.exists()) {
+                  const jo = joSnap.data() as Record<string, unknown>;
+                  const cn =
+                    (typeof jo.companyName === 'string' && jo.companyName.trim()) ||
+                    (typeof jo.clientName === 'string' && jo.clientName.trim()) ||
+                    '';
+                  if (cn) companyName = cn;
+                }
+              } catch (_) {
+                // ignore
+              }
+            }
+
             if (!location || !jobTitle) {
               try {
                 const jobRef = doc(db, 'tenants', tenantId, 'job_postings', jobId);
@@ -127,13 +203,15 @@ const UserApplications: React.FC = () => {
                   postTitle = postTitle || jobData.postTitle || '';
                   companyName = companyName || jobData.companyName || '';
                   payRate = payRate !== undefined ? payRate : jobData.payRate;
-                  if (jobData.startDate?.toDate) {
-                    shiftStart = jobData.startDate.toDate();
-                  } else if (jobData.startDate) {
-                    shiftStart = new Date(jobData.startDate);
-                  } else if (Array.isArray(jobData.shifts) && jobData.shifts[0]?.startTime) {
-                    const s = jobData.shifts[0];
-                    shiftStart = s.startTime?.toDate ? s.startTime.toDate() : new Date(s.startTime);
+                  if (!shiftStart) {
+                    if (jobData.startDate?.toDate) {
+                      shiftStart = jobData.startDate.toDate();
+                    } else if (jobData.startDate) {
+                      shiftStart = new Date(jobData.startDate);
+                    } else if (Array.isArray(jobData.shifts) && jobData.shifts[0]?.startTime) {
+                      const s = jobData.shifts[0];
+                      shiftStart = s.startTime?.toDate ? s.startTime.toDate() : new Date(s.startTime);
+                    }
                   }
                   if (!location) {
                     if (jobData.city && jobData.state) {
@@ -352,9 +430,9 @@ const UserApplications: React.FC = () => {
         <Stack spacing={2}>
           {applications.map((app) => {
             const title = app.postTitle || app.jobTitle || t('applications.untitledJob');
-            const companyLine = app.companyName || t('applications.na');
+            const companyLine = app.companyName?.trim() || '';
             const locationLine = app.location || '';
-            const shiftLine = app.shiftStart ? formatShiftDate(app.shiftStart) : t('applications.na');
+            const shiftLine = app.shiftStart ? formatShiftDate(app.shiftStart) : '';
             const payLine = formatHourlyPayRateForDisplay(app.payRate) ?? '';
             const appliedLine = `${t('applications.dateApplied')}: ${formatDate(app.submittedAt)}`;
             const statusLabel = getStatusLabel(app);

@@ -44,6 +44,18 @@ import type {
   WorkerAiPrescreenInterviewKind,
   WorkerInterviewAiBlock,
 } from '../../../types/workerAiPrescreenInterview';
+import {
+  explanationLineForHiringDecision,
+  formatHiringDecisionLabel,
+  formatScoreRecommendationLabel,
+  hiringDecisionChipColor,
+  hiringDecisionChipVariant,
+  labelForAiHiringReasonCode,
+  labelForDynamicAnswerKey,
+  labelForInterviewFlag,
+  readDynamicAnswersFromAiContext,
+  WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP,
+} from '../../../utils/workerAiHiringDecisionDisplay';
 
 interface InterviewQuestion {
   id: string;
@@ -92,7 +104,57 @@ function parseInterviewAi(raw: unknown): WorkerInterviewAiBlock | undefined {
   const model = typeof o.model === 'string' ? o.model : undefined;
   const ct = o.computedAt as { toDate?: () => Date } | undefined;
   const computedAt = ct && typeof ct.toDate === 'function' ? ct.toDate() : undefined;
-  return { overallScore, recommendation, flags, subScores, summary, model, computedAt };
+
+  let assignmentReadiness: WorkerInterviewAiBlock['assignmentReadiness'];
+  const ar = o.assignmentReadiness;
+  if (ar && typeof ar === 'object') {
+    const s = (ar as Record<string, unknown>).status;
+    const status = s === 'ready' || s === 'review' || s === 'blocked' ? s : 'review';
+    const reasons = Array.isArray((ar as Record<string, unknown>).reasons)
+      ? ((ar as Record<string, unknown>).reasons as unknown[]).map((x) => String(x))
+      : [];
+    assignmentReadiness = { status, reasons };
+  }
+
+  let alternatePaths: WorkerInterviewAiBlock['alternatePaths'];
+  const ap = o.alternatePaths;
+  if (ap && typeof ap === 'object' && (ap as Record<string, unknown>).gigEligible === true) {
+    alternatePaths = { gigEligible: true };
+  }
+
+  let aiInterviewContext: Record<string, unknown> | undefined;
+  const ctx = o.aiInterviewContext;
+  if (ctx && typeof ctx === 'object' && !Array.isArray(ctx)) {
+    aiInterviewContext = ctx as Record<string, unknown>;
+  }
+
+  let hiringDecision: WorkerInterviewAiBlock['hiringDecision'];
+  const hdRaw = o.hiringDecision;
+  if (hdRaw && typeof hdRaw === 'object') {
+    const hd = hdRaw as Record<string, unknown>;
+    const dec = hd.decision;
+    if (dec === 'advance' || dec === 'review' || dec === 'hold' || dec === 'reject') {
+      hiringDecision = {
+        decision: dec,
+        eligibleForAutoAdvance: Boolean(hd.eligibleForAutoAdvance),
+        reasonCodes: Array.isArray(hd.reasonCodes) ? hd.reasonCodes.map((x) => String(x)) : [],
+      };
+    }
+  }
+
+  return {
+    overallScore,
+    recommendation,
+    flags,
+    subScores,
+    summary,
+    model,
+    computedAt,
+    assignmentReadiness,
+    alternatePaths,
+    aiInterviewContext,
+    hiringDecision,
+  };
 }
 
 function interviewSourceLabel(kind: Interview['interviewKind']): string {
@@ -105,6 +167,15 @@ function recommendationChipColor(
   if (r === 'proceed') return 'success';
   if (r === 'caution' || r === 'decline') return 'error';
   return 'warning';
+}
+
+function historyFlagsSummary(interview: Interview): string {
+  if (interview.interviewKind !== 'worker_ai_prescreen' || !interview.ai) return '—';
+  const flags = interview.ai.flags;
+  if (!flags.length) return '—';
+  const parts = flags.slice(0, 2).map(labelForInterviewFlag);
+  const extra = flags.length > 2 ? ` +${flags.length - 2}` : '';
+  return parts.join(', ') + extra;
 }
 
 interface InterviewTabProps {
@@ -420,10 +491,13 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const latestWorkerAiPrescreen = useMemo(
-    () => interviews.find((i) => i.interviewKind === 'worker_ai_prescreen') ?? null,
-    [interviews],
-  );
+  const latestWorkerAiPrescreen = useMemo(() => {
+    const prescreens = interviews.filter((i) => i.interviewKind === 'worker_ai_prescreen');
+    if (prescreens.length === 0) return null;
+    return prescreens.reduce((latest, cur) =>
+      cur.createdAt.getTime() > latest.createdAt.getTime() ? cur : latest,
+    prescreens[0]);
+  }, [interviews]);
 
   const handleDeleteInterview = async (e: React.MouseEvent, interviewId: string) => {
     e.stopPropagation();
@@ -450,45 +524,137 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
       {latestWorkerAiPrescreen?.ai && (
         <Card variant="outlined" sx={{ borderColor: 'secondary.light' }}>
           <CardHeader
-            title="Latest worker AI pre-screen"
-            titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
+            title={
+              <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1}>
+                <Typography component="span" variant="h6" fontWeight={700}>
+                  AI pre-screen
+                </Typography>
+                <Chip size="small" label="Worker AI" color="secondary" variant="outlined" />
+                {latestWorkerAiPrescreen.applicationId ? (
+                  <Chip size="small" label={`Application ${latestWorkerAiPrescreen.applicationId}`} variant="outlined" />
+                ) : null}
+              </Stack>
+            }
             subheader={formatDate(latestWorkerAiPrescreen.createdAt)}
           />
           <CardContent sx={{ pt: 0 }}>
-            <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1.5 }}>
-              <Typography variant="body2" color="text.secondary">
-                Overall score
-              </Typography>
-              <Typography variant="h6" fontWeight={700} color="primary">
-                {latestWorkerAiPrescreen.ai.overallScore}/100
-              </Typography>
-              {latestWorkerAiPrescreen.score10 !== undefined && (
-                <Chip size="small" label={`${latestWorkerAiPrescreen.score10}/10 (mapped)`} variant="outlined" />
-              )}
-              <Chip
-                size="small"
-                label={latestWorkerAiPrescreen.ai.recommendation}
-                color={recommendationChipColor(latestWorkerAiPrescreen.ai.recommendation)}
-              />
+            <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+              {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
+            </Typography>
+
+            <Stack spacing={1.25} sx={{ mb: 1.5 }}>
+              <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
+                <Typography variant="body2" color="text.secondary">
+                  Score
+                </Typography>
+                <Typography variant="h6" fontWeight={700} color="primary">
+                  {latestWorkerAiPrescreen.ai.overallScore}/100
+                </Typography>
+                {latestWorkerAiPrescreen.score10 !== undefined && (
+                  <Chip size="small" label={`${latestWorkerAiPrescreen.score10}/10 (mapped)`} variant="outlined" />
+                )}
+              </Stack>
+
+              <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
+                <Typography variant="body2" color="text.secondary">
+                  Interview recommendation
+                </Typography>
+                <Chip
+                  size="small"
+                  label={formatScoreRecommendationLabel(latestWorkerAiPrescreen.ai.recommendation)}
+                  color={recommendationChipColor(latestWorkerAiPrescreen.ai.recommendation)}
+                />
+              </Stack>
+
+              <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center">
+                <Typography variant="body2" color="text.secondary">
+                  Hiring decision
+                </Typography>
+                {latestWorkerAiPrescreen.ai.hiringDecision ? (
+                  <Chip
+                    size="small"
+                    label={formatHiringDecisionLabel(latestWorkerAiPrescreen.ai.hiringDecision.decision)}
+                    color={hiringDecisionChipColor(latestWorkerAiPrescreen.ai.hiringDecision.decision)}
+                    variant={hiringDecisionChipVariant(latestWorkerAiPrescreen.ai.hiringDecision.decision)}
+                  />
+                ) : (
+                  <Chip size="small" label="Not evaluated" variant="outlined" />
+                )}
+                {latestWorkerAiPrescreen.ai.hiringDecision?.eligibleForAutoAdvance ? (
+                  <Chip size="small" label="Eligible for auto-advance (rules)" color="info" variant="outlined" />
+                ) : null}
+              </Stack>
             </Stack>
+
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+              {latestWorkerAiPrescreen.ai.hiringDecision
+                ? explanationLineForHiringDecision({
+                    decision: latestWorkerAiPrescreen.ai.hiringDecision.decision,
+                    reasonCodes: latestWorkerAiPrescreen.ai.hiringDecision.reasonCodes,
+                  })
+                : 'Hiring decision has not been computed for this record yet.'}
+            </Typography>
+
+            {latestWorkerAiPrescreen.ai.hiringDecision && latestWorkerAiPrescreen.ai.hiringDecision.reasonCodes.length > 0 ? (
+              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1.5 }}>
+                {latestWorkerAiPrescreen.ai.hiringDecision.reasonCodes.map((code) => (
+                  <Chip
+                    key={code}
+                    size="small"
+                    label={labelForAiHiringReasonCode(code)}
+                    variant="outlined"
+                    color="default"
+                  />
+                ))}
+              </Stack>
+            ) : null}
+
             {latestWorkerAiPrescreen.ai.summary ? (
               <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, whiteSpace: 'pre-wrap' }}>
                 {latestWorkerAiPrescreen.ai.summary}
               </Typography>
             ) : null}
+
             {latestWorkerAiPrescreen.ai.flags.length > 0 ? (
-              <Stack direction="row" flexWrap="wrap" gap={0.5}>
+              <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
                 {latestWorkerAiPrescreen.ai.flags.map((f) => (
-                  <Chip key={f} size="small" label={f.replace(/_/g, ' ')} variant="outlined" />
+                  <Chip key={f} size="small" label={labelForInterviewFlag(f)} variant="outlined" />
                 ))}
               </Stack>
             ) : (
-              <Typography variant="caption" color="text.secondary">
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
                 No risk flags
               </Typography>
             )}
+
+            {(() => {
+              const dyn = readDynamicAnswersFromAiContext(latestWorkerAiPrescreen.ai.aiInterviewContext);
+              if (!dyn) return null;
+              return (
+                <Box sx={{ mb: 1 }}>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                    Job-specific answers
+                  </Typography>
+                  <Stack spacing={0.25}>
+                    {Object.entries(dyn).map(([k, v]) => (
+                      <Typography key={k} variant="caption" color="text.secondary">
+                        {labelForDynamicAnswerKey(k)}: <strong>{v}</strong>
+                      </Typography>
+                    ))}
+                  </Stack>
+                </Box>
+              );
+            })()}
+
+            {(latestWorkerAiPrescreen.ai.hiringDecision?.reasonCodes.includes('gig_path_eligible') ||
+              latestWorkerAiPrescreen.ai.alternatePaths?.gigEligible) && (
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                Gig path may be available as an alternate path when the primary role is not a fit.
+              </Typography>
+            )}
+
             {latestWorkerAiPrescreen.applicationId ? (
-              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.5 }}>
                 Application ID: {latestWorkerAiPrescreen.applicationId}
               </Typography>
             ) : null}
@@ -588,6 +754,17 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                     <TableCell sx={{ fontWeight: 600 }}>Source</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Completed By</TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Score</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      <Tooltip title="Interview recommendation (answer quality & scoring signals)">
+                        <span>Interview rec.</span>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      <Tooltip title="Hiring decision (policy, capacity, thresholds, automation)">
+                        <span>Hiring decision</span>
+                      </Tooltip>
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>Flags</TableCell>
                     <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
@@ -631,6 +808,27 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                       <TableCell>
                         <Typography variant="body2" fontWeight={600} color="primary">
                           {interview.score10 !== undefined ? `${interview.score10}/10` : 'N/A'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {interview.interviewKind === 'worker_ai_prescreen' && interview.ai
+                            ? formatScoreRecommendationLabel(interview.ai.recommendation)
+                            : '—'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary">
+                          {interview.interviewKind === 'worker_ai_prescreen' && interview.ai
+                            ? interview.ai.hiringDecision
+                              ? formatHiringDecisionLabel(interview.ai.hiringDecision.decision)
+                              : 'Not evaluated'
+                            : '—'}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 220 }} noWrap title={historyFlagsSummary(interview)}>
+                          {historyFlagsSummary(interview)}
                         </Typography>
                       </TableCell>
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
@@ -705,7 +903,55 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                 {viewInterviewDialog.interview.ai && (
                   <Box>
                     <Typography variant="subtitle2" fontWeight={600} gutterBottom>
-                      AI assessment (rules-based)
+                      Hiring decision
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
+                      {WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP}
+                    </Typography>
+                    {viewInterviewDialog.interview.ai.hiringDecision ? (
+                      <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1 }}>
+                        <Chip
+                          size="small"
+                          label={formatHiringDecisionLabel(viewInterviewDialog.interview.ai.hiringDecision.decision)}
+                          color={hiringDecisionChipColor(viewInterviewDialog.interview.ai.hiringDecision.decision)}
+                          variant={hiringDecisionChipVariant(viewInterviewDialog.interview.ai.hiringDecision.decision)}
+                        />
+                        <Typography variant="caption" color="text.secondary">
+                          Eligible for auto-advance (rules):{' '}
+                          {viewInterviewDialog.interview.ai.hiringDecision.eligibleForAutoAdvance ? 'Yes' : 'No'}
+                        </Typography>
+                      </Stack>
+                    ) : (
+                      <Chip size="small" label="Not evaluated" variant="outlined" sx={{ mb: 1 }} />
+                    )}
+                    {viewInterviewDialog.interview.ai.hiringDecision &&
+                    viewInterviewDialog.interview.ai.hiringDecision.reasonCodes.length > 0 ? (
+                      <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
+                        {viewInterviewDialog.interview.ai.hiringDecision.reasonCodes.map((code) => (
+                          <Chip key={code} size="small" label={labelForAiHiringReasonCode(code)} variant="outlined" />
+                        ))}
+                      </Stack>
+                    ) : null}
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                      {viewInterviewDialog.interview.ai.hiringDecision
+                        ? explanationLineForHiringDecision({
+                            decision: viewInterviewDialog.interview.ai.hiringDecision.decision,
+                            reasonCodes: viewInterviewDialog.interview.ai.hiringDecision.reasonCodes,
+                          })
+                        : 'Hiring decision has not been computed for this record yet.'}
+                    </Typography>
+                    <Divider sx={{ mt: 1, mb: 2 }} />
+                  </Box>
+                )}
+
+                {viewInterviewDialog.interview.ai && (
+                  <Box>
+                    <Typography variant="subtitle2" fontWeight={600} gutterBottom>
+                      Interview recommendation and score
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1 }}>
+                      From rules-based scoring (answers, sub-scores, flags). This is not the same as hiring decision
+                      above.
                     </Typography>
                     <Stack direction="row" flexWrap="wrap" gap={1} alignItems="center" sx={{ mb: 1 }}>
                       <Typography variant="body2">
@@ -713,7 +959,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                       </Typography>
                       <Chip
                         size="small"
-                        label={viewInterviewDialog.interview.ai.recommendation}
+                        label={formatScoreRecommendationLabel(viewInterviewDialog.interview.ai.recommendation)}
                         color={recommendationChipColor(viewInterviewDialog.interview.ai.recommendation)}
                       />
                       {viewInterviewDialog.interview.ai.model ? (
@@ -730,7 +976,7 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                     {viewInterviewDialog.interview.ai.flags.length > 0 ? (
                       <Stack direction="row" flexWrap="wrap" gap={0.5} sx={{ mb: 1 }}>
                         {viewInterviewDialog.interview.ai.flags.map((f) => (
-                          <Chip key={f} size="small" label={f.replace(/_/g, ' ')} variant="outlined" />
+                          <Chip key={f} size="small" label={labelForInterviewFlag(f)} variant="outlined" />
                         ))}
                       </Stack>
                     ) : null}

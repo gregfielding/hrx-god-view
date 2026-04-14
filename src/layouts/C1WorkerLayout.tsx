@@ -47,6 +47,10 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
                 overflow: 'auto',
                 maxWidth: { sm: 880 },
                 borderRadius: 0,
+                /** Keep main (incl. page transition transforms) below WorkerNav drawer stacking (z-index). */
+                position: 'relative',
+                zIndex: 0,
+                isolation: 'isolate',
               }}
             >
               <WorkerPageTransition>{children ?? <Outlet />}</WorkerPageTransition>

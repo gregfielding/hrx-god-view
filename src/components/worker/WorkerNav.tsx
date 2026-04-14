@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import React, { useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Box,
   Drawer,
@@ -15,29 +15,31 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../i18n';
-import { C1_WORKER_AI_PRESCREEN_PATH, C1_WORKER_SCREENING_PATH } from '../../constants/c1WorkerRoutes';
+import { C1_WORKER_AI_PRESCREEN_PATH } from '../../constants/c1WorkerRoutes';
+import { useWorkerAiPrescreenSurfaceSignals } from '../../hooks/useWorkerAiPrescreenSurfaceSignals';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import AssignmentIcon from '@mui/icons-material/Assignment';
 import WorkIcon from '@mui/icons-material/Work';
 import ListAltIcon from '@mui/icons-material/ListAlt';
 import NotificationsNoneIcon from '@mui/icons-material/NotificationsNone';
 import PersonIcon from '@mui/icons-material/Person';
-import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import QuizOutlinedIcon from '@mui/icons-material/QuizOutlined';
 
 const drawerWidth = 240;
 
-const navConfig = [
+const baseNavConfig = [
   { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
-  { key: 'nav.myProfile', path: '/c1/workers/profile', icon: <PersonIcon /> },
+  { key: 'nav.myAccount', path: '/c1/workers/profile', icon: <PersonIcon /> },
   { key: 'nav.prescreen', path: C1_WORKER_AI_PRESCREEN_PATH, icon: <QuizOutlinedIcon /> },
-  { key: 'nav.screening', path: C1_WORKER_SCREENING_PATH, icon: <VerifiedUserIcon /> },
   { key: 'nav.myAssignments', path: '/c1/workers/assignments', icon: <AssignmentIcon /> },
   { key: 'nav.myApplications', path: '/c1/workers/applications', icon: <ListAltIcon /> },
   { key: 'nav.notifications', path: '/c1/workers/notifications', icon: <NotificationsNoneIcon /> },
   /* Help & Support hidden: import HelpOutlineIcon, append nav.helpSupport -> /c1/workers/support */
 ];
+
+/** Above main + page transition layers so sidebar clicks are never swallowed (see C1 worker layout). */
+const DRAWER_Z = 1301;
 
 const drawerPaperSx = {
   width: drawerWidth,
@@ -46,21 +48,29 @@ const drawerPaperSx = {
   borderRadius: 0,
   borderRight: '1px solid',
   borderColor: 'divider',
+  zIndex: DRAWER_Z,
 };
 
 function DrawerContent({
-  navigate,
   location,
   tenantDisplayName,
   onNavClick,
   t,
+  navItems,
 }: {
-  navigate: (path: string) => void;
   location: { pathname: string };
   tenantDisplayName: string;
   onNavClick?: () => void;
   t: (key: string) => string;
+  navItems: typeof baseNavConfig;
 }) {
+  const navigate = useNavigate();
+
+  const go = (path: string) => {
+    navigate(path);
+    onNavClick?.();
+  };
+
   const getLabel = (key: string) => {
     if (key === 'nav.notifications') {
       const translated = t('nav.notifications');
@@ -68,11 +78,6 @@ function DrawerContent({
       return translated?.toLowerCase?.() === 'inbox' ? 'Notifications' : translated;
     }
     return t(key);
-  };
-
-  const handleNav = (path: string) => {
-    navigate(path);
-    onNavClick?.();
   };
 
   return (
@@ -91,7 +96,8 @@ function DrawerContent({
       >
         <Box
           component="button"
-          onClick={() => handleNav('/c1/workers/dashboard')}
+          type="button"
+          onClick={() => go('/c1/workers/dashboard')}
           sx={{
             width: 52,
             height: 52,
@@ -103,6 +109,7 @@ function DrawerContent({
             justifyContent: 'center',
             cursor: 'pointer',
             border: 'none',
+            textDecoration: 'none',
             transition: 'background-color 150ms ease',
             '&:hover': {
               background: 'rgba(0,0,0,0.08)',
@@ -147,11 +154,11 @@ function DrawerContent({
         </Typography>
       </Box>
       <List sx={{ pt: 2 }}>
-        {navConfig.map(({ key, path, icon }) => (
+        {navItems.map(({ key, path, icon }) => (
           <ListItemButton
             key={path}
             selected={location.pathname === path || location.pathname.startsWith(path + '/')}
-            onClick={() => handleNav(path)}
+            onClick={() => go(path)}
           >
             <ListItemIcon>{icon}</ListItemIcon>
             <ListItemText primary={getLabel(key)} />
@@ -163,15 +170,19 @@ function DrawerContent({
 }
 
 const WorkerNav: React.FC = () => {
-  const navigate = useNavigate();
   const location = useLocation();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
   const t = useT();
 
-  const { activeTenant } = useAuth();
+  const { activeTenant, user } = useAuth();
   const tenantDisplayName = activeTenant?.name || 'HRX Platform';
+  const { showPrescreenNav } = useWorkerAiPrescreenSurfaceSignals(activeTenant?.id, user?.uid ?? null);
+  const navItems = useMemo(() => {
+    if (showPrescreenNav) return baseNavConfig;
+    return baseNavConfig.filter((item) => item.path !== C1_WORKER_AI_PRESCREEN_PATH);
+  }, [showPrescreenNav]);
 
   const closeMobileDrawer = () => setMobileOpen(false);
 
@@ -186,7 +197,7 @@ const WorkerNav: React.FC = () => {
             position: 'fixed',
             top: 16,
             left: 16,
-            zIndex: 1300,
+            zIndex: 1400,
             bgcolor: 'background.paper',
             boxShadow: 2,
             border: '1px solid',
@@ -205,15 +216,16 @@ const WorkerNav: React.FC = () => {
           onClose={closeMobileDrawer}
           ModalProps={{ keepMounted: true }}
           sx={{
+            zIndex: (theme) => theme.zIndex.drawer + 2,
             '& .MuiDrawer-paper': drawerPaperSx,
           }}
         >
           <DrawerContent
-            navigate={navigate}
             location={location}
             tenantDisplayName={tenantDisplayName}
             onNavClick={closeMobileDrawer}
             t={t}
+            navItems={navItems}
           />
         </Drawer>
       </>
@@ -227,14 +239,15 @@ const WorkerNav: React.FC = () => {
       sx={{
         width: drawerWidth,
         flexShrink: 0,
+        zIndex: DRAWER_Z,
         '& .MuiDrawer-paper': drawerPaperSx,
       }}
     >
       <DrawerContent
-        navigate={navigate}
         location={location}
         tenantDisplayName={tenantDisplayName}
         t={t}
+        navItems={navItems}
       />
     </Drawer>
   );

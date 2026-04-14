@@ -7,6 +7,16 @@ import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
 import { canManageOnboarding } from './workerOnboardingPipeline';
+import {
+  TWILIO_ACCOUNT_SID,
+  TWILIO_AUTH_TOKEN,
+  TWILIO_MESSAGING_PHONE_NUMBER,
+  TWILIO_A2P_CAMPAIGN,
+} from '../messaging/twilioSecrets';
+import {
+  notifyWorkerAfterI9SupportingReview,
+  writeEverifyI9SupportingPrefillSnapshot,
+} from './i9SupportingReviewNotifications';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -89,7 +99,17 @@ export const createWorkerI9SupportingDocumentRequest = onCall(
 );
 
 export const reviewWorkerI9SupportingDocument = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '256MiB' },
+  {
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
+    memory: '256MiB',
+    secrets: [
+      TWILIO_ACCOUNT_SID,
+      TWILIO_AUTH_TOKEN,
+      TWILIO_MESSAGING_PHONE_NUMBER,
+      TWILIO_A2P_CAMPAIGN,
+    ],
+  },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
@@ -128,6 +148,8 @@ export const reviewWorkerI9SupportingDocument = onCall(
     }
 
     const now = admin.firestore.FieldValue.serverTimestamp();
+    const targetUserId = String(meta.userId || '').trim();
+    const documentType = String(meta.documentType || '').trim();
     if (decision === 'approved') {
       await docRef.update({
         status: 'approved',
@@ -139,7 +161,7 @@ export const reviewWorkerI9SupportingDocument = onCall(
       logger.info('i9_supporting_document.review_approved', {
         tenantId,
         documentId,
-        targetUserId: String(meta.userId || ''),
+        targetUserId,
         callerUid: caller,
       });
     } else {
@@ -153,9 +175,35 @@ export const reviewWorkerI9SupportingDocument = onCall(
       logger.info('i9_supporting_document.review_rejected', {
         tenantId,
         documentId,
-        targetUserId: String(meta.userId || ''),
+        targetUserId,
         callerUid: caller,
       });
+    }
+
+    if (targetUserId) {
+      try {
+        await writeEverifyI9SupportingPrefillSnapshot(tenantId, targetUserId);
+      } catch (e) {
+        logger.warn('i9_supporting_review.everify_prefill_snapshot_failed', {
+          tenantId,
+          targetUserId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      try {
+        await notifyWorkerAfterI9SupportingReview({
+          tenantId,
+          targetUserId,
+          documentType,
+          decision,
+        });
+      } catch (e) {
+        logger.warn('i9_supporting_review.notify_failed', {
+          tenantId,
+          targetUserId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     }
 
     return { ok: true as const, documentId, decision };
