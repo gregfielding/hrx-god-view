@@ -8,7 +8,9 @@
  *
  * Scope: intentionally simpler than job-order hiring — group defaults only.
  * Do not merge job posting overrides, container merge rules, or shift-level staffing here.
- * (v1 control panel — execution/orchestrator not wired here.)
+ *
+ * Orchestrator policy: `functions` `resolveAiHiringPolicyBundle` merges `hiringConfig.quality` + `automation` + `targets`
+ * into the same fields as `userGroup.aiHiring` (explicit `aiHiring` wins per-field) for group-scoped applications.
  */
 
 /** @see mergeLegacyHiringConfigKeys — legacy Firestore used `mode` + partial `automation`. */

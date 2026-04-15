@@ -264,6 +264,7 @@ export {
   syncAccusourcePackageCatalog,
 } from './integrations/accusource';
 export { syncC1WorkerHomeReadinessSnapshot } from './readiness/homeSnapshotTrigger';
+export { logC1WorkerReadinessDomainChanges } from './readiness/homeSnapshotTriggerStub';
 export { syncWorkerProfileReadinessV1 } from './readiness/profileReadinessTrigger';
 export { syncWorkerReadinessV1FromEntityEmployment } from './readiness/entityEmploymentWorkerReadinessTrigger';
 export { syncWorkerReadinessV1FromAssignment } from './readiness/assignmentWorkerReadinessTrigger';

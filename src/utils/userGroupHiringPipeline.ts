@@ -35,7 +35,7 @@ export function getUserGroupHiringUxDisplay(
 }
 
 export type GroupHiringPipelineMetrics = {
-  /** Applications tied to this group (query result size). */
+  /** Rows in the pipeline table: application docs, or one per worker when on-call dedupe is active. */
   totalApplications: number;
   /** Completed AI prescreen (or equivalent interviewed signal). */
   interviewed: number;
@@ -61,8 +61,53 @@ function getAi(data: Record<string, unknown>): Record<string, unknown> | undefin
   return ai && typeof ai === 'object' ? (ai as Record<string, unknown>) : undefined;
 }
 
+/**
+ * Same rules as `extractOrchestratorDecision` in `userGroupHirePassedCandidates` (Cloud Functions).
+ * Reads legacy `aiAutomation.decision` first, else `orchestratorV1.finalResult` / `policyEngineResult`.
+ */
+export function extractStoredOrchestratorDecision(data: Record<string, unknown>): string | null {
+  const aa = data.aiAutomation as Record<string, unknown> | undefined;
+  if (!aa || typeof aa !== 'object') return null;
+  const legacy = aa.decision;
+  if (typeof legacy === 'string' && legacy.trim()) return legacy.trim().toLowerCase();
+  const v1 = aa.orchestratorV1 as Record<string, unknown> | undefined;
+  if (!v1 || typeof v1 !== 'object') return null;
+  const final = v1.finalResult as Record<string, unknown> | undefined;
+  const policyEngine = v1.policyEngineResult as Record<string, unknown> | undefined;
+  const fr =
+    final && typeof final.decision === 'string'
+      ? final
+      : policyEngine && typeof policyEngine.decision === 'string'
+        ? policyEngine
+        : final ?? policyEngine;
+  const decRaw = fr && typeof fr.decision === 'string' ? fr.decision : '';
+  return decRaw ? decRaw.trim().toLowerCase() : null;
+}
+
 function num(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+function docSortTimestamp(data: Record<string, unknown>): number {
+  const u = data.updatedAt;
+  if (u && typeof u === 'object' && u !== null && 'seconds' in u) {
+    const s = (u as { seconds?: unknown }).seconds;
+    if (typeof s === 'number' && Number.isFinite(s)) return s;
+  }
+  if (
+    u &&
+    typeof u === 'object' &&
+    u !== null &&
+    'toMillis' in u &&
+    typeof (u as { toMillis: () => number }).toMillis === 'function'
+  ) {
+    try {
+      return (u as { toMillis: () => number }).toMillis() / 1000;
+    } catch {
+      return 0;
+    }
+  }
+  return 0;
 }
 
 /**
@@ -108,7 +153,8 @@ function reasonCodesCapacity(ai: Record<string, unknown> | undefined): boolean {
 }
 
 /**
- * Aggregate metrics for `tenants/{tenantId}/applications` where `groupId` matches.
+ * Aggregate metrics for group-scoped applications: `groupId` match **or** applications for users in the group’s
+ * `memberIds` (same union as `userGroupHirePassedCandidates`).
  * Definitions align with `jobOrderApplicationHiringStats` / `hiringContainerStats` where possible.
  */
 export function aggregateGroupHiringPipeline(
@@ -130,7 +176,8 @@ export function aggregateGroupHiringPipeline(
     if (passesQualityGates(data, cfg)) qualified += 1;
 
     const ai = getAi(data);
-    if (ai && ai.decision === 'advance') autoAdvanced += 1;
+    const orch = extractStoredOrchestratorDecision(data);
+    if (orch === 'advance') autoAdvanced += 1;
 
     if (c.ready) onboardingAccepted += 1;
     if (c.onboarding) onboardingInFlow += 1;
@@ -176,6 +223,72 @@ export function aggregateGroupHiringPipeline(
   };
 }
 
+/**
+ * On-call / labor-pool hiring: recruiters care about **people**, not every job-specific application row.
+ * When this is true, pipeline metrics and policy-impact rows use {@link dedupeApplicationsForOnCallPool}.
+ */
+export function isOnCallMemberCentricPipeline(cfg: UserGroupHiringConfigV1): boolean {
+  return cfg.employment?.employmentType === 'on_call';
+}
+
+function compareOnCallCanonicalDocs(
+  a: Record<string, unknown>,
+  b: Record<string, unknown>,
+  groupId: string,
+): number {
+  const gid = String(groupId || '').trim();
+  const aGroup = gid && String(a.groupId || '').trim() === gid ? 1 : 0;
+  const bGroup = gid && String(b.groupId || '').trim() === gid ? 1 : 0;
+  if (aGroup !== bGroup) return bGroup - aGroup;
+
+  const aScore = num(getAi(a)?.score);
+  const bScore = num(getAi(b)?.score);
+  const av = aScore ?? Number.NEGATIVE_INFINITY;
+  const bv = bScore ?? Number.NEGATIVE_INFINITY;
+  if (av !== bv) return av > bv ? -1 : 1;
+
+  const ta = docSortTimestamp(a);
+  const tb = docSortTimestamp(b);
+  return tb - ta;
+}
+
+/**
+ * Reduces the application union to **one document per worker** for on-call pool UX.
+ * Preference: app with this `groupId` → highest AI interview score → most recently updated.
+ * Rows with no `userId`/`candidateId` are kept as-is (one row each).
+ */
+export function dedupeApplicationsForOnCallPool(
+  docs: Record<string, unknown>[],
+  groupId: string,
+): Record<string, unknown>[] {
+  const gid = String(groupId || '').trim();
+  const byUser = new Map<string, Record<string, unknown>[]>();
+  const noUid: Record<string, unknown>[] = [];
+
+  for (const d of docs) {
+    const uidRaw = d.userId ?? d.candidateId;
+    const uid = typeof uidRaw === 'string' && uidRaw.trim() ? uidRaw.trim() : null;
+    if (!uid) {
+      noUid.push(d);
+      continue;
+    }
+    const list = byUser.get(uid) ?? [];
+    list.push(d);
+    byUser.set(uid, list);
+  }
+
+  const picked: Record<string, unknown>[] = [];
+  for (const list of byUser.values()) {
+    if (list.length === 1) {
+      picked.push(list[0]);
+      continue;
+    }
+    const sorted = [...list].sort((a, b) => compareOnCallCanonicalDocs(a, b, gid));
+    picked.push(sorted[0]);
+  }
+  return [...picked, ...noUid];
+}
+
 export type HiringSimulationResult = {
   /** Pass interview + job-fit + no-show gates. */
   qualify: number;
@@ -199,10 +312,19 @@ export type GroupQueuedCandidateRow = {
 
 function applicationLabel(data: Record<string, unknown>): string {
   const cand = data.candidate as Record<string, unknown> | undefined;
-  const fn = cand?.firstName;
-  const ln = cand?.lastName;
-  const name = [fn, ln].filter((x) => typeof x === 'string' && x.trim()).join(' ');
-  if (name) return name;
+  const fromNested = [cand?.firstName, cand?.lastName]
+    .filter((x) => typeof x === 'string' && x.trim())
+    .join(' ');
+  if (fromNested) return fromNested;
+
+  const direct = String(data.applicantName || data.displayName || '').trim();
+  if (direct) return direct;
+
+  const fnRoot = String(data.firstName ?? '').trim();
+  const lnRoot = String(data.lastName ?? '').trim();
+  const fromRoot = [fnRoot, lnRoot].filter(Boolean).join(' ');
+  if (fromRoot) return fromRoot;
+
   const uid = data.userId ?? data.candidateId;
   if (uid) return String(uid);
   return 'Candidate';
@@ -278,22 +400,6 @@ export function getPolicyWhyDisplayLabel(why: PolicyWhyLabel | string): string {
     'Not in active pipeline': 'Not in hiring review',
   };
   return map[String(why)] ?? String(why);
-}
-
-function docSortTimestamp(data: Record<string, unknown>): number {
-  const u = data.updatedAt;
-  if (u && typeof u === 'object' && u !== null && 'seconds' in u) {
-    const s = (u as { seconds?: unknown }).seconds;
-    if (typeof s === 'number' && Number.isFinite(s)) return s;
-  }
-  if (u && typeof u === 'object' && u !== null && 'toMillis' in u && typeof (u as { toMillis: () => number }).toMillis === 'function') {
-    try {
-      return (u as { toMillis: () => number }).toMillis() / 1000;
-    } catch {
-      return 0;
-    }
-  }
-  return 0;
 }
 
 function formatPolicyDecisionState(data: Record<string, unknown>): string {

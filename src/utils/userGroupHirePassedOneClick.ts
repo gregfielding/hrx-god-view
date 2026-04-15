@@ -10,6 +10,8 @@ export type UserGroupHirePassedExecuteResult = {
   groupId: string;
   tenantId: string;
   mode: string;
+  /** Default `current_policy`: re-run orchestrator with saved interview scores + **today’s** tenant/group policy. */
+  eligibilityMode?: 'stored' | 'current_policy';
   groupMemberCount: number;
   applicationsScanned: number;
   eligibleCount: number;
@@ -20,9 +22,22 @@ export type UserGroupHirePassedExecuteResult = {
 };
 
 const userGroupHirePassedCandidates = httpsCallable<
-  { tenantId: string; groupId: string; mode: 'execute' },
+  { tenantId: string; groupId: string; mode?: 'preview' | 'commit' | 'execute' },
   UserGroupHirePassedExecuteResult
 >(getFunctions(app, REGION), 'userGroupHirePassedCandidates');
+
+/** Same eligibility rules as **Hire Passed Candidates** (interview completed + orchestrator advance + C1 checks). */
+export async function runUserGroupHirePassedPreview(params: {
+  tenantId: string;
+  groupId: string;
+}): Promise<UserGroupHirePassedExecuteResult> {
+  const { data } = await userGroupHirePassedCandidates({
+    tenantId: params.tenantId,
+    groupId: params.groupId,
+    mode: 'preview',
+  });
+  return data as UserGroupHirePassedExecuteResult;
+}
 
 export async function runUserGroupHirePassedExecute(params: {
   tenantId: string;
@@ -39,6 +54,11 @@ export async function runUserGroupHirePassedExecute(params: {
 export function formatUserGroupHirePassedSuccess(r: UserGroupHirePassedExecuteResult): string {
   const lines: string[] = [];
   lines.push('Hire passed — on-call onboarding run finished.');
+  const modeLine =
+    r.eligibilityMode === 'stored'
+      ? 'Eligibility mode: stored Firestore decisions only.'
+      : 'Eligibility mode: current tenant + group policy (re-evaluated per application).';
+  lines.push(modeLine);
   lines.push(
     `Scanned ${r.applicationsScanned} application(s) (${r.groupMemberCount} group members). Eligible: ${r.eligibleCount}, excluded: ${r.excludedCount}.`,
   );
@@ -59,7 +79,7 @@ export function formatUserGroupHirePassedSuccess(r: UserGroupHirePassedExecuteRe
   }
   if (r.eligibleCount === 0) {
     lines.push(
-      'No eligible rows (interview completed + orchestrator advance + no blocking C1 employment). If everyone shows “interview not completed”, complete AI prescreens first.',
+      'No eligible rows: prescreen completed, current-policy orchestrator advance, and no blocking C1 employment. If many lack prescreen completion, finish interviews first.',
     );
   }
   return lines.join('\n');

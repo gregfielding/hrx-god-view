@@ -7,6 +7,7 @@ import {
   buildHomeSnapshotWritePayload,
   extractReadinessSignals,
 } from './homeSnapshotModel';
+import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from '../utils/functionRuntimeDefaults';
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -26,6 +27,7 @@ export const syncC1WorkerHomeReadinessSnapshot = onDocumentWritten(
     region: 'us-central1',
     maxInstances: 1,
     retry: false,
+    memory: DEFAULT_FIRESTORE_TRIGGER_MEMORY,
   },
   async (event) => {
     const before = event.data?.before?.exists ? (event.data.before.data() as Record<string, unknown>) : null;

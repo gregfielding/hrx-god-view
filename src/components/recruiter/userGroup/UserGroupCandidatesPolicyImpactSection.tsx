@@ -21,8 +21,14 @@ import { getPolicyWhyDisplayLabel, type PolicyImpactCandidateRow } from '../../.
 export type UserGroupCandidatesPolicyImpactSectionProps = {
   rows: PolicyImpactCandidateRow[];
   loading: boolean;
-  /** Same count as pipeline metrics total (group-scoped applications query). */
+  /** Row count shown in metrics (after on-call dedupe when `memberCentricOnCall`). */
   applicationCount: number;
+  /** Group roster size — used to explain when rows exceed members (non-on-call) or for context. */
+  memberCount?: number;
+  /** Employment is on-call: one row per worker; counts are per person, not per job application. */
+  memberCentricOnCall?: boolean;
+  /** Pre-dedupe application document count (only differs when `memberCentricOnCall`). */
+  rawApplicationRecordCount?: number;
   /** Shown in empty state — this table only lists applications with this `groupId`. */
   groupId: string;
 };
@@ -43,6 +49,9 @@ const UserGroupCandidatesPolicyImpactSection: React.FC<UserGroupCandidatesPolicy
   rows,
   loading,
   applicationCount,
+  memberCount,
+  memberCentricOnCall,
+  rawApplicationRecordCount,
   groupId,
 }) => {
   const navigate = useNavigate();
@@ -69,8 +78,43 @@ const UserGroupCandidatesPolicyImpactSection: React.FC<UserGroupCandidatesPolicy
           Candidates affected by current policy
         </Typography>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.5 }}>
-          Rows load from applications where <strong>groupId</strong> equals this user group. Decision = current status
-          from the application / automation; Why = policy reason; Next action = suggested recruiter step.
+          {memberCentricOnCall ? (
+            <>
+              <strong>On-call pool:</strong> one row per person (hiring is not tied to a specific job). If someone has
+              several application records, we keep the best match for this group: application with this{' '}
+              <strong>groupId</strong> first, then highest interview score, then most recently updated. Summary chips
+              count <strong>people</strong> by policy reason.
+              {typeof rawApplicationRecordCount === 'number' && rawApplicationRecordCount > applicationCount ? (
+                <>
+                  {' '}
+                  ({applicationCount} worker{applicationCount === 1 ? '' : 's'} from{' '}
+                  {rawApplicationRecordCount} application record{rawApplicationRecordCount === 1 ? '' : 's'})
+                </>
+              ) : typeof memberCount === 'number' ? (
+                <>
+                  {' '}
+                  ({applicationCount} worker{applicationCount === 1 ? '' : 's'} in pipeline vs {memberCount} roster member
+                  {memberCount === 1 ? '' : 's'})
+                </>
+              ) : null}
+            </>
+          ) : (
+            <>
+              Each row is one <strong>application</strong> (union of apps with this <strong>groupId</strong> and apps
+              for group members). The same person can have multiple applications, so counts here can exceed the group’s
+              member count
+              {typeof memberCount === 'number' ? (
+                <>
+                  {' '}
+                  ({applicationCount} application{applicationCount === 1 ? '' : 's'} vs {memberCount} member
+                  {memberCount === 1 ? '' : 's'})
+                </>
+              ) : null}
+              . Summary chips count applications by policy reason, not unique people.
+            </>
+          )}{' '}
+          Decision = current status from the application / automation; Why = policy reason; Next action = suggested
+          recruiter step.
         </Typography>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
           Group ID: <Box component="code">{groupId}</Box>
@@ -80,7 +124,7 @@ const UserGroupCandidatesPolicyImpactSection: React.FC<UserGroupCandidatesPolicy
           <Box sx={{ py: 1 }}>
             <LinearProgress />
             <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-              Loading applications…
+              {memberCentricOnCall ? 'Loading on-call pipeline…' : 'Loading applications…'}
             </Typography>
           </Box>
         ) : applicationCount === 0 ? (

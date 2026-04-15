@@ -41,7 +41,10 @@ import {
   getEffectiveHiringThresholdSummaryLines,
   getTenantHiringPolicySummaryLines,
 } from '../../../utils/mergeTenantAndGroupHiringConfig';
-import { simulateHiringFromMembers } from '../../../utils/userGroupHiringPipeline';
+import {
+  runUserGroupHirePassedPreview,
+  type UserGroupHirePassedExecuteResult,
+} from '../../../utils/userGroupHirePassedOneClick';
 import UserGroupCandidatesPolicyImpactSection from './UserGroupCandidatesPolicyImpactSection';
 import UserGroupHiringDecisionFlowPreview from './UserGroupHiringDecisionFlowPreview';
 import UserGroupHiringPipelineStatus from './UserGroupHiringPipelineStatus';
@@ -58,7 +61,7 @@ export type UserGroupHiringControlPanelProps = {
   tenantId: string;
   groupId: string;
   memberCount: number;
-  /** Used for “Preview hiring outcomes” (member AI scores as proxies). */
+  /** Optional member profile scores (legacy); “Preview hiring outcomes” uses the hire-passed callable when you run it. */
   memberProfiles?: UserGroupMemberProfilePreview[];
   onSaved?: () => void;
 };
@@ -147,7 +150,11 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
   const [done, setDone] = useState<string | null>(null);
   const [cfg, setCfg] = useState<UserGroupHiringConfigV1>(DEFAULT_USER_GROUP_HIRING_CONFIG);
   const [tenantData, setTenantData] = useState<Record<string, unknown> | undefined>();
-  const [hiringPreviewRan, setHiringPreviewRan] = useState(false);
+  const [hirePassedPreviewLoading, setHirePassedPreviewLoading] = useState(false);
+  const [hirePassedPreviewError, setHirePassedPreviewError] = useState<string | null>(null);
+  const [hirePassedPreviewResult, setHirePassedPreviewResult] = useState<UserGroupHirePassedExecuteResult | null>(
+    null,
+  );
   const [entityOptions, setEntityOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [entitiesLoading, setEntitiesLoading] = useState(false);
 
@@ -172,15 +179,23 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
     metricsBeta,
     queuedPreview,
     policyImpactRows,
+    rawApplicationDocCount,
+    memberCentricOnCall,
   } = useUserGroupHiringPipeline(tenantId, groupId, effectiveCfg);
 
-  const simResult = useMemo(
-    () =>
-      simulateHiringFromMembers(memberProfiles, effectiveCfg, {
-        currentOnboardingForTarget: metrics.currentOnboardingForTarget,
-      }),
-    [memberProfiles, effectiveCfg, metrics.currentOnboardingForTarget],
-  );
+  const runHirePassedPreview = useCallback(async () => {
+    setHirePassedPreviewLoading(true);
+    setHirePassedPreviewError(null);
+    try {
+      const r = await runUserGroupHirePassedPreview({ tenantId, groupId });
+      setHirePassedPreviewResult(r);
+    } catch (e) {
+      setHirePassedPreviewResult(null);
+      setHirePassedPreviewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setHirePassedPreviewLoading(false);
+    }
+  }, [tenantId, groupId]);
 
   useEffect(() => {
     if (!tenantId || !groupId) return;
@@ -563,12 +578,17 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
         metrics={metrics}
         loading={pipelineLoading}
         applicationCount={metrics.totalApplications}
+        memberCentricOnCall={memberCentricOnCall}
+        rawApplicationRecordCount={rawApplicationDocCount}
       />
 
       <UserGroupCandidatesPolicyImpactSection
         rows={policyImpactRows}
         loading={pipelineLoading}
         applicationCount={metrics.totalApplications}
+        memberCount={memberCount}
+        memberCentricOnCall={memberCentricOnCall}
+        rawApplicationRecordCount={rawApplicationDocCount}
         groupId={groupId}
       />
 
@@ -597,11 +617,17 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
                 Preview hiring outcomes
               </Typography>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-                Uses member AI scores as proxies. Respects target cap vs current onboarding in flow.
+                Uses the same scan as <strong>Hire Passed Candidates</strong> (live applications): prescreen completed,
+                orchestrator <code>advance</code>, no blocking C1 employment.
               </Typography>
             </Box>
-            <Button variant="contained" size="small" onClick={() => setHiringPreviewRan(true)}>
-              Run preview
+            <Button
+              variant="contained"
+              size="small"
+              onClick={() => void runHirePassedPreview()}
+              disabled={hirePassedPreviewLoading}
+            >
+              {hirePassedPreviewLoading ? 'Running…' : 'Run preview'}
             </Button>
           </Stack>
           <Box
@@ -609,57 +635,55 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
               mt: 1.5,
               p: 1.25,
               borderRadius: 1,
-              bgcolor: hiringPreviewRan ? 'action.hover' : 'grey.50',
+              bgcolor: hirePassedPreviewResult ? 'action.hover' : 'grey.50',
               border: '1px dashed',
               borderColor: 'divider',
               minHeight: 88,
             }}
           >
-            {!hiringPreviewRan ? (
+            {hirePassedPreviewLoading ? (
+              <Stack direction="row" alignItems="center" gap={1}>
+                <CircularProgress size={22} />
+                <Typography variant="body2" color="text.secondary">
+                  Scanning applications…
+                </Typography>
+              </Stack>
+            ) : hirePassedPreviewError ? (
+              <Alert severity="error" sx={{ py: 0 }}>
+                {hirePassedPreviewError}
+              </Alert>
+            ) : !hirePassedPreviewResult ? (
               <Typography variant="body2" color="text.secondary">
-                Run preview to estimate outcomes
+                Run preview to load eligible counts from the server (matches the hire button).
               </Typography>
             ) : (
               <Stack spacing={1}>
                 <Typography variant="caption" color="text.secondary">
-                  Estimated from {memberProfiles.length} member{memberProfiles.length === 1 ? '' : 's'} (approximate)
+                  Group members: {hirePassedPreviewResult.groupMemberCount} · Applications scanned:{' '}
+                  {hirePassedPreviewResult.applicationsScanned}
                 </Typography>
                 <Stack direction="row" flexWrap="wrap" gap={2}>
                   <Box>
                     <Typography variant="caption" color="text.secondary" display="block">
-                      Qualify
+                      Eligible (hire-passed)
                     </Typography>
                     <Typography variant="h6" fontWeight={800}>
-                      {simResult.qualify}
+                      {hirePassedPreviewResult.eligibleCount}
                     </Typography>
                   </Box>
                   <Box>
                     <Typography variant="caption" color="text.secondary" display="block">
-                      Queue
+                      Excluded
                     </Typography>
                     <Typography variant="h6" fontWeight={800}>
-                      {simResult.queue}
-                    </Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Reject
-                    </Typography>
-                    <Typography variant="h6" fontWeight={800}>
-                      {simResult.reject}
-                    </Typography>
-                  </Box>
-                  <Box>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Hold
-                    </Typography>
-                    <Typography variant="h6" fontWeight={800}>
-                      {simResult.hold}
+                      {hirePassedPreviewResult.excludedCount}
                     </Typography>
                   </Box>
                 </Stack>
                 <Typography variant="caption" color="text.secondary">
-                  Reject = failed interview score · Hold = job-fit / no-show / manual path · Queue = qualified + auto-advance but target full
+                  Eligibility uses <strong>current</strong> tenant + group hiring policy, re-running the orchestrator with
+                  each application’s saved prescreen score and interview flags (same as Hire Passed). Changing D/E and
+                  saving updates who counts as advance without rewriting old Firestore decision fields.
                 </Typography>
               </Stack>
             )}

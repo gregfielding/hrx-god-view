@@ -1,5 +1,6 @@
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from '../utils/functionRuntimeDefaults';
 
 const C1_TENANT_ID = 'BCiP2bQ9CgVOCTfV6MhD';
 const READINESS_TRIGGER_VERSION = 1;
@@ -148,6 +149,7 @@ export const logC1WorkerReadinessDomainChanges = onDocumentWritten(
     region: 'us-central1',
     maxInstances: 1,
     retry: false,
+    memory: DEFAULT_FIRESTORE_TRIGGER_MEMORY,
   },
   async (event) => {
     const uid = event.params.uid as string;

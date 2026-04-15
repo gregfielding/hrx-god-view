@@ -15,6 +15,8 @@ import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 import { maybeScheduleWorkerAiPrescreenReminder } from './workerAiPrescreen/scheduleWorkerAiPrescreenReminder';
 import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
+import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from './utils/functionRuntimeDefaults';
+import { sendGridFromEmail, sendGridFromName } from './messaging/emailProviderFactory';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -94,9 +96,16 @@ const twilioA2PCampaign = defineSecret('TWILIO_A2P_CAMPAIGN');
 const APPLICATION_SMS_TRIGGER_OPTS = {
   document: 'tenants/{tenantId}/applications/{applicationId}',
   region: 'us-central1' as const,
-  memory: '512MiB' as const,
+  memory: DEFAULT_FIRESTORE_TRIGGER_MEMORY,
   timeoutSeconds: 300,
-  secrets: [twilioAccountSid, twilioAuthToken, twilioMessagingPhoneNumber, twilioA2PCampaign],
+  secrets: [
+    twilioAccountSid,
+    twilioAuthToken,
+    twilioMessagingPhoneNumber,
+    twilioA2PCampaign,
+    sendGridFromEmail,
+    sendGridFromName,
+  ],
 };
 
 /**

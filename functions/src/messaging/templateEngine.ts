@@ -185,6 +185,38 @@ async function getTemplateAnyLanguage(
   }
 }
 
+function escapeRegExpForTemplate(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Field values often pasted into templates as example literals, e.g. `{Isaiah}` instead of `{{firstName}}`. */
+const MISAUTHORED_LITERAL_KEYS = [
+  'firstName',
+  'lastName',
+  'fullName',
+  'jobTitle',
+  'locationCity',
+  'companyName',
+  'tenantName',
+] as const;
+
+function replaceMisauthoredLiteralPlaceholders(
+  text: string,
+  context: Record<string, any>,
+): string {
+  let out = text;
+  for (const key of MISAUTHORED_LITERAL_KEYS) {
+    const value = context[key];
+    if (value == null || value === '') continue;
+    const s = String(value).trim();
+    if (!s) continue;
+    const esc = escapeRegExpForTemplate(s);
+    out = out.replace(new RegExp(`\\{\\{\\s*${esc}\\s*\\}\\}`, 'gi'), s);
+    out = out.replace(new RegExp(`\\{\\s*${esc}\\s*\\}`, 'g'), s);
+  }
+  return out;
+}
+
 /**
  * Render template with context variables
  * 
@@ -218,6 +250,8 @@ export function renderTemplate(
         const keyEscaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         rendered = rendered.replace(new RegExp(`\\{${keyEscaped}\\}`, 'g'), stringValue);
       }
+
+      rendered = replaceMisauthoredLiteralPlaceholders(rendered, mergedContext);
       
       // Check for unreplaced variables (warn but don't fail) — both {{x}} and {x}
       const unreplacedDouble = rendered.match(/\{\{([^}]+)\}\}/g);
@@ -285,7 +319,7 @@ export function renderStringWithVariables(str: string, context: Record<string, a
     const keyEscaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     out = out.replace(new RegExp(`\\{${keyEscaped}\\}`, 'g'), stringValue);
   }
-  return out;
+  return replaceMisauthoredLiteralPlaceholders(out, context);
 }
 
 /**

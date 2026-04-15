@@ -7,8 +7,11 @@ export type UserGroupHiringPipelineStatusProps = {
   cfg: UserGroupHiringConfigV1;
   metrics: GroupHiringPipelineMetrics;
   loading: boolean;
-  /** Same count as applications in the policy-impact table (group-scoped query). */
+  /** Same count as rows in the policy-impact table (group-scoped query, after on-call dedupe when applicable). */
   applicationCount?: number;
+  /** When true, funnel counts one row per worker; `rawApplicationRecordCount` is pre-merge total. */
+  memberCentricOnCall?: boolean;
+  rawApplicationRecordCount?: number;
 };
 
 function StatChip({ label, value }: { label: string; value: string | number }) {
@@ -39,6 +42,8 @@ export const UserGroupHiringPipelineStatus: React.FC<UserGroupHiringPipelineStat
   metrics,
   loading,
   applicationCount,
+  memberCentricOnCall,
+  rawApplicationRecordCount,
 }) => {
   const tgt = cfg.targets?.targetOnboardingCount;
   const target = typeof tgt === 'number' && Number.isFinite(tgt) && tgt >= 1 ? tgt : null;
@@ -82,8 +87,22 @@ export const UserGroupHiringPipelineStatus: React.FC<UserGroupHiringPipelineStat
           Funnel (group-scoped applications)
           {applicationCount !== undefined && !loading ? (
             <Box component="span" sx={{ display: 'block', mt: 0.5 }}>
-              Same {applicationCount} application record{applicationCount === 1 ? '' : 's'} as in &quot;Candidates
-              affected by current policy&quot; below.
+              {memberCentricOnCall ? (
+                <>
+                  On-call pool: one row per person ({applicationCount} worker{applicationCount === 1 ? '' : 's'}
+                  {typeof rawApplicationRecordCount === 'number' && rawApplicationRecordCount > applicationCount
+                    ? `, merged from ${rawApplicationRecordCount} application record${
+                        rawApplicationRecordCount === 1 ? '' : 's'
+                      }`
+                    : ''}
+                  ). Same rows as in &quot;Candidates affected by current policy&quot; below.
+                </>
+              ) : (
+                <>
+                  Same {applicationCount} application record{applicationCount === 1 ? '' : 's'} as in &quot;Candidates
+                  affected by current policy&quot; below.
+                </>
+              )}
             </Box>
           ) : null}
         </Typography>

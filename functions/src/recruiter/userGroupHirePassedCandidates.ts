@@ -18,6 +18,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
+import { evaluateCurrentPolicyOrchestratorDecision } from './reevaluateHirePassedPolicy';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -26,6 +27,9 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 export type UserGroupHirePassedMode = 'preview' | 'commit' | 'execute';
+
+/** `current_policy` (default): re-run orchestrator with merged tenant+group hiring config. `stored`: legacy read of saved decision only. */
+export type UserGroupHirePassedEligibilityMode = 'stored' | 'current_policy';
 
 export type UserGroupHirePassedRow = {
   applicationId: string;
@@ -41,6 +45,7 @@ export type UserGroupHirePassedResult = {
   groupId: string;
   tenantId: string;
   mode: UserGroupHirePassedMode;
+  eligibilityMode: UserGroupHirePassedEligibilityMode;
   c1SelectEntityId: string | null;
   c1SelectResolved: boolean;
   /** Count of user IDs on the group document (`memberIds`). */
@@ -155,12 +160,16 @@ export const userGroupHirePassedCandidates = onCall(
       tenantId?: unknown;
       groupId?: unknown;
       mode?: unknown;
+      eligibilityMode?: unknown;
     };
     const tenantId = typeof raw.tenantId === 'string' ? raw.tenantId.trim() : '';
     const groupId = typeof raw.groupId === 'string' ? raw.groupId.trim() : '';
     const modeRaw = typeof raw.mode === 'string' ? raw.mode.trim().toLowerCase() : 'preview';
     const mode: UserGroupHirePassedMode =
       modeRaw === 'commit' ? 'commit' : modeRaw === 'execute' ? 'execute' : 'preview';
+    const eligibilityModeRaw = typeof raw.eligibilityMode === 'string' ? raw.eligibilityMode.trim().toLowerCase() : '';
+    const eligibilityMode: UserGroupHirePassedEligibilityMode =
+      eligibilityModeRaw === 'stored' ? 'stored' : 'current_policy';
 
     if (!tenantId || !groupId) {
       throw new HttpsError('invalid-argument', 'tenantId and groupId are required');
@@ -174,6 +183,9 @@ export const userGroupHirePassedCandidates = onCall(
     if (!groupSnap.exists) {
       throw new HttpsError('not-found', 'User group not found');
     }
+
+    const tenantSnap = await db.doc(`tenants/${tenantId}`).get();
+    const tenantData = (tenantSnap.data() || {}) as Record<string, unknown>;
 
     const entitiesSnap = await db.collection(`tenants/${tenantId}/entities`).get();
     const entities = entitiesSnap.docs.map((d) => ({
@@ -258,7 +270,7 @@ export const userGroupHirePassedCandidates = onCall(
       const reasons: string[] = [];
       const userId = String(data.userId || data.candidateId || '').trim();
       const appStatus = norm(data.status);
-      const orch = extractOrchestratorDecision(data);
+      const storedOrch = extractOrchestratorDecision(data);
       const nameHint = applicantNameFromApplication(data);
 
       if (!userId) {
@@ -269,7 +281,7 @@ export const userGroupHirePassedCandidates = onCall(
           displayNameHint: nameHint,
           outcome: 'excluded',
           reasons: ['Missing userId / candidateId on application'],
-          orchestratorDecision: orch,
+          orchestratorDecision: storedOrch,
           applicationStatus: appStatus || null,
         });
         continue;
@@ -284,7 +296,7 @@ export const userGroupHirePassedCandidates = onCall(
           displayNameHint: nameHint,
           outcome: 'excluded',
           reasons,
-          orchestratorDecision: orch,
+          orchestratorDecision: storedOrch,
           applicationStatus: appStatus || null,
         });
         continue;
@@ -299,18 +311,71 @@ export const userGroupHirePassedCandidates = onCall(
           displayNameHint: nameHint,
           outcome: 'excluded',
           reasons,
-          orchestratorDecision: orch,
+          orchestratorDecision: storedOrch,
           applicationStatus: appStatus || null,
         });
         continue;
       }
 
-      if (orch !== 'advance') {
+      let effectiveOrch: string | null = storedOrch;
+      if (eligibilityMode === 'current_policy') {
+        try {
+          const re = await evaluateCurrentPolicyOrchestratorDecision(
+            db,
+            tenantId,
+            tenantData,
+            applicationId,
+            data,
+            groupId,
+          );
+          if (re.decision === null) {
+            excludedCount += 1;
+            reasons.push(
+              re.reason
+                ? `Current policy re-evaluation failed: ${re.reason}`
+                : 'Current policy re-evaluation produced no decision',
+            );
+            if (storedOrch) reasons.push(`Stored orchestrator decision was “${storedOrch}”.`);
+            rows.push({
+              applicationId,
+              userId,
+              displayNameHint: nameHint,
+              outcome: 'excluded',
+              reasons,
+              orchestratorDecision: storedOrch,
+              applicationStatus: appStatus || null,
+            });
+            continue;
+          }
+          effectiveOrch = re.decision;
+        } catch (e) {
+          excludedCount += 1;
+          reasons.push(
+            `Current policy re-evaluation error: ${e instanceof Error ? e.message : String(e)}`,
+          );
+          rows.push({
+            applicationId,
+            userId,
+            displayNameHint: nameHint,
+            outcome: 'excluded',
+            reasons,
+            orchestratorDecision: storedOrch,
+            applicationStatus: appStatus || null,
+          });
+          continue;
+        }
+      }
+
+      if (effectiveOrch !== 'advance') {
         excludedCount += 1;
         reasons.push(
-          orch
-            ? `Orchestrator decision is “${orch}” (requires “advance” to count as passed)`
-            : 'No orchestrator decision on application (expected after interview submit)',
+          eligibilityMode === 'current_policy'
+            ? effectiveOrch
+              ? `Current-policy orchestrator decision is “${effectiveOrch}” (requires “advance”)`
+              : 'No current-policy orchestrator decision'
+            : storedOrch
+              ? `Orchestrator decision is “${storedOrch}” (requires “advance” to count as passed)`
+              : 'No orchestrator decision on application (expected after interview submit)',
         );
         rows.push({
           applicationId,
@@ -318,7 +383,7 @@ export const userGroupHirePassedCandidates = onCall(
           displayNameHint: nameHint,
           outcome: 'excluded',
           reasons,
-          orchestratorDecision: orch,
+          orchestratorDecision: effectiveOrch ?? storedOrch,
           applicationStatus: appStatus || null,
         });
         continue;
@@ -344,20 +409,28 @@ export const userGroupHirePassedCandidates = onCall(
           displayNameHint: nameHint,
           outcome: 'excluded',
           reasons,
-          orchestratorDecision: orch,
+          orchestratorDecision: effectiveOrch ?? storedOrch,
           applicationStatus: appStatus || null,
         });
         continue;
       }
 
       eligibleCount += 1;
+      const eligibleReasons: string[] = [
+        eligibilityMode === 'current_policy'
+          ? 'Eligible under current tenant + group hiring policy (orchestrator advance) and no blocking C1 Select employment'
+          : 'Passed AI interview (orchestrator advance) and no blocking C1 Select employment row',
+      ];
+      if (eligibilityMode === 'current_policy' && storedOrch && storedOrch !== 'advance') {
+        eligibleReasons.push(`Earlier stored decision was “${storedOrch}” (superseded by current-policy re-evaluation).`);
+      }
       rows.push({
         applicationId,
         userId,
         displayNameHint: nameHint,
         outcome: 'eligible',
-        reasons: ['Passed AI interview (orchestrator advance) and no blocking C1 Select employment row'],
-        orchestratorDecision: orch,
+        reasons: eligibleReasons,
+        orchestratorDecision: effectiveOrch ?? storedOrch,
         applicationStatus: appStatus || null,
       });
     }
@@ -381,6 +454,7 @@ export const userGroupHirePassedCandidates = onCall(
         tenantId,
         groupId,
         mode: 'commit',
+        eligibilityMode,
         performedByUid: request.auth.uid,
         performedAt: committedAt,
         c1SelectEntityId,
@@ -464,6 +538,7 @@ export const userGroupHirePassedCandidates = onCall(
         tenantId,
         groupId,
         mode: 'execute',
+        eligibilityMode,
         performedByUid: request.auth.uid,
         performedAt: committedAt,
         c1SelectEntityId,
@@ -494,6 +569,7 @@ export const userGroupHirePassedCandidates = onCall(
       groupId,
       tenantId,
       mode,
+      eligibilityMode,
       c1SelectEntityId,
       c1SelectResolved: Boolean(c1SelectEntityId),
       groupMemberCount: memberIds.length,
