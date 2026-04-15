@@ -200,6 +200,8 @@ const ManageAssociationDialog: React.FC<{
   onAdd: (item: ManageDialogOption) => void;
   onRemove: (id: string) => void;
   groupBy?: (option: ManageDialogOption) => string;
+  /** Rendered below the add row (e.g. create-new shortcut for Locations) */
+  addSectionFooter?: React.ReactNode;
 }> = ({
   open,
   onClose,
@@ -211,6 +213,7 @@ const ManageAssociationDialog: React.FC<{
   onAdd,
   onRemove,
   groupBy,
+  addSectionFooter,
 }) => {
   const [selectedOption, setSelectedOption] = useState<{ id: string; label: string; secondary?: string } | null>(null);
 
@@ -337,6 +340,7 @@ const ManageAssociationDialog: React.FC<{
                 </Typography>
               </Box>
             )}
+            {addSectionFooter}
           </Box>
         </Box>
       </DialogContent>
@@ -395,6 +399,9 @@ interface AccountSidebarProps {
   visibleSections?: Array<'activity' | 'company' | 'relatedAccounts' | 'location' | 'contacts' | 'jobOrders' | 'deals' | 'salespeople' | 'recruiters' | 'laborPool' | 'jobsBoard'>;
   /** When set (e.g. for child accounts), location options come from parent's companies instead of account's companyIds. */
   parentCompanyIds?: string[];
+  /** Open the same Add New Location dialog as the account / company flow; location is created on the linked company (parent's company for child accounts). */
+  onAddNewLocation?: () => void;
+  addNewLocationEnabled?: boolean;
 }
 
 function AccountSidebar({
@@ -421,6 +428,8 @@ function AccountSidebar({
   saving,
   visibleSections = ['activity', 'company', 'relatedAccounts', 'location', 'contacts', 'jobOrders', 'deals', 'salespeople', 'recruiters', 'laborPool'],
   parentCompanyIds,
+  onAddNewLocation,
+  addNewLocationEnabled = false,
 }: AccountSidebarProps) {
   const [manageCompaniesOpen, setManageCompaniesOpen] = useState(false);
   const [manageLocationsOpen, setManageLocationsOpen] = useState(false);
@@ -1133,6 +1142,24 @@ function AccountSidebar({
           updateAccountAssociations({ locations: [...locations, { companyId, locationId }] });
         }}
         onRemove={(id) => updateAccountAssociations({ locations: locations.filter((loc) => `${loc.companyId}:${loc.locationId}` !== id) })}
+        addSectionFooter={
+          addNewLocationEnabled && onAddNewLocation ? (
+            <Box sx={{ mt: 2 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                startIcon={<AddIcon />}
+                onClick={() => {
+                  setManageLocationsOpen(false);
+                  onAddNewLocation();
+                }}
+                sx={{ textTransform: 'none' }}
+              >
+                Add new location
+              </Button>
+            </Box>
+          ) : undefined
+        }
       />
       <ManageAssociationDialog
         open={manageContactsOpen}
@@ -1337,6 +1364,16 @@ const RecruiterAccountDetails: React.FC = () => {
     skipped_idempotent: number;
   } | null>(null);
   const [parentCompanyIds, setParentCompanyIds] = useState<string[]>([]);
+  const addLocationTargetCompanyIds = useMemo(
+    () => (isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? [])),
+    [isChildAccount, parentCompanyIds, account?.associations?.companyIds]
+  );
+  const showAddLocationCompanySelect = useMemo(
+    () =>
+      addLocationTargetCompanyIds.length > 1 ||
+      (!isChildAccount && (account?.mspAccountIds?.length ?? 0) > 0),
+    [addLocationTargetCompanyIds, isChildAccount, account?.mspAccountIds]
+  );
   const [parentAccountLogoUrl, setParentAccountLogoUrl] = useState<string | null>(null);
   const [orderDefaultsSubView, setOrderDefaultsSubView] = useState<'staffInstructions' | 'orderDetails'>('staffInstructions');
   const [addLocationCompanyId, setAddLocationCompanyId] = useState<string>('');
@@ -2295,8 +2332,32 @@ const RecruiterAccountDetails: React.FC = () => {
     }
   }, [tenantId, account?.associations?.companyIds, companies]);
 
+  const openAddLocationDialogForAccount = useCallback(() => {
+    const ids = isChildAccount ? parentCompanyIds : (account?.associations?.companyIds ?? []);
+    if (!ids.length) return;
+    setAddLocationCompanyId(ids[0]);
+    setAddLocationForm({
+      name: '',
+      code: '',
+      address: '',
+      city: '',
+      state: '',
+      zipCode: '',
+      country: 'USA',
+      type: 'Office',
+      division: '',
+      phone: '',
+      coordinates: null,
+    });
+    setAddLocationError(null);
+    setShowAddLocationDialog(true);
+  }, [isChildAccount, parentCompanyIds, account?.associations?.companyIds]);
+
   const handleAddLocationAccount = useCallback(async () => {
-    const companyId = addLocationCompanyId || account?.associations?.companyIds?.[0];
+    const companyId =
+      addLocationCompanyId ||
+      (isChildAccount ? parentCompanyIds[0] : undefined) ||
+      account?.associations?.companyIds?.[0];
     if (!tenantId || !companyId || !addLocationForm.name || !addLocationForm.address) return;
     setAddLocationSubmitting(true);
     setAddLocationError(null);
@@ -2327,13 +2388,23 @@ const RecruiterAccountDetails: React.FC = () => {
       });
       setShowAddLocationDialog(false);
       fetchAccountLocations();
+      loadLocationsForCompanies([companyId]).catch(() => {});
     } catch (err) {
       console.error('Error adding location:', err);
       setAddLocationError('Failed to add location');
     } finally {
       setAddLocationSubmitting(false);
     }
-  }, [tenantId, account?.associations?.companyIds, addLocationCompanyId, addLocationForm, fetchAccountLocations]);
+  }, [
+    tenantId,
+    isChildAccount,
+    parentCompanyIds,
+    account?.associations?.companyIds,
+    addLocationCompanyId,
+    addLocationForm,
+    fetchAccountLocations,
+    loadLocationsForCompanies,
+  ]);
 
   // Only fetch full company locations for national/standalone accounts; child accounts show only their worksites
   useEffect(() => {
@@ -3788,28 +3859,12 @@ const RecruiterAccountDetails: React.FC = () => {
                   Add Sub Account
                 </Button>
               ) : null}
-              {!isNationalAccount && account?.associations?.companyIds?.length ? (
+              {!isNationalAccount &&
+              (isChildAccount ? parentCompanyIds.length : (account?.associations?.companyIds?.length ?? 0)) ? (
                 <Button
                   variant="contained"
                   startIcon={<AddIcon />}
-                  onClick={() => {
-                    setAddLocationCompanyId(account?.associations?.companyIds?.[0] ?? '');
-                    setAddLocationForm({
-                      name: '',
-                      code: '',
-                      address: '',
-                      city: '',
-                      state: '',
-                      zipCode: '',
-                      country: 'USA',
-                      type: 'Office',
-                      division: '',
-                      phone: '',
-                      coordinates: null,
-                    });
-                    setAddLocationError(null);
-                    setShowAddLocationDialog(true);
-                  }}
+                  onClick={openAddLocationDialogForAccount}
                   sx={{ flexShrink: 0 }}
                 >
                   Add Location
@@ -3892,9 +3947,11 @@ const RecruiterAccountDetails: React.FC = () => {
         <DialogContent>
           <Box sx={{ pt: 1 }}>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Add a new location for a company linked to this account. The location is created on the company (same as adding from the Company – Locations tab). Use the address field to automatically populate city, state, and ZIP.
+              {isChildAccount
+                ? 'Add a new location for a company linked to the parent account. The location is stored on that company (same as Company → Locations). Use the address field to automatically populate city, state, and ZIP.'
+                : 'Add a new location for a company linked to this account. The location is created on the company (same as adding from the Company – Locations tab). Use the address field to automatically populate city, state, and ZIP.'}
             </Typography>
-            {account?.associations?.companyIds?.length && (account.associations.companyIds.length > 1 || (account.mspAccountIds?.length ?? 0) > 0) && (
+            {showAddLocationCompanySelect && addLocationTargetCompanyIds.length > 0 && (
               <FormControl fullWidth sx={{ mb: 2 }}>
                 <InputLabel>Company</InputLabel>
                 <Select
@@ -3902,7 +3959,7 @@ const RecruiterAccountDetails: React.FC = () => {
                   label="Company"
                   onChange={(e) => setAddLocationCompanyId(e.target.value)}
                 >
-                  {account.associations.companyIds.map((cid: string) => (
+                  {addLocationTargetCompanyIds.map((cid: string) => (
                     <MenuItem key={cid} value={cid}>
                       {companies.find((c) => c.id === cid)?.label ?? cid}
                     </MenuItem>
@@ -4593,6 +4650,10 @@ const RecruiterAccountDetails: React.FC = () => {
                     : ['activity', 'company', 'relatedAccounts', 'location', 'contacts']
                 ) as AccountSidebarProps['visibleSections']}
                 parentCompanyIds={isChildAccount ? parentCompanyIds : undefined}
+                addNewLocationEnabled={
+                  (isChildAccount ? parentCompanyIds.length : (account?.associations?.companyIds?.length ?? 0)) > 0
+                }
+                onAddNewLocation={openAddLocationDialogForAccount}
               />
             </Grid>
           </Grid>

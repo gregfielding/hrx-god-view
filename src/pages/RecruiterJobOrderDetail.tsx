@@ -3102,10 +3102,57 @@ const RecruiterJobOrderDetail: React.FC = () => {
     return () => { cancelled = true; };
   }, [tenantId, companyIdForAccount]);
 
+  /** When the JO has no `hiringEntityId`, inherit from `recruiterAccountId` (then parent national account). Matches backend `resolveEntityContext` / Placements entity_employments scoping. */
+  const [resolvedRecruiterAccountHiringEntityId, setResolvedRecruiterAccountHiringEntityId] = useState<string | null>(null);
+  useEffect(() => {
+    const rid = String((jobOrder as any)?.recruiterAccountId || '').trim();
+    if (!tenantId || !rid) {
+      setResolvedRecruiterAccountHiringEntityId(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, p.recruiterAccount(tenantId, rid)));
+        if (!snap.exists() || cancelled) {
+          if (!cancelled) setResolvedRecruiterAccountHiringEntityId(null);
+          return;
+        }
+        const d = snap.data() as { hiringEntityId?: string | null; parentAccountId?: string | null };
+        let hid = d.hiringEntityId != null && String(d.hiringEntityId).trim() ? String(d.hiringEntityId).trim() : null;
+        const parentId = d.parentAccountId != null && String(d.parentAccountId).trim() ? String(d.parentAccountId).trim() : null;
+        if (!hid && parentId) {
+          const pSnap = await getDoc(doc(db, p.recruiterAccount(tenantId, parentId)));
+          if (pSnap.exists()) {
+            const pd = pSnap.data() as { hiringEntityId?: string | null };
+            if (pd.hiringEntityId != null && String(pd.hiringEntityId).trim()) {
+              hid = String(pd.hiringEntityId).trim();
+            }
+          }
+        }
+        if (!cancelled) setResolvedRecruiterAccountHiringEntityId(hid);
+      } catch {
+        if (!cancelled) setResolvedRecruiterAccountHiringEntityId(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, (jobOrder as any)?.recruiterAccountId]);
+
+  const effectiveJobOrderHiringEntityId = useMemo(() => {
+    const direct = (jobOrder as any)?.hiringEntityId;
+    if (direct != null && String(direct).trim()) return String(direct).trim();
+    if (resolvedRecruiterAccountHiringEntityId) return resolvedRecruiterAccountHiringEntityId;
+    const fromLinked = linkedAccount?.hiringEntityId;
+    if (fromLinked != null && String(fromLinked).trim()) return String(fromLinked).trim();
+    return null;
+  }, [jobOrder, resolvedRecruiterAccountHiringEntityId, linkedAccount?.hiringEntityId]);
+
   /** Entity for linked account (Account Type / E-Verify / Hiring Entity on Basic Information card). */
   const { entity: linkedAccountEntity } = useEntity(tenantId, linkedAccount?.hiringEntityId ?? null);
-  /** Job order hiring entity (Placements: resolves C1 entity key for `entity_employments` employment chip). */
-  const { entity: jobOrderHiringEntity } = useEntity(tenantId, jobOrder?.hiringEntityId ?? null);
+  /** Hiring entity for this job context: explicit JO → recruiter account (± parent) → company-linked account. Used for Placements employment chips. */
+  const { entity: jobOrderHiringEntity } = useEntity(tenantId, effectiveJobOrderHiringEntityId);
 
   // Subscribe to job order with onSnapshot so Staff Instructions inputs update in real time; save on blur
   const jobOrderInitialLoadDone = useRef(false);
@@ -4735,9 +4782,10 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   variant="outlined"
                   size="small"
                   onClick={() => {
-                    if (company) {
-                      navigate(`/companies/${company.id}`);
-                    }
+                    const aid =
+                      (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
+                    if (aid) navigate(`/accounts/${aid}`);
+                    else if (company) navigate(`/companies/${company.id}`);
                   }}
                   sx={{ 
                     minWidth: 'auto',
@@ -4754,13 +4802,21 @@ const RecruiterJobOrderDetail: React.FC = () => {
                   <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     <Box
                       sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'grey.50', cursor: 'pointer' }}
-                      onClick={() => navigate(`/companies/${company.id}`)}
+                      onClick={() => {
+                        const aid =
+                          (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
+                        if (aid) navigate(`/accounts/${aid}`);
+                        else navigate(`/companies/${company.id}`);
+                      }}
                       role="button"
                       tabIndex={0}
                       onKeyDown={(e) => { 
                         if (e.key === 'Enter' || e.key === ' ') { 
                           e.preventDefault(); 
-                          navigate(`/companies/${company.id}`);
+                          const aid =
+                            (jobOrder as any)?.recruiterAccountId ?? linkedAccount?.id ?? null;
+                          if (aid) navigate(`/accounts/${aid}`);
+                          else navigate(`/companies/${company.id}`);
                         } 
                       }}
                     >
@@ -5233,6 +5289,7 @@ const RecruiterJobOrderDetail: React.FC = () => {
           onJobOrderUpdated={fetchJobOrder}
           connectedJobPostIds={(connectedJobPosts || []).map((p) => p.id).filter(Boolean)}
           hiringEntityName={jobOrderHiringEntity?.name ?? null}
+          placementHiringEntityId={effectiveJobOrderHiringEntityId}
         />
       </TabPanel>
 

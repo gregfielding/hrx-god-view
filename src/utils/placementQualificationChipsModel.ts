@@ -193,8 +193,11 @@ export function placementEmploymentChipFromEntityData(
 
   const es = String(data.employmentState ?? '').trim().toLowerCase();
   const leg = String(data.status ?? '').trim().toLowerCase();
-  const hasCanon = Boolean(es);
-  const primary = hasCanon ? es : leg;
+  // Match `userListEntityEmploymentStatus` / backend sync: treat placeholder `employmentState` as absent so
+  // legacy `status` (e.g. `onboarding`) still drives the chip when canonical state was not denormalized yet.
+  const esMeaningful = Boolean(es) && es !== 'not_started' && es !== 'none';
+  const primary = esMeaningful ? es : leg;
+  const hasCanon = esMeaningful;
 
   if (!primary || primary === 'not_started' || primary === 'none') {
     return {

@@ -45,9 +45,12 @@ export function useEntity(tenantId: string | null, entityId: string | null | und
         return;
       }
       const d = snap.data() as any;
+      // Align with backend `resolveEntityContext` / `entities` reads: `name` alone can be empty while `legalName` holds "C1 Select LLC".
+      // Placements (and other UIs) derive C1 entity key from this string for `entity_employments` doc ids (`uid__select`, etc.).
+      const resolvedName = String(d?.name || d?.legalName || d?.title || '').trim() || snap.id;
       setEntity({
         id: snap.id,
-        name: d?.name ?? snap.id,
+        name: resolvedName,
         entityCode: d?.entityCode ?? '',
         workerType: d?.workerType ?? 'W2',
         everifyRequired: !!d?.everifyRequired,

@@ -57,6 +57,7 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  limit,
   type QueryDocumentSnapshot,
   documentId,
 } from 'firebase/firestore';
@@ -105,6 +106,11 @@ interface PlacementsTabProps {
   connectedJobPostIds?: string[];
   /** Hiring entity legal name (used to resolve C1 entity key for `entity_employments` / employment chip). */
   hiringEntityName?: string | null;
+  /**
+   * Effective Firestore entities/{id} for this job (explicit JO hiring entity, else recruiter account / parent).
+   * When set, `entity_employments` rows are matched by this id; overrides `jobOrder.hiringEntityId` when absent on the JO doc.
+   */
+  placementHiringEntityId?: string | null;
 }
 
 interface Shift {
@@ -282,6 +288,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
   onJobOrderUpdated,
   connectedJobPostIds = [],
   hiringEntityName = null,
+  placementHiringEntityId = null,
 }) => {
   // Only present in hrx-god-view workspace build (Assign All + Export + Preview Email)
   if (typeof console !== 'undefined' && console.log) {
@@ -499,15 +506,65 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
       try {
         const ref = collection(db, 'tenants', tenantId, 'entity_employments');
         const merged = new Map<string, Record<string, unknown>>();
-        for (let i = 0; i < placementQualUserIds.length; i += 30) {
-          const chunk = placementQualUserIds.slice(i, i + 30);
-          const docIds = chunk.map((uid) => `${uid}__${placementEntityKey}`);
-          const q = query(ref, where(documentId(), 'in', docIds));
-          const snap = await getDocs(q);
-          snap.docs.forEach((d) => {
-            const uid = d.id.split('__')[0];
-            merged.set(uid, d.data() as Record<string, unknown>);
-          });
+        const hiringEntityId = String(
+          placementHiringEntityId ?? (jobOrder as { hiringEntityId?: string | null })?.hiringEntityId ?? ''
+        ).trim();
+        // Fast path when the job has no hiring entity id: `${uid}__${entityKey}` batch lookup.
+        if (!hiringEntityId) {
+          for (let i = 0; i < placementQualUserIds.length; i += 30) {
+            const chunk = placementQualUserIds.slice(i, i + 30);
+            const docIds = chunk.map((uid) => `${uid}__${placementEntityKey}`);
+            const q = query(ref, where(documentId(), 'in', docIds));
+            const snap = await getDocs(q);
+            snap.docs.forEach((d) => {
+              const uid = d.id.split('__')[0];
+              merged.set(uid, d.data() as Record<string, unknown>);
+            });
+          }
+        }
+        if (hiringEntityId) {
+          // Job order is authoritative: `${uid}__${entityKey}` can point at the wrong row when a worker has
+          // multiple entity_employments (e.g. workforce row exists but Select onboarding is the job context).
+          // Always prefer the row whose `entityId` matches this job's hiring entity (same as profile chips).
+          for (const uid of placementQualUserIds) {
+            try {
+              const q2 = query(ref, where('userId', '==', uid), limit(60));
+              const snap2 = await getDocs(q2);
+              const rows = snap2.docs.map((d) => ({ id: d.id, data: d.data() as Record<string, unknown> }));
+              const byEntityId = rows.find(
+                (r) => String(r.data.entityId || '').trim() === hiringEntityId
+              );
+              const byEntityKey =
+                !byEntityId && placementEntityKey
+                  ? rows.find(
+                      (r) =>
+                        String(r.data.entityKey || '').toLowerCase() === String(placementEntityKey).toLowerCase()
+                    )
+                  : null;
+              const picked = byEntityId ?? byEntityKey;
+              if (picked) merged.set(uid, picked.data);
+              else merged.delete(uid);
+            } catch {
+              /* ignore single-user fallback */
+            }
+          }
+        } else {
+          for (const uid of placementQualUserIds) {
+            if (merged.has(uid)) continue;
+            try {
+              const q2 = query(ref, where('userId', '==', uid), limit(60));
+              const snap2 = await getDocs(q2);
+              const match = snap2.docs.find((d) => {
+                const data = d.data() as { entityKey?: string };
+                return (
+                  String(data.entityKey || '').toLowerCase() === String(placementEntityKey).toLowerCase()
+                );
+              });
+              if (match) merged.set(uid, match.data() as Record<string, unknown>);
+            } catch {
+              /* ignore */
+            }
+          }
         }
         if (!cancelled) setEntityEmploymentByUserId(merged);
       } catch (e) {
@@ -520,7 +577,7 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [tenantId, placementEntityKey, placementQualUserIdsKey]);
+  }, [tenantId, placementEntityKey, placementQualUserIdsKey, placementHiringEntityId, jobOrder?.hiringEntityId]);
 
   useEffect(() => {
     if (!tenantId || assignmentIdsForReadinessSnapshot.length === 0) {
@@ -2902,7 +2959,10 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                   {hasBio && (
                                     <Tooltip
                                       title={
-                                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', maxWidth: 320 }}>
+                                    <Typography
+                                      variant="body2"
+                                      sx={{ whiteSpace: 'pre-wrap', maxWidth: 320, color: 'common.white' }}
+                                    >
                                             {worker.bio}
                                           </Typography>
                                       }
@@ -2916,10 +2976,20 @@ const PlacementsTab: React.FC<PlacementsTabProps> = ({
                                   {hasWorkHistory && (
                                     <Tooltip
                                       title={
-                                    <Box sx={{ maxWidth: 340 }}>
-                                          <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Work History</Typography>
+                                    <Box sx={{ maxWidth: 340, color: 'common.white' }}>
+                                          <Typography
+                                            variant="subtitle2"
+                                            sx={{ mb: 0.5, color: 'inherit', fontWeight: 600 }}
+                                          >
+                                            Work History
+                                          </Typography>
                                             {worker.workHistory?.slice(0, 3).map((job: any, idx: number) => (
-                                        <Typography key={idx} variant="caption" display="block">
+                                        <Typography
+                                          key={idx}
+                                          variant="caption"
+                                          display="block"
+                                          sx={{ color: 'rgba(255, 255, 255, 0.92)' }}
+                                        >
                                           {job.position || job.title || job.role || 'Position'}{job.company ? ` at ${job.company}` : ''}
                                                 </Typography>
                                       ))}
