@@ -1,11 +1,12 @@
 /**
  * Compact I-9 supporting documents block for Employment → Tax and identity (primary action surface).
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   Box,
   Button,
+  Checkbox,
   Chip,
   CircularProgress,
   Dialog,
@@ -53,10 +54,19 @@ import {
   I9_MESSAGE_REQUEST_UPLOAD_SMS_DEEPLINK,
   I9_REQUEST_CREATED_STAFF_HINT_V2,
 } from '../../constants/i9SupportingDocumentsEmploymentStrings';
-import { callCreateWorkerI9SupportingDocumentRequest } from '../../services/i9SupportingDocumentCallables';
+import {
+  callCreateWorkerI9SupportingDocumentRequest,
+  callSetEntityEmploymentI9SupportingManualComplete,
+} from '../../services/i9SupportingDocumentCallables';
 import I9SupportingDocumentsDetailDrawer from './I9SupportingDocumentsDetailDrawer';
 import { LIST_A_TYPES, LIST_B_TYPES, LIST_C_TYPES } from './I9SupportingDocumentsWorkspace';
-import { filterI9RowsForEntityEmployment, workerMyEmploymentAbsoluteUrl } from '../../utils/workerEmploymentWorkerSurface';
+import {
+  filterI9RowsForEntityEmployment,
+  workerMyEmploymentMessagingAbsoluteUrl,
+} from '../../utils/workerEmploymentWorkerSurface';
+
+/** When false, hides the manual-complete checkbox under "I-9 supporting documents" (not the payroll I-9 C1 checkbox). */
+const SHOW_I9_SUPPORTING_DOCUMENTS_MANUAL_COMPLETE_CHECKBOX = false;
 
 export interface EmploymentI9SupportingDocumentsSubsectionProps {
   tenantId: string;
@@ -81,6 +91,13 @@ export interface EmploymentI9SupportingDocumentsSubsectionProps {
   }) => void | Promise<void>;
   /** Payroll / TempWorks I-9 verified — supporting uploads are not part of completion gates. */
   i9EmployeeSectionComplete?: boolean;
+  /** Set on entity_employments when recruiter confirms supporting docs satisfied outside HRX. */
+  i9SupportingManualComplete?: boolean;
+  /** Recruiter-only: show checkbox to set/clear manual confirmation. Hidden when payroll I-9 is already C1-verified (avoid duplicating Tax & identity → I-9 payroll). */
+  showI9SupportingManualToggle?: boolean;
+  /** `entity_employments` doc id — required for manual toggle callable. */
+  employmentRecordId?: string | null;
+  onManualI9SupportingComplete?: () => void;
 }
 
 function substatusChipColor(
@@ -111,6 +128,10 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
   onOpenWorkerNotificationComposer,
   onSendWorkerNotificationDirect,
   i9EmployeeSectionComplete = false,
+  i9SupportingManualComplete = false,
+  showI9SupportingManualToggle = false,
+  employmentRecordId,
+  onManualI9SupportingComplete,
 }) => {
   const { user, isHRX, claimsRoles, tenantRolesFromProfile, legacyUserSecurityLevel, legacyUserRole } = useAuth();
   const viewerUid = user?.uid;
@@ -154,14 +175,51 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
     () =>
       buildI9SupportingDocumentsEmploymentViewModel(scopedRows, {
         i9EmployeeSectionComplete,
+        i9SupportingManualComplete,
       }),
-    [scopedRows, i9EmployeeSectionComplete],
+    [scopedRows, i9EmployeeSectionComplete, i9SupportingManualComplete],
   );
 
+  const [manualToggleBusy, setManualToggleBusy] = useState(false);
+  const [manualToggleErr, setManualToggleErr] = useState<string | null>(null);
+  const [manualOptimistic, setManualOptimistic] = useState<boolean | null>(null);
+  const manualEffective =
+    manualOptimistic !== null ? manualOptimistic : Boolean(i9SupportingManualComplete);
+
+  useEffect(() => {
+    setManualOptimistic(null);
+  }, [i9SupportingManualComplete]);
+
+  const handleManualCompleteToggle = async (next: boolean) => {
+    const eid = employmentRecordId?.trim();
+    if (!eid || !tenantId.trim()) return;
+    if (!next) {
+      const ok = window.confirm(
+        'Clear manual I-9 supporting confirmation? Upload and review actions will be available again for this employment.',
+      );
+      if (!ok) return;
+    }
+    setManualToggleBusy(true);
+    setManualToggleErr(null);
+    setManualOptimistic(next);
+    try {
+      await callSetEntityEmploymentI9SupportingManualComplete(functions, {
+        tenantId,
+        employmentId: eid,
+        complete: next,
+      });
+      onManualI9SupportingComplete?.();
+    } catch (e: unknown) {
+      setManualOptimistic(null);
+      setManualToggleErr(formatFirebaseHttpsError(e) || 'Could not update manual confirmation.');
+    } finally {
+      setManualToggleBusy(false);
+    }
+  };
+
   const workerEmploymentAbsoluteUrl = useMemo(() => {
-    const id = workerEmploymentRecordId?.trim();
-    if (!id || typeof window === 'undefined') return '';
-    return workerMyEmploymentAbsoluteUrl(window.location.origin, id);
+    if (typeof window === 'undefined') return '';
+    return workerMyEmploymentMessagingAbsoluteUrl(window.location.origin, workerEmploymentRecordId);
   }, [workerEmploymentRecordId]);
 
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -304,6 +362,42 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
       <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.5 }}>
         {staffMode ? I9_EMPLOYMENT_ADMIN_INTRO : I9_EMPLOYMENT_PURPOSE}
       </Typography>
+
+      {SHOW_I9_SUPPORTING_DOCUMENTS_MANUAL_COMPLETE_CHECKBOX &&
+      showI9SupportingManualToggle &&
+      employmentRecordId?.trim() ? (
+        <Stack spacing={0.5} sx={{ mb: 1.25 }}>
+          <FormControlLabel
+            sx={{ ml: 0, mr: 0, alignItems: 'flex-start' }}
+            control={
+              <Checkbox
+                size="small"
+                checked={manualEffective}
+                disabled={manualToggleBusy}
+                color={manualEffective ? 'success' : 'primary'}
+                onChange={(_, c) => void handleManualCompleteToggle(c)}
+              />
+            }
+            label={
+              <Box>
+                <Typography variant="body2" component="span">
+                  Manually confirm I-9 supporting documents complete
+                </Typography>
+                <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25, lineHeight: 1.45 }}>
+                  Use when List A / B / C were verified outside HRX. Workers will not be asked to upload here; admin upload
+                  actions are disabled while this is checked.
+                </Typography>
+              </Box>
+            }
+          />
+          {manualToggleErr ? (
+            <Typography variant="caption" color="error" display="block">
+              {manualToggleErr}
+            </Typography>
+          ) : null}
+        </Stack>
+      ) : null}
+
       {i9EmployeeSectionComplete ? (
         <Alert severity="info" sx={{ mb: 1.25 }}>
           <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
@@ -312,149 +406,166 @@ const EmploymentI9SupportingDocumentsSubsection: React.FC<EmploymentI9Supporting
         </Alert>
       ) : null}
 
-      {loading ? (
-        <Typography variant="caption" color="text.secondary">
-          Loading document status…
-        </Typography>
-      ) : error ? (
-        <Alert severity="error" sx={{ mb: 1 }}>
-          {error}
+      {workerSelf && manualEffective ? (
+        <Alert severity="success" variant="outlined" sx={{ mt: 0.5 }}>
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            Your employer confirmed your I-9 supporting documents. You do not need to upload documents in HRX for this
+            employment.
+          </Typography>
         </Alert>
       ) : (
-        <>
-          <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-              Status:
+        <Box
+          sx={
+            staffMode && manualEffective
+              ? { opacity: 0.48, pointerEvents: 'none', filter: 'grayscale(0.2)' }
+              : undefined
+          }
+        >
+          {loading ? (
+            <Typography variant="caption" color="text.secondary">
+              Loading document status…
             </Typography>
-            <Chip
-              size="small"
-              label={vm.substatusLabel}
-              color={substatusChipColor(vm.substatus)}
-              variant={vm.substatus === 'not_started' ? 'outlined' : 'filled'}
-            />
-          </Stack>
+          ) : error ? (
+            <Alert severity="error" sx={{ mb: 1 }}>
+              {error}
+            </Alert>
+          ) : (
+            <>
+              <Stack direction="row" alignItems="center" flexWrap="wrap" gap={1} sx={{ mb: 1 }}>
+                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                  Status:
+                </Typography>
+                <Chip
+                  size="small"
+                  label={vm.substatusLabel}
+                  color={substatusChipColor(vm.substatus)}
+                  variant={vm.substatus === 'not_started' ? 'outlined' : 'filled'}
+                />
+              </Stack>
 
-          {vm.compactContextLines.length > 0 ? (
-            <Box sx={{ mb: 1 }}>
-              {vm.compactContextLines.map((line) => (
-                <Typography
-                  key={line}
-                  variant="caption"
-                  color="text.secondary"
-                  display="block"
-                  sx={{ lineHeight: 1.45, fontStyle: 'italic' }}
-                >
+              {vm.compactContextLines.length > 0 ? (
+                <Box sx={{ mb: 1 }}>
+                  {vm.compactContextLines.map((line) => (
+                    <Typography
+                      key={line}
+                      variant="caption"
+                      color="text.secondary"
+                      display="block"
+                      sx={{ lineHeight: 1.45, fontStyle: 'italic' }}
+                    >
+                      {line}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : null}
+
+              <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.35 }}>
+                {i9EmployeeSectionComplete ? I9_HELPER_REQUIREMENT_HEADING : I9_HELPER_REQUIREMENT_HEADING_WHEN_I9_PENDING}
+              </Typography>
+              <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
+                Upload 1 List A document, or 1 List B document and 1 List C document.
+              </Typography>
+
+              {vm.stillNeededLines.map((line) => (
+                <Typography key={line} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
                   {line}
                 </Typography>
               ))}
-            </Box>
-          ) : null}
+              {vm.uploadedSummaryLines.length > 0 ? (
+                <Box sx={{ mt: 0.75 }}>
+                  {vm.uploadedSummaryLines.map((line) => (
+                    <Typography key={line} variant="caption" display="block" sx={{ lineHeight: 1.45 }}>
+                      {line}
+                    </Typography>
+                  ))}
+                </Box>
+              ) : null}
 
-          <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.35 }}>
-            {i9EmployeeSectionComplete ? I9_HELPER_REQUIREMENT_HEADING : I9_HELPER_REQUIREMENT_HEADING_WHEN_I9_PENDING}
-          </Typography>
-          <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 0.75, lineHeight: 1.45 }}>
-            Upload 1 List A document, or 1 List B document and 1 List C document.
-          </Typography>
-
-          {vm.stillNeededLines.map((line) => (
-            <Typography key={line} variant="caption" color="text.secondary" display="block" sx={{ lineHeight: 1.45 }}>
-              {line}
-            </Typography>
-          ))}
-          {vm.uploadedSummaryLines.length > 0 ? (
-            <Box sx={{ mt: 0.75 }}>
-              {vm.uploadedSummaryLines.map((line) => (
-                <Typography key={line} variant="caption" display="block" sx={{ lineHeight: 1.45 }}>
-                  {line}
+              <Stack direction="row" flexWrap="wrap" gap={2} sx={{ mt: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Last upload: {vm.latestUploadedAtLabel}
                 </Typography>
-              ))}
-            </Box>
-          ) : null}
+                <Typography variant="caption" color="text.secondary">
+                  Last review: {vm.latestReviewedAtLabel}
+                </Typography>
+              </Stack>
+              {vm.latestRejectionReason && vm.substatus === 'action_needed' ? (
+                <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
+                  Latest rejection: {vm.latestRejectionReason}
+                </Typography>
+              ) : null}
+            </>
+          )}
 
-          <Stack direction="row" flexWrap="wrap" gap={2} sx={{ mt: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              Last upload: {vm.latestUploadedAtLabel}
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Last review: {vm.latestReviewedAtLabel}
-            </Typography>
-          </Stack>
-          {vm.latestRejectionReason && vm.substatus === 'action_needed' ? (
-            <Typography variant="caption" color="error" display="block" sx={{ mt: 0.5 }}>
-              Latest rejection: {vm.latestRejectionReason}
-            </Typography>
-          ) : null}
-        </>
-      )}
+          {requestSuccess && (
+            <Alert severity="success" sx={{ mt: 1 }} onClose={() => setRequestSuccess(null)}>
+              <Stack spacing={1}>
+                <Typography variant="body2">{requestSuccess}</Typography>
+                {staffMode ? successAlertSmsEmail() : null}
+              </Stack>
+            </Alert>
+          )}
 
-      {requestSuccess && (
-        <Alert severity="success" sx={{ mt: 1 }} onClose={() => setRequestSuccess(null)}>
-          <Stack spacing={1}>
-            <Typography variant="body2">{requestSuccess}</Typography>
-            {staffMode ? successAlertSmsEmail() : null}
-          </Stack>
-        </Alert>
-      )}
-
-      <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5 }} useFlexGap alignItems="center">
-        {staffMode ? (
-          <>
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={<OpenInNewIcon />}
-              onClick={() => setDrawerOpen(true)}
-              disabled={loading || Boolean(error)}
-            >
-              {I9_ADMIN_BTN_REVIEW_DOCUMENTS}
-            </Button>
-            {canNotifyWorker ? (
+          <Stack direction="row" flexWrap="wrap" gap={1} sx={{ mt: 1.5 }} useFlexGap alignItems="center">
+            {staffMode ? (
               <>
                 <Button
                   size="small"
-                  variant="outlined"
-                  startIcon={directSmsBusy ? <CircularProgress color="inherit" size={14} /> : <SmsIcon />}
-                  onClick={() => void runReminderSms()}
-                  disabled={loading || Boolean(error) || directSmsBusy || directEmailBusy}
+                  variant="contained"
+                  startIcon={<OpenInNewIcon />}
+                  onClick={() => setDrawerOpen(true)}
+                  disabled={loading || Boolean(error)}
                 >
-                  {I9_ADMIN_SEND_REMINDER_SMS}
+                  {I9_ADMIN_BTN_REVIEW_DOCUMENTS}
                 </Button>
+                {canNotifyWorker ? (
+                  <>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={directSmsBusy ? <CircularProgress color="inherit" size={14} /> : <SmsIcon />}
+                      onClick={() => void runReminderSms()}
+                      disabled={loading || Boolean(error) || directSmsBusy || directEmailBusy}
+                    >
+                      {I9_ADMIN_SEND_REMINDER_SMS}
+                    </Button>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={directEmailBusy ? <CircularProgress color="inherit" size={14} /> : <EmailIcon />}
+                      onClick={() => void runReminderEmail()}
+                      disabled={loading || Boolean(error) || directSmsBusy || directEmailBusy}
+                    >
+                      {I9_ADMIN_RESEND_LINK_EMAIL}
+                    </Button>
+                  </>
+                ) : null}
                 <Button
                   size="small"
-                  variant="outlined"
-                  startIcon={directEmailBusy ? <CircularProgress color="inherit" size={14} /> : <EmailIcon />}
-                  onClick={() => void runReminderEmail()}
-                  disabled={loading || Boolean(error) || directSmsBusy || directEmailBusy}
+                  variant="text"
+                  color="inherit"
+                  startIcon={<AddIcon />}
+                  onClick={openAddSlotsDialog}
+                  disabled={loading || Boolean(error)}
+                  sx={{ fontSize: '0.75rem', textTransform: 'none' }}
                 >
-                  {I9_ADMIN_RESEND_LINK_EMAIL}
+                  {I9_ADMIN_MANUAL_ROW_TEXT}
                 </Button>
               </>
+            ) : workerSelf ? (
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<OpenInNewIcon />}
+                onClick={() => setDrawerOpen(true)}
+                disabled={loading || Boolean(error)}
+              >
+                {I9_ADMIN_BTN_REVIEW_DOCUMENTS}
+              </Button>
             ) : null}
-            <Button
-              size="small"
-              variant="text"
-              color="inherit"
-              startIcon={<AddIcon />}
-              onClick={openAddSlotsDialog}
-              disabled={loading || Boolean(error)}
-              sx={{ fontSize: '0.75rem', textTransform: 'none' }}
-            >
-              {I9_ADMIN_MANUAL_ROW_TEXT}
-            </Button>
-          </>
-        ) : workerSelf ? (
-          <Button
-            size="small"
-            variant="contained"
-            startIcon={<OpenInNewIcon />}
-            onClick={() => setDrawerOpen(true)}
-            disabled={loading || Boolean(error)}
-          >
-            {I9_ADMIN_BTN_REVIEW_DOCUMENTS}
-          </Button>
-        ) : null}
-      </Stack>
+          </Stack>
+        </Box>
+      )}
 
       {(staffMode || workerSelf) && (
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1.25, lineHeight: 1.45 }}>

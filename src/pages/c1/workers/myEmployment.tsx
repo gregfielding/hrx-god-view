@@ -6,6 +6,7 @@ import React from 'react';
 import {
   Alert,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
@@ -16,7 +17,7 @@ import {
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import WorkIcon from '@mui/icons-material/Work';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
@@ -27,6 +28,7 @@ const MyEmploymentPage: React.FC = () => {
   const { user, tenantId: authTenantId, activeTenant } = useAuth();
   const t = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const tenantId = authTenantId || activeTenant?.id || null;
   const uid = user?.uid ?? null;
 
@@ -36,7 +38,16 @@ const MyEmploymentPage: React.FC = () => {
   if (!uid) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">{t('workerEmploymentHub.myEmploymentSignIn')}</Alert>
+        <Stack spacing={2}>
+          <Alert severity="info">{t('workerEmploymentHub.myEmploymentSignIn')}</Alert>
+          <Button
+            variant="contained"
+            sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+            onClick={() => navigate('/login', { state: { from: location } })}
+          >
+            {t('workerEmploymentHub.signInButton')}
+          </Button>
+        </Stack>
       </Container>
     );
   }

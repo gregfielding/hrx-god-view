@@ -198,6 +198,7 @@ export { archiveAllCrmDeals };
 export { backfillJobPostingLocations } from './backfillJobPostingLocations';
 export { onShiftCreated, onShiftUpdated, onShiftDeleted } from './updateNextShiftDate';
 export { onGigJobOrderShiftWritten, syncGigJobOrderStatusFromShifts } from './jobOrders/gigJobOrderStatusSync';
+export { notifyShiftWorkersUpdated } from './jobOrders/notifyShiftWorkersUpdated';
 export { onJobOrderShiftCancelledCascadeAssignments } from './shiftAssignmentCascades';
 export { onApplicationWithdrawnOrDeletedCascadeAssignments } from './shiftAssignmentCascades';
 export { onAssignmentCompletedStampCompletedAt } from './assignmentAutoClose';
@@ -297,6 +298,8 @@ export {
   updateWorkerOnboardingStepWorkflow,
   updateWorkerOnboardingStepMilestone,
   updateEntityEmploymentStatus,
+  setEntityEmploymentI9SupportingManualComplete,
+  setEntityEmploymentEverifyOutsideHrx,
 } from './onboarding/workerOnboardingPipeline';
 export { syncEntityEmploymentOnboardingFromWorkerOnboarding } from './onboarding/entityEmploymentOnboardingSync';
 export { startOnCallEmployment, startOnCallOnboarding } from './onboarding/startOnCallEmployment';

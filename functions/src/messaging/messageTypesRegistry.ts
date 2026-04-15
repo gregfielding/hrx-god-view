@@ -305,6 +305,21 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     enabled: true,
   },
   {
+    id: 'shift_details_updated',
+    label: 'Shift details updated',
+    category: 'transactional',
+    defaultChannels: ['sms', 'email', 'push'],
+    critical: true,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: false,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Sent when a recruiter updates shift schedule or instructions and chooses to notify assigned workers. Body is provided via _message / _rawMessage.',
+    enabled: true,
+  },
+  {
     id: 'assignment_cancelled',
     label: 'Assignment Cancelled',
     category: 'transactional',

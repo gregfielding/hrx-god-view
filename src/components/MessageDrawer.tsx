@@ -662,6 +662,12 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
     setSuccess(false);
 
     try {
+      if (!effectiveTenantId?.trim()) {
+        setError('Tenant context is missing. Refresh the page or re-select your organization and try again.');
+        setLoading(false);
+        return;
+      }
+
       const API_BASE_URL = process.env.REACT_APP_FUNCTIONS_URL || 
         'https://us-central1-hrx1-d3beb.cloudfunctions.net';
 
@@ -1048,8 +1054,15 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
         });
 
         if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: { message: 'Failed to send message' } }));
-          throw new Error(error.error?.message || 'Failed to send message');
+          const text = await response.text();
+          let msg = 'Failed to send message';
+          try {
+            const json = JSON.parse(text);
+            msg = json.error?.message || json.message || msg;
+          } catch {
+            if (text?.trim()) msg = text.trim().slice(0, 500);
+          }
+          throw new Error(msg);
         }
 
         return response.json();
@@ -1076,7 +1089,10 @@ const MessageDrawer: React.FC<MessageDrawerProps> = ({
           onClose();
         }, 2000);
       } else {
-        setError(result.warnings?.join(', ') || 'Failed to send message');
+        setError(
+          result.warnings?.filter(Boolean).join(' · ') ||
+            'Message could not be sent on any channel. For email, confirm SendGrid/system mail is configured; for SMS, check the recipient phone number.'
+        );
       }
     } catch (err: any) {
       setError(err.message || 'Failed to send message');

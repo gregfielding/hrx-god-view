@@ -35,6 +35,8 @@ export interface BackgroundCheckDocument {
   worksiteId?: string | null;
   clientId: string;
   providerProfileId?: string | null;
+  /** Raw token from `partial_profile_link` webhook payload (for support / replay). */
+  providerPartialProfileToken?: string | null;
   /** V2 create response: e.g. PRO-… */
   providerProfileNumber?: string | null;
   /** V2 create response: SourceDirect subject id */
@@ -43,6 +45,10 @@ export interface BackgroundCheckDocument {
   providerOrderIds?: string[] | null;
   orderMode: 'partial_profile' | 'full_profile';
   hrxStatus: HrxBackgroundCheckStatus;
+  /** Applicant self-service URL (create response or `partial_profile_link` webhook). */
+  applicantPortalLink?: string | null;
+  /** Same URL as `applicantPortalLink` when written by webhooks (vendor-aligned name). */
+  applicantPortalUrl?: string | null;
   providerStatus?: string | null;
   providerStatusId?: string | number | null;
   finalReportReady: boolean;

@@ -3,7 +3,7 @@
  * Operational recruiter queues: tax/payroll, E-Verify (C1 Select), background checks.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Box, Button, Stack, Tab, Tabs, Typography } from '@mui/material';
 import PageHeader from '../components/PageHeader';
@@ -14,6 +14,13 @@ import {
   StaffOnboardingBackgroundTab,
 } from '../components/staffOnboarding/StaffOnboardingQueueTables';
 import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
+import type { OnboardingQueuePagination } from '../types/onboardingQueue';
+import {
+  defaultStaffOnboardingUi,
+  loadStaffOnboardingUi,
+  saveStaffOnboardingUi,
+  type StaffOnboardingUiState,
+} from '../utils/staffOnboardingUiStorage';
 
 function TabPanel(props: { children?: React.ReactNode; index: number; value: number }) {
   const { children, value, index, ...other } = props;
@@ -28,16 +35,61 @@ function TabPanel(props: { children?: React.ReactNode; index: number; value: num
 
 const StaffOnboardingCenter: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const [tab, setTab] = useState(0);
+  const [ui, setUi] = useState<StaffOnboardingUiState>(() => defaultStaffOnboardingUi());
   const [i9ReminderOpen, setI9ReminderOpen] = useState(false);
   const { activeTenant } = useAuth();
+  const tenantId = activeTenant?.id;
+
+  useEffect(() => {
+    if (!tenantId) return;
+    const saved = loadStaffOnboardingUi(tenantId);
+    if (saved) setUi(saved);
+  }, [tenantId]);
+
+  useEffect(() => {
+    if (!tenantId) return;
+    saveStaffOnboardingUi(tenantId, ui);
+  }, [tenantId, ui]);
 
   useEffect(() => {
     if (searchParams.get('tab') === 'background') {
-      setTab(2);
+      setUi((prev) => ({ ...prev, tab: 2 }));
     }
   }, [searchParams]);
-  const tenantId = activeTenant?.id;
+
+  const handleTabChange = useCallback((_: React.SyntheticEvent, value: number) => {
+    setUi((prev) => ({ ...prev, tab: value }));
+  }, []);
+
+  const taxPagination = useMemo<OnboardingQueuePagination>(
+    () => ({
+      page: ui.taxPage,
+      pageSize: ui.taxPageSize,
+      setPage: (p) => setUi((s) => ({ ...s, taxPage: p })),
+      setPageSize: (s) => setUi((u) => ({ ...u, taxPageSize: s, taxPage: 0 })),
+    }),
+    [ui.taxPage, ui.taxPageSize],
+  );
+
+  const evPagination = useMemo<OnboardingQueuePagination>(
+    () => ({
+      page: ui.evPage,
+      pageSize: ui.evPageSize,
+      setPage: (p) => setUi((s) => ({ ...s, evPage: p })),
+      setPageSize: (s) => setUi((u) => ({ ...u, evPageSize: s, evPage: 0 })),
+    }),
+    [ui.evPage, ui.evPageSize],
+  );
+
+  const bgPagination = useMemo<OnboardingQueuePagination>(
+    () => ({
+      page: ui.bgPage,
+      pageSize: ui.bgPageSize,
+      setPage: (p) => setUi((s) => ({ ...s, bgPage: p })),
+      setPageSize: (s) => setUi((u) => ({ ...u, bgPageSize: s, bgPage: 0 })),
+    }),
+    [ui.bgPage, ui.bgPageSize],
+  );
 
   return (
     <Box
@@ -68,23 +120,38 @@ const StaffOnboardingCenter: React.FC = () => {
         tenantId={tenantId}
       />
       <Box sx={{ borderBottom: 1, borderColor: 'divider', flexShrink: 0 }}>
-        <Tabs value={tab} onChange={(_, v) => setTab(v)} aria-label="Onboarding queues">
+        <Tabs value={ui.tab} onChange={handleTabChange} aria-label="Onboarding queues">
           <Tab label="Tax and Payroll" id="staff-onboarding-tab-0" />
           <Tab label="E-Verify" id="staff-onboarding-tab-1" />
           <Tab label="Background Checks" id="staff-onboarding-tab-2" />
         </Tabs>
       </Box>
-      <TabPanel value={tab} index={0}>
-        <StaffOnboardingTaxPayrollTab tenantId={tenantId} />
+      <TabPanel value={ui.tab} index={0}>
+        <StaffOnboardingTaxPayrollTab
+          tenantId={tenantId}
+          pagination={taxPagination}
+          workerSearch={ui.taxSearch}
+          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, taxSearch: v, taxPage: 0 }))}
+        />
       </TabPanel>
-      <TabPanel value={tab} index={1}>
-        <StaffOnboardingEverifyTab tenantId={tenantId} />
+      <TabPanel value={ui.tab} index={1}>
+        <StaffOnboardingEverifyTab
+          tenantId={tenantId}
+          pagination={evPagination}
+          workerSearch={ui.evSearch}
+          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, evSearch: v, evPage: 0 }))}
+        />
       </TabPanel>
-      <TabPanel value={tab} index={2}>
+      <TabPanel value={ui.tab} index={2}>
         <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.5 }}>
           Open orders and errors are prioritized. Package names reflect AccuSource when available.
         </Typography>
-        <StaffOnboardingBackgroundTab tenantId={tenantId} />
+        <StaffOnboardingBackgroundTab
+          tenantId={tenantId}
+          pagination={bgPagination}
+          workerSearch={ui.bgSearch}
+          onWorkerSearchChange={(v) => setUi((s) => ({ ...s, bgSearch: v, bgPage: 0 }))}
+        />
       </TabPanel>
     </Box>
   );

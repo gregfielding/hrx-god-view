@@ -94,7 +94,7 @@ function canManageAssignmentsFromClaims(auth: any, tenantId: string): boolean {
   return false;
 }
 
-async function canManageAssignments(auth: any, tenantId: string, uid: string): Promise<boolean> {
+export async function canManageAssignments(auth: any, tenantId: string, uid: string): Promise<boolean> {
   if (canManageAssignmentsFromClaims(auth, tenantId)) return true;
 
   const userSnap = await db.doc(`users/${uid}`).get();

@@ -24,7 +24,7 @@ import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
 import { collection, doc, getDoc, getDocs, limit, query, where } from 'firebase/firestore';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
@@ -95,6 +95,7 @@ interface EmploymentRecord {
   employmentEntryMode?: string | null;
   /** Denormalized from onboarding engine; aligns with Employment V2 `onboardingComplete`. */
   onboardingComplete?: boolean;
+  i9SupportingDocumentsManualCompleteAt?: { toDate: () => Date } | null;
 }
 
 const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]> = {
@@ -106,6 +107,7 @@ const EMPTY_BUCKETS: Record<WorkerOnboardingBucketId, EmploymentOnboardingRow[]>
 
 const MyEmploymentDetailPage: React.FC = () => {
   const { employmentId } = useParams<{ employmentId: string }>();
+  const location = useLocation();
   const { user, tenantId: authTenantId, activeTenant } = useAuth();
   const t = useT();
   const workerDisplayName = user?.displayName?.trim() || undefined;
@@ -148,7 +150,19 @@ const MyEmploymentDetailPage: React.FC = () => {
       setLoading(true);
       try {
         const empRef = doc(db, p.entityEmployment(tenantId, employmentId));
-        const empSnap = await getDoc(empRef);
+        let empSnap = await getDoc(empRef);
+        if (!empSnap.exists()) {
+          const pipelineQ = query(
+            collection(db, p.entityEmployments(tenantId)),
+            where('userId', '==', uid),
+            where('onboardingPipelineId', '==', employmentId),
+            limit(1),
+          );
+          const pipelineSnap = await getDocs(pipelineQ);
+          if (!pipelineSnap.empty) {
+            empSnap = pipelineSnap.docs[0];
+          }
+        }
         if (!empSnap.exists()) {
           setEmployment(null);
           setPayrollAccount(null);
@@ -366,10 +380,27 @@ const MyEmploymentDetailPage: React.FC = () => {
     return null;
   }, [payrollSignupUrl, payrollPortalLoginUrl, payrollComplete]);
 
-  if (!uid || !tenantId) {
+  if (!uid) {
     return (
       <Container maxWidth="sm" sx={{ py: 3 }}>
-        <Alert severity="info">Sign in to view this page.</Alert>
+        <Stack spacing={2}>
+          <Alert severity="info">{t('workerEmploymentHub.detailSignInPrompt')}</Alert>
+          <Button
+            variant="contained"
+            sx={{ alignSelf: 'flex-start', textTransform: 'none' }}
+            onClick={() => navigate('/login', { state: { from: location } })}
+          >
+            {t('workerEmploymentHub.signInButton')}
+          </Button>
+        </Stack>
+      </Container>
+    );
+  }
+
+  if (!tenantId) {
+    return (
+      <Container maxWidth="sm" sx={{ py: 3 }}>
+        <Alert severity="info">{t('workerEmploymentHub.myEmploymentNeedEntity')}</Alert>
       </Container>
     );
   }
@@ -585,6 +616,7 @@ const MyEmploymentDetailPage: React.FC = () => {
                         employmentRecordId={employment.id}
                         employmentEntityKey={employment.entityKey}
                         requestedForEntityId={employment.entityId ?? null}
+                        i9SupportingManualComplete={Boolean(employment.i9SupportingDocumentsManualCompleteAt)}
                       />
                     </Box>
                   ) : null}

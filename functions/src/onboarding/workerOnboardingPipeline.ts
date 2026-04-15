@@ -708,6 +708,111 @@ export const updateWorkerOnboardingStepStatus = onCall({ cors: true }, async (re
   return { success: true };
 });
 
+/**
+ * Recruiter/admin: mark E-Verify as completed outside HRX when there is no worker_onboarding pipeline (or as a fallback).
+ * Aligns with `updateWorkerOnboardingStepStatus` for `e_verify` → `manual_outside_hrx` on entity_employments.
+ */
+export const setEntityEmploymentEverifyOutsideHrx = onCall({ cors: true }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+  const { tenantId, employmentId, complete } = (request.data || {}) as {
+    tenantId?: string;
+    employmentId?: string;
+    complete?: boolean;
+  };
+  if (!tenantId?.trim() || !employmentId?.trim() || typeof complete !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "tenantId, employmentId, and complete (boolean) are required",
+    );
+  }
+  if (!(await canManageOnboarding(request.auth, tenantId, request.auth.uid))) {
+    throw new HttpsError("permission-denied", "Insufficient permissions to update employment");
+  }
+  const ref = db.doc(`tenants/${tenantId}/entity_employments/${employmentId.trim()}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Employment record not found");
+  }
+  const ek = String((snap.data() as { entityKey?: string })?.entityKey || "").toLowerCase();
+  if (ek !== "select") {
+    throw new HttpsError(
+      "failed-precondition",
+      "E-Verify manual confirmation applies to C1 Select employment only",
+    );
+  }
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  if (complete) {
+    await ref.set(
+      {
+        everifyStatus: "manual_outside_hrx",
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  } else {
+    await ref.set(
+      {
+        everifyStatus: admin.firestore.FieldValue.delete(),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  }
+  return { success: true };
+});
+
+/**
+ * Recruiter/admin: mark I-9 supporting documents as manually satisfied (e.g. verified in payroll outside HRX uploads).
+ * Stored on entity_employments — workers see uploads hidden when set.
+ */
+export const setEntityEmploymentI9SupportingManualComplete = onCall({ cors: true }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError("unauthenticated", "Authentication required");
+  }
+  const { tenantId, employmentId, complete } = (request.data || {}) as {
+    tenantId?: string;
+    employmentId?: string;
+    complete?: boolean;
+  };
+  if (!tenantId?.trim() || !employmentId?.trim() || typeof complete !== "boolean") {
+    throw new HttpsError(
+      "invalid-argument",
+      "tenantId, employmentId, and complete (boolean) are required",
+    );
+  }
+  if (!(await canManageOnboarding(request.auth, tenantId, request.auth.uid))) {
+    throw new HttpsError("permission-denied", "Insufficient permissions to update employment");
+  }
+  const ref = db.doc(`tenants/${tenantId}/entity_employments/${employmentId.trim()}`);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    throw new HttpsError("not-found", "Employment record not found");
+  }
+  const now = admin.firestore.FieldValue.serverTimestamp();
+  if (complete) {
+    await ref.set(
+      {
+        i9SupportingDocumentsManualCompleteAt: now,
+        i9SupportingDocumentsManualCompleteBy: request.auth.uid,
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  } else {
+    await ref.set(
+      {
+        i9SupportingDocumentsManualCompleteAt: admin.firestore.FieldValue.delete(),
+        i9SupportingDocumentsManualCompleteBy: admin.firestore.FieldValue.delete(),
+        updatedAt: now,
+      },
+      { merge: true },
+    );
+  }
+  return { success: true };
+});
+
 /** Dummy package options for Phase 1 (background / drug screen). */
 export const DUMMY_BACKGROUND_PACKAGES = [
   { id: "dummy_bg_1", label: "Dummy Background 1" },

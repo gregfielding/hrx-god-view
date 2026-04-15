@@ -53,7 +53,7 @@ export async function resolveSenderIdentity(
 /**
  * Get system sender identity (SendGrid + main Twilio number)
  */
-async function getSystemSenderIdentity(tenantId: string): Promise<SenderIdentity> {
+export async function getSystemSenderIdentity(tenantId: string): Promise<SenderIdentity> {
   // System sender is always available
   return {
     id: 'system',

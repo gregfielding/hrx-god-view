@@ -45,6 +45,21 @@ export const sendMessageApi = onRequest(
         return;
       }
 
+      // Prefer parsed body; some proxies/clients omit JSON parsing — fall back to rawBody.
+      let body: Record<string, unknown> = (request.body || {}) as Record<string, unknown>;
+      if (
+        (!body || typeof body !== 'object' || Object.keys(body).length === 0) &&
+        (request as any).rawBody
+      ) {
+        try {
+          const raw = (request as any).rawBody;
+          const parsed = typeof raw === 'string' ? JSON.parse(raw) : JSON.parse(raw.toString());
+          if (parsed && typeof parsed === 'object') body = parsed;
+        } catch (parseErr: any) {
+          logger.warn('sendMessageApi: could not parse rawBody as JSON', parseErr?.message);
+        }
+      }
+
       // TODO: Add authentication middleware
       // const auth = await verifyAuth(request);
       // if (!auth) {
@@ -60,7 +75,7 @@ export const sendMessageApi = onRequest(
         customerId,
         agencyId,
         metadata,
-      } = request.body;
+      } = body as any;
 
       logger.info('sendMessageApi called', {
         userId,
@@ -116,8 +131,16 @@ export const sendMessageApi = onRequest(
       }
 
       const warnings: string[] = [];
+      if (result.routingDecision.reason && (!result.success || !result.routingDecision.shouldSend)) {
+        warnings.push(result.routingDecision.reason);
+      }
       result.routingDecision.skippedChannels.forEach(skipped => {
         warnings.push(`Skipped ${skipped.channel}: ${skipped.reason}`);
+      });
+      result.deliveryResults.forEach(dr => {
+        if (!dr.success && dr.error) {
+          warnings.push(`${dr.channel}: ${dr.error}`);
+        }
       });
 
       logger.info('sendMessageApi success', {

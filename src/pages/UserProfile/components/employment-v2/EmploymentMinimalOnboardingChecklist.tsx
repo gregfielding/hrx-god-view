@@ -12,6 +12,8 @@ import {
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import SmsIcon from '@mui/icons-material/Sms';
+import EmailIcon from '@mui/icons-material/Email';
 import { httpsCallable } from 'firebase/functions';
 import { functions } from '../../../../firebase';
 import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
@@ -33,6 +35,7 @@ import ExternalOnboardingVerificationControls from './ExternalOnboardingVerifica
 import type { ExternalOnboardingStepKey } from '../../../../types/externalOnboardingSteps';
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
 import ProfileTabPointerAlert from '../../../../components/profile/ProfileTabPointerAlert';
+import { workerWorkAuthorizationProfileAbsoluteUrl } from '../../../../utils/workerEmploymentWorkerSurface';
 
 const resendPayrollInvite = httpsCallable<
   {
@@ -49,6 +52,11 @@ const updateWorkerOnboardingStepStatus = httpsCallable<
   { tenantId: string; pipelineId: string; stepId: string; status: string },
   { success?: boolean }
 >(functions, 'updateWorkerOnboardingStepStatus');
+
+const setEntityEmploymentEverifyOutsideHrx = httpsCallable<
+  { tenantId: string; employmentId: string; complete: boolean },
+  { success?: boolean }
+>(functions, 'setEntityEmploymentEverifyOutsideHrx');
 
 const EV_STATUS_CHIP: Record<string, { label: string; color: 'default' | 'warning' | 'success' | 'error' | 'info' }> = {
   not_started: { label: 'Not started', color: 'default' },
@@ -204,6 +212,40 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   };
 
   const workAuthItem = buildWorkAuthorizationChecklistItem(workAuthorizedStatus, workAuthorizationAttestedAt);
+  const [workAuthRemindBusy, setWorkAuthRemindBusy] = useState<false | 'sms' | 'email'>(false);
+  const [workAuthRemindErr, setWorkAuthRemindErr] = useState<string | null>(null);
+
+  const sendWorkAuthorizationReminder = useCallback(
+    async (channel: 'sms' | 'email') => {
+      if (!onSendWorkerNotificationDirect) return;
+      setWorkAuthRemindErr(null);
+      setWorkAuthRemindBusy(channel);
+      try {
+        const origin = typeof window !== 'undefined' ? window.location.origin : '';
+        const url = workerWorkAuthorizationProfileAbsoluteUrl(origin);
+        const label = (overview.headerEntityName || actionContext.entityDisplayName || '').trim();
+        const prefix = label ? `${label}: ` : '';
+        const body =
+          channel === 'sms'
+            ? `${prefix}Please complete your work authorization in your HRX profile (required for hiring): ${url}`
+            : `${prefix}Please complete your work authorization in your HRX profile (required for hiring).\n\n${url}`;
+        await onSendWorkerNotificationDirect({
+          channel,
+          body,
+          subject: 'Reminder: complete your work authorization',
+        });
+      } catch (e: unknown) {
+        setWorkAuthRemindErr(e instanceof Error ? e.message : 'Send failed.');
+      } finally {
+        setWorkAuthRemindBusy(false);
+      }
+    },
+    [onSendWorkerNotificationDirect, overview.headerEntityName, actionContext.entityDisplayName],
+  );
+
+  const showWorkAuthRemindActions =
+    actionContext.viewer === 'recruiter' && !workAuthItem.completed && Boolean(onSendWorkerNotificationDirect);
+
   const { i9, w4OrW9 } = buildTaxIdentityChecklistItems(overview);
   const { handbook, policies } = buildHandbookPoliciesItems(overview);
   const directDeposit = buildDirectDepositItem(overview);
@@ -229,18 +271,16 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   );
   const pipelineId = `${profileUserId}__${entityKey}`;
 
-  const entityEverifyEmploymentDone = ['employment_authorized', 'manual_outside_hrx'].includes(
-    String(overview.entityEmployment?.everifyStatus || '').toLowerCase(),
-  );
-  const everifyRowStatus = String(everifyRow?.status || '').toLowerCase();
-  const everifyRowShowsComplete = ['completed', 'satisfied_by_existing_record', 'not_required'].includes(
-    everifyRowStatus,
-  );
-  /** Hide “C1 completed” manual control when E-Verify is already satisfied via case, pipeline, or employment record. */
-  const everifyAlreadySatisfied = everifyRowShowsComplete || eVerifyPipelineComplete || entityEverifyEmploymentDone;
-
+  const entityEverifyStatus = String(overview.entityEmployment?.everifyStatus || '').toLowerCase();
+  const employmentAuthorizedInHrx = entityEverifyStatus === 'employment_authorized';
+  const manualOutsideHrx = entityEverifyStatus === 'manual_outside_hrx';
+  const employmentIdForEverify = overview.entityEmployment?.id?.trim() || '';
+  /** Show manual outside-HRX confirmation whenever Select E-Verify is in scope and the worker is not already authorized via integrated HRX (case). */
   const showEverifyManualComplete =
-    showEverify && showManualExternalStepVerify && Boolean(overview.workerOnboarding) && !everifyAlreadySatisfied;
+    showEverify &&
+    showManualExternalStepVerify &&
+    Boolean(employmentIdForEverify) &&
+    !employmentAuthorizedInHrx;
 
   const [everifyManualBusy, setEverifyManualBusy] = useState(false);
   const [everifyManualErr, setEverifyManualErr] = useState<string | null>(null);
@@ -249,17 +289,23 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
 
   useEffect(() => {
     setEverifyOptimisticChecked(null);
-  }, [eVerifyPipelineComplete]);
+  }, [eVerifyPipelineComplete, manualOutsideHrx]);
 
   const eVerifyCheckboxChecked =
-    everifyOptimisticChecked !== null ? everifyOptimisticChecked : eVerifyPipelineComplete;
+    everifyOptimisticChecked !== null
+      ? everifyOptimisticChecked
+      : eVerifyPipelineComplete || manualOutsideHrx;
 
   const handleEverifyManualToggle = useCallback(
     async (nextChecked: boolean) => {
       if (!tenantId || !showEverifyManualComplete) return;
+      const eid = overview.entityEmployment?.id?.trim();
+      if (!eid) return;
       if (!nextChecked) {
         const ok = window.confirm(
-          'Clear manual E-Verify completion? This removes the “C1 completed” mark and resets the pipeline step to Not started.',
+          overview.workerOnboarding
+            ? 'Clear manual E-Verify completion? This removes the outside-HRX mark and resets the pipeline step to Not started.'
+            : 'Clear manual E-Verify completion? This removes the outside-HRX mark from the employment record.',
         );
         if (!ok) return;
       }
@@ -267,12 +313,20 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
       setEverifyManualBusy(true);
       setEverifyManualErr(null);
       try {
-        await updateWorkerOnboardingStepStatus({
-          tenantId,
-          pipelineId,
-          stepId: 'e_verify',
-          status: nextChecked ? 'complete' : 'not_started',
-        });
+        if (overview.workerOnboarding) {
+          await updateWorkerOnboardingStepStatus({
+            tenantId,
+            pipelineId,
+            stepId: 'e_verify',
+            status: nextChecked ? 'complete' : 'not_started',
+          });
+        } else {
+          await setEntityEmploymentEverifyOutsideHrx({
+            tenantId,
+            employmentId: eid,
+            complete: nextChecked,
+          });
+        }
         onRefresh?.();
       } catch (e: unknown) {
         setEverifyOptimisticChecked(null);
@@ -281,7 +335,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
         setEverifyManualBusy(false);
       }
     },
-    [tenantId, showEverifyManualComplete, pipelineId, onRefresh],
+    [tenantId, showEverifyManualComplete, pipelineId, onRefresh, overview.workerOnboarding, overview.entityEmployment?.id],
   );
 
   return (
@@ -361,6 +415,47 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
             secondaryLine={workAuthItem.detailLine}
             item={{ completed: workAuthItem.completed, completedAt: workAuthItem.completedAt }}
           />
+          {showWorkAuthRemindActions ? (
+            <Box>
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1} alignItems={{ xs: 'stretch', sm: 'center' }}>
+                <Tooltip title="Sends an SMS to the phone number on the worker’s profile. Opens their Work authorization page when they tap the link.">
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<SmsIcon />}
+                      disabled={workAuthRemindBusy !== false}
+                      onClick={() => void sendWorkAuthorizationReminder('sms')}
+                    >
+                      {workAuthRemindBusy === 'sms' ? 'Sending…' : 'Send reminder (SMS)'}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Tooltip title="Sends email to the address on the worker’s profile with the same link.">
+                  <span>
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={<EmailIcon />}
+                      disabled={workAuthRemindBusy !== false}
+                      onClick={() => void sendWorkAuthorizationReminder('email')}
+                    >
+                      {workAuthRemindBusy === 'email' ? 'Sending…' : 'Send reminder (email)'}
+                    </Button>
+                  </span>
+                </Tooltip>
+              </Stack>
+              <Typography variant="caption" color="text.secondary" sx={{ mt: 0.75, display: 'block', lineHeight: 1.45 }}>
+                SMS and email use the phone and address on the worker’s profile and include a link to Work authorization.
+                One-off push from here is not wired — use SMS or email.
+              </Typography>
+              {workAuthRemindErr ? (
+                <Typography variant="caption" color="error" sx={{ mt: 0.5, display: 'block' }}>
+                  {workAuthRemindErr}
+                </Typography>
+              ) : null}
+            </Box>
+          ) : null}
           {showI9 ? (
             showManualExternalStepVerify ? (
               <ExternalOnboardingVerificationControls
@@ -396,12 +491,16 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
             profileUserId={profileUserId}
             requestedForEntityId={hiringEntityId || null}
             employmentEntityKey={entityKey}
-            workerEmploymentRecordId={overview.entityEmployment?.id?.trim() || `${profileUserId}__${entityKey}`}
+            workerEmploymentRecordId={overview.entityEmployment?.id?.trim() || null}
             hiringEntityDisplayName={overview.headerEntityName?.trim() || undefined}
             onRefresh={onRefresh}
             onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}
             onSendWorkerNotificationDirect={onSendWorkerNotificationDirect}
             i9EmployeeSectionComplete={i9.completed}
+            i9SupportingManualComplete={Boolean(overview.entityEmployment?.i9SupportingDocumentsManualCompleteAt)}
+            showI9SupportingManualToggle={Boolean(showManualExternalStepVerify && !i9.completed)}
+            employmentRecordId={overview.entityEmployment?.id?.trim() || null}
+            onManualI9SupportingComplete={onRefresh}
           />
         ) : null}
       </Box>
@@ -448,7 +547,7 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
                   Manual confirmation
                 </Typography>
                 <Tooltip
-                  title="Use when E-Verify was finished outside HRX (another system or vendor). Marks the pipeline step complete and updates the employment record for reporting."
+                  title="Use when E-Verify was completed outside HRX (another system or vendor). Updates the employment record for reporting; when a worker onboarding pipeline exists, also marks the E-Verify step complete."
                   placement="right"
                 >
                   <InfoOutlinedIcon sx={{ fontSize: 16, color: 'text.secondary', cursor: 'help' }} />
@@ -471,10 +570,10 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
                   <Typography variant="body2" color="text.secondary" sx={{ pt: 0.35, lineHeight: 1.45 }}>
                     {eVerifyCheckboxChecked ? (
                       <Box component="span" sx={{ fontWeight: 600, color: 'success.main' }}>
-                        C1 completed
+                        E-Verify completed outside HRX
                       </Box>
                     ) : (
-                      'C1 completed'
+                      'E-Verify completed outside HRX'
                     )}
                   </Typography>
                 }

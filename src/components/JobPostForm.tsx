@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, useContext, createContext } from 'react';
 import { flushSync } from 'react-dom';
 import type { TextFieldProps } from '@mui/material';
 import {
@@ -53,6 +53,55 @@ function zipFromWorksiteAddress(wa: Record<string, unknown> | undefined): string
   return typeof z === 'string' ? z : '';
 }
 
+/**
+ * Job order → Jobs Board tab: when user picks a title from Positions, pull pay and client JD from the order.
+ */
+function buildPatchFromJobOrderTitle(
+  jobOrderData: any,
+  title: string,
+  positionJobDescriptionFromAccount?: string | null,
+): Partial<JobsBoardPost> {
+  const trimmed = title.trim();
+  if (!trimmed) {
+    const cleared: Partial<JobsBoardPost> = { jobTitle: '' };
+    if (jobOrderData?.jobType === 'gig') {
+      cleared.positionJobTitle = undefined;
+    }
+    return cleared;
+  }
+  const patch: Partial<JobsBoardPost> = {
+    jobTitle: title,
+  };
+  if (!jobOrderData) {
+    return patch;
+  }
+  if (jobOrderData.jobType === 'gig') {
+    patch.positionJobTitle = trimmed;
+  }
+  const gp = jobOrderData.gigPositions;
+  let pos: any;
+  if (Array.isArray(gp)) {
+    pos = gp.find((p: any) => String(p?.jobTitle ?? '').trim() === trimmed);
+  }
+  if (pos && pos.payRate != null && String(pos.payRate).trim() !== '') {
+    const n = parseFloat(String(pos.payRate));
+    if (Number.isFinite(n)) patch.payRate = n;
+  } else if (!pos && String(jobOrderData.jobTitle ?? '').trim() === trimmed) {
+    const pr = jobOrderData.payRate;
+    if (pr != null && String(pr).trim() !== '') {
+      const n = parseFloat(String(pr));
+      if (Number.isFinite(n)) patch.payRate = n;
+    }
+  }
+  const clientJd =
+    String(positionJobDescriptionFromAccount ?? '').trim() ||
+    String(jobOrderData.jobDescriptionFromClient ?? '').trim();
+  if (trimmed && clientJd) {
+    patch.jobDescription = clientJd;
+  }
+  return patch;
+}
+
 /** Flatten nested worksiteAddress + worksiteName so city/state fields work on first paint (edit load). */
 function getFlatWorksiteFromInitialJobPost(initialData?: Partial<JobsBoardPost>) {
   if (!initialData) {
@@ -84,6 +133,38 @@ function getFlatWorksiteFromInitialJobPost(initialData?: Partial<JobsBoardPost>)
   };
 }
 
+type JobPostFormAutoSaveContextValue = {
+  autoSave: boolean;
+  mode: 'create' | 'edit';
+  schedulePersist: () => void;
+};
+
+const JobPostFormAutoSaveContext = createContext<JobPostFormAutoSaveContextValue>({
+  autoSave: false,
+  mode: 'create',
+  schedulePersist: () => {},
+});
+
+/**
+ * Must be module-scoped: a TextField wrapper defined inside JobPostForm is a new component type every render,
+ * so MUI remounts inputs and the user can only type one character before focus is lost.
+ */
+function JobPostFormAutoSaveTextField(props: TextFieldProps) {
+  const { autoSave, mode, schedulePersist } = useContext(JobPostFormAutoSaveContext);
+  const { onBlur, ...rest } = props;
+  return (
+    <TextField
+      {...rest}
+      onBlur={(e) => {
+        onBlur?.(e);
+        if (autoSave && mode === 'edit') {
+          window.setTimeout(() => schedulePersist(), 0);
+        }
+      }}
+    />
+  );
+}
+
 export interface JobPostFormProps {
   initialData?: Partial<JobsBoardPost>;
   onSave: (data: Partial<JobsBoardPost>) => Promise<void>;
@@ -92,6 +173,8 @@ export interface JobPostFormProps {
   mode?: 'create' | 'edit';
   hideJobOrderConnection?: boolean; // Hide the "Connect with Job Order" section when used from Job Order detail page
   jobOrderData?: any; // Full job order data for AI generation
+  /** Account → Pricing row "Client job description" for this position (job title match); seeds public job description on the posting. */
+  positionJobDescriptionFromAccount?: string | null;
   /** When true (edit mode only), persist on TextField blur and on other control change; hides footer buttons. */
   autoSave?: boolean;
   /** Recruiter edit page: merge into header `post` for live syndication icons + location lines while editing. */
@@ -106,6 +189,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   mode = 'create',
   hideJobOrderConnection = false,
   jobOrderData,
+  positionJobDescriptionFromAccount = null,
   autoSave = false,
   onHeaderPreviewChange,
 }) => {
@@ -200,6 +284,43 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
   const showSyndicationUrlFields =
     hideJobOrderConnection || !(formData.jobOrderId && String(formData.jobOrderId).trim());
 
+  /**
+   * From job order detail → Jobs Board only: restrict Job Title to Positions on that order (not full O*NET).
+   * Standalone / non–job-order posts keep the full list.
+   */
+  const jobOrderRestrictedJobTitles = useMemo((): string[] | null => {
+    if (!hideJobOrderConnection || !jobOrderData) return null;
+    const gp = jobOrderData.gigPositions;
+    if (Array.isArray(gp) && gp.length > 0) {
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const p of gp) {
+        const t = String((p as { jobTitle?: string })?.jobTitle ?? '').trim();
+        if (t && !seen.has(t)) {
+          seen.add(t);
+          out.push(t);
+        }
+      }
+      return out;
+    }
+    const jt = String(jobOrderData.jobTitle ?? '').trim();
+    return jt ? [jt] : [];
+  }, [hideJobOrderConnection, jobOrderData]);
+
+  const restrictJobTitleToOrderPositions = jobOrderRestrictedJobTitles !== null;
+  /** Include current posting title if it is not yet on the order (legacy / edited) so MUI Autocomplete stays valid. */
+  const jobTitleAutocompleteOptions = useMemo(() => {
+    if (!restrictJobTitleToOrderPositions) return jobTitlesList;
+    const base = [...(jobOrderRestrictedJobTitles as string[])];
+    const cur = String(formData.jobTitle ?? '').trim();
+    if (cur && !base.includes(cur)) {
+      base.push(cur);
+    }
+    return base;
+  }, [restrictJobTitleToOrderPositions, jobOrderRestrictedJobTitles, formData.jobTitle]);
+  /** When restricted to the job order’s Positions, do not allow free-typing O*NET titles. */
+  const jobTitleAutocompleteFreeSolo = !restrictJobTitleToOrderPositions;
+
   /** Job description + AI prompt: local strings while typing; commit to formData on blur (avoids heavy re-renders each keystroke). */
   const jobDescriptionFocusRef = useRef(false);
   const jobDescriptionPromptFocusRef = useRef(false);
@@ -210,6 +331,17 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     const p = (initialData as { jobDescriptionPrompt?: string } | undefined)?.jobDescriptionPrompt;
     return typeof p === 'string' ? p : '';
   });
+
+  /** Account Pricing client JD can load after first paint; fill public description if still empty. */
+  useEffect(() => {
+    const jd = String(positionJobDescriptionFromAccount ?? '').trim();
+    if (!jd) return;
+    setFormData((prev) => {
+      if (String(prev.jobDescription || '').trim()) return prev;
+      return { ...prev, jobDescription: jd };
+    });
+    setJobDescriptionLocal((prev) => (String(prev).trim() ? prev : jd));
+  }, [positionJobDescriptionFromAccount]);
 
   const formDataRef = useRef(formData);
   formDataRef.current = formData;
@@ -237,6 +369,32 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       autoAddToUserGroup: fd.autoAddToUserGroups.length === 1 ? fd.autoAddToUserGroups[0] : undefined,
       craigslistUrl: craigslistTrimmed,
       indeedUrl: indeedTrimmed,
+      skills: coerceStringArrayField(fd.skills),
+      showSkills: fd.showSkills,
+      licensesCerts: coerceStringArrayField(fd.licensesCerts),
+      showLicensesCerts: fd.showLicensesCerts,
+      experienceLevels: coerceStringArrayField(fd.experienceLevels),
+      showExperience: fd.showExperience,
+      educationLevels: coerceStringArrayField(fd.educationLevels),
+      showEducation: fd.showEducation,
+      languages: coerceStringArrayField(fd.languages),
+      showLanguages: fd.showLanguages,
+      physicalRequirements: coerceStringArrayField(fd.physicalRequirements),
+      showPhysicalRequirements: fd.showPhysicalRequirements,
+      uniformRequirements: coerceStringArrayField(fd.uniformRequirements),
+      showUniformRequirements: fd.showUniformRequirements,
+      customUniformRequirements: fd.customUniformRequirements,
+      showCustomUniformRequirements: fd.showCustomUniformRequirements,
+      requiredPpe: coerceStringArrayField(fd.requiredPpe),
+      showRequiredPpe: fd.showRequiredPpe,
+      backgroundCheckPackages: coerceStringArrayField(fd.backgroundCheckPackages),
+      showBackgroundChecks: fd.showBackgroundChecks,
+      drugScreeningPanels: coerceStringArrayField(fd.drugScreeningPanels),
+      showDrugScreening: fd.showDrugScreening,
+      additionalScreenings: coerceStringArrayField(fd.additionalScreenings),
+      showAdditionalScreenings: fd.showAdditionalScreenings,
+      shift: coerceStringArrayField(fd.shift),
+      showShift: fd.showShift,
     } as Record<string, unknown>) as Partial<JobsBoardPost>;
   }, []);
 
@@ -292,22 +450,6 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     },
     [autoSave, mode, onHeaderPreviewChange, schedulePersist]
   );
-
-  function AutoSaveTextField(props: TextFieldProps) {
-    const { onBlur, ...rest } = props;
-    return (
-      <TextField
-        {...rest}
-        onBlur={(e) => {
-          onBlur?.(e);
-          // Defer persist until after React applies the last onChange from this field (blur can run in the same tick).
-          if (autoSave && mode === 'edit') {
-            window.setTimeout(() => schedulePersist(), 0);
-          }
-        }}
-      />
-    );
-  }
 
   // Company and location data
   const [companies, setCompanies] = useState<Array<{ id: string; name: string }>>([]);
@@ -1066,8 +1208,9 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     if (!formData.postTitle?.trim()) return false;
     if (!formData.jobType) return false;
     const desc = jobDescriptionFocusRef.current ? jobDescriptionLocal : formData.jobDescription;
-    if (!desc?.trim()) return false;
-    
+    // Drafts can be saved without public copy (e.g. job order tab: title, pay, status first). Non-draft must have text.
+    if (formData.status !== 'draft' && !desc?.trim()) return false;
+
     // Location: valid if we have city+state (e.g. from job order worksiteAddress) OR company worksite selected
     // For Gig jobs and event worksites, worksite may not be in company locations subcollection, so city+state is sufficient
     const hasLocationViaAddress = !!(formData.city?.trim() && formData.state?.trim());
@@ -1154,6 +1297,32 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         payRate: formData.payRate ? parseFloat(formData.payRate.toString()) : undefined,
         autoAddToUserGroups: formData.autoAddToUserGroups,
         autoAddToUserGroup: formData.autoAddToUserGroups.length === 1 ? formData.autoAddToUserGroups[0] : undefined,
+        skills: coerceStringArrayField(formData.skills),
+        showSkills: formData.showSkills,
+        licensesCerts: coerceStringArrayField(formData.licensesCerts),
+        showLicensesCerts: formData.showLicensesCerts,
+        experienceLevels: coerceStringArrayField(formData.experienceLevels),
+        showExperience: formData.showExperience,
+        educationLevels: coerceStringArrayField(formData.educationLevels),
+        showEducation: formData.showEducation,
+        languages: coerceStringArrayField(formData.languages),
+        showLanguages: formData.showLanguages,
+        physicalRequirements: coerceStringArrayField(formData.physicalRequirements),
+        showPhysicalRequirements: formData.showPhysicalRequirements,
+        uniformRequirements: coerceStringArrayField(formData.uniformRequirements),
+        showUniformRequirements: formData.showUniformRequirements,
+        customUniformRequirements: formData.customUniformRequirements,
+        showCustomUniformRequirements: formData.showCustomUniformRequirements,
+        requiredPpe: coerceStringArrayField(formData.requiredPpe),
+        showRequiredPpe: formData.showRequiredPpe,
+        backgroundCheckPackages: coerceStringArrayField(formData.backgroundCheckPackages),
+        showBackgroundChecks: formData.showBackgroundChecks,
+        drugScreeningPanels: coerceStringArrayField(formData.drugScreeningPanels),
+        showDrugScreening: formData.showDrugScreening,
+        additionalScreenings: coerceStringArrayField(formData.additionalScreenings),
+        showAdditionalScreenings: formData.showAdditionalScreenings,
+        shift: coerceStringArrayField(formData.shift),
+        showShift: formData.showShift,
       } as Record<string, unknown>) as Partial<JobsBoardPost>;
 
       await onSave(dataToSave);
@@ -1162,7 +1331,13 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     }
   };
 
+  const autoSaveTextFieldContextValue = useMemo(
+    () => ({ autoSave, mode, schedulePersist }),
+    [autoSave, mode, schedulePersist]
+  );
+
   return (
+    <JobPostFormAutoSaveContext.Provider value={autoSaveTextFieldContextValue}>
     <Box>
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
@@ -1175,7 +1350,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <AutoSaveTextField
+              <JobPostFormAutoSaveTextField
                 label="Post Title"
                 value={formData.postTitle}
                 onChange={(e) => setFormData({ ...formData, postTitle: e.target.value })}
@@ -1208,21 +1383,57 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             <Grid item xs={12} sm={6}>
               <Autocomplete
                 fullWidth
-                freeSolo
-                options={jobTitlesList}
+                freeSolo={jobTitleAutocompleteFreeSolo}
+                options={jobTitleAutocompleteOptions}
                 value={formData.jobTitle}
                 onChange={(event, newValue) => {
-                  setFormData({ ...formData, jobTitle: newValue || '' });
+                  const title = newValue || '';
+                  if (restrictJobTitleToOrderPositions && jobOrderData) {
+                    const patch = buildPatchFromJobOrderTitle(
+                      jobOrderData,
+                      title,
+                      positionJobDescriptionFromAccount,
+                    );
+                    const formPatch = {
+                      ...patch,
+                      ...(patch.payRate != null && patch.payRate !== undefined
+                        ? { payRate: String(patch.payRate) }
+                        : {}),
+                    };
+                    if (typeof patch.jobDescription === 'string' && patch.jobDescription.trim()) {
+                      flushSync(() => {
+                        setJobDescriptionLocal(patch.jobDescription as string);
+                        setFormData((prev) => ({ ...prev, ...formPatch }));
+                      });
+                    } else {
+                      setFormData((prev) => ({ ...prev, ...formPatch }));
+                    }
+                  } else {
+                    setFormData({ ...formData, jobTitle: title });
+                  }
                   maybeTickPersist();
                 }}
-                onInputChange={(event, newInputValue) => {
-                  setFormData({ ...formData, jobTitle: newInputValue });
-                }}
+                onInputChange={
+                  jobTitleAutocompleteFreeSolo
+                    ? (event, newInputValue) => {
+                        setFormData({ ...formData, jobTitle: newInputValue });
+                      }
+                    : undefined
+                }
+                noOptionsText={
+                  restrictJobTitleToOrderPositions && (jobOrderRestrictedJobTitles?.length ?? 0) === 0
+                    ? 'Add job titles in the job order Positions section first.'
+                    : 'No matches'
+                }
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Job Title (Optional)"
-                    helperText="Search or enter a job title - leave blank for generic multi-role postings"
+                    helperText={
+                      restrictJobTitleToOrderPositions
+                        ? 'Choose a title from this job order’s Positions. Pay rate and client job description import when you select a title.'
+                        : 'Search or enter a job title - leave blank for generic multi-role postings'
+                    }
                   />
                 )}
               />
@@ -1253,7 +1464,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <AutoSaveTextField
+              <JobPostFormAutoSaveTextField
                 label="Expiration Date"
                 type="date"
                 value={formData.expDate || ''}
@@ -1266,7 +1477,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             {formData.jobType !== 'gig' && (
               <Grid item xs={12} sm={6}>
                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     label="Workers Needed"
                     type="number"
                     value={formData.workersNeeded}
@@ -1381,7 +1592,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={6}>
-              <AutoSaveTextField
+              <JobPostFormAutoSaveTextField
                 label="Pay Rate ($/hr)"
                 type="number"
                 value={formData.payRate}
@@ -1408,7 +1619,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2}>
             <Grid item xs={12} sm={4}>
-              <AutoSaveTextField
+              <JobPostFormAutoSaveTextField
                 label="Start Date"
                 type="date"
                 value={formData.startDate}
@@ -1430,7 +1641,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               </Box>
             </Grid>
             <Grid item xs={12} sm={4}>
-              <AutoSaveTextField
+              <JobPostFormAutoSaveTextField
                 label="End Date"
                 type="date"
                 value={formData.endDate}
@@ -1469,7 +1680,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     maybeTickPersist();
                   }}
                   renderInput={(params) => (
-                    <AutoSaveTextField
+                    <JobPostFormAutoSaveTextField
                       {...params}
                       label="Shift Details"
                       helperText="Select shift requirements for this position"
@@ -1508,7 +1719,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           <Box sx={{ mt: 2 }}>
             <Grid container spacing={2} alignItems="center">
               <Grid item xs={12} sm={3}>
-                <AutoSaveTextField
+                <JobPostFormAutoSaveTextField
                   label="Start Time"
                   type="time"
                   value={formData.startTime}
@@ -1531,7 +1742,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                 </Box>
               </Grid>
               <Grid item xs={12} sm={3}>
-                <AutoSaveTextField
+                <JobPostFormAutoSaveTextField
                   label="End Time"
                   type="time"
                   value={formData.endTime}
@@ -1618,7 +1829,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                     loading={loadingCompanies}
                     disabled={hideJobOrderConnection || loadingCompanies}
                     renderInput={(params) => (
-                      <AutoSaveTextField
+                      <JobPostFormAutoSaveTextField
                         {...params}
                         label="Company"
                         InputProps={{
@@ -1709,7 +1920,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                       loading={loadingCompanies}
                       disabled={hideJobOrderConnection || loadingCompanies}
                       renderInput={(params) => (
-                        <AutoSaveTextField
+                        <JobPostFormAutoSaveTextField
                           {...params}
                           label="Company"
                           helperText="Select a company, or leave empty to use city/state"
@@ -1882,7 +2093,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Background Check Packages"
                     helperText="Select required background check packages"
@@ -1929,7 +2140,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Drug Screening Panels"
                     helperText="Select required drug screening panels"
@@ -1976,7 +2187,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Additional Screenings"
                     helperText="Select required additional screening types"
@@ -2023,7 +2234,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Required Skills"
                     helperText="Select skills required for this position"
@@ -2073,7 +2284,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Licenses & Certifications"
                     helperText="Select required licenses and certifications"
@@ -2120,7 +2331,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Experience Levels"
                     helperText="Select required experience levels"
@@ -2167,7 +2378,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Education Levels"
                     helperText="Select required education levels"
@@ -2214,7 +2425,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Language Requirements"
                     helperText="Select required languages for this position"
@@ -2269,7 +2480,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Physical Requirements"
                     helperText="Select physical requirements for this position"
@@ -2330,7 +2541,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Uniform Requirements"
                     helperText="Select dress code and uniform requirements"
@@ -2367,7 +2578,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         <Box sx={{ mt: 2 }}>
           <Grid container spacing={2} alignItems="center">
             <Grid item xs={12} sm={6}>
-              <AutoSaveTextField
+              <JobPostFormAutoSaveTextField
                 fullWidth
                 label="Custom Uniform Requirements"
                 multiline
@@ -2422,7 +2633,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 renderInput={(params) => (
-                  <AutoSaveTextField
+                  <JobPostFormAutoSaveTextField
                     {...params}
                     label="Required PPE"
                     helperText="Select required personal protective equipment"
@@ -2477,7 +2688,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             ))
           }
           renderInput={(params) => (
-            <AutoSaveTextField
+            <JobPostFormAutoSaveTextField
               {...params}
               label="Auto-Add to User Groups"
               placeholder="Search user groups..."
@@ -2494,7 +2705,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
         {showSyndicationUrlFields && (
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            <AutoSaveTextField
+            <JobPostFormAutoSaveTextField
               label="Craigslist URL"
               value={formData.craigslistUrl}
               onChange={(e) => {
@@ -2509,7 +2720,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
               placeholder="https://…"
               helperText="Optional. Header icon opens this link in a new tab when set."
             />
-            <AutoSaveTextField
+            <JobPostFormAutoSaveTextField
               label="Indeed URL"
               value={formData.indeedUrl}
               onChange={(e) => {
@@ -2569,10 +2780,10 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             }
           }}
           fullWidth
-          required
+          required={formData.status !== 'draft'}
           multiline
           minRows={6}
-          helperText="Public job posting text. Use Generate to draft from the job order (or from your prompts when no order is connected). Edits save when you leave this field."
+          helperText="Public job posting text. Use Generate to draft from the job order (or from your prompts when no order is connected). Drafts can be saved without text; set to Active when ready."
         />
 
         {!(autoSave && mode === 'edit') && (
@@ -2606,6 +2817,7 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       />
     </Box>
+    </JobPostFormAutoSaveContext.Provider>
   );
 };
 

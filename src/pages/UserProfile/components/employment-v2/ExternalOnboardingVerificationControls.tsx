@@ -194,7 +194,7 @@ export interface ExternalOnboardingVerificationControlsProps {
   suppress?: boolean;
 }
 
-type DialogMode = 'verify' | 'correction' | 'error' | null;
+type DialogMode = 'verify' | 'correction' | 'error' | 'clear_verification' | null;
 
 const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerificationControlsProps> = ({
   ctx,
@@ -263,7 +263,7 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
     return null;
   }
 
-  const submit = async (action: 'verify_complete' | 'request_correction' | 'mark_error') => {
+  const submit = async (action: 'verify_complete' | 'request_correction' | 'mark_error' | 'clear_verification') => {
     setErr(null);
     const trimmed = note.trim();
     if ((action === 'request_correction' || action === 'mark_error') && !trimmed) {
@@ -294,13 +294,16 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
   const dialogTitle =
     dialogMode === 'verify'
       ? 'Mark complete'
-      : dialogMode === 'correction'
-        ? 'Request correction'
-        : dialogMode === 'error'
-          ? 'Mark for review'
-          : '';
+      : dialogMode === 'clear_verification'
+        ? 'Clear C1 verification'
+        : dialogMode === 'correction'
+          ? 'Request correction'
+          : dialogMode === 'error'
+            ? 'Mark for review'
+            : '';
 
   const noteRequired = dialogMode === 'correction' || dialogMode === 'error';
+  const clearMode = dialogMode === 'clear_verification';
 
   const checkboxChecked = verified || optimisticChecked;
 
@@ -336,20 +339,36 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
       <FormControlLabel
         sx={{ alignItems: 'flex-start', mr: 0, mb: 0.5 }}
         control={
-          <Checkbox
-            checked={checkboxChecked}
-            disabled={verified || loading}
-            color={verified ? 'success' : 'primary'}
-            onChange={(_, checked) => {
-              if (verified || loading) return;
-              if (checked) {
-                setOptimisticChecked(true);
-                setDialogMode('verify');
-              } else {
-                setOptimisticChecked(false);
-              }
-            }}
-          />
+          verified ? (
+            <Tooltip title="Click to clear the C1 verification stamp" placement="top">
+              <span>
+                <Checkbox
+                  checked={checkboxChecked}
+                  disabled={loading}
+                  color="success"
+                  onChange={(_, checked) => {
+                    if (loading) return;
+                    if (!checked) setDialogMode('clear_verification');
+                  }}
+                />
+              </span>
+            </Tooltip>
+          ) : (
+            <Checkbox
+              checked={checkboxChecked}
+              disabled={loading}
+              color="primary"
+              onChange={(_, checked) => {
+                if (loading) return;
+                if (checked) {
+                  setOptimisticChecked(true);
+                  setDialogMode('verify');
+                } else {
+                  setOptimisticChecked(false);
+                }
+              }}
+            />
+          )
         }
         label={
           <Typography variant="body2" color="text.secondary" sx={{ pt: 0.5, lineHeight: 1.45 }}>
@@ -401,19 +420,23 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             {dialogMode === 'verify'
               ? 'Records that this payroll step is done. Add an optional note if helpful.'
-              : dialogMode === 'correction'
-                ? 'Sends the step back to the worker flow. A short note is required.'
-                : 'Flags the step for internal review. A note is required.'}
+              : dialogMode === 'clear_verification'
+                ? 'Removes the “C1 completed” stamp in HRX. Use this if you marked a step complete by mistake. The worker’s status in your payroll system is unchanged.'
+                : dialogMode === 'correction'
+                  ? 'Sends the step back to the worker flow. A short note is required.'
+                  : 'Flags the step for internal review. A note is required.'}
           </Typography>
-          <TextField
-            label={noteRequired ? 'Note (required)' : 'Note (optional)'}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            fullWidth
-            multiline
-            minRows={2}
-            disabled={loading}
-          />
+          {clearMode ? null : (
+            <TextField
+              label={noteRequired ? 'Note (required)' : 'Note (optional)'}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              fullWidth
+              multiline
+              minRows={2}
+              disabled={loading}
+            />
+          )}
           {err ? (
             <Typography variant="caption" color="error" display="block" sx={{ mt: 1 }}>
               {err}
@@ -434,15 +457,17 @@ const ExternalOnboardingVerificationControls: React.FC<ExternalOnboardingVerific
           </Button>
           <Button
             variant="contained"
+            color={clearMode ? 'warning' : 'primary'}
             disabled={loading}
             onClick={() => {
               if (dialogMode === 'verify') void submit('verify_complete');
+              if (dialogMode === 'clear_verification') void submit('clear_verification');
               if (dialogMode === 'correction') void submit('request_correction');
               if (dialogMode === 'error') void submit('mark_error');
             }}
             startIcon={loading ? <CircularProgress size={16} /> : null}
           >
-            Submit
+            {clearMode ? 'Clear verification' : 'Submit'}
           </Button>
         </DialogActions>
       </Dialog>

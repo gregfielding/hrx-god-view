@@ -296,7 +296,13 @@ const WorkerProfile: React.FC = () => {
                     rec,
                     employmentRecords.length,
                   );
-                  const i9Vm = buildI9SupportingDocumentsEmploymentViewModel(i9Scoped);
+                  const i9Vm = buildI9SupportingDocumentsEmploymentViewModel(i9Scoped, {
+                    i9SupportingManualComplete: Boolean(rec.i9SupportingDocumentsManualCompleteAt),
+                    i9EmployeeSectionComplete: Boolean(
+                      rec.onboardingPipelineId &&
+                        i9EmployeeSectionVerifiedByPipelineId[rec.onboardingPipelineId],
+                    ),
+                  });
                   const row = buildWorkerMyEmploymentListRowModel(
                     rec,
                     employmentStepCounts,

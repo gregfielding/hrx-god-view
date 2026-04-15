@@ -19,6 +19,7 @@ import {
 import {
   normalizeWorkerTypeForExternalSteps,
   externalStepAppliesToWorkerType,
+  type ExternalOnboardingWorkerTypeNorm,
 } from './externalOnboardingSteps';
 import {
   deriveC1EntityKeyFromEntityName,
@@ -149,12 +150,12 @@ function mapStepLabelToWhyQueuedPreferred(label: string): string {
   return TAX_PAYROLL_WHY_QUEUED.needsReview;
 }
 
-/** Picks the first dimension tied at `sortPriority` (payroll external → Everee → direct deposit → tax). */
+/** Picks the first dimension tied at `sortPriority` (I-9 external → Everee → direct deposit → tax). */
 function taxPayrollWhyQueuedLabel(args: {
   pipelineComplete: boolean;
   allReadyOrNA: boolean;
   sortPriority: number;
-  payrollUi: { tier: number; label: string };
+  i9Ui: { tier: number; label: string };
   evereeUi: { tier: number; label: string } | null;
   ddUi: { tier: number; label: string };
   taxFormsUi: { tier: number; label: string };
@@ -162,7 +163,7 @@ function taxPayrollWhyQueuedLabel(args: {
   if (args.allReadyOrNA && !args.pipelineComplete) {
     return TAX_PAYROLL_WHY_QUEUED.onboardingOpen;
   }
-  const candidates: { tier: number; label: string }[] = [args.payrollUi];
+  const candidates: { tier: number; label: string }[] = [args.i9Ui];
   if (args.evereeUi) candidates.push(args.evereeUi);
   candidates.push(args.ddUi, args.taxFormsUi);
   for (const c of candidates) {
@@ -553,8 +554,9 @@ export function buildTaxPayrollQueueRows(
     const evereeUi = everee ? evereeLabel(everee) : { label: 'Ready', tier: 60 };
 
     const payrollExt = extMap?.payroll_onboarding;
-    const payrollApplies = externalStepAppliesToWorkerType('payroll_onboarding', wtNorm);
-    const payrollUi = externalStepQueueLabel(payrollExt, payrollApplies);
+    const i9Ext = extMap?.i9_employee_section;
+    const i9Applies = externalStepAppliesToWorkerType('i9_employee_section', wtNorm);
+    const i9Ui = externalStepQueueLabel(i9Ext, i9Applies);
 
     const ddApplies = externalStepAppliesToWorkerType('direct_deposit', wtNorm);
     const ddUi = externalStepQueueLabel(extMap?.direct_deposit, ddApplies);
@@ -586,16 +588,13 @@ export function buildTaxPayrollQueueRows(
       taxFormsUiFinal = { label: 'Ready', tier: 60 };
     }
 
-    const payrollSetupTier = everee ? worstTier(payrollUi.tier, evereeUi.tier) : payrollUi.tier;
-    const payrollSetupLabel = everee
-      ? payrollUi.tier <= evereeUi.tier
-        ? payrollUi.label
-        : evereeUi.label
-      : payrollUi.label;
+    const i9CompleteLabel = i9Ui.label;
+    const i9Tier = i9Ui.tier;
 
     let lastMs = firestoreTimeMs(p.updatedAt);
     const extKeys = [
       'payroll_onboarding',
+      'i9_employee_section',
       'direct_deposit',
       'tax_withholding_forms',
       'contractor_tax_form_w9',
@@ -610,6 +609,7 @@ export function buildTaxPayrollQueueRows(
     if (emp?.updatedAt) lastMs = Math.max(lastMs, firestoreTimeMs(emp.updatedAt));
 
     const extNeedsReview = [
+      i9Ext,
       payrollExt,
       extMap?.direct_deposit,
       extMap?.tax_withholding_forms,
@@ -622,6 +622,7 @@ export function buildTaxPayrollQueueRows(
           (r.status === 'completed' && !isExternalOnboardingStepVerifiedComplete(r))),
     );
     const extWaitingWorker =
+      (i9Applies && externalStepInviteOrNotStarted(i9Ext)) ||
       externalStepInviteOrNotStarted(payrollExt) ||
       (externalStepInviteOrNotStarted(extMap?.direct_deposit) &&
         !isDirectDepositCompleteFromExternalAndPayrollAccount(extMap?.direct_deposit, payrollAccount)) ||
@@ -638,13 +639,13 @@ export function buildTaxPayrollQueueRows(
           ));
 
     const owner = taxPayrollOwner(extNeedsReview, extWaitingWorker, everee ? evereeUi.tier : 60, [
-      payrollUi.tier,
+      i9Ui.tier,
       ddUiFinal.tier,
       taxFormsUiFinal.tier,
     ]);
 
     const sortPriority = worstTier(
-      payrollSetupTier,
+      i9Tier,
       ddUiFinal.tier,
       taxFormsUiFinal.tier,
       everee ? evereeUi.tier : 60,
@@ -656,13 +657,14 @@ export function buildTaxPayrollQueueRows(
     const workerDisplayName =
       fn || ln ? `${fn} ${ln}`.trim() : String(p.userName || '').trim() || uid;
 
+    const i9ReadyOrNA = i9Ui.label === 'Ready' || i9Ui.label === "Doesn't apply";
     const allReadyOrNA =
-      (payrollUi.label === 'Ready' || payrollUi.label === "Doesn't apply") &&
-      (evereeUi.label === 'Ready' || evereeUi.label === "Doesn't apply") &&
+      i9ReadyOrNA &&
       (ddUiFinal.label === 'Ready' || ddUiFinal.label === "Doesn't apply") &&
       (taxFormsUiFinal.label === 'Ready' || taxFormsUiFinal.label === "Doesn't apply");
 
-    if (pipelineStatus === 'complete' && allReadyOrNA) continue;
+    /** Tax & Payroll queue = follow-up until I-9, direct deposit, and tax forms are all Ready (or N/A). Then they drop off — onboarded for these milestones regardless of pipeline `status`. */
+    if (allReadyOrNA) continue;
 
     const pickedAssignmentId = pickAssignmentIdForTaxPayrollRow({
       uid,
@@ -688,7 +690,7 @@ export function buildTaxPayrollQueueRows(
       pipelineComplete: pipelineStatus === 'complete',
       allReadyOrNA,
       sortPriority,
-      payrollUi,
+      i9Ui,
       evereeUi: everee ? evereeUi : null,
       ddUi: ddUiFinal,
       taxFormsUi: taxFormsUiFinal,
@@ -714,7 +716,7 @@ export function buildTaxPayrollQueueRows(
       entityLabel,
       workerTypeLabel,
       employmentModeLabel,
-      payrollSetupLabel,
+      i9CompleteLabel,
       directDepositLabel: ddUiFinal.label,
       taxFormsLabel: taxFormsUiFinal.label,
       whyQueuedLabel,
@@ -740,13 +742,101 @@ export function buildTaxPayrollQueueRows(
   return rows;
 }
 
+function isSelectPipeline(p: TaxPayrollPipelineInput): boolean {
+  const ek =
+    normalizeEntityKey(p.entityKey as string | undefined) || String(p.entityKey || '').trim().toLowerCase();
+  return ek === 'select';
+}
+
+function findSelectPipelineForUser(
+  uid: string,
+  pipelines: TaxPayrollPipelineInput[],
+): TaxPayrollPipelineInput | undefined {
+  const u = String(uid || '').trim();
+  for (const p of pipelines) {
+    if (String(p.userId || '').trim() !== u) continue;
+    if (isSelectPipeline(p)) return p;
+  }
+  return undefined;
+}
+
+/** I-9 verified (or N/A for worker types without I-9) — same external step as Tax & Payroll “I-9 Complete”. */
+function i9SatisfiedForEverifyQueue(
+  extMap: ReturnType<typeof parseExternalOnboardingSteps>,
+  wtNorm: ExternalOnboardingWorkerTypeNorm,
+): boolean {
+  const i9Applies = externalStepAppliesToWorkerType('i9_employee_section', wtNorm);
+  const i9Ui = externalStepQueueLabel(extMap?.i9_employee_section, i9Applies);
+  return i9Ui.label === 'Ready' || i9Ui.label === "Doesn't apply";
+}
+
+/**
+ * True when E-Verify still needs recruiter/system follow-up (contrast: employment authorized, manual outside HRX,
+ * pipeline e_verify complete, or a closed/authorized case).
+ */
+function eVerifyFollowUpNeeded(
+  emp: EntityEmploymentLite | undefined,
+  pipelineSteps: unknown,
+  latestCase: EverifyCaseInput | undefined,
+): boolean {
+  const st = String(emp?.everifyStatus || '').toLowerCase();
+  if (st === 'employment_authorized' || st === 'manual_outside_hrx') return false;
+
+  const step = everifyStepFromPipeline(pipelineSteps);
+  const wf = String(step?.workflowStatus || step?.status || '').toLowerCase();
+  if (wf === 'complete' || wf === 'completed' || wf === 'skipped') return false;
+
+  if (latestCase) {
+    if (!everifyCaseIsClosedForQueue(latestCase)) return true;
+    return false;
+  }
+  return true;
+}
+
+function employmentContextForSelectPipeline(
+  p: TaxPayrollPipelineInput,
+  emp: EntityEmploymentLite | undefined,
+): string {
+  const aid = assignmentIdForTaxPayrollRow(emp, p);
+  if (aid) return 'Assignment';
+  if (emp?.employmentEntryMode === 'on_call_pool') return 'On-call / Employment';
+  if (emp) return 'On-call / Employment';
+  return 'Not linked — open profile';
+}
+
+/** When the row is synthesized from worker_onboarding + employment (no open case), infer step/owner from the status chip label. */
+function syntheticEverifyStepOwnerFromStatusLabel(statusLabel: string): {
+  currentStepLabel: string;
+  sortPriority: number;
+  owner: OnboardingQueueOwnerLabel;
+} {
+  const s = statusLabel.toLowerCase();
+  if (s.includes('not started')) {
+    return { currentStepLabel: 'Ready to run', sortPriority: 20, owner: 'You' };
+  }
+  if (s.includes('error') || s.includes('attention') || s.includes('review')) {
+    return { currentStepLabel: 'Needs attention', sortPriority: 0, owner: 'You' };
+  }
+  if (s.includes('progress')) {
+    return { currentStepLabel: 'Waiting on result', sortPriority: 25, owner: 'System' };
+  }
+  if (s.includes('complete') || s.includes('authorized') || s.includes('manual')) {
+    return { currentStepLabel: 'Recorded', sortPriority: 40, owner: 'System' };
+  }
+  return { currentStepLabel: 'Follow up on profile', sortPriority: 30, owner: 'System' };
+}
+
 export function buildEverifyQueueRows(
   cases: EverifyCaseInput[],
   selectEntityId: string | null,
   entityIdToName: Map<string, string>,
   userById: Record<string, UserProfileLite | undefined>,
+  pipelines: TaxPayrollPipelineInput[] = [],
+  employmentByPipelineId: Record<string, EntityEmploymentLite | undefined> = {},
 ): OnboardingEverifyQueueRow[] {
   const rows: OnboardingEverifyQueueRow[] = [];
+  const usersWithOpenCaseRow = new Set<string>();
+  const latestCaseByUser = latestSelectEverifyCaseByUserId(cases, selectEntityId);
 
   for (const c of cases) {
     const eid = String(c.entityId || '');
@@ -756,6 +846,14 @@ export function buildEverifyQueueRows(
 
     const uid = String(c.userId || '').trim();
     if (!uid) continue;
+
+    const pipe = findSelectPipelineForUser(uid, pipelines);
+    if (!pipe) continue;
+    const extMap = parseExternalOnboardingSteps(pipe.externalOnboardingSteps);
+    const empCase = employmentByPipelineId[pipe.id];
+    const wtNormCase = normalizeWorkerTypeForExternalSteps(empCase?.workerType || '');
+    if (!i9SatisfiedForEverifyQueue(extMap, wtNormCase)) continue;
+    if (!eVerifyFollowUpNeeded(empCase, pipe.steps, c)) continue;
 
     const pub = c.public;
     const rawStatus = String(pub?.status ?? c.status ?? '').toLowerCase();
@@ -800,10 +898,14 @@ export function buildEverifyQueueRows(
       ? 'On-call / Employment'
       : 'Not linked on case — open profile';
 
+    usersWithOpenCaseRow.add(uid);
+
     rows.push({
       rowId: `ev:${c.id}`,
       userId: uid,
       workerDisplayName,
+      workerEmail: prof?.email,
+      workerPhone: prof?.phone,
       workerAvatarUrl: prof?.avatarUrl,
       caseId: c.id,
       entityLabel: deriveC1EntityKeyFromEntityName(entName) === 'select' ? 'C1 Select' : entName,
@@ -819,9 +921,59 @@ export function buildEverifyQueueRows(
     });
   }
 
+  for (const p of pipelines) {
+    if (!isSelectPipeline(p)) continue;
+    const uid = String(p.userId || '').trim();
+    if (!uid || usersWithOpenCaseRow.has(uid)) continue;
+
+    const emp = employmentByPipelineId[p.id];
+    const extMapP = parseExternalOnboardingSteps(p.externalOnboardingSteps);
+    const wtNormP = normalizeWorkerTypeForExternalSteps(emp?.workerType || '');
+    if (!i9SatisfiedForEverifyQueue(extMapP, wtNormP)) continue;
+
+    const latestCase = latestCaseByUser.get(uid);
+    if (!eVerifyFollowUpNeeded(emp, p.steps, latestCase)) continue;
+
+    const statusLabel = formatEverifyStatusForTaxPayrollQueue(
+      latestCase,
+      emp?.everifyStatus,
+      p.steps,
+    );
+    const { currentStepLabel, sortPriority, owner } = syntheticEverifyStepOwnerFromStatusLabel(statusLabel);
+
+    let lastMs = firestoreTimeMs(p.updatedAt);
+    if (emp?.updatedAt) lastMs = Math.max(lastMs, firestoreTimeMs(emp.updatedAt));
+    if (latestCase?.updatedAt) lastMs = Math.max(lastMs, firestoreTimeMs(latestCase.updatedAt));
+
+    const prof = userById[uid];
+    const fn = String(prof?.firstName || '').trim();
+    const ln = String(prof?.lastName || '').trim();
+    const workerDisplayName = fn || ln ? `${fn} ${ln}`.trim() : uid;
+
+    const entName = selectEntityId ? entityIdToName.get(selectEntityId) || 'C1 Select' : 'C1 Select';
+
+    rows.push({
+      rowId: `evp:${p.id}`,
+      userId: uid,
+      workerDisplayName,
+      workerEmail: prof?.email,
+      workerPhone: prof?.phone,
+      workerAvatarUrl: prof?.avatarUrl,
+      entityLabel: deriveC1EntityKeyFromEntityName(entName) === 'select' ? 'C1 Select' : entName,
+      employmentContextLabel: employmentContextForSelectPipeline(p, emp),
+      statusLabel,
+      currentStepLabel,
+      lastUpdateLabel: lastMs ? format(new Date(lastMs), 'MMM d, yyyy p') : '—',
+      lastUpdateMs: lastMs,
+      ownerLabel: owner,
+      sortPriority,
+      profilePath: `/users/${uid}`,
+      userEmploymentId: p.id,
+    });
+  }
+
   rows.sort((a, b) => {
     if (b.lastUpdateMs !== a.lastUpdateMs) return b.lastUpdateMs - a.lastUpdateMs;
-    if (a.sortPriority !== b.sortPriority) return a.sortPriority - b.sortPriority;
     return a.workerDisplayName.localeCompare(b.workerDisplayName);
   });
 
@@ -910,6 +1062,8 @@ export function buildBackgroundQueueRows(
       rowId: `bg:${r.id}`,
       userId: uid,
       workerDisplayName,
+      workerEmail: prof?.email,
+      workerPhone: prof?.phone,
       workerAvatarUrl: prof?.avatarUrl,
       backgroundCheckId: r.id,
       entityLabel,

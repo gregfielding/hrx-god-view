@@ -155,6 +155,11 @@ import type { ApplicationHiringLifecycle } from '../types/applicationHiringLifec
 import { parseApplicationHiringLifecycle } from '../utils/applicationHiringLifecycle';
 import type { JobScoreSummary, JobScoreSummaryStored } from '../types/jobScore';
 import JobPostForm from '../components/JobPostForm';
+import {
+  fetchResolvedAccountPricingPositions,
+  buildPricingByJobTitle,
+} from '../utils/accountPricingForJobOrder';
+import type { AccountPositionPricing } from '../types/recruiter/account';
 import { experienceOptions, educationOptions } from '../data/experienceOptions';
 import JobOrderChecklist, { getJobOrderChecklistProgress } from '../components/recruiter/JobOrderChecklist';
 import JobOrderAutoMessagingTab from '../components/recruiter/JobOrderAutoMessagingTab';
@@ -2485,6 +2490,8 @@ const JobOrderJobsBoardTab: React.FC<{
   const [copyLinkSnackbarOpen, setCopyLinkSnackbarOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const jobsBoardService = JobsBoardService.getInstance();
+  /** Account → Pricing positions (client JD per title) for seeding Jobs Board posts. */
+  const [accountPricingPositions, setAccountPricingPositions] = useState<AccountPositionPricing[]>([]);
 
   /** E-Verify comes from Hiring Entity (source of truth). */
   const { entity: jobOrderEntity } = useEntity(tenantId, jobOrder?.hiringEntityId ?? null);
@@ -2534,6 +2541,37 @@ const JobOrderJobsBoardTab: React.FC<{
     loadPosts();
   }, [loadPosts]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await fetchResolvedAccountPricingPositions(tenantId, {
+          recruiterAccountId: jobOrder?.recruiterAccountId,
+          companyId: jobOrder?.companyId,
+        });
+        if (!cancelled) setAccountPricingPositions(rows);
+      } catch {
+        if (!cancelled) setAccountPricingPositions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, jobOrder?.recruiterAccountId, jobOrder?.companyId]);
+
+  const accountPricingByTitle = useMemo(
+    () => buildPricingByJobTitle(accountPricingPositions),
+    [accountPricingPositions],
+  );
+
+  const accountPricingSeedKey = useMemo(
+    () =>
+      accountPricingPositions
+        .map((p) => `${String(p.jobTitle ?? '').trim()}\t${String(p.jobDescriptionFromClient ?? '').length}`)
+        .join('|'),
+    [accountPricingPositions],
+  );
+
   const existingPostSingle = !isGigWithPositions ? (posts[0] ?? null) : null;
 
   // Memoize initialData to prevent JobPostForm's useEffect from overwriting user input on every parent re-render.
@@ -2555,17 +2593,24 @@ const JobOrderJobsBoardTab: React.FC<{
     });
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initialDataByPositionKey and jobOrderEntity drive recompute
-  }, [initialDataByPositionKey, jobOrder?.id, jobOrderEntity?.everifyRequired]);
+  }, [initialDataByPositionKey, jobOrder?.id, jobOrderEntity?.everifyRequired, accountPricingSeedKey]);
 
   const initialDataSingle = useMemo(
     () => getInitialDataStatic(existingPostSingle, null),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when post loads, job order or entity changes
-    [existingPostSingle?.id ?? 'new', jobOrder?.id, jobOrderEntity?.everifyRequired]
+    [existingPostSingle?.id ?? 'new', jobOrder?.id, jobOrderEntity?.everifyRequired, accountPricingSeedKey]
   );
 
   // Convert job order data to JobPostForm initialData format (optionally for a specific Gig position)
   function getInitialDataStatic(existingPostForForm: JobsBoardPost | null | undefined, position: GigPosition | null | undefined): any {
     if (existingPostForForm) {
+      const savedDesc =
+        typeof existingPostForForm.jobDescription === 'string' ? existingPostForForm.jobDescription.trim() : '';
+      const titleKey = String(
+        existingPostForForm.positionJobTitle || existingPostForForm.jobTitle || '',
+      ).trim();
+      const accountRow = titleKey ? accountPricingByTitle.get(titleKey) : undefined;
+      const accountJd = accountRow?.jobDescriptionFromClient?.trim();
       return {
         ...existingPostForForm,
         startDate: formatDateForInput(existingPostForForm.startDate),
@@ -2575,6 +2620,7 @@ const JobOrderJobsBoardTab: React.FC<{
         showWorkersNeeded: existingPostForForm.showWorkersNeeded !== undefined ? existingPostForForm.showWorkersNeeded : false,
         skills: Array.isArray(existingPostForForm.skills) ? existingPostForForm.skills : (existingPostForForm.skills ? [existingPostForForm.skills] : []),
         uniformRequirements: Array.isArray(existingPostForForm.uniformRequirements) ? existingPostForForm.uniformRequirements : (existingPostForForm.uniformRequirements ? [existingPostForForm.uniformRequirements] : []),
+        jobDescription: savedDesc || accountJd || '',
       };
     }
 
@@ -2616,7 +2662,13 @@ const JobOrderJobsBoardTab: React.FC<{
       postTitle: jobOrder.jobOrderName || '',
       jobType: jobOrder.jobType || 'career',
       jobTitle: isGigJob && positionForPrefill ? positionForPrefill.jobTitle : jobOrder.jobTitle || '',
-      jobDescription: '',
+      jobDescription: (() => {
+        const titleKey = String(positionForPrefill?.jobTitle || jobOrder.jobTitle || '').trim();
+        const row = titleKey ? accountPricingByTitle.get(titleKey) : undefined;
+        const fromAccount = row?.jobDescriptionFromClient?.trim();
+        if (fromAccount) return fromAccount;
+        return '';
+      })(),
       companyId: jobOrder.companyId || '',
       companyName: jobOrder.companyName || '',
       worksiteId: jobOrder.worksiteId || '',
@@ -2843,6 +2895,10 @@ const JobOrderJobsBoardTab: React.FC<{
                         mode={existingPostForPosition ? 'edit' : 'create'}
                         hideJobOrderConnection={true}
                         jobOrderData={jobOrder}
+                        positionJobDescriptionFromAccount={
+                          accountPricingByTitle.get(String(position.jobTitle).trim())?.jobDescriptionFromClient ??
+                          null
+                        }
                       />
                     </CardContent>
                   </Card>
@@ -2875,6 +2931,13 @@ const JobOrderJobsBoardTab: React.FC<{
                 mode={existingPostSingle ? 'edit' : 'create'}
                 hideJobOrderConnection={true}
                 jobOrderData={jobOrder}
+                positionJobDescriptionFromAccount={
+                  accountPricingByTitle.get(
+                    String(
+                      (isGigWithPositions && gigPositions?.[0]?.jobTitle) || jobOrder.jobTitle || '',
+                    ).trim(),
+                  )?.jobDescriptionFromClient ?? null
+                }
               />
             </CardContent>
           </Card>

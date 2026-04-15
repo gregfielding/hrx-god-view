@@ -3,6 +3,10 @@
  * (maps from canonical EmploymentV2HeaderState / I-9 view model — no backend changes).
  */
 import type { EmploymentV2HeaderState } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
+import {
+  C1_WORKER_MY_EMPLOYMENT_LIST_PATH,
+  C1_WORKER_WORK_AUTHORIZATION_PROFILE_PATH,
+} from '../constants/c1WorkerRoutes';
 import type { I9EmploymentDocsSubstatus } from './i9SupportingDocumentsViewModel';
 
 /** Optional `t` from `useT()` / `src/i18n` for worker-facing pages. */
@@ -177,9 +181,32 @@ export function workerMyEmploymentDetailPath(employmentRecordId: string): string
   return `/c1/workers/my-employment/${encodeURIComponent(employmentRecordId)}`;
 }
 
+/** List page when we do not have a verified Firestore `entity_employments` document id (avoid guessed `uid__entityKey` links). */
+export function workerMyEmploymentListAbsoluteUrl(origin: string): string {
+  return `${origin.replace(/\/$/, '')}${C1_WORKER_MY_EMPLOYMENT_LIST_PATH}`;
+}
+
 export function workerMyEmploymentAbsoluteUrl(origin: string, employmentRecordId: string): string {
   const path = workerMyEmploymentDetailPath(employmentRecordId);
   return `${origin.replace(/\/$/, '')}${path}`;
+}
+
+/**
+ * SMS/email links: use a detail URL only when we have the real `entity_employments` doc id from Firestore.
+ * Otherwise use the My Employment list (opening the right card is one tap).
+ */
+export function workerMyEmploymentMessagingAbsoluteUrl(
+  origin: string,
+  employmentRecordId: string | null | undefined,
+): string {
+  const id = String(employmentRecordId || '').trim();
+  if (!id) return workerMyEmploymentListAbsoluteUrl(origin);
+  return workerMyEmploymentAbsoluteUrl(origin, id);
+}
+
+/** Deep link for recruiters to remind workers to complete work-authorization attestation. */
+export function workerWorkAuthorizationProfileAbsoluteUrl(origin: string): string {
+  return `${origin.replace(/\/$/, '')}${C1_WORKER_WORK_AUTHORIZATION_PROFILE_PATH}`;
 }
 
 /** Scope tenant I-9 rows to an entity when `requestedForEntityId` matches; single-employment fallback = all rows. */

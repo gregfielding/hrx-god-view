@@ -18,7 +18,8 @@ export interface OnboardingTaxPayrollQueueRow {
   entityLabel: string;
   workerTypeLabel: string;
   employmentModeLabel: string;
-  payrollSetupLabel: string;
+  /** TempWorks `i9_employee_section` — same gate as User → Employment → I-9 completed. */
+  i9CompleteLabel: string;
   directDepositLabel: string;
   taxFormsLabel: string;
   /** Single bottleneck aligned with sort priority (see `buildTaxPayrollQueueRows`). */
@@ -42,8 +43,11 @@ export interface OnboardingEverifyQueueRow {
   rowId: string;
   userId: string;
   workerDisplayName: string;
+  workerEmail?: string;
+  workerPhone?: string;
   workerAvatarUrl?: string;
-  caseId: string;
+  /** Present when the row is backed by an E-Verify public case; pipeline-only onboarding rows omit this. */
+  caseId?: string;
   entityLabel: string;
   employmentContextLabel: string;
   statusLabel: string;
@@ -61,6 +65,8 @@ export interface OnboardingBackgroundQueueRow {
   rowId: string;
   userId: string;
   workerDisplayName: string;
+  workerEmail?: string;
+  workerPhone?: string;
   workerAvatarUrl?: string;
   backgroundCheckId: string;
   entityLabel: string;
@@ -81,3 +87,11 @@ export interface OnboardingQueuePaginationState {
   setPage: (p: number) => void;
   setPageSize: (n: number) => void;
 }
+
+/** Optional parent-controlled pagination for `/staff-onboarding` (session-persisted tab + tables). */
+export type OnboardingQueuePagination = {
+  page: number;
+  pageSize: number;
+  setPage: (page: number) => void;
+  setPageSize: (size: number) => void;
+};

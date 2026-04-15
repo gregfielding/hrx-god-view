@@ -44,24 +44,31 @@ const Login = () => {
     if (didRedirectRef.current) return;
     if (!loading && user && securityLevel != null && String(securityLevel).trim() !== '') {
       try {
-        // Staff (security levels 0-4) go to their profile
         const secLevel = parseInt(String(securityLevel), 10);
         didRedirectRef.current = true;
+        const state = location.state as { from?: { pathname?: string; search?: string; hash?: string } } | null;
+        const from = state?.from;
+        const deepLink =
+          from && typeof from.pathname === 'string' && from.pathname.startsWith('/c1/')
+            ? `${from.pathname}${from.search || ''}${from.hash || ''}`
+            : '';
         if (secLevel >= 0 && secLevel <= 4) {
-          const tenantSlug = activeTenant?.slug || 'c1';
-          navigate(`/${tenantSlug}/users/${user.uid}`, { replace: true });
+          if (deepLink) {
+            navigate(deepLink, { replace: true });
+          } else {
+            const tenantSlug = activeTenant?.slug || 'c1';
+            navigate(`/${tenantSlug}/users/${user.uid}`, { replace: true });
+          }
         } else {
-          // Admins go to dashboard
           navigate('/', { replace: true });
         }
       } catch (error) {
         console.error('Error during login redirect:', error);
-        // Fallback to dashboard
         didRedirectRef.current = true;
         navigate('/', { replace: true });
       }
     }
-  }, [user, loading, securityLevel, activeTenant, navigate]);
+  }, [user, loading, securityLevel, activeTenant, navigate, location]);
 
   // Check for success message from password setup
   useEffect(() => {

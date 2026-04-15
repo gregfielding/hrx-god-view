@@ -156,6 +156,7 @@ export async function createBackgroundCheckInternal(
       providerSubjectId: parsed.providerSubjectId,
       providerClientId: parsed.providerClientId || clientId,
       applicantPortalLink: parsed.applicantPortalLink,
+      applicantPortalUrl: parsed.applicantPortalLink,
       providerStatus: parsed.providerStatus,
       hrxStatus: nextStatus,
       syncError: null,

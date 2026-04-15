@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where, limit } from 'firebase/firestore';
 import { db } from '../firebase';
-import type { OnboardingBackgroundQueueRow } from '../types/onboardingQueue';
+import type { OnboardingBackgroundQueueRow, OnboardingQueuePagination } from '../types/onboardingQueue';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import {
   buildBackgroundQueueRows,
   type UserProfileLite,
   userProfileLiteFromUserDoc,
 } from '../utils/onboardingQueueBuilders';
+import { rowMatchesOnboardingWorkerSearch } from '../utils/onboardingQueueSearch';
 
 const BG_LIMIT = 250;
 
@@ -15,13 +16,34 @@ function docToRecord(id: string, data: Record<string, unknown>): BackgroundCheck
   return { id, ...data } as BackgroundCheckRecord;
 }
 
-export function useOnboardingBackgroundQueue(tenantId: string | undefined) {
+export function useOnboardingBackgroundQueue(
+  tenantId: string | undefined,
+  controlledPagination?: OnboardingQueuePagination,
+  searchQuery?: string,
+) {
   const [records, setRecords] = useState<BackgroundCheckRecord[]>([]);
   const [userById, setUserById] = useState<Record<string, UserProfileLite | undefined>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(20);
+  const [internalPage, setInternalPage] = useState(0);
+  const [internalPageSize, setInternalPageSize] = useState(20);
+
+  const page = controlledPagination?.page ?? internalPage;
+  const pageSize = controlledPagination?.pageSize ?? internalPageSize;
+  const setPage = useCallback(
+    (n: number) => {
+      if (controlledPagination) controlledPagination.setPage(n);
+      else setInternalPage(n);
+    },
+    [controlledPagination],
+  );
+  const setPageSize = useCallback(
+    (n: number) => {
+      if (controlledPagination) controlledPagination.setPageSize(n);
+      else setInternalPageSize(n);
+    },
+    [controlledPagination],
+  );
 
   useEffect(() => {
     if (!tenantId) {
@@ -87,23 +109,32 @@ export function useOnboardingBackgroundQueue(tenantId: string | undefined) {
 
   const allRows = useMemo(() => buildBackgroundQueueRows(records, userById), [records, userById]);
 
-  const totalCount = allRows.length;
+  const unfilteredCount = allRows.length;
+  const filteredRows = useMemo(() => {
+    if (!searchQuery?.trim()) return allRows;
+    return allRows.filter((r) => rowMatchesOnboardingWorkerSearch(searchQuery, r));
+  }, [allRows, searchQuery]);
+
+  const totalCount = filteredRows.length;
   const rows: OnboardingBackgroundQueueRow[] = useMemo(
-    () => allRows.slice(page * pageSize, page * pageSize + pageSize),
-    [allRows, page, pageSize]
+    () => filteredRows.slice(page * pageSize, page * pageSize + pageSize),
+    [filteredRows, page, pageSize],
   );
 
-  const setPageCb = useCallback((n: number) => setPage(n), []);
-  const setPageSizeCb = useCallback((n: number) => setPageSize(n), []);
+  useEffect(() => {
+    const maxPage = totalCount === 0 ? 0 : Math.ceil(totalCount / pageSize) - 1;
+    if (page > maxPage) setPage(Math.max(0, maxPage));
+  }, [totalCount, pageSize, page, setPage]);
 
   return {
     rows,
     loading,
     error,
     totalCount,
+    unfilteredCount,
     page,
     pageSize,
-    setPage: setPageCb,
-    setPageSize: setPageSizeCb,
+    setPage,
+    setPageSize,
   };
 }

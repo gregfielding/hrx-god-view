@@ -61,9 +61,10 @@ function formatTs(value: unknown): string {
 
 export function buildI9SupportingDocumentsEmploymentViewModel(
   rows: Array<{ id: string; data: Record<string, unknown> }>,
-  opts?: { i9EmployeeSectionComplete?: boolean },
+  opts?: { i9EmployeeSectionComplete?: boolean; i9SupportingManualComplete?: boolean },
 ): I9SupportingDocumentsEmploymentViewModel {
   const i9DoneElsewhere = opts?.i9EmployeeSectionComplete === true;
+  const manualEmployerConfirm = opts?.i9SupportingManualComplete === true;
   const requestCount = rows.length;
   const docs = i9DocumentsFromFirestoreRows(rows);
   const documentSetComplete = isI9DocumentSetComplete(docs);
@@ -105,7 +106,9 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
   }
 
   let substatus: I9EmploymentDocsSubstatus;
-  if (documentSetComplete) {
+  if (manualEmployerConfirm) {
+    substatus = 'complete';
+  } else if (documentSetComplete) {
     substatus = 'complete';
   } else if (pendingReviewCount > 0) {
     substatus = 'under_review';
@@ -121,9 +124,16 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
     action_needed: 'Action needed',
     complete: 'Complete',
   };
+  const substatusLabelResolved = manualEmployerConfirm
+    ? 'Confirmed by employer'
+    : substatusLabels[substatus];
 
   const stillNeededLines: string[] = [];
-  if (documentSetComplete) {
+  if (manualEmployerConfirm) {
+    stillNeededLines.push(
+      'Supporting uploads were marked complete by your team. HRX document uploads are not required for this worker.',
+    );
+  } else if (documentSetComplete) {
     stillNeededLines.push('I-9 supporting document requirement satisfied.');
   } else if (hb && !hc) {
     stillNeededLines.push('Still needed: one List C document (e.g. Social Security card or birth certificate).');
@@ -167,7 +177,7 @@ export function buildI9SupportingDocumentsEmploymentViewModel(
 
   return {
     substatus,
-    substatusLabel: substatusLabels[substatus],
+    substatusLabel: substatusLabelResolved,
     documentSetComplete,
     hasApprovedListA: ha,
     hasApprovedListB: hb,

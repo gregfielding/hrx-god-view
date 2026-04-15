@@ -91,3 +91,23 @@ export function callEnsureWorkerI9SlotsForMyEmploymentRecord(
     EnsureWorkerI9SlotsForMyEmploymentRecordResult
   >(functions, 'ensureWorkerI9SlotsForMyEmploymentRecord')(payload);
 }
+
+export type SetEntityEmploymentI9SupportingManualCompleteInput = {
+  tenantId: string;
+  employmentId: string;
+  complete: boolean;
+};
+
+export type SetEntityEmploymentI9SupportingManualCompleteResult = {
+  success: boolean;
+};
+
+export function callSetEntityEmploymentI9SupportingManualComplete(
+  functions: Functions,
+  payload: SetEntityEmploymentI9SupportingManualCompleteInput,
+) {
+  return httpsCallable<
+    SetEntityEmploymentI9SupportingManualCompleteInput,
+    SetEntityEmploymentI9SupportingManualCompleteResult
+  >(functions, 'setEntityEmploymentI9SupportingManualComplete')(payload);
+}

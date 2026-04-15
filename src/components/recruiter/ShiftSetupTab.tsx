@@ -59,9 +59,17 @@ import { getDateRange, formatDayAndDate, dateHasHours } from '../../utils/dateSc
 import { formatHourlyPayRateForDisplay } from '../../utils/hourlyPayDisplay';
 import { useAuth } from '../../contexts/AuthContext';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, addMonths, subMonths, startOfWeek, endOfWeek, isToday } from 'date-fns';
+import { httpsCallable } from 'firebase/functions';
+import { functions } from '../../firebase';
+import {
+  buildScheduleNotifyText,
+  computeShiftNotifyDiff,
+  shouldPromptShiftWorkerNotify,
+  type ShiftNotifyDiff,
+} from '../../utils/shiftWorkerNotifyDiff';
 export type ShiftStatus = 'open' | 'closed' | 'filled' | 'cancelled';
 
-interface Shift {
+export interface Shift {
   id: string;
   tenantId: string;
   jobOrderId: string;
@@ -188,6 +196,14 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
   const [shiftToDuplicate, setShiftToDuplicate] = useState<Shift | null>(null);
   const [selectedDates, setSelectedDates] = useState<Date[]>([]);
   const [calendarMonth, setCalendarMonth] = useState(new Date());
+  const [workerNotifyDialogOpen, setWorkerNotifyDialogOpen] = useState(false);
+  const [pendingWorkerSave, setPendingWorkerSave] = useState<{
+    shiftData: any;
+    plainNext: Record<string, unknown>;
+    diff: ShiftNotifyDiff;
+    shiftId: string;
+  } | null>(null);
+  const [workerNotifySaving, setWorkerNotifySaving] = useState(false);
 
   // Get available positions from job order (gigPositions for gig jobs, or single position for career jobs)
   const getAvailablePositions = (): Position[] => {
@@ -342,10 +358,95 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     setDialogOpen(false);
     setEditingShift(null);
     setError('');
+    setWorkerNotifyDialogOpen(false);
+    setPendingWorkerSave(null);
+  };
+
+  const finalizeShiftSave = (message: string) => {
+    setSuccess(message);
+    handleCloseDialog();
+    fetchShifts();
+    JobsBoardService.getInstance().syncJobOrderToLinkedPostings(tenantId, jobOrderId).catch(() => {});
+    setTimeout(() => setSuccess(''), 3000);
+  };
+
+  const persistNewShift = async (shiftData: any, isSchedule: boolean, isGigJob: boolean) => {
+    const dataForAdd = { ...shiftData };
+    if (!isSchedule) {
+      delete dataForAdd.endDate;
+      delete dataForAdd.weeklySchedule;
+      delete dataForAdd.dateSchedule;
+    } else if (!isGigJob) {
+      delete dataForAdd.endDate;
+    }
+    await addDoc(collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts'), dataForAdd);
+  };
+
+  const handleWorkerNotifyChoice = async (sendNotify: boolean) => {
+    const pending = pendingWorkerSave;
+    if (!pending || workerNotifySaving) return;
+    setWorkerNotifySaving(true);
+    setWorkerNotifyDialogOpen(false);
+    setPendingWorkerSave(null);
+    try {
+      await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', pending.shiftId), pending.shiftData);
+      let notifyFailed = false;
+      if (sendNotify) {
+        try {
+          const jobTitle =
+            formData.defaultJobTitle?.trim() ||
+            jobOrder?.jobTitle?.trim() ||
+            'your role';
+          const scheduleSection = pending.diff.scheduleChanged
+            ? buildScheduleNotifyText(
+                {
+                  shiftMode: pending.plainNext.shiftMode as 'single' | 'multi' | undefined,
+                  shiftDate: pending.plainNext.shiftDate as string | undefined,
+                  endDate: pending.plainNext.endDate as string | undefined,
+                  defaultStartTime: pending.plainNext.defaultStartTime as string | undefined,
+                  defaultEndTime: pending.plainNext.defaultEndTime as string | undefined,
+                  dateSchedule: pending.plainNext.dateSchedule as
+                    | Record<string, { startTime: string; endTime: string }>
+                    | undefined,
+                  weeklySchedule: pending.plainNext.weeklySchedule as
+                    | Record<string, { enabled?: boolean; startTime: string; endTime: string }>
+                    | undefined,
+                },
+                formatTime
+              )
+            : '';
+          const instructionsSection = pending.diff.instructionsChanged
+            ? [formData.shiftDescription?.trim(), formData.emailIntro?.trim()].filter(Boolean).join('\n\n')
+            : '';
+          const notifyFn = httpsCallable(functions, 'notifyShiftWorkersUpdated');
+          await notifyFn({
+            tenantId,
+            jobOrderId,
+            shiftId: pending.shiftId,
+            jobTitle,
+            scheduleSection,
+            instructionsSection,
+          });
+        } catch (notifyErr) {
+          console.error('notifyShiftWorkersUpdated failed:', notifyErr);
+          notifyFailed = true;
+        }
+      }
+      finalizeShiftSave('Shift updated successfully');
+      if (notifyFailed) {
+        setTimeout(() => setError('Shift saved, but worker notifications could not be sent.'), 0);
+      }
+    } catch (err) {
+      console.error('Error saving shift:', err);
+      setError('Failed to save shift');
+    } finally {
+      setWorkerNotifySaving(false);
+    }
   };
 
   const handleSubmit = async () => {
     try {
+      setError('');
       // Validation
       if (!formData.shiftTitle.trim()) {
         setError('Shift title is required');
@@ -442,24 +543,29 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         shiftMode: isSchedule ? 'multi' : 'single',
       };
 
+      let mergedGigDateSchedule: Record<
+        string,
+        { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }
+      > | undefined;
+
       if (isSchedule) {
         if (isGigJob) {
           shiftData.endDate = formData.endDate;
           const range = getDateRange(formData.shiftDate, formData.endDate);
-          const merged: Record<string, { startTime: string; endTime: string; workersNeeded?: number; overstaff?: number }> = {};
+          mergedGigDateSchedule = {};
           range.forEach((iso) => {
             const existing = formData.dateSchedule?.[iso];
-            merged[iso] = {
+            mergedGigDateSchedule![iso] = {
               startTime: existing?.startTime ?? formData.defaultStartTime,
               endTime: existing?.endTime ?? formData.defaultEndTime,
               workersNeeded: existing?.workersNeeded != null ? Math.max(1, Number(existing.workersNeeded)) : 1,
               overstaff: existing?.overstaff != null ? Math.max(0, Number(existing.overstaff)) : 0,
             };
           });
-          shiftData.dateSchedule = merged;
+          shiftData.dateSchedule = mergedGigDateSchedule;
           // GIG: derive totalStaffRequested from sum of (workers + over) per day for backward compatibility
           const gigTotal = range.reduce((sum, iso) => {
-            const e = merged[iso];
+            const e = mergedGigDateSchedule![iso];
             return sum + (e?.workersNeeded ?? 1) + (e?.overstaff ?? 0);
           }, 0);
           shiftData.totalStaffRequested = Math.max(1, gigTotal);
@@ -482,29 +588,51 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         }
       }
 
-      if (editingShift) {
-        await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', editingShift.id), shiftData);
-        setSuccess('Shift updated successfully');
-      } else {
-        // addDoc() does not accept deleteField() — only include fields we want on the new document
-        const dataForAdd = { ...shiftData };
-        if (!isSchedule) {
-          delete dataForAdd.endDate;
-          delete dataForAdd.weeklySchedule;
-          delete dataForAdd.dateSchedule;
-        } else if (!isGigJob) {
-          delete dataForAdd.endDate;
+      const plainNext: Record<string, unknown> = {
+        shiftDate: formData.shiftDate,
+        shiftMode: isSchedule ? 'multi' : 'single',
+        defaultStartTime: formData.defaultStartTime,
+        defaultEndTime: formData.defaultEndTime,
+        shiftDescription: formData.shiftDescription,
+        emailIntro: formData.emailIntro,
+      };
+      if (isSchedule) {
+        if (isGigJob) {
+          plainNext.endDate = formData.endDate;
+          plainNext.dateSchedule = mergedGigDateSchedule || {};
+          plainNext.weeklySchedule = {};
+        } else {
+          plainNext.endDate = '';
+          plainNext.weeklySchedule =
+            formData.weeklySchedule || buildDefaultWeeklySchedule(formData.defaultStartTime, formData.defaultEndTime);
+          plainNext.dateSchedule = {};
         }
-        await addDoc(collection(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts'), dataForAdd);
-        setSuccess('Shift created successfully');
+      } else {
+        plainNext.endDate = '';
+        plainNext.weeklySchedule = {};
+        plainNext.dateSchedule = {};
       }
 
-      handleCloseDialog();
-      fetchShifts();
-      // Keep linked job postings in sync so jobs board shows current shifts/dates
-      JobsBoardService.getInstance().syncJobOrderToLinkedPostings(tenantId, jobOrderId).catch(() => {});
+      if (!editingShift) {
+        await persistNewShift(shiftData, isSchedule, isGigJob);
+        finalizeShiftSave('Shift created successfully');
+        return;
+      }
 
-      setTimeout(() => setSuccess(''), 3000);
+      const diff = computeShiftNotifyDiff(editingShift, plainNext);
+      if (shouldPromptShiftWorkerNotify(diff)) {
+        setPendingWorkerSave({
+          shiftData,
+          plainNext,
+          diff,
+          shiftId: editingShift.id,
+        });
+        setWorkerNotifyDialogOpen(true);
+        return;
+      }
+
+      await updateDoc(doc(db, 'tenants', tenantId, 'job_orders', jobOrderId, 'shifts', editingShift.id), shiftData);
+      finalizeShiftSave('Shift updated successfully');
     } catch (err) {
       console.error('Error saving shift:', err);
       setError('Failed to save shift');
@@ -1379,6 +1507,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
             variant="contained" 
             onClick={handleSubmit}
             disabled={
+              workerNotifySaving ||
               !formData.shiftTitle ||
               !formData.shiftDate ||
               (!isGigJob && (!formData.defaultStartTime || !formData.defaultEndTime)) ||
@@ -1386,6 +1515,32 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
             }
           >
             {editingShift ? 'Update Shift' : 'Add Shift'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={workerNotifyDialogOpen}
+        onClose={() => {
+          if (workerNotifySaving) return;
+          setWorkerNotifyDialogOpen(false);
+          setPendingWorkerSave(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Notify assigned workers?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            The schedule or instructions for this shift changed. Send an update by SMS, email, and push to workers assigned to this shift?
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={() => handleWorkerNotifyChoice(false)} disabled={workerNotifySaving}>
+            No, don&apos;t notify
+          </Button>
+          <Button variant="contained" onClick={() => handleWorkerNotifyChoice(true)} disabled={workerNotifySaving}>
+            Yes, notify workers
           </Button>
         </DialogActions>
       </Dialog>

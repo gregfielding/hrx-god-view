@@ -6,16 +6,19 @@ import {
   Box,
   Button,
   Chip,
+  Stack,
   TableCell,
   TableRow,
   Tooltip,
   Typography,
 } from '@mui/material';
 import { TABLE_AVATAR_SIZE } from '../../utils/uiConstants';
+import type { OnboardingQueuePagination } from '../../types/onboardingQueue';
 import { useOnboardingTaxPayrollQueue } from '../../hooks/useOnboardingTaxPayrollQueue';
 import { useOnboardingEverifyQueue } from '../../hooks/useOnboardingEverifyQueue';
 import { useOnboardingBackgroundQueue } from '../../hooks/useOnboardingBackgroundQueue';
 import OnboardingQueueTableShell from './OnboardingQueueTableShell';
+import OnboardingQueueWorkerSearchField from './OnboardingQueueWorkerSearchField';
 
 function initials(name: string): string {
   const p = name.trim().split(/\s+/).filter(Boolean);
@@ -59,11 +62,18 @@ function statusChipColor(
 
 const headCellSx = { fontWeight: 700, fontSize: 13, whiteSpace: 'nowrap' as const };
 
-export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefined }> = ({
-  tenantId,
-}) => {
+export const StaffOnboardingTaxPayrollTab: React.FC<{
+  tenantId: string | undefined;
+  pagination: OnboardingQueuePagination;
+  workerSearch: string;
+  onWorkerSearchChange: (value: string) => void;
+}> = ({ tenantId, pagination, workerSearch, onWorkerSearchChange }) => {
   const navigate = useNavigate();
-  const q = useOnboardingTaxPayrollQueue(tenantId);
+  const q = useOnboardingTaxPayrollQueue(tenantId, pagination, workerSearch);
+  const emptyMessage =
+    q.unfilteredCount === 0
+      ? 'No workers currently need tax or payroll follow-up.'
+      : 'No workers match your search.';
 
   const openRow = useCallback(
     (uid: string) => {
@@ -73,10 +83,16 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefin
   );
 
   return (
-    <OnboardingQueueTableShell
+    <Stack spacing={2} sx={{ width: '100%' }}>
+      <OnboardingQueueWorkerSearchField
+        id="staff-onboarding-tax-search"
+        value={workerSearch}
+        onChange={onWorkerSearchChange}
+      />
+      <OnboardingQueueTableShell
       loading={q.loading}
       error={q.error}
-      emptyMessage="No workers currently need tax or payroll follow-up."
+      emptyMessage={emptyMessage}
       colCount={13}
       totalCount={q.totalCount}
       page={q.page}
@@ -92,11 +108,11 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefin
           <TableCell sx={headCellSx}>E-Verify</TableCell>
           <TableCell sx={headCellSx}>Assignment</TableCell>
           <Tooltip
-            title="HRIS / Everee provider milestone (external payroll_onboarding + Everee step when present). Separate from the Direct deposit column."
+            title="TempWorks I-9 employee section (external i9_employee_section) — same completion rules as User → Employment → Tax and identity → I-9 completed."
             placement="top"
             arrow
           >
-            <TableCell sx={headCellSx}>Payroll setup</TableCell>
+            <TableCell sx={headCellSx}>I-9 Complete</TableCell>
           </Tooltip>
           <Tooltip
             title="Same completion rules as User → Employment → Payroll setup: verified TempWorks direct-deposit step or payroll account signals."
@@ -113,7 +129,7 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefin
             <TableCell sx={headCellSx}>Tax forms</TableCell>
           </Tooltip>
           <Tooltip
-            title="The tightest bottleneck among payroll setup, direct deposit, and tax forms (matches row sort priority)."
+            title="The tightest bottleneck among I-9, Everee (when present), direct deposit, and tax forms (matches row sort priority)."
             placement="top"
             arrow
           >
@@ -198,8 +214,8 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefin
           <TableCell>
             <Chip
               size="small"
-              label={r.payrollSetupLabel}
-              color={statusChipColor(r.payrollSetupLabel)}
+              label={r.i9CompleteLabel}
+              color={statusChipColor(r.i9CompleteLabel)}
               variant="outlined"
             />
           </TableCell>
@@ -239,14 +255,22 @@ export const StaffOnboardingTaxPayrollTab: React.FC<{ tenantId: string | undefin
         </TableRow>
       ))}
     </OnboardingQueueTableShell>
+    </Stack>
   );
 };
 
-export const StaffOnboardingEverifyTab: React.FC<{ tenantId: string | undefined }> = ({
-  tenantId,
-}) => {
+export const StaffOnboardingEverifyTab: React.FC<{
+  tenantId: string | undefined;
+  pagination: OnboardingQueuePagination;
+  workerSearch: string;
+  onWorkerSearchChange: (value: string) => void;
+}> = ({ tenantId, pagination, workerSearch, onWorkerSearchChange }) => {
   const navigate = useNavigate();
-  const q = useOnboardingEverifyQueue(tenantId);
+  const q = useOnboardingEverifyQueue(tenantId, pagination, workerSearch);
+  const emptyMessage =
+    q.unfilteredCount === 0
+      ? 'No C1 Select workers with I-9 complete who still need E-Verify.'
+      : 'No workers match your search.';
 
   const openRow = useCallback(
     (uid: string) => {
@@ -269,14 +293,21 @@ export const StaffOnboardingEverifyTab: React.FC<{ tenantId: string | undefined 
       ) : null}
       {!q.loading && q.selectEntityResolved ? (
         <Alert severity="info" sx={{ mb: 2 }} variant="outlined">
-          This tab lists <strong>open E-Verify cases for C1 Select only</strong>. Workforce/Events
-          I-9 and closed cases are not shown here.
+          <strong>C1 Select only.</strong> Workers whose <strong>I-9 is complete</strong> (same TempWorks rule as Tax
+          &amp; Payroll) and <strong>E-Verify is not yet complete</strong> — including active onboarding or employed
+          Select pipelines (newest activity first). Workforce/Events hires are not included.
         </Alert>
       ) : null}
-      <OnboardingQueueTableShell
+      <Stack spacing={2} sx={{ width: '100%' }}>
+        <OnboardingQueueWorkerSearchField
+          id="staff-onboarding-ev-search"
+          value={workerSearch}
+          onChange={onWorkerSearchChange}
+        />
+        <OnboardingQueueTableShell
         loading={q.loading}
         error={q.error}
-        emptyMessage="No workers currently need E-Verify action."
+        emptyMessage={emptyMessage}
         colCount={8}
         totalCount={q.totalCount}
         page={q.page}
@@ -311,9 +342,16 @@ export const StaffOnboardingEverifyTab: React.FC<{ tenantId: string | undefined 
                   displayName={r.workerDisplayName}
                   avatarUrl={r.workerAvatarUrl}
                 />
-                <Typography variant="body2" fontWeight={600} noWrap>
-                  {r.workerDisplayName}
-                </Typography>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={600} noWrap>
+                    {r.workerDisplayName}
+                  </Typography>
+                  {(r.workerEmail || r.workerPhone) && (
+                    <Typography variant="caption" color="text.secondary" display="block" noWrap>
+                      {[r.workerEmail, r.workerPhone].filter(Boolean).join(' · ')}
+                    </Typography>
+                  )}
+                </Box>
               </Box>
             </TableCell>
             <TableCell>{r.entityLabel}</TableCell>
@@ -348,15 +386,23 @@ export const StaffOnboardingEverifyTab: React.FC<{ tenantId: string | undefined 
           </TableRow>
         ))}
       </OnboardingQueueTableShell>
+      </Stack>
     </Box>
   );
 };
 
-export const StaffOnboardingBackgroundTab: React.FC<{ tenantId: string | undefined }> = ({
-  tenantId,
-}) => {
+export const StaffOnboardingBackgroundTab: React.FC<{
+  tenantId: string | undefined;
+  pagination: OnboardingQueuePagination;
+  workerSearch: string;
+  onWorkerSearchChange: (value: string) => void;
+}> = ({ tenantId, pagination, workerSearch, onWorkerSearchChange }) => {
   const navigate = useNavigate();
-  const q = useOnboardingBackgroundQueue(tenantId);
+  const q = useOnboardingBackgroundQueue(tenantId, pagination, workerSearch);
+  const emptyMessage =
+    q.unfilteredCount === 0
+      ? 'No workers currently need background screening follow-up.'
+      : 'No workers match your search.';
 
   const openRow = useCallback(
     (uid: string, backgroundCheckId?: string) => {
@@ -372,10 +418,16 @@ export const StaffOnboardingBackgroundTab: React.FC<{ tenantId: string | undefin
   );
 
   return (
-    <OnboardingQueueTableShell
+    <Stack spacing={2} sx={{ width: '100%' }}>
+      <OnboardingQueueWorkerSearchField
+        id="staff-onboarding-bg-search"
+        value={workerSearch}
+        onChange={onWorkerSearchChange}
+      />
+      <OnboardingQueueTableShell
       loading={q.loading}
       error={q.error}
-      emptyMessage="No workers currently need background screening follow-up."
+      emptyMessage={emptyMessage}
       colCount={8}
       totalCount={q.totalCount}
       page={q.page}
@@ -407,9 +459,16 @@ export const StaffOnboardingBackgroundTab: React.FC<{ tenantId: string | undefin
           <TableCell sx={{ minWidth: 200 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <QueueWorkerAvatar displayName={r.workerDisplayName} avatarUrl={r.workerAvatarUrl} />
-              <Typography variant="body2" fontWeight={600} noWrap>
-                {r.workerDisplayName}
-              </Typography>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={600} noWrap>
+                  {r.workerDisplayName}
+                </Typography>
+                {(r.workerEmail || r.workerPhone) && (
+                  <Typography variant="caption" color="text.secondary" display="block" noWrap>
+                    {[r.workerEmail, r.workerPhone].filter(Boolean).join(' · ')}
+                  </Typography>
+                )}
+              </Box>
             </Box>
           </TableCell>
           <TableCell>{r.entityLabel}</TableCell>
@@ -442,5 +501,6 @@ export const StaffOnboardingBackgroundTab: React.FC<{ tenantId: string | undefin
         </TableRow>
       ))}
     </OnboardingQueueTableShell>
+    </Stack>
   );
 };

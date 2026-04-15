@@ -66,6 +66,11 @@ export interface EntityEmploymentRecord {
   onCallScreeningPackageId?: string | null;
   onCallScreeningPackageName?: string | null;
   onCallStartedAt?: { toDate: () => Date } | null;
+  /**
+   * When set, recruiter confirmed I-9 supporting docs are satisfied outside HRX uploads — hide worker upload UI; grey admin actions.
+   */
+  i9SupportingDocumentsManualCompleteAt?: { toDate: () => Date } | null;
+  i9SupportingDocumentsManualCompleteBy?: string | null;
   updatedAt?: { toDate: () => Date } | null;
 }
 

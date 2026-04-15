@@ -48,6 +48,8 @@ export interface EntityEmploymentRecord {
   onboardingPhase?: string | null;
   onboardingCompletedAt?: { toDate: () => Date } | null;
   employmentEntryMode?: string | null;
+  /** Recruiter marked I-9 supporting docs complete outside HRX uploads. */
+  i9SupportingDocumentsManualCompleteAt?: { toDate: () => Date } | null;
 }
 
 export const MY_EMPLOYMENT_LIST_HEADER_COLOR: Record<

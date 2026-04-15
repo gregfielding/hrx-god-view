@@ -60,7 +60,11 @@ import { getRequirementPackIds, JOB_REQUIREMENT_PACKS } from '../data/jobRequire
 import { useWorkersCompRatesByJobTitle } from '../hooks/useWorkersCompRatesByJobTitle';
 import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
 import { useEntity } from '../hooks/useEntity';
-import { normalizeStateCode } from '../utils/unemploymentRates';
+import {
+  normalizeStateCode,
+  getSutaRateByState,
+  getFutaRateByState,
+} from '../utils/unemploymentRates';
 import {
   fetchResolvedAccountPricingPositions,
   buildPricingByJobTitle,
@@ -98,6 +102,22 @@ function mergeCareerFormWithPricingPreset(
   const jd = (preset.jobDescriptionFromClient || '').trim();
   if (jd) next.jobDescriptionFromClient = jd;
   return next;
+}
+
+/** Persist SUTA/FUTA as numbers on each gig position (matches account `pricing.positions`). */
+function normalizeGigPositionsForPersist(
+  positions: Array<Record<string, unknown> & { sutaRate?: string; futaRate?: string }>,
+) {
+  const parseOptPct = (v: string | undefined) => {
+    if (v == null || String(v).trim() === '') return undefined;
+    const n = parseFloat(String(v));
+    return Number.isFinite(n) ? n : undefined;
+  };
+  return positions.map((pos) => ({
+    ...pos,
+    sutaRate: parseOptPct(pos.sutaRate),
+    futaRate: parseOptPct(pos.futaRate),
+  }));
 }
 
 // Helper function to remove undefined values from objects (Firestore doesn't allow undefined)
@@ -211,7 +231,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
   // Use props if provided, otherwise fall back to auth context
   const tenantId = propTenantId || authTenantId;
   const user = propCreatedBy ? { uid: propCreatedBy } : authUser;
-  const wcRatesByStateAndJobTitle = useWorkersCompRatesByJobTitle(tenantId);
+  const { byStateAndJobTitle: wcRatesByStateAndJobTitle, wcRatesByStateAndCode } =
+    useWorkersCompRatesByJobTitle(tenantId);
 
   /** Account Pricing tab positions (child → national fallback); empty ⇒ use O*NET unless propJobTitles overrides */
   const [resolvedAccountPositions, setResolvedAccountPositions] = useState<AccountPositionPricing[]>([]);
@@ -289,9 +310,22 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     [recruiterAccountHiringEntityId, initialData?.hiringEntityId, jobOrder?.hiringEntityId, loadedJobOrderData]
   );
   const { entity: formEntity } = useEntity(tenantId ?? null, hiringEntityIdForForm);
-  const [gigPositions, setGigPositions] = useState<Array<{jobTitle: string; workersNeeded: number; payRate: string; workersCompClassCode?: string; workersCompRate?: string}>>([
-    { jobTitle: '', workersNeeded: 1, payRate: '' }
-  ]); // For gig-type jobs with multiple positions
+  /** Same hiring entities as Account → Pricing (SUTA/FUTA on pay for margin). */
+  const showSutaFutaOnGigPositions = useMemo(
+    () => /C1 Workforce|C1 Select/i.test(formEntity?.name || ''),
+    [formEntity?.name],
+  );
+  const [gigPositions, setGigPositions] = useState<
+    Array<{
+      jobTitle: string;
+      workersNeeded: number;
+      payRate: string;
+      workersCompClassCode?: string;
+      workersCompRate?: string;
+      sutaRate?: string;
+      futaRate?: string;
+    }>
+  >([{ jobTitle: '', workersNeeded: 1, payRate: '' }]); // For gig-type jobs with multiple positions
   /** Draft text for career Job Title Autocomplete (value commits on blur / pick / Enter — avoids save+re-render each keystroke). */
   const [careerJobTitleInput, setCareerJobTitleInput] = useState('');
   const careerJobTitleInputRef = useRef('');
@@ -847,6 +881,28 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     setFilteredLocations(finalLocations);
   }, [locations, formData.worksiteId, formData.companyId]);
 
+  /** Worksite state for SUTA/FUTA (same as Account Pricing). */
+  const worksiteStateCodeForPricing = useMemo(() => {
+    const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
+      | (Location & { state?: string; address?: { state?: string } })
+      | undefined;
+    const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
+    return normalizeStateCode(stateRaw).trim().toUpperCase();
+  }, [filteredLocations, formData.worksiteId]);
+
+  const applySutaFutaFromWorksiteState = () => {
+    if (!worksiteStateCodeForPricing) return;
+    const suta = getSutaRateByState(worksiteStateCodeForPricing);
+    const futa = getFutaRateByState(worksiteStateCodeForPricing);
+    setGigPositions((prev) =>
+      prev.map((pos) => ({
+        ...pos,
+        ...(suta != null ? { sutaRate: String(suta) } : {}),
+        futaRate: String(futa),
+      })),
+    );
+  };
+
   // Load company contacts when companyId is present in formData
   useEffect(() => {
     if (formData.companyId && tenantId) {
@@ -854,9 +910,10 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
     }
   }, [formData.companyId, tenantId]);
 
-  // Auto-apply WC code/rate from master when job title + worksite state match (Settings > Workers Comp Rates)
+  // Auto-apply WC code/rate from master when job title + worksite state match (Settings > Workers Comp Rates).
+  // If Account Pricing only stored class code, fill rate from master by state+code (same as Account Pricing tab).
   useEffect(() => {
-    if (!formData.worksiteId || Object.keys(wcRatesByStateAndJobTitle).length === 0) return;
+    if (!formData.worksiteId || (Object.keys(wcRatesByStateAndJobTitle).length === 0 && Object.keys(wcRatesByStateAndCode).length === 0)) return;
     const selectedLocation = filteredLocations.find((loc) => loc.id === formData.worksiteId) as (Location & { state?: string; address?: { state?: string } }) | undefined;
     const stateRaw = selectedLocation?.state ?? selectedLocation?.address?.state;
     const stateCode = normalizeStateCode(stateRaw).trim().toUpperCase();
@@ -866,28 +923,52 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
       let updated = false;
       const next = gigPositions.map((pos) => {
         const jobTitle = (pos.jobTitle ?? '').trim();
-        if (!jobTitle) return pos;
-        const key = `${stateCode}_${jobTitle.toLowerCase()}`;
-        const lookup = wcRatesByStateAndJobTitle[key];
-        if (!lookup) return pos;
-        if (pos.workersCompClassCode === lookup.code && String(pos.workersCompRate ?? '') === String(lookup.rate)) return pos;
-        updated = true;
-        return { ...pos, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+        if (jobTitle) {
+          const key = `${stateCode}_${jobTitle.toLowerCase()}`;
+          const lookup = wcRatesByStateAndJobTitle[key];
+          if (lookup) {
+            if (pos.workersCompClassCode === lookup.code && String(pos.workersCompRate ?? '') === String(lookup.rate)) return pos;
+            updated = true;
+            return { ...pos, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+          }
+        }
+        const code = (pos.workersCompClassCode ?? '').trim();
+        if (code) {
+          const rate = wcRatesByStateAndCode[`${stateCode}_${code}`];
+          if (rate != null && !Number.isNaN(rate) && String(pos.workersCompRate ?? '') !== String(rate)) {
+            updated = true;
+            return { ...pos, workersCompRate: String(rate) };
+          }
+        }
+        return pos;
       });
       if (updated) setGigPositions(next);
       return;
     }
 
     const jobTitle = (formData.jobTitle ?? '').trim();
-    if (!jobTitle) return;
-    const key = `${stateCode}_${jobTitle.toLowerCase()}`;
-    const lookup = wcRatesByStateAndJobTitle[key];
-    if (!lookup) return;
-    setFormData((prev) => {
-      if (prev.workersCompClassCode === lookup.code && String(prev.workersCompRate ?? '') === String(lookup.rate)) return prev;
-      return { ...prev, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
-    });
-  }, [formData.worksiteId, formData.jobTitle, formData.jobType, gigPositions, filteredLocations, wcRatesByStateAndJobTitle]);
+    if (jobTitle) {
+      const key = `${stateCode}_${jobTitle.toLowerCase()}`;
+      const lookup = wcRatesByStateAndJobTitle[key];
+      if (lookup) {
+        setFormData((prev) => {
+          if (prev.workersCompClassCode === lookup.code && String(prev.workersCompRate ?? '') === String(lookup.rate)) return prev;
+          return { ...prev, workersCompClassCode: lookup.code, workersCompRate: String(lookup.rate) };
+        });
+        return;
+      }
+    }
+    const code = (formData.workersCompClassCode ?? '').trim();
+    if (code) {
+      const rate = wcRatesByStateAndCode[`${stateCode}_${code}`];
+      if (rate != null && !Number.isNaN(rate)) {
+        setFormData((prev) => {
+          if (String(prev.workersCompRate ?? '') === String(rate)) return prev;
+          return { ...prev, workersCompRate: String(rate) };
+        });
+      }
+    }
+  }, [formData.worksiteId, formData.jobTitle, formData.jobType, formData.workersCompClassCode, gigPositions, filteredLocations, wcRatesByStateAndJobTitle, wcRatesByStateAndCode]);
 
   const loadCompanies = async () => {
     try {
@@ -1395,6 +1476,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             billRate: p.billRate,
             workersCompClassCode: p.workersCompClassCode ?? '',
             workersCompRate: p.workersCompRate != null ? String(p.workersCompRate) : '',
+            sutaRate: p.sutaRate != null && p.sutaRate !== '' ? String(p.sutaRate) : '',
+            futaRate: p.futaRate != null && p.futaRate !== '' ? String(p.futaRate) : '',
           }));
           setGigPositions(loaded);
         } else if ((data as any).jobType === 'gig') {
@@ -1407,6 +1490,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
             billRate: String((data as any).billRate || ''),
             workersCompClassCode: (data as any).workersCompClassCode ?? '',
             workersCompRate: (data as any).workersCompRate != null ? String((data as any).workersCompRate) : '',
+            sutaRate: '',
+            futaRate: '',
           } as any]);
         }
         
@@ -1686,7 +1771,9 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
           (dataToUse as any).jobType === 'gig'
             ? String(gigPositions[0]?.jobTitle ?? '')
             : String((dataToUse as any).jobTitle ?? ''),
-        ...( (dataToUse as any).jobType === 'gig' ? { gigPositions } : {}),
+        ...( (dataToUse as any).jobType === 'gig'
+          ? { gigPositions: normalizeGigPositionsForPersist(gigPositions as any) }
+          : {}),
         stageData: stageDataUpdate,
         updatedAt: new Date(),
         updatedBy: user.uid,
@@ -2007,8 +2094,8 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
         startDate: formData.startDate || null,
         endDate: formData.endDate || null,
         
-        // Gig positions array (only for gig type)
-        gigPositions: formData.jobType === 'gig' ? gigPositions : undefined,
+        // Gig positions array (only for gig type); SUTA/FUTA as numbers for Firestore (same as account Pricing)
+        gigPositions: formData.jobType === 'gig' ? normalizeGigPositionsForPersist(gigPositions as any) : undefined,
         
         // Update the deal data
         deal: updatedDealData,
@@ -2672,12 +2759,41 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                         size="small"
                         startIcon={<AddIcon />}
                         onClick={() => {
-                          setGigPositions([...gigPositions, { jobTitle: '', workersNeeded: 1, payRate: '', workersCompClassCode: '', workersCompRate: '' }]);
+                          setGigPositions([
+                            ...gigPositions,
+                            {
+                              jobTitle: '',
+                              workersNeeded: 1,
+                              payRate: '',
+                              workersCompClassCode: '',
+                              workersCompRate: '',
+                              sutaRate: '',
+                              futaRate: '',
+                            },
+                          ]);
                         }}
                       >
                         Add Position
                       </Button>
                     </Box>
+
+                    {showSutaFutaOnGigPositions && (
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={applySutaFutaFromWorksiteState}
+                          disabled={!worksiteStateCodeForPricing}
+                        >
+                          Apply SUTA/FUTA from worksite state
+                        </Button>
+                        <Typography variant="caption" color="text.secondary">
+                          {worksiteStateCodeForPricing
+                            ? `Estimated new-employer SUTA and FUTA for ${worksiteStateCodeForPricing} (same as Account → Pricing).`
+                            : 'Select a worksite with a state to apply rates.'}
+                        </Typography>
+                      </Box>
+                    )}
 
                     {gigPositions.map((position, index) => (
                       <Box key={index} sx={{ display: 'flex', gap: 2, alignItems: 'flex-start', p: 2, border: '1px solid', borderColor: 'divider', borderRadius: 1 }}>
@@ -2696,6 +2812,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                     ? pricingByJobTitle.get(String(title).trim())
                                     : undefined;
                                   const jdFromPreset = (preset?.jobDescriptionFromClient || '').trim();
+                                  const selectedLoc = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
+                                    | (Location & { state?: string; address?: { state?: string } })
+                                    | undefined;
+                                  const pricingStateCode = normalizeStateCode(
+                                    selectedLoc?.state ?? selectedLoc?.address?.state,
+                                  )
+                                    .trim()
+                                    .toUpperCase();
                                   setGigPositions((prev) => {
                                     const updated = [...prev];
                                     const row: any = { ...updated[index], jobTitle: title };
@@ -2715,8 +2839,20 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                       if (preset.workersCompCode) {
                                         row.workersCompClassCode = String(preset.workersCompCode);
                                       }
-                                      if (preset.workersCompRate != null) {
+                                      const wcCode = (preset.workersCompCode ?? '').toString().trim();
+                                      if (preset.workersCompRate != null && !Number.isNaN(Number(preset.workersCompRate))) {
                                         row.workersCompRate = String(preset.workersCompRate);
+                                      } else if (pricingStateCode && wcCode) {
+                                        const r = wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
+                                        if (r != null && !Number.isNaN(r)) {
+                                          row.workersCompRate = String(r);
+                                        }
+                                      }
+                                      if (preset.sutaRate != null && !Number.isNaN(Number(preset.sutaRate))) {
+                                        row.sutaRate = String(preset.sutaRate);
+                                      }
+                                      if (preset.futaRate != null && !Number.isNaN(Number(preset.futaRate))) {
+                                        row.futaRate = String(preset.futaRate);
                                       }
                                     }
                                     updated[index] = row;
@@ -2753,6 +2889,14 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                         ? pricingByJobTitle.get(String(title).trim())
                                         : undefined;
                                       const jdFromPreset = (preset?.jobDescriptionFromClient || '').trim();
+                                      const selectedLoc = filteredLocations.find((loc) => loc.id === formData.worksiteId) as
+                                        | (Location & { state?: string; address?: { state?: string } })
+                                        | undefined;
+                                      const pricingStateCode = normalizeStateCode(
+                                        selectedLoc?.state ?? selectedLoc?.address?.state,
+                                      )
+                                        .trim()
+                                        .toUpperCase();
                                       setGigPositions((prev) => {
                                         const updated = [...prev];
                                         const row: any = { ...updated[index], jobTitle: title };
@@ -2776,8 +2920,20 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                                           if (preset.workersCompCode) {
                                             row.workersCompClassCode = String(preset.workersCompCode);
                                           }
-                                          if (preset.workersCompRate != null) {
+                                          const wcCode = (preset.workersCompCode ?? '').toString().trim();
+                                          if (preset.workersCompRate != null && !Number.isNaN(Number(preset.workersCompRate))) {
                                             row.workersCompRate = String(preset.workersCompRate);
+                                          } else if (pricingStateCode && wcCode) {
+                                            const r = wcRatesByStateAndCode[`${pricingStateCode}_${wcCode}`];
+                                            if (r != null && !Number.isNaN(r)) {
+                                              row.workersCompRate = String(r);
+                                            }
+                                          }
+                                          if (preset.sutaRate != null && !Number.isNaN(Number(preset.sutaRate))) {
+                                            row.sutaRate = String(preset.sutaRate);
+                                          }
+                                          if (preset.futaRate != null && !Number.isNaN(Number(preset.futaRate))) {
+                                            row.futaRate = String(preset.futaRate);
                                           }
                                         }
                                         updated[index] = row;
@@ -2894,6 +3050,45 @@ const JobOrderForm: React.FC<JobOrderFormProps> = ({
                               />
                             </Box>
                           </Box>
+
+                          {showSutaFutaOnGigPositions && (
+                            <Box sx={{ display: 'flex', gap: 2 }}>
+                              <Box sx={{ flex: 1 }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="SUTA %"
+                                  value={(position as any).sutaRate ?? ''}
+                                  onChange={(e) => {
+                                    const updated = [...gigPositions];
+                                    (updated[index] as any).sutaRate = e.target.value;
+                                    setGigPositions(updated);
+                                  }}
+                                  placeholder="e.g. 2.7"
+                                  type="number"
+                                  inputProps={{ step: 0.01, min: 0 }}
+                                  helperText="State unemployment on pay (C1 Workforce / C1 Select)"
+                                />
+                              </Box>
+                              <Box sx={{ flex: 1 }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="FUTA %"
+                                  value={(position as any).futaRate ?? ''}
+                                  onChange={(e) => {
+                                    const updated = [...gigPositions];
+                                    (updated[index] as any).futaRate = e.target.value;
+                                    setGigPositions(updated);
+                                  }}
+                                  placeholder="e.g. 0.6"
+                                  type="number"
+                                  inputProps={{ step: 0.01, min: 0 }}
+                                  helperText="Federal unemployment on pay"
+                                />
+                              </Box>
+                            </Box>
+                          )}
                         </Box>
                         {gigPositions.length > 1 && (
                           <IconButton

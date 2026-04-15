@@ -101,6 +101,8 @@
     "myEmploymentEmptyList": "You don’t have any employment records yet. Records are created when you’re confirmed for a role or start onboarding with an entity.",
     "detailNotFound": "Employment record not found.",
     "detailBackToList": "Back to Profile",
+    "detailSignInPrompt": "Sign in to view this employment page.",
+    "signInButton": "Sign in",
     "readinessOnboarding": "Complete onboarding to start working",
     "readinessAtRisk": "Some items need attention soon",
     "readinessBlocked": "You are not eligible to work right now",

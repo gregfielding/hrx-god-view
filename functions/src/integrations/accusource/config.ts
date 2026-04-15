@@ -5,6 +5,10 @@ import { AccusourceEnvironment, AccusourceProviderConfig } from './types';
 const DEFAULT_SANDBOX_BASE = 'https://sdapi-sandbox.accusourcedirect.construction';
 const DEFAULT_PROD_BASE = 'https://sdapi.accusourcedirect.com';
 
+/** Applicant self-service setup (partial profile invite) — not the REST API host. */
+const DEFAULT_APPLICANT_SETUP_SANDBOX = 'https://sandbox.myaccusourcedirect.construction/setup?token=';
+const DEFAULT_APPLICANT_SETUP_PRODUCTION = 'https://myaccusourcedirect.com/setup?token=';
+
 /**
  * Firebase params (see `functions/scripts/copyEnvFromRoot.js` PARAM_KEYS) — same names as root `.env`.
  * Falls back to `process.env` so local scripts and tests keep working.
@@ -92,5 +96,30 @@ export function isAccusourceProductionValidationHrxOnly(): boolean {
     trimStr(process.env.ACCUSOURCE_PRODUCTION_VALIDATION_HRX_ONLY) ||
     'true';
   return v.toLowerCase() !== 'false' && v !== '0';
+}
+
+/**
+ * Base URL for applicant-facing partial-profile setup links (includes `?token=`).
+ * Override with ACCUSOURCE_APPLICANT_SETUP_BASE_URL for staging or vendor changes.
+ */
+export function getAccusourceApplicantSetupBaseUrl(environment: AccusourceEnvironment): string {
+  const fromEnv = trimStr(process.env.ACCUSOURCE_APPLICANT_SETUP_BASE_URL);
+  if (fromEnv.length > 0) {
+    if (fromEnv.includes('token=')) return fromEnv;
+    const base = fromEnv.replace(/\/?$/, '');
+    return `${base}/setup?token=`;
+  }
+  return environment === 'production' ? DEFAULT_APPLICANT_SETUP_PRODUCTION : DEFAULT_APPLICANT_SETUP_SANDBOX;
+}
+
+/** Full applicant portal URL for a partial-profile invite token. */
+export function buildAccusourceApplicantPortalLink(
+  environment: AccusourceEnvironment,
+  token: string,
+): string | null {
+  const t = String(token ?? '').trim();
+  if (!t) return null;
+  const base = getAccusourceApplicantSetupBaseUrl(environment);
+  return `${base}${encodeURIComponent(t)}`;
 }
 

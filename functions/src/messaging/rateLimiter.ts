@@ -78,6 +78,7 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'assignment_created',
   'assignment_status_change',
   'assignment_confirmed',
+  'shift_details_updated',
   'assignment_cancelled',
   'assignment_active',
   'assignment_completed',

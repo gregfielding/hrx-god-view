@@ -61,6 +61,11 @@ export interface BackgroundCheckRecord {
   requestedPackageId?: string | number | null;
   requestedPackageName?: string | null;
   applicantPortalLink?: string | null;
+  /** Optional alias for the same URL (some webhooks write `applicantPortalUrl`). */
+  applicantPortalUrl?: string | null;
+  /** Raw invite token from AccuSource `partial_profile_link` webhook when resent. */
+  providerPartialProfileToken?: string | null;
+  providerStatusId?: string | number | null;
   lastWebhookType?: string | null;
   syncError?: string | null;
   createdAt?: Timestamp | null;

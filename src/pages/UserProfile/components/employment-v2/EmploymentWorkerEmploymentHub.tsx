@@ -196,7 +196,7 @@ const EmploymentWorkerEmploymentHub: React.FC<EmploymentWorkerEmploymentHubProps
                       profileUserId={profileUserId}
                       requestedForEntityId={hiringEntityId || null}
                       employmentEntityKey={entityKey}
-                      workerEmploymentRecordId={overview.entityEmployment?.id?.trim() || `${profileUserId}__${entityKey}`}
+                      workerEmploymentRecordId={overview.entityEmployment?.id?.trim() || null}
                       hiringEntityDisplayName={headerEntityName?.trim() || undefined}
                       onRefresh={onRefresh}
                       onOpenWorkerNotificationComposer={onOpenWorkerNotificationComposer}

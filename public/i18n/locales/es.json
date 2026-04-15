@@ -101,6 +101,8 @@
     "myEmploymentEmptyList": "Aún no tienes registros de empleo. Se crean cuando te confirman en un rol o inicias la incorporación con una entidad.",
     "detailNotFound": "No se encontró el registro de empleo.",
     "detailBackToList": "Volver al perfil",
+    "detailSignInPrompt": "Inicia sesión para ver esta página de empleo.",
+    "signInButton": "Iniciar sesión",
     "readinessOnboarding": "Completa la incorporación para empezar a trabajar",
     "readinessAtRisk": "Algunos elementos necesitan atención pronto",
     "readinessBlocked": "No eres elegible para trabajar en este momento",

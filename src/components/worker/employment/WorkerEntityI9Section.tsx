@@ -2,7 +2,7 @@
  * Worker entity employment page — I-9 supporting uploads (same Firestore/rules as admin; worker-only actions).
  */
 import React from 'react';
-import { Box, Typography } from '@mui/material';
+import { Alert, Box, Typography } from '@mui/material';
 import I9SupportingDocumentsWorkspace from '../../i9SupportingDocuments/I9SupportingDocumentsWorkspace';
 import { I9_WORKER_ENTITY_EXAMPLES } from '../../../constants/i9SupportingDocumentsEmploymentStrings';
 
@@ -15,6 +15,8 @@ export interface WorkerEntityI9SectionProps {
   employmentEntityKey?: string | null;
   /** `entity_employments.entityId` — scopes requests when set. */
   requestedForEntityId?: string | null;
+  /** Recruiter confirmed supporting docs outside HRX — hide upload UI. */
+  i9SupportingManualComplete?: boolean;
 }
 
 const WorkerEntityI9Section: React.FC<WorkerEntityI9SectionProps> = ({
@@ -22,7 +24,23 @@ const WorkerEntityI9Section: React.FC<WorkerEntityI9SectionProps> = ({
   workerUserId,
   employmentEntityKey,
   requestedForEntityId,
+  i9SupportingManualComplete = false,
 }) => {
+  if (i9SupportingManualComplete) {
+    return (
+      <Box>
+        <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>
+          I-9 supporting documents
+        </Typography>
+        <Alert severity="success" variant="outlined" sx={{ mt: 0.5 }}>
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            Your employer confirmed your I-9 supporting documents. You do not need to upload documents here.
+          </Typography>
+        </Alert>
+      </Box>
+    );
+  }
+
   return (
     <Box>
       <Typography variant="subtitle1" fontWeight={700} sx={{ mb: 0.5 }}>

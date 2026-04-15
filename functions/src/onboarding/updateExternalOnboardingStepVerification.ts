@@ -27,7 +27,7 @@ const ALLOWED_STEP_KEYS = new Set([
   'policies_acknowledgment',
 ]);
 
-type Action = 'verify_complete' | 'request_correction' | 'mark_error';
+type Action = 'verify_complete' | 'request_correction' | 'mark_error' | 'clear_verification';
 
 /** Firestore update() rejects undefined anywhere in the payload (unless ignoreUndefinedProperties is set early). */
 function shallowOmitUndefined(rec: Record<string, unknown>): Record<string, unknown> {
@@ -98,7 +98,7 @@ export const updateExternalOnboardingStepVerification = onCall(
       throw new HttpsError('invalid-argument', 'This step is not enabled for verification actions yet');
     }
 
-    if (!['verify_complete', 'request_correction', 'mark_error'].includes(action)) {
+    if (!['verify_complete', 'request_correction', 'mark_error', 'clear_verification'].includes(action)) {
       throw new HttpsError('invalid-argument', 'Invalid action');
     }
 
@@ -170,6 +170,20 @@ export const updateExternalOnboardingStepVerification = onCall(
       } else {
         delete next.verificationNote;
       }
+      steps[stepKey] = next;
+    } else if (action === 'clear_verification') {
+      if (!alreadyVerifiedComplete) {
+        throw new HttpsError(
+          'failed-precondition',
+          'This step is not C1-verified in HRX (nothing to clear).',
+        );
+      }
+      const next: Record<string, unknown> = { ...prev };
+      delete next.verifiedAt;
+      delete next.verifiedBy;
+      delete next.verificationNote;
+      next.updatedAt = now;
+      next.updatedBy = uid;
       steps[stepKey] = next;
     } else if (action === 'request_correction') {
       if (!['worker_completed_external', 'pending_admin_verification'].includes(status)) {

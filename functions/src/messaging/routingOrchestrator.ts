@@ -22,7 +22,7 @@ import { getTenantSmsConsent } from './tenantConsent';
 import { getTenantNotificationSettings, isChannelAllowedForUser } from './tenantNotificationSettings';
 import { checkRateLimits } from './rateLimiter';
 import { isQuietHours } from './quietHours';
-import { resolveSenderIdentity, SenderIdentity } from './senderIdentity';
+import { getSystemSenderIdentity, resolveSenderIdentity, SenderIdentity } from './senderIdentity';
 import { findOrCreateEmailThread, addMessageToThread } from './emailThreading';
 
 const db = admin.firestore();
@@ -86,7 +86,18 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
       if (existsInDefaults) {
         logger.warn(`Message type ${context.messageTypeId} exists in DEFAULT_MESSAGE_TYPES but getMessageTypeConfig returned null`);
       }
-      throw new Error(`Message type ${context.messageTypeId} not found`);
+      return {
+        success: false,
+        messageTypeId: context.messageTypeId,
+        userId: context.userId,
+        routingDecision: {
+          channels: [],
+          shouldSend: false,
+          reason: `Message type "${context.messageTypeId}" is not configured for this tenant`,
+          skippedChannels: [],
+        },
+        deliveryResults: [],
+      };
     }
     
     if (!messageTypeConfig.enabled) {
@@ -108,7 +119,20 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
     // 2. Get user data and preferences
     const userDoc = await db.doc(`users/${context.userId}`).get();
     if (!userDoc.exists) {
-      throw new Error(`User ${context.userId} not found`);
+      logger.warn(`sendMessage: recipient users/${context.userId} does not exist`);
+      return {
+        success: false,
+        messageTypeId: context.messageTypeId,
+        userId: context.userId,
+        routingDecision: {
+          channels: [],
+          shouldSend: false,
+          reason:
+            'Recipient profile not found in users collection. They may need to sign in once, or the profile ID may be wrong.',
+          skippedChannels: [],
+        },
+        deliveryResults: [],
+      };
     }
     const userData = userDoc.data()!;
     
@@ -790,23 +814,17 @@ async function deliverEmail(
     // Resolve sender identity
     let senderIdentity = await resolveSenderIdentity(context.tenantId, context);
 
-    // CRITICAL POLICY:
-    // User-composed emails (recruiter sending, or explicit direct_message type) must NEVER fall back to SendGrid.
-    // System messages (e.g. application_received) use _directMessage for pre-rendered body but should use SendGrid.
-    const isUserComposedEmail =
-      context.source === 'recruiter' ||
-      context.messageTypeId === 'direct_message';
-    if (isUserComposedEmail) {
-      if (senderIdentity.emailProvider !== 'gmail' || !senderIdentity.gmailUserId) {
-        return {
-          channel: 'email',
-          success: false,
-          error:
-            'Gmail connection required to send email. Please connect Gmail in Settings (no SendGrid fallback for user emails).',
-        };
-      }
+    // Recruiter / direct_message emails send from Gmail when the recruiter has connected Gmail.
+    // Otherwise use system SendGrid (noreply@ / HRX) so messages still deliver without a personal Gmail link.
+    const prefersRecruiterGmail =
+      context.source === 'recruiter' || context.messageTypeId === 'direct_message';
+    if (
+      prefersRecruiterGmail &&
+      (senderIdentity.emailProvider !== 'gmail' || !senderIdentity.gmailUserId)
+    ) {
+      senderIdentity = await getSystemSenderIdentity(context.tenantId);
     }
-    
+
     // Get appropriate email provider based on sender identity
     let emailProvider;
     try {

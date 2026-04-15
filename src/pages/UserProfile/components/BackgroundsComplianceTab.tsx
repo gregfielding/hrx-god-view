@@ -71,6 +71,8 @@ import {
 import { EVERIFY_SELECT_PERM_HINT } from './StartEverifySelectDialog';
 import I9SupportingDocumentsSection from '../../../components/i9SupportingDocuments/I9SupportingDocumentsSection';
 import ProfileTabPointerAlert from '../../../components/profile/ProfileTabPointerAlert';
+import AccusourceApplicantSetupPanel from '../../../components/recruiter/AccusourceApplicantSetupPanel';
+import { resolveApplicantPortalUrl } from '../../../utils/backgroundCheckApplicantPortal';
 
 const PAGE_LIMIT = 100;
 
@@ -800,6 +802,7 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                   );
                 }
                 const r = row.screening!;
+                const applicantPortalResolved = resolveApplicantPortalUrl(r);
                 const rowDomId = backgroundComplianceScreeningRowElementId(r.id);
                 const rowHighlighted = Boolean(highlightScreeningRowId && highlightScreeningRowId === r.id);
                 return (
@@ -829,6 +832,11 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                       <TableCell>{row.packageLabel}</TableCell>
                       <TableCell>
                         <Typography variant="body2">{row.statusPrimary}</Typography>
+                        {row.statusSecondary ? (
+                          <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 0.25 }}>
+                            {row.statusSecondary}
+                          </Typography>
+                        ) : null}
                       </TableCell>
                       <TableCell>{formatTime(row.submittedAt)}</TableCell>
                       <TableCell>{row.providerLabel}</TableCell>
@@ -865,11 +873,26 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                         </Stack>
                       </TableCell>
                       <TableCell align="right">
-                        {r.applicantPortalLink && (
-                          <Link href={r.applicantPortalLink} target="_blank" rel="noopener noreferrer">
+                        {applicantPortalResolved ? (
+                          <Link href={applicantPortalResolved} target="_blank" rel="noopener noreferrer">
                             Portal
                           </Link>
-                        )}
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell
+                        colSpan={8}
+                        sx={{
+                          py: 1.5,
+                          px: 2,
+                          bgcolor: 'grey.50',
+                          borderBottom: 1,
+                          borderColor: 'divider',
+                          verticalAlign: 'top',
+                        }}
+                      >
+                        <AccusourceApplicantSetupPanel record={r} />
                       </TableCell>
                     </TableRow>
                     {canAccusourceAdmin ? (

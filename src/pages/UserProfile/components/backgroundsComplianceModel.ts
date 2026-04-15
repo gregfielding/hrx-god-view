@@ -5,6 +5,7 @@
 
 import { Timestamp } from 'firebase/firestore';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
+import { resolveApplicantPortalUrl } from '../../../utils/backgroundCheckApplicantPortal';
 import type { TenantRole } from '../../../contexts/AuthContext';
 import type { Role, SecurityLevel } from '../../../utils/AccessRoles';
 import { viewerCanStaffManageI9SupportingDocuments } from '../../../utils/i9SupportingDocumentsUi';
@@ -159,12 +160,19 @@ export function normalizeEverifyRow(id: string, data: Record<string, unknown>): 
 
 export function normalizeScreeningRow(r: BackgroundCheckRecord): NormalizedComplianceRow {
   const label = bgStatusLabel(r);
+  const portalUrl = resolveApplicantPortalUrl(r);
+  const statusSecondary =
+    r.hrxStatus === 'awaiting_applicant' && portalUrl
+      ? 'Applicant setup link ready'
+      : r.hrxStatus === 'awaiting_applicant' && !portalUrl
+        ? 'Awaiting applicant setup link'
+        : '';
   return {
     key: `bg-${r.id}`,
     channel: 'screening',
     packageLabel: [r.requestedPackageName, r.requestedPackageId].filter(Boolean).join(' · ') || '—',
     statusPrimary: label,
-    statusSecondary: '',
+    statusSecondary,
     submittedAt: r.createdAt,
     providerLabel: 'AccuSource',
     actionNeeded: screeningActionNeeded(r),

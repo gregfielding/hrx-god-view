@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { collection, doc, getDoc, getDocs, onSnapshot, orderBy, query, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { p } from '../data/firestorePaths';
-import type { OnboardingTaxPayrollQueueRow } from '../types/onboardingQueue';
+import type { OnboardingQueuePagination, OnboardingTaxPayrollQueueRow } from '../types/onboardingQueue';
+import { rowMatchesOnboardingWorkerSearch } from '../utils/onboardingQueueSearch';
 import {
   buildTaxPayrollQueueRows,
   type AssignmentQueueLite,
@@ -176,7 +177,11 @@ async function mergeEntityEmploymentChunk(
   }
 }
 
-export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
+export function useOnboardingTaxPayrollQueue(
+  tenantId: string | undefined,
+  controlledPagination?: OnboardingQueuePagination,
+  searchQuery?: string,
+) {
   const [pipelines, setPipelines] = useState<TaxPayrollPipelineInput[]>([]);
   const [employmentByPipelineId, setEmploymentByPipelineId] = useState<
     Record<string, EntityEmploymentLite | undefined>
@@ -194,8 +199,25 @@ export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
   >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(20);
+  const [internalPage, setInternalPage] = useState(0);
+  const [internalPageSize, setInternalPageSize] = useState(20);
+
+  const page = controlledPagination?.page ?? internalPage;
+  const pageSize = controlledPagination?.pageSize ?? internalPageSize;
+  const setPage = useCallback(
+    (n: number) => {
+      if (controlledPagination) controlledPagination.setPage(n);
+      else setInternalPage(n);
+    },
+    [controlledPagination],
+  );
+  const setPageSize = useCallback(
+    (n: number) => {
+      if (controlledPagination) controlledPagination.setPageSize(n);
+      else setInternalPageSize(n);
+    },
+    [controlledPagination],
+  );
 
   useEffect(() => {
     if (!tenantId) {
@@ -474,23 +496,32 @@ export function useOnboardingTaxPayrollQueue(tenantId: string | undefined) {
     ],
   );
 
-  const totalCount = allRows.length;
+  const unfilteredCount = allRows.length;
+  const filteredRows = useMemo(() => {
+    if (!searchQuery?.trim()) return allRows;
+    return allRows.filter((r) => rowMatchesOnboardingWorkerSearch(searchQuery, r));
+  }, [allRows, searchQuery]);
+
+  const totalCount = filteredRows.length;
   const rows: OnboardingTaxPayrollQueueRow[] = useMemo(
-    () => allRows.slice(page * pageSize, page * pageSize + pageSize),
-    [allRows, page, pageSize],
+    () => filteredRows.slice(page * pageSize, page * pageSize + pageSize),
+    [filteredRows, page, pageSize],
   );
 
-  const setPageSafe = useCallback((p: number) => setPage(p), []);
-  const setPageSizeSafe = useCallback((n: number) => setPageSize(n), []);
+  useEffect(() => {
+    const maxPage = totalCount === 0 ? 0 : Math.ceil(totalCount / pageSize) - 1;
+    if (page > maxPage) setPage(Math.max(0, maxPage));
+  }, [totalCount, pageSize, page, setPage]);
 
   return {
     rows,
     loading,
     error,
     totalCount,
+    unfilteredCount,
     page,
     pageSize,
-    setPage: setPageSafe,
-    setPageSize: setPageSizeSafe,
+    setPage,
+    setPageSize,
   };
 }
