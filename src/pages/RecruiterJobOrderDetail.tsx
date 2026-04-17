@@ -2934,6 +2934,8 @@ const JobOrderJobsBoardTab: React.FC<{
       ...(positionForPrefill && { positionJobTitle: positionForPrefill.jobTitle }),
       workersNeeded: jobOrder.workersNeeded || 1,
       eVerifyRequired: jobOrderEntity ? jobOrderEntity.everifyRequired : (compliance.eVerify === true || (jobOrder as any).eVerifyRequired || false),
+      screeningPackageId: String((jobOrder as any).screeningPackageId ?? '').trim(),
+      screeningPackageName: String((jobOrder as any).screeningPackageName ?? '').trim(),
       // Background check packages from scoping (preferred) or top-level, deduplicated
       backgroundCheckPackages: (() => {
         const scopingBg = Array.isArray(compliance.backgroundCheckPackages) ? compliance.backgroundCheckPackages : [];

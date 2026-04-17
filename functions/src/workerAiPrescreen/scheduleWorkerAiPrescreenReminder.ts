@@ -87,6 +87,7 @@ export async function maybeScheduleWorkerAiPrescreenReminder(args: {
       const snap = await tx.get(ref);
       if (!snap.exists) return;
       const data = snap.data() || {};
+      if (data.workerAiPrescreenFirstTouchCombinedAt) return;
       if (data.workerAiPrescreenReminderSentAt) return;
       if (data.workerAiPrescreenReminderPending === true && data.workerAiPrescreenReminderDueAt) return;
 

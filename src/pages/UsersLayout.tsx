@@ -8,12 +8,15 @@
  * /usergroups/:id) and returning via /users restores the prior list tab and filters.
  */
 
-import React, { useEffect, useState } from 'react';
-import { Box, Button, Tooltip } from '@mui/material';
+import React, { useCallback, useEffect, useState } from 'react';
+import { Alert, Box, Button, CircularProgress, Tooltip } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
+import { httpsCallable } from 'firebase/functions';
 import PageHeader from '../components/PageHeader';
 import { useAuth } from '../contexts/AuthContext';
+import { functions } from '../firebase';
+import { formatFirebaseHttpsError } from '../utils/firebaseHttpsErrors';
 import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
@@ -45,6 +48,38 @@ const UsersLayout: React.FC = () => {
   const activeTab = getActiveUsersTab(pathname);
   const { activeTenant } = useAuth();
   const [i9MasterReminderOpen, setI9MasterReminderOpen] = useState(false);
+  const [backfillLoading, setBackfillLoading] = useState(false);
+
+  const runInterviewBackfill = useCallback(
+    async (dryRun: boolean) => {
+      const tenantId = activeTenant?.id?.trim();
+      if (!tenantId) {
+        window.alert('Select an active tenant first.');
+        return;
+      }
+      if (!dryRun) {
+        const ok = window.confirm(
+          'Send real interview-invite SMS to eligible recent users (up to 500)? This uses production Twilio.',
+        );
+        if (!ok) return;
+      }
+      setBackfillLoading(true);
+      try {
+        // Default callable wait is ~70s; large sends hit `deadline-exceeded` without this.
+        const fn = httpsCallable(functions, 'triggerRecentUserInterviewBackfill', {
+          timeout: 3_600_000,
+        });
+        const res = await fn({ tenantId, dryRun, limit: 500 });
+        const data = res.data as Record<string, unknown>;
+        window.alert(JSON.stringify(data, null, 2));
+      } catch (e: unknown) {
+        window.alert(formatFirebaseHttpsError(e));
+      } finally {
+        setBackfillLoading(false);
+      }
+    },
+    [activeTenant?.id],
+  );
 
   const persisted = loadUsersLayoutPersisted();
   const [usersSearch, setUsersSearch] = useState(persisted.usersListSearch);
@@ -220,6 +255,43 @@ const UsersLayout: React.FC = () => {
         }
         rightActions={rightActions}
       />
+      <Alert
+        severity="warning"
+        sx={{ mx: 2, mt: 2, flexShrink: 0, alignItems: 'center' }}
+        action={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            {backfillLoading ? <CircularProgress size={22} /> : null}
+            <Tooltip title="Uses active tenant. No SMS; returns eligible user ids and counts.">
+              <span>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={backfillLoading || !activeTenant?.id}
+                  onClick={() => void runInterviewBackfill(true)}
+                >
+                  Prescreen backfill (dry run)
+                </Button>
+              </span>
+            </Tooltip>
+            <Tooltip title="Sends SMS via triggerRecentUserInterviewBackfill. Remove this banner after use.">
+              <span>
+                <Button
+                  size="small"
+                  variant="contained"
+                  color="warning"
+                  disabled={backfillLoading || !activeTenant?.id}
+                  onClick={() => void runInterviewBackfill(false)}
+                >
+                  Prescreen backfill (send)
+                </Button>
+              </span>
+            </Tooltip>
+          </Box>
+        }
+      >
+        <strong>Temporary:</strong> recent-user AI prescreen invite backfill (callable). Requires recruiter access
+        and an active tenant.
+      </Alert>
       <Box
         sx={{
           flex: 1,

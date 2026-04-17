@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { WorkerToastProvider } from '../contexts/WorkerToastContext';
 import { usePushNotifications } from '../hooks/usePushNotifications';
 import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage';
-import { setLanguage, preloadLocales } from '../i18n';
+import { setLanguage } from '../i18n';
 import { getWorkerTheme } from '../theme/workerTheme';
 
 /**
@@ -26,10 +26,6 @@ const C1WorkerLayout: React.FC<{ children?: React.ReactNode }> = ({ children }) 
   useEffect(() => {
     setLanguage(preferredLanguage);
   }, [preferredLanguage]);
-
-  useEffect(() => {
-    if (user?.uid) preloadLocales();
-  }, [user?.uid]);
 
   return (
     <ThemeProvider theme={workerTheme}>

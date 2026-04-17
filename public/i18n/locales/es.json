@@ -13,7 +13,8 @@
     "startDate": "Fecha de inicio",
     "ok": "OK",
     "close": "Cerrar",
-    "notifications": "Notificaciones"
+    "notifications": "Notificaciones",
+    "signIn": "Iniciar sesión"
   },
   "nav": {
     "dashboard": "Panel",
@@ -333,6 +334,23 @@
     },
     "openingMultiSelectHint": "Elige todas las que apliquen.",
     "placeholderShortAnswer": "Una o dos frases bastan",
+    "openInMaps": "Abrir en Google Maps",
+    "dynamicOpts": {
+      "yes": "Sí",
+      "no": "No",
+      "not_sure": "No estoy seguro"
+    },
+    "dynamic": {
+      "dyn_shift_punctuality": "Tu turno comienza a las {startTime}. ¿Puedes llegar puntualmente de forma confiable?",
+      "dyn_worksite_commute": "Este trabajo está en {location}. ¿Podrás llegar de forma confiable?",
+      "dyn_job_drug_screen": "Este trabajo requiere un examen de drogas antes de comenzar. ¿Puedes completarlo?",
+      "dyn_job_background_check": "Este trabajo requiere verificación de antecedentes. ¿Puedes aprobarla y completarla?",
+      "dyn_physical_job_fit": "Este trabajo implica trabajo físico como {list}. ¿Te sientes cómodo/a con eso?",
+      "dyn_cert_have": "Este trabajo requiere {cert}. ¿Tienes esta certificación?",
+      "dyn_cert_willing": "Si aún no tienes {cert}, ¿estarías dispuesto/a a obtenerla antes o poco después de empezar?",
+      "dyn_uniform_available": "Este rol requiere {uniformText}. ¿Los tienes disponibles?",
+      "dyn_gig_path_willing": "Podemos tener turnos tipo gig antes de que abra un rol de tiempo completo. ¿Estarías dispuesto/a a tomar turnos gig mientras tanto?"
+    },
     "signInPrompt": "Inicia sesión para completar esta entrevista.",
     "backToDashboard": "Volver al panel",
     "successTitle": "Entrevista enviada",
@@ -525,11 +543,17 @@
         "opt_yes": "Sí",
         "opt_not_sure": "No estoy seguro"
       },
+      "drug_screen_detail": {
+        "prompt": "Indicaste que podría aparecer algo en un examen de drogas. Explica brevemente qué debemos saber (fechas o contexto ayudan). Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
+      },
       "background_check": {
         "prompt": "Si el puesto requiere verificación de antecedentes, ¿hay algo que pudiera aparecer?",
         "opt_no": "No",
         "opt_yes": "Sí",
         "opt_not_sure": "No estoy seguro"
+      },
+      "background_check_detail": {
+        "prompt": "Indicaste que podría aparecer algo en una verificación de antecedentes. Explica brevemente qué debemos saber. Si elegiste Sí por error, vuelve atrás para cambiar tu respuesta."
       },
       "supervisor_feedback": {
         "prompt": "¿Qué diría tu último supervisor sobre ti? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas trabajando (si aplica)"
@@ -841,6 +865,13 @@
     "passwordsDontMatchHelper": "Las contraseñas no coinciden",
     "english": "Inglés",
     "spanish": "Español",
+    "last4Ssn": "Últimos 4 del SSN o ITIN",
+    "last4SsnHelper": "Opcional. Ingresa los últimos cuatro dígitos de tu SSN o ITIN.",
+    "last4SsnInvalid": "Si ingresas los últimos cuatro de tu SSN o ITIN, deben ser exactamente 4 dígitos.",
+    "confirmWorkAuthBeforeSkipEeo": "Confirma tus respuestas de autorización de trabajo antes de omitir las preguntas opcionales de EEO.",
+    "optionalEeoTitle": "Igualdad de empleo (opcional)",
+    "optionalEeoHint": "Los empleadores pueden usar esta información para informes de diversidad. Puedes omitir esta sección.",
+    "skipOptionalEeo": "Omitir preguntas opcionales",
     "streetAddress": "Dirección",
     "unitApt": "Unidad / Apt",
     "city": "Ciudad",
@@ -988,6 +1019,12 @@
     "estimatedStartLabel": "Inicio estimado: {date}",
     "startsLabel": "Inicia {date}",
     "nextShiftLabel": "Próximo turno: {date}",
+    "dateTbd": "Fecha por confirmar",
+    "jobPostingNotFound": "No encontramos esta oferta de trabajo.",
+    "scoreChip": "Puntuación: {score}",
+    "mapEmbedTitle": "Mapa",
+    "stickyNextShiftFallback": "Próximo turno",
+    "stickyApplyNow": "Postular ahora",
     "applicationStatusSubmitted": "Solicitud enviada",
     "applicationStatusHired": "Contratado",
     "applicationStatusWaitlisted": "Lista de espera",
@@ -1336,9 +1373,9 @@
       "everifyActionTitle": "E-Verify requiere tu acción",
       "everifyActionDescription": "Tu caso de E-Verify necesita que des el siguiente paso (por ejemplo, resolver una no confirmación tentativa).",
       "everifyActionPrimary": "Resolver",
-      "aiPrescreenInterviewTitle": "Completa tu entrevista",
-      "aiPrescreenInterviewDescription": "Te enviamos por SMS un enlace corto de entrevista C1. Complétala para seguir con tu solicitud.",
-      "aiPrescreenInterviewPrimary": "Empezar entrevista",
+      "aiPrescreenInterviewTitle": "Completa mi entrevista",
+      "aiPrescreenInterviewDescription": "Aún no terminaste la entrevista corta. Continúa para retomar donde la dejaste y seguir con tu solicitud.",
+      "aiPrescreenInterviewPrimary": "Continuar entrevista",
       "aiPrescreenProfileTitle": "Termina tu perfil primero",
       "aiPrescreenProfileDescription": "Necesitamos un poco más de información en tu perfil antes de enviarte el enlace de la entrevista. Actualiza tu perfil y espera el próximo mensaje.",
       "aiPrescreenProfilePrimary": "Actualizar perfil",

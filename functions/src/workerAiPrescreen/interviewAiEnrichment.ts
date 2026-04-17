@@ -5,7 +5,9 @@
 import type { WorkerAiPrescreenAnswers } from './scoreWorkerAiPrescreen';
 import type { AnswerQualityTier, InterviewAnswerQualityStored } from './prescreenTextAnswerQuality';
 import {
-  complianceRiskFactorForDrugBackground,
+  complianceConcernLevel,
+  complianceRiskFactorFromConcern,
+  type ComplianceQuestionFraming,
   normalizeDrugBackgroundAnswer,
   type DrugBackgroundAnswer,
 } from './prescreenComplianceSemantics';
@@ -23,13 +25,24 @@ function normLower(s: unknown): string {
 }
 
 /**
- * Compliance: drug + background (yes = low risk, no = high risk, not_sure = medium).
+ * Compliance: drug + background — uses disclosure vs ability framing from merge meta.
  */
-export function computeComplianceRisk(answers: WorkerAiPrescreenAnswers): number {
-  const drug = normalizeDrugBackgroundAnswer(answers.drug_screen);
-  const bg = normalizeDrugBackgroundAnswer(answers.background_check);
-  const drugR = complianceRiskFactorForDrugBackground(drug);
-  const bgR = complianceRiskFactorForDrugBackground(bg);
+export function computeComplianceRisk(
+  answers: WorkerAiPrescreenAnswers,
+  meta?: MergeDrugBackgroundMeta,
+): number {
+  const drugSrc = meta?.drugSource ?? 'core';
+  const bgSrc = meta?.backgroundSource ?? 'core';
+  let drugR = 0.48;
+  let bgR = 0.48;
+  if (drugSrc !== 'none') {
+    const framing: ComplianceQuestionFraming = drugSrc === 'dynamic' ? 'ability' : 'disclosure';
+    drugR = complianceRiskFactorFromConcern(complianceConcernLevel(answers.drug_screen, framing));
+  }
+  if (bgSrc !== 'none') {
+    const framing: ComplianceQuestionFraming = bgSrc === 'dynamic' ? 'ability' : 'disclosure';
+    bgR = complianceRiskFactorFromConcern(complianceConcernLevel(answers.background_check, framing));
+  }
   return Math.min(1, (drugR + bgR) / 2);
 }
 
@@ -59,9 +72,12 @@ function round3(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 
-export function computeRiskProfile(answers: WorkerAiPrescreenAnswers): InterviewRiskProfile {
+export function computeRiskProfile(
+  answers: WorkerAiPrescreenAnswers,
+  meta?: MergeDrugBackgroundMeta,
+): InterviewRiskProfile {
   return {
-    complianceRisk: round3(computeComplianceRisk(answers)),
+    complianceRisk: round3(computeComplianceRisk(answers, meta)),
     attendanceRisk: round3(computeAttendanceRisk(answers)),
     transportationRisk: round3(computeTransportationRisk(answers)),
   };
@@ -103,15 +119,26 @@ export function computeConfidenceScore(args: {
 }
 
 /**
- * Explicit “admission” for automation: disclosed attendance issues, or drug/bg **no** / **not_sure**.
- * `unknown` is treated via `drug_unknown` / `background_unknown` scores only — not double-counted here.
+ * Explicit “admission” for automation: attendance issues, or drug/bg **concern** / **uncertain**
+ * under the correct disclosure vs ability framing.
  */
-export function shouldFlagRiskAdmission(answers: WorkerAiPrescreenAnswers): boolean {
+export function shouldFlagRiskAdmission(
+  answers: WorkerAiPrescreenAnswers,
+  meta?: MergeDrugBackgroundMeta,
+): boolean {
   if (normLower(answers.attendance_issues) === 'yes') return true;
-  const drug = normalizeDrugBackgroundAnswer(answers.drug_screen);
-  const bg = normalizeDrugBackgroundAnswer(answers.background_check);
-  if (drug === 'no' || drug === 'not_sure') return true;
-  if (bg === 'no' || bg === 'not_sure') return true;
+  const drugSrc = meta?.drugSource ?? 'core';
+  const bgSrc = meta?.backgroundSource ?? 'core';
+  if (drugSrc !== 'none') {
+    const framing: ComplianceQuestionFraming = drugSrc === 'dynamic' ? 'ability' : 'disclosure';
+    const level = complianceConcernLevel(answers.drug_screen, framing);
+    if (level === 'concern' || level === 'uncertain') return true;
+  }
+  if (bgSrc !== 'none') {
+    const framing: ComplianceQuestionFraming = bgSrc === 'dynamic' ? 'ability' : 'disclosure';
+    const level = complianceConcernLevel(answers.background_check, framing);
+    if (level === 'concern' || level === 'uncertain') return true;
+  }
   return false;
 }
 
@@ -147,9 +174,24 @@ export function buildPrescreenComplianceDebug(args: {
   const drug = normalizeDrugBackgroundAnswer(answersEffective.drug_screen);
   const bg = normalizeDrugBackgroundAnswer(answersEffective.background_check);
   const att = normLower(answersEffective.attendance_issues);
+  const drugSrc = mergeMeta?.drugSource ?? 'core';
+  const bgSrc = mergeMeta?.backgroundSource ?? 'core';
 
-  const drugFactor = complianceRiskFactorForDrugBackground(drug);
-  const bgFactor = complianceRiskFactorForDrugBackground(bg);
+  const drugFactor =
+    drugSrc === 'none'
+      ? 0.48
+      : complianceRiskFactorFromConcern(
+          complianceConcernLevel(answersEffective.drug_screen, drugSrc === 'dynamic' ? 'ability' : 'disclosure'),
+        );
+  const bgFactor =
+    bgSrc === 'none'
+      ? 0.48
+      : complianceRiskFactorFromConcern(
+          complianceConcernLevel(
+            answersEffective.background_check,
+            bgSrc === 'dynamic' ? 'ability' : 'disclosure',
+          ),
+        );
 
   return {
     version: 2,

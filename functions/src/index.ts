@@ -231,6 +231,7 @@ export {
   processScheduledInterviewInvites,
 } from './workerAiPrescreen/autoScheduledInterviewInvite';
 export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWorkerAiPrescreenReminders';
+export { triggerRecentUserInterviewBackfill } from './workerAiPrescreen/triggerRecentUserInterviewBackfill';
 export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
 export { updateExternalOnboardingStepVerification } from './onboardingGate';

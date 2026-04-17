@@ -23,6 +23,7 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './workerAiPrescreen/interviewInviteCooldown';
+import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -48,6 +49,42 @@ function phoneE164FromUser(data: Record<string, unknown>): string {
  * Best-effort: find an application doc for this user + tenant + job posting id from the apply snapshot
  * so the interview stays job-aware (dynamic prescreen plan + context).
  */
+/**
+ * Interview-first: if the user already submitted an application for this job context,
+ * do not send the legacy apply-wizard reminder SMS (prescreen / status triggers handle next steps).
+ */
+async function userHasSubmittedApplicationForSnapshot(
+  uid: string,
+  snapshot: Record<string, unknown>,
+): Promise<boolean> {
+  const tenantId = String(snapshot.tenantId || '').trim();
+  const jobId = String(snapshot.jobId || '').trim();
+  if (!tenantId || !jobId) return false;
+  try {
+    const apps = await db
+      .collection(`tenants/${tenantId}/applications`)
+      .where('userId', '==', uid)
+      .limit(40)
+      .get();
+    for (const d of apps.docs) {
+      const o = d.data() as Record<string, unknown>;
+      const jp = String(o.jobPostingId || o.jobPostId || '').trim();
+      const jid = String(o.jobId || '').trim();
+      const matchJob = jp === jobId || jid === jobId || d.id.includes(jobId);
+      if (!matchJob) continue;
+      if (normalizeApplicationStatus(String(o.status ?? '')) === 'submitted') {
+        return true;
+      }
+    }
+  } catch (e) {
+    logger.warn('applyWizardReminder: userHasSubmittedApplicationForSnapshot failed', {
+      uid,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  return false;
+}
+
 async function resolveApplicationIdForInterviewInvite(
   uid: string,
   snapshot: Record<string, unknown>,
@@ -187,6 +224,17 @@ export const processApplyWizardReminders = onSchedule(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         aborted += 1;
+        continue;
+      }
+
+      if (await userHasSubmittedApplicationForSnapshot(uid, snapshot)) {
+        await docSnap.ref.update({
+          applyWizardReminderPending: false,
+          applyWizardReminderAbortedReason: 'interview_first_submitted_application',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        aborted += 1;
+        logger.info('applyWizardReminder: aborted interview_first_submitted_application', { uid });
         continue;
       }
 

@@ -235,6 +235,40 @@ function ensureI551NumberForFormI551(data: Record<string, unknown>): void {
   if (derived) data.i551_number = derived;
 }
 
+/**
+ * ICA create-draft rejects `document_sub_type_code` when present as `""` (ATTRIBUTE_REQUIRED).
+ * Fixtures and JSON merges may include the key with an empty string — omit before POST.
+ */
+function omitEmptyDocumentSubTypeCode(data: Record<string, unknown>): void {
+  const v = data.document_sub_type_code;
+  if (v === null || v === undefined) {
+    delete data.document_sub_type_code;
+    return;
+  }
+  if (typeof v === 'string' && v.trim() === '') {
+    delete data.document_sub_type_code;
+  }
+}
+
+/**
+ * When List A is U.S. passport (or receipt), USCIS REST expects a non-empty `document_sub_type_code`
+ * (passport book vs passport card). HRX presets only set `document_a_type_code`; default to book.
+ * Confirm enum labels against your signed ICA if ATTRIBUTE_INVALID_ENUM appears.
+ */
+const US_PASSPORT_SUBTYPE_DEFAULT = 'US_PASSPORT_BOOK';
+
+function ensureDocumentSubTypeCodeForPassportListA(data: Record<string, unknown>): void {
+  const docA = typeof data.document_a_type_code === 'string' ? data.document_a_type_code.trim() : '';
+  if (docA !== 'US_PASSPORT' && docA !== 'US_PASSPORT_RECEIPT') return;
+
+  const sub =
+    typeof data.document_sub_type_code === 'string' ? data.document_sub_type_code.trim() : '';
+  if (sub) return;
+
+  data.document_sub_type_code =
+    docA === 'US_PASSPORT_RECEIPT' ? 'US_PASSPORT_RECEIPT' : US_PASSPORT_SUBTYPE_DEFAULT;
+}
+
 export function applyRestDraftPayloadNormalization(data: Record<string, unknown>): void {
   normalizeSsnInI9Payload(data);
   normalizeCitizenshipStatusCodeInI9Payload(data);
@@ -244,6 +278,8 @@ export function applyRestDraftPayloadNormalization(data: Record<string, unknown>
   normalizeI551NumberInI9Payload(data);
   omitNoExpirationDateForFormI551(data);
   normalizeCaseCreatorPhoneForEverifyRest(data);
+  omitEmptyDocumentSubTypeCode(data);
+  ensureDocumentSubTypeCodeForPassportListA(data);
 }
 
 function parseEnvI9FixtureJson(): Record<string, unknown> | null {

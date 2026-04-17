@@ -44,3 +44,6 @@ functions/service-account-key.json
 
 # Notebook artifacts
 *.ipynb
+
+# Local QA cursors (optional; remove from gitignore if you want to commit a team cursor template)
+.qa/

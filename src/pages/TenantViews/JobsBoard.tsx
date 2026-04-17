@@ -2352,31 +2352,54 @@ const JobsBoard: React.FC = () => {
                     />
                   </Grid>
                   <Grid item xs={12} sm={6}>
-                    <FormControl fullWidth required disabled={!selectedCompanyId}>
-                      <InputLabel>Worksite</InputLabel>
-                      <Select
-                        value={selectedLocationId}
-                        label="Worksite"
-                        onChange={(e) => handleLocationChange(e.target.value)}
-                        disabled={loadingLocations || !selectedCompanyId}
-                      >
-                        {loadingLocations ? (
-                          <MenuItem key="newpost-worksite-loading" value="">
-                            Loading locations...
-                          </MenuItem>
-                        ) : locations.length === 0 ? (
-                          <MenuItem key="newpost-worksite-empty" value="">
-                            No locations available
-                          </MenuItem>
-                        ) : (
-                          locations.map((location) => (
-                            <MenuItem key={location.id} value={location.id}>
-                              {location.nickname || location.name}
-                            </MenuItem>
-                          ))
-                        )}
-                      </Select>
-                    </FormControl>
+                    <Autocomplete
+                      fullWidth
+                      options={locations}
+                      getOptionLabel={(option) => option.nickname || option.name}
+                      isOptionEqualToValue={(option, value) => option.id === value.id}
+                      value={locations.find((l) => l.id === selectedLocationId) || null}
+                      onChange={(event, newValue) => {
+                        if (newValue) {
+                          handleLocationChange(newValue.id);
+                        } else {
+                          setSelectedLocationId('');
+                          setNewPost((prev) => ({
+                            ...prev,
+                            worksiteId: '',
+                            worksiteName: '',
+                            street: '',
+                            city: '',
+                            state: '',
+                            zipCode: '',
+                            coordinates: undefined,
+                          }));
+                        }
+                      }}
+                      loading={loadingLocations}
+                      disabled={loadingLocations || !selectedCompanyId}
+                      noOptionsText={
+                        loadingLocations ? 'Loading locations…' : 'No locations match your search'
+                      }
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Worksite"
+                          required
+                          helperText="Search or select a worksite"
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {loadingLocations ? (
+                                  <CircularProgress color="inherit" size={20} />
+                                ) : null}
+                                {params.InputProps.endAdornment}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
                   </Grid>
                 </Grid>
                 </Box>

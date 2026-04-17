@@ -1,6 +1,7 @@
 /**
- * User groups: bulk profile update SMS (preview-first), for “Needs profile update first” bucket.
- * Retriggers workers who missed automated prescreen nudges or need a fresh profile prompt.
+ * User groups: legacy bulk profile update SMS (preview-first).
+ * @deprecated Product default: use `userGroupInterviewInviteSend` — `needs_profile_update` is routed to adaptive
+ * interview invites (entry=user_group_profile_gap_interview_invite). Kept for rare manual/ops use only.
  */
 import * as crypto from 'crypto';
 import * as admin from 'firebase-admin';

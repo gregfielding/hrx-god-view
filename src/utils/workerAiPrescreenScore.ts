@@ -5,7 +5,11 @@
  */
 
 import { prescreenTextHasConcreteDetail } from '../shared/prescreenAnswerQuality';
-import { normalizeDrugBackgroundAnswer } from './prescreenComplianceSemantics';
+import {
+  complianceConcernLevel,
+  type ComplianceQuestionFraming,
+  type DrugBackgroundScoringMeta,
+} from './prescreenComplianceSemantics';
 
 /** Opening fields are inclusive multi-select (`string[]` each), not mutually exclusive singles. */
 export type WorkerAiPrescreenAnswers = {
@@ -28,7 +32,9 @@ export type WorkerAiPrescreenAnswers = {
   backup_transportation?: string;
   physical_comfort?: string;
   drug_screen?: string;
+  drug_screen_detail?: string;
   background_check?: string;
+  background_check_detail?: string;
   supervisor_feedback?: string;
   additional_notes?: string;
 };
@@ -164,31 +170,38 @@ function scoreTransportation(answers: WorkerAiPrescreenAnswers): { pts: number; 
   return { pts, flags };
 }
 
-function scoreRisk(answers: WorkerAiPrescreenAnswers): { pts: number; flags: string[] } {
-  const flags: string[] = [];
-  let pts = 0;
-
-  const drug = normalizeDrugBackgroundAnswer(answers.drug_screen);
-  if (drug === 'yes') {
-    pts += 10;
-  } else if (drug === 'not_sure' || drug === 'unknown') {
-    pts += 5;
-    flags.push('drug_unknown');
-  } else if (drug === 'no') {
-    flags.push('drug_risk');
+function scoreRiskHalf(
+  raw: unknown,
+  source: 'core' | 'dynamic' | 'none',
+  riskFlag: 'drug_risk' | 'background_risk',
+  unknownFlag: 'drug_unknown' | 'background_unknown',
+): { pts: number; flags: string[] } {
+  if (source === 'none') {
+    return { pts: 5, flags: [unknownFlag] };
   }
-
-  const bg = normalizeDrugBackgroundAnswer(answers.background_check);
-  if (bg === 'yes') {
-    pts += 10;
-  } else if (bg === 'not_sure' || bg === 'unknown') {
-    pts += 5;
-    flags.push('background_unknown');
-  } else if (bg === 'no') {
-    flags.push('background_risk');
+  const framing: ComplianceQuestionFraming = source === 'dynamic' ? 'ability' : 'disclosure';
+  const level = complianceConcernLevel(raw, framing);
+  if (level === 'clean') {
+    return { pts: 10, flags: [] };
   }
+  if (level === 'concern') {
+    return { pts: 0, flags: [riskFlag] };
+  }
+  return { pts: 5, flags: [unknownFlag] };
+}
 
-  pts = Math.min(20, pts);
+function scoreRisk(
+  answers: WorkerAiPrescreenAnswers,
+  meta?: DrugBackgroundScoringMeta,
+): { pts: number; flags: string[] } {
+  const drugSrc = meta?.drugSource ?? 'core';
+  const bgSrc = meta?.backgroundSource ?? 'core';
+
+  const drugHalf = scoreRiskHalf(answers.drug_screen, drugSrc, 'drug_risk', 'drug_unknown');
+  const bgHalf = scoreRiskHalf(answers.background_check, bgSrc, 'background_risk', 'background_unknown');
+
+  const pts = Math.min(20, drugHalf.pts + bgHalf.pts);
+  const flags = [...drugHalf.flags, ...bgHalf.flags];
   return { pts, flags };
 }
 
@@ -274,12 +287,16 @@ function buildSummary(
 
 export function scoreWorkerAiPrescreen(
   answers: WorkerAiPrescreenAnswers,
-  opts?: { answerQualityFlags?: string[]; scoreAdjustment?: number },
+  opts?: {
+    answerQualityFlags?: string[];
+    scoreAdjustment?: number;
+    drugBackgroundMergeMeta?: DrugBackgroundScoringMeta;
+  },
 ): AiPrescreenScoreResult {
   const exp = scoreExperience(answers);
   const rel = scoreReliability(answers);
   const trans = scoreTransportation(answers);
-  const risk = scoreRisk(answers);
+  const risk = scoreRisk(answers, opts?.drugBackgroundMergeMeta);
   const phys = scorePhysical(answers);
 
   const flagSet = [

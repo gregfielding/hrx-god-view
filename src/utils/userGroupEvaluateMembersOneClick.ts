@@ -1,6 +1,6 @@
 /**
- * One-click: commit evaluation audit + server prepare/send for interview + profile SMS.
- * Uses server max batch size (25) and override cooldowns, matching prior dialog defaults at cap.
+ * One-click: commit evaluation audit + adaptive interview SMS for both evaluator buckets
+ * (`ready_for_interview` and `needs_profile_update`). Uses server max batch size (25) and cooldown overrides.
  */
 import { getFunctions, httpsCallable } from 'firebase/functions';
 import { app } from '../firebase';
@@ -28,6 +28,7 @@ export type InterviewInviteSendClientResult = {
   failed: number;
 };
 
+/** Legacy profile-reminder SMS path — no longer used by one-click (both buckets use adaptive interview invites). */
 export type ProfileReminderSendClientResult = {
   action: 'send';
   flow: 'profile_reminder';
@@ -40,6 +41,7 @@ export type ProfileReminderSendClientResult = {
 export type EvaluateMembersOneClickResult = {
   evaluate: EvaluateMembersResult;
   interviewSend: InterviewInviteSendClientResult | null;
+  /** Always null — profile SMS removed from Evaluate; `needs_profile_update` uses interview invites. */
   profileSend: ProfileReminderSendClientResult | null;
 };
 
@@ -49,13 +51,6 @@ const userGroupEvaluateMembersNextStep = httpsCallable<
 >(getFunctions(app, REGION), 'userGroupEvaluateMembersNextStep');
 
 type InterviewPrepare = {
-  action: 'prepare';
-  previewToken: string;
-  confirmationRequired: string;
-  selectedRecipients: unknown[];
-};
-
-type ProfilePrepare = {
   action: 'prepare';
   previewToken: string;
   confirmationRequired: string;
@@ -76,20 +71,6 @@ const userGroupInterviewInviteSendCallable = httpsCallable<
   InterviewPrepare | InterviewInviteSendClientResult
 >(getFunctions(app, REGION), 'userGroupInterviewInviteSend');
 
-const userGroupProfileReminderSendCallable = httpsCallable<
-  {
-    action: 'prepare' | 'send';
-    tenantId: string;
-    groupId: string;
-    maxRecipients?: number;
-    includeCooldownWarnings?: boolean;
-    previewToken?: string;
-    idempotencyKey?: string;
-    typedConfirmation?: string;
-  },
-  ProfilePrepare | ProfileReminderSendClientResult
->(getFunctions(app, REGION), 'userGroupProfileReminderSend');
-
 function newIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -98,8 +79,8 @@ function newIdempotencyKey(): string {
 }
 
 /**
- * Writes audit (commit), then for each non-empty bucket runs prepare → send with confirmation string from the server.
- * Single batch per channel (max {@link EVALUATE_OUTREACH_MAX_BATCH} recipients each); override cooldowns enabled.
+ * Writes audit (commit), then prepare → send adaptive interview SMS when either bucket has members.
+ * Override cooldowns enabled; max {@link EVALUATE_OUTREACH_MAX_BATCH} recipients per send.
  */
 export async function runEvaluateMembersOneClick(params: {
   tenantId: string;
@@ -117,9 +98,11 @@ export async function runEvaluateMembersOneClick(params: {
   const includeCooldownWarnings = true;
 
   let interviewSend: InterviewInviteSendClientResult | null = null;
-  let profileSend: ProfileReminderSendClientResult | null = null;
+  const profileSend: ProfileReminderSendClientResult | null = null;
 
-  if ((evaluate.counts.ready_for_interview ?? 0) > 0) {
+  const outreachCount =
+    (evaluate.counts.ready_for_interview ?? 0) + (evaluate.counts.needs_profile_update ?? 0);
+  if (outreachCount > 0) {
     const { data: prep } = await userGroupInterviewInviteSendCallable({
       action: 'prepare',
       tenantId,
@@ -146,33 +129,6 @@ export async function runEvaluateMembersOneClick(params: {
     }
   }
 
-  if ((evaluate.counts.needs_profile_update ?? 0) > 0) {
-    const { data: prep } = await userGroupProfileReminderSendCallable({
-      action: 'prepare',
-      tenantId,
-      groupId,
-      maxRecipients: cap,
-      includeCooldownWarnings,
-    });
-    if (prep.action !== 'prepare') {
-      throw new Error('Unexpected profile prepare response');
-    }
-    if (prep.selectedRecipients.length > 0) {
-      const { data: send } = await userGroupProfileReminderSendCallable({
-        action: 'send',
-        tenantId,
-        groupId,
-        previewToken: prep.previewToken,
-        idempotencyKey: newIdempotencyKey(),
-        typedConfirmation: prep.confirmationRequired,
-      });
-      if (send.action !== 'send') {
-        throw new Error('Unexpected profile send response');
-      }
-      profileSend = send;
-    }
-  }
-
   return { evaluate, interviewSend, profileSend };
 }
 
@@ -187,17 +143,15 @@ export function formatEvaluateMembersOneClickSuccess(r: EvaluateMembersOneClickR
   );
   if (r.interviewSend) {
     lines.push(
-      `Interview SMS — sent ${r.interviewSend.sent}, skipped ${r.interviewSend.skipped}, failed ${r.interviewSend.failed} (audit ${r.interviewSend.auditId})`,
+      `Adaptive interview SMS — sent ${r.interviewSend.sent}, skipped ${r.interviewSend.skipped}, failed ${r.interviewSend.failed} (audit ${r.interviewSend.auditId}). Includes Ready for interview + Needs profile update buckets.`,
     );
-  } else if ((r.evaluate.counts.ready_for_interview ?? 0) > 0) {
-    lines.push('Interview SMS — no messages sent (all candidates skipped in this batch).');
-  }
-  if (r.profileSend) {
+  } else if (
+    (r.evaluate.counts.ready_for_interview ?? 0) > 0 ||
+    (r.evaluate.counts.needs_profile_update ?? 0) > 0
+  ) {
     lines.push(
-      `Profile SMS — sent ${r.profileSend.sent}, skipped ${r.profileSend.skipped}, failed ${r.profileSend.failed} (audit ${r.profileSend.auditId})`,
+      'Adaptive interview SMS — no messages sent (all candidates skipped in this batch).',
     );
-  } else if ((r.evaluate.counts.needs_profile_update ?? 0) > 0) {
-    lines.push('Profile SMS — no messages sent (all candidates skipped in this batch).');
   }
   if (
     (r.evaluate.counts.ready_for_interview ?? 0) === 0 &&

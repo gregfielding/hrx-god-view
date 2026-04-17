@@ -67,6 +67,7 @@ export type RateLimitResult =
  */
 const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'application_received',
+  'application_received_interview_next_step',
   'application_status_change',
   'application_offered',
   'application_waitlisted',
@@ -84,6 +85,7 @@ const RATE_LIMIT_EXEMPT_MESSAGE_TYPES = new Set([
   'assignment_completed',
   'assignment_reminder_24h',
   'assignment_reminder_2h',
+  'recent_user_backfill_interview_invite',
   'worker_onboarding_pipeline_started',
   'on_call_employment_started',
   'payroll_onboarding_invite_needed',

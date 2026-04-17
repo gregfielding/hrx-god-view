@@ -47,21 +47,27 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
   const q = prescreen.questions;
 
   if (q.askShiftConfirmation && a?.startTime) {
+    const startTime = String(a.startTime);
     steps.push({
       id: 'dyn_shift_punctuality',
       type: 'single_select',
       module: 'shift',
-      prompt: `Your shift starts at ${a.startTime}. Can you reliably be there on time?`,
+      prompt: `Your shift starts at ${startTime}. Can you reliably be there on time?`,
+      promptKey: 'workerAiPrescreen.dynamic.dyn_shift_punctuality',
+      promptParams: { startTime },
       options: YNNS,
     });
   }
 
   if (q.askLocationConfirmation && a?.location) {
+    const location = String(a.location);
     steps.push({
       id: 'dyn_worksite_commute',
       type: 'single_select',
       module: 'location',
-      prompt: `This job is located in ${a.location}. Will you be able to reliably get there?`,
+      prompt: `This job is located in ${location}. Will you be able to reliably get there?`,
+      promptKey: 'workerAiPrescreen.dynamic.dyn_worksite_commute',
+      promptParams: { location },
       options: YNNS,
     });
   }
@@ -73,6 +79,7 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       module: 'compliance_drug',
       prompt:
         'This job requires a drug screen before starting. Are you able to complete that?',
+      promptKey: 'workerAiPrescreen.dynamic.dyn_job_drug_screen',
       options: YNNS,
     });
   }
@@ -83,6 +90,7 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       type: 'single_select',
       module: 'compliance_background',
       prompt: 'This job requires a background check. Are you able to pass and complete it?',
+      promptKey: 'workerAiPrescreen.dynamic.dyn_job_background_check',
       options: YNNS,
     });
   }
@@ -95,6 +103,8 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       type: 'single_select',
       module: 'physical',
       prompt: `This job involves physical work such as ${list}. Are you comfortable with that?`,
+      promptKey: 'workerAiPrescreen.dynamic.dyn_physical_job_fit',
+      promptParams: { list },
       options: YNNS,
     });
   }
@@ -103,11 +113,23 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
     ? [...new Set((a?.certificationsRequired ?? []).filter(Boolean))].slice(0, MAX_CERT_QUESTIONS)
     : [];
   for (const cert of certs) {
+    const slug = certSlug(cert);
     steps.push({
-      id: `dyn_cert__${certSlug(cert)}`,
+      id: `dyn_cert__${slug}`,
       type: 'single_select',
       module: 'certification',
       prompt: `This job requires ${cert}. Do you have this certification?`,
+      promptKey: 'workerAiPrescreen.dynamic.dyn_cert_have',
+      promptParams: { cert },
+      options: YNNS,
+    });
+    steps.push({
+      id: `dyn_cert_willing__${slug}`,
+      type: 'single_select',
+      module: 'certification',
+      prompt: `If you don't already have ${cert}, are you willing to obtain it before or shortly after starting?`,
+      promptKey: 'workerAiPrescreen.dynamic.dyn_cert_willing',
+      promptParams: { cert },
       options: YNNS,
     });
   }
@@ -120,6 +142,8 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       type: 'single_select',
       module: 'uniform',
       prompt: `This role requires ${uText}. Do you have these available?`,
+      promptKey: 'workerAiPrescreen.dynamic.dyn_uniform_available',
+      promptParams: { uniformText: uText },
       options: YNNS,
     });
   }
@@ -131,6 +155,7 @@ export function buildDynamicPrescreenSteps(context: AiInterviewContext): Dynamic
       module: 'gig_path',
       prompt:
         'We may have gig shifts available before a full-time role opens. Would you be willing to take gig shifts in the meantime?',
+      promptKey: 'workerAiPrescreen.dynamic.dyn_gig_path_willing',
       options: YNNS,
     });
   }

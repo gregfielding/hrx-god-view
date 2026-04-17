@@ -35,7 +35,11 @@ export function buildWorkerAiPrescreenDashboardActions(args: {
     if (!a.data.workerAiPrescreenReminderSentAt) return false;
     if (completedApplicationIds.has(a.id)) return false;
     const outcome = String(a.data.workerAiPrescreenReminderLastOutcome || '');
-    return outcome === 'eligible_invite' || outcome === 'ineligible_nudge';
+    return (
+      outcome === 'eligible_invite' ||
+      outcome === 'ineligible_nudge' ||
+      outcome === 'combined_first_touch'
+    );
   });
   if (candidates.length === 0) return [];
 
@@ -45,7 +49,7 @@ export function buildWorkerAiPrescreenDashboardActions(args: {
   const pick = candidates[0];
   const outcome = String(pick.data.workerAiPrescreenReminderLastOutcome || '');
 
-  if (outcome === 'eligible_invite') {
+  if (outcome === 'eligible_invite' || outcome === 'combined_first_touch') {
     return [
       {
         id: 'worker_ai_prescreen_interview',

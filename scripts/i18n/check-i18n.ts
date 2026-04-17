@@ -7,6 +7,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { WORKER_AI_PRESCREEN_STEPS } from '../../src/constants/workerAiPrescreenQuestions';
+
 const ROOT = path.resolve(__dirname, '../..');
 const LOCALES_DIR = path.join(ROOT, 'i18n', 'locales');
 const SRC_DIR = path.join(ROOT, 'src');
@@ -97,6 +99,54 @@ function main(): void {
           failed = true;
         }
       }
+    }
+  }
+
+  // (3) Worker AI prescreen uses dynamic t(`workerAiPrescreen.steps.${id}.prompt`) — ensure every core step id exists in en + es.
+  for (const step of WORKER_AI_PRESCREEN_STEPS) {
+    const promptKey = `workerAiPrescreen.steps.${step.id}.prompt`;
+    if (!enKeySet.has(promptKey)) {
+      console.error(`[i18n] en.json missing (required for prescreen UI): ${promptKey}`);
+      failed = true;
+    }
+    if (!esKeySet.has(promptKey)) {
+      console.error(`[i18n] es.json missing (required for prescreen UI): ${promptKey}`);
+      failed = true;
+    }
+  }
+  const openMapsKey = 'workerAiPrescreen.openInMaps';
+  if (!enKeySet.has(openMapsKey)) {
+    console.error(`[i18n] en.json missing: ${openMapsKey}`);
+    failed = true;
+  }
+  if (!esKeySet.has(openMapsKey)) {
+    console.error(`[i18n] es.json missing: ${openMapsKey}`);
+    failed = true;
+  }
+
+  // (4) Job-specific dynamic prescreen steps use t(promptKey) on the client — keep JSON aligned with `buildDynamicPrescreenQuestions.ts`.
+  const DYNAMIC_PRESCREEN_I18N_KEYS = [
+    'workerAiPrescreen.dynamicOpts.yes',
+    'workerAiPrescreen.dynamicOpts.no',
+    'workerAiPrescreen.dynamicOpts.not_sure',
+    'workerAiPrescreen.dynamic.dyn_shift_punctuality',
+    'workerAiPrescreen.dynamic.dyn_worksite_commute',
+    'workerAiPrescreen.dynamic.dyn_job_drug_screen',
+    'workerAiPrescreen.dynamic.dyn_job_background_check',
+    'workerAiPrescreen.dynamic.dyn_physical_job_fit',
+    'workerAiPrescreen.dynamic.dyn_cert_have',
+    'workerAiPrescreen.dynamic.dyn_cert_willing',
+    'workerAiPrescreen.dynamic.dyn_uniform_available',
+    'workerAiPrescreen.dynamic.dyn_gig_path_willing',
+  ];
+  for (const k of DYNAMIC_PRESCREEN_I18N_KEYS) {
+    if (!enKeySet.has(k)) {
+      console.error(`[i18n] en.json missing (dynamic prescreen): ${k}`);
+      failed = true;
+    }
+    if (!esKeySet.has(k)) {
+      console.error(`[i18n] es.json missing (dynamic prescreen): ${k}`);
+      failed = true;
     }
   }
 

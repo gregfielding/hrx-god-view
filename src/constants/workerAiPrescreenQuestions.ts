@@ -25,7 +25,9 @@ export type WorkerAiPrescreenStepId =
   | 'backup_transportation'
   | 'physical_comfort'
   | 'drug_screen'
+  | 'drug_screen_detail'
   | 'background_check'
+  | 'background_check_detail'
   | 'supervisor_feedback'
   | 'additional_notes';
 
@@ -134,6 +136,13 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     ],
   },
   {
+    id: 'drug_screen_detail',
+    type: 'text',
+    prompt:
+      'You indicated something may show on a drug screen. Briefly explain what we should know (dates/context help). ' +
+      'If you tapped Yes by mistake, go Back to change your answer.',
+  },
+  {
     id: 'background_check',
     type: 'single_select',
     prompt: 'If a role requires a background check, is there anything that might appear?',
@@ -142,6 +151,13 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
       { value: 'yes', label: 'Yes' },
       { value: 'not_sure', label: 'Not sure' },
     ],
+  },
+  {
+    id: 'background_check_detail',
+    type: 'text',
+    prompt:
+      'You indicated something may appear on a background check. Briefly explain what we should know. ' +
+      'If you tapped Yes by mistake, go Back to change your answer.',
   },
   {
     id: 'supervisor_feedback',

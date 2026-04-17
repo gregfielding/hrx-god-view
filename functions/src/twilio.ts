@@ -433,6 +433,101 @@ export async function sendWorkerMessageInternal(
       }
     }
 
+    // Early-funnel SMS coordination (same policy as routingOrchestrator deliverSms).
+    // Runs even when phone lookup failed, as long as context carries tenantId + userId.
+    if (tenantId && recipientUserId && context?.messageTypeId) {
+      const { checkEarlyFunnelSmsGate } = await import('./messaging/earlyFunnelSmsPolicy');
+      const gate = await checkEarlyFunnelSmsGate({
+        tenantId,
+        userId: recipientUserId,
+        messageTypeId: context.messageTypeId,
+      });
+      if (gate.allowed === false) {
+        logger.info('sendWorkerMessageInternal: early_funnel_suppressed', {
+          tenantId,
+          userId: recipientUserId,
+          messageTypeId: context.messageTypeId,
+          reason: gate.reason,
+          lastMessageTypeId: gate.lastMessageTypeId,
+        });
+        try {
+          const { logMessage } = await import('./messaging/messageLogging');
+          const lang = (recipientUserData?.preferredLanguage || 'en') as 'en' | 'es' | null;
+          await logMessage({
+            tenantId,
+            userId: recipientUserId,
+            messageTypeId: context.messageTypeId,
+            channel: 'sms',
+            direction: 'outbound',
+            fromIdentity: context?.source === 'recruiter' ? 'recruiter' : 'system',
+            fromUserId: context?.sourceId || undefined,
+            contentSent: messageContent,
+            language: lang,
+            status: 'suppressed_early_funnel',
+            failureReason: JSON.stringify({
+              reason: gate.reason,
+              lastMessageTypeId: gate.lastMessageTypeId,
+              elapsedMs: gate.elapsedMs,
+            }),
+          });
+        } catch (logErr: any) {
+          logger.warn(`Failed to log suppressed early-funnel SMS: ${logErr.message}`);
+        }
+        return {
+          success: false,
+          messageId: null,
+          status: 'skipped',
+          error: 'early_funnel_cooldown',
+        };
+      }
+    }
+
+    // Same messageTypeId + same user within 60s (last-line defense; orchestrator uses deliverSms).
+    if (tenantId && recipientUserId && context?.messageTypeId) {
+      const { checkSmsDuplicateMessageTypeGuard } = await import('./messaging/smsDuplicateMessageGuard');
+      const dup = await checkSmsDuplicateMessageTypeGuard({
+        tenantId,
+        userId: recipientUserId,
+        messageTypeId: context.messageTypeId,
+      });
+      if (dup.allowed === false) {
+        logger.info('duplicate_message_guard', {
+          tenantId,
+          userId: recipientUserId,
+          messageTypeId: context.messageTypeId,
+          elapsedMs: dup.elapsedMs,
+        });
+        try {
+          const { logMessage } = await import('./messaging/messageLogging');
+          const lang = (recipientUserData?.preferredLanguage || 'en') as 'en' | 'es' | null;
+          await logMessage({
+            tenantId,
+            userId: recipientUserId,
+            messageTypeId: context.messageTypeId,
+            channel: 'sms',
+            direction: 'outbound',
+            fromIdentity: context?.source === 'recruiter' ? 'recruiter' : 'system',
+            fromUserId: context?.sourceId || undefined,
+            contentSent: messageContent,
+            language: lang,
+            status: 'suppressed_duplicate_message_guard',
+            failureReason: JSON.stringify({
+              reason: 'duplicate_message_guard',
+              elapsedMs: dup.elapsedMs,
+            }),
+          });
+        } catch (logErr: any) {
+          logger.warn(`Failed to log suppressed duplicate-guard SMS: ${logErr.message}`);
+        }
+        return {
+          success: false,
+          messageId: null,
+          status: 'skipped',
+          error: 'duplicate_message_guard',
+        };
+      }
+    }
+
     // Get Twilio configuration
     let client;
     let messagingPhoneNumber;
@@ -630,6 +725,30 @@ export async function sendWorkerMessageInternal(
     }
 
     logger.info(`SMS sent internally: ${messageResult.sid} to ${to}`);
+
+    if (tenantId && recipientUserId && context?.messageTypeId) {
+      try {
+        const { recordEarlyFunnelSmsSent } = await import('./messaging/earlyFunnelSmsPolicy');
+        await recordEarlyFunnelSmsSent({
+          tenantId,
+          userId: recipientUserId,
+          messageTypeId: context.messageTypeId,
+        });
+      } catch (recErr: any) {
+        logger.warn(`recordEarlyFunnelSmsSent failed: ${recErr?.message || recErr}`);
+      }
+      try {
+        const { recordSmsDuplicateMessageGuardSent } = await import('./messaging/smsDuplicateMessageGuard');
+        await recordSmsDuplicateMessageGuardSent({
+          tenantId,
+          userId: recipientUserId,
+          messageTypeId: context.messageTypeId,
+        });
+      } catch (recErr: any) {
+        logger.warn(`recordSmsDuplicateMessageGuardSent failed: ${recErr?.message || recErr}`);
+      }
+    }
+
     return { 
       success: true, 
       messageId: messageResult.sid,

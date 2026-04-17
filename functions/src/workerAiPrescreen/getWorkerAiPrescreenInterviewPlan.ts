@@ -52,6 +52,8 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
         id: s.id,
         type: s.type,
         prompt: s.prompt,
+        promptKey: s.promptKey,
+        promptParams: s.promptParams,
         options: s.options,
         module: s.module,
       })),

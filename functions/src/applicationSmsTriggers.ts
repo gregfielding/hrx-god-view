@@ -13,11 +13,17 @@ import { resolveTemplateVariables, TemplateVariableContext, ResolvedVariables } 
 import { sendApplicationStatusChangedNotification } from './messaging/unifiedWorkerNotifications';
 import { markLifecycleEventIfFirst } from './messaging/lifecycleDedupe';
 import { maybeScheduleWorkerAiPrescreenReminder } from './workerAiPrescreen/scheduleWorkerAiPrescreenReminder';
+import { sendCombinedApplicationInterviewFirstTouch } from './workerAiPrescreen/combinedApplicationInterviewFirstTouch';
 import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationReceivedSmsGuards';
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from './utils/functionRuntimeDefaults';
 import { sendGridFromEmail, sendGridFromName } from './messaging/emailProviderFactory';
 import { maybeEmitJobAppliedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
+import {
+  isApplicationStatusWaitlisted,
+  logWaitlistNotificationsSuppressed,
+  shouldSendApplicationWaitlistNotifications,
+} from './messaging/applicationWaitlistNotificationsGate';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -57,8 +63,7 @@ function firestoreTsMillis(value: unknown): number {
 }
 
 /**
- * One "thanks for applying" / application_received wave per application doc submission.
- * Uses submittedAt (preferred), else appliedAt, else updatedAt — so re-apply after withdraw gets a new timestamp and a new message.
+ * Suffix for **re-apply only** (withdrawn → submitted): new thank-you per resubmission wave.
  */
 function applicationReceivedThanksDedupeSuffix(data: Record<string, any>): string {
   const m =
@@ -66,6 +71,23 @@ function applicationReceivedThanksDedupeSuffix(data: Record<string, any>): strin
     firestoreTsMillis(data.appliedAt) ||
     firestoreTsMillis(data.updatedAt);
   return m > 0 ? String(m) : '0';
+}
+
+/**
+ * One application_received SMS per application doc for a given submission generation.
+ * Root-cause fix: onCreate + onUpdate both used time-based suffixes that could differ by ms → duplicate SMS.
+ * - First submit: single key `application_received_thanks__{applicationId}` (onCreate and in_progress→submitted share it).
+ * - Re-apply after withdraw: `application_received_thanks__{applicationId}__reapply__{suffix}`.
+ */
+function applicationReceivedThanksDedupeKey(
+  applicationId: string,
+  after: Record<string, any>,
+  opts: { mode: 'create' | 'update'; oldStatus?: unknown },
+): string {
+  if (opts.mode === 'update' && String(opts.oldStatus || '').trim().toLowerCase() === 'withdrawn') {
+    return `application_received_thanks__${applicationId}__reapply__${applicationReceivedThanksDedupeSuffix(after)}`;
+  }
+  return `application_received_thanks__${applicationId}`;
 }
 
 function isSubmittedApplicationStatus(status: unknown): boolean {
@@ -76,12 +98,6 @@ if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
-
-/**
- * When false, `onApplicationStatusChanged` sends nothing for status `waitlisted` (no SMS, email, push, or worker inbox title).
- * Flip to true after waitlist notification bugs are resolved.
- */
-const ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS = false;
 
 // Define secrets for Twilio (required for SMS sending)
 // SendGrid uses process.env (SENDGRID_API_KEY, etc.) - set in .env or Firebase config to avoid secret/env conflict
@@ -162,12 +178,6 @@ export const onApplicationCreated = onDocumentCreated(
     try {
       logger.info(`New application created: ${applicationId} in tenant ${tenantId}`);
 
-      await maybeScheduleWorkerAiPrescreenReminder({
-        tenantId,
-        applicationId,
-        after: applicationData as Record<string, unknown>,
-      });
-
       // Get user ID from application (userId or candidateId)
       // Also try to extract from applicationId if it follows pattern: {userId}_{jobId}
       let userId = applicationData.userId || applicationData.candidateId;
@@ -227,6 +237,38 @@ export const onApplicationCreated = onDocumentCreated(
           return { success: true, deduped: true };
         }
 
+        const shouldSendSms = await shouldSendNotification(userId, 'applicationUpdates', 'sms');
+        if (!shouldSendSms) {
+          await maybeScheduleWorkerAiPrescreenReminder({
+            tenantId,
+            applicationId,
+            after: applicationData as Record<string, unknown>,
+          });
+          logger.info(`SMS disabled for user ${userId} - skipping application created notification`);
+          return { success: true };
+        }
+
+        const thanksKeyCreate = applicationReceivedThanksDedupeKey(applicationId, applicationData, { mode: 'create' });
+        const combinedResult = await sendCombinedApplicationInterviewFirstTouch({
+          tenantId,
+          applicationId,
+          applicationData: applicationData as Record<string, unknown>,
+          userId,
+          userData: userData as Record<string, unknown>,
+          phoneE164,
+          thanksDedupeKey: thanksKeyCreate,
+          source: 'application_created',
+        });
+        if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks') {
+          return { success: true };
+        }
+
+        await maybeScheduleWorkerAiPrescreenReminder({
+          tenantId,
+          applicationId,
+          after: applicationData as Record<string, unknown>,
+        });
+
         // Try to find matching template
         let message = '';
         let templateFound = false;
@@ -275,23 +317,16 @@ export const onApplicationCreated = onDocumentCreated(
         }
 
         if (message) {
-          // Check notification settings (SMS enabled unless user has opted out)
-          const shouldSend = await shouldSendNotification(userId, 'applicationUpdates', 'sms');
-          if (!shouldSend) {
-            logger.info(`SMS disabled for user ${userId} - skipping application created notification`);
-            return { success: true };
-          }
-
-          const thanksSuffix = applicationReceivedThanksDedupeSuffix(applicationData);
+          const thanksDedupeKey = applicationReceivedThanksDedupeKey(applicationId, applicationData, { mode: 'create' });
           const claimedThanks = await markLifecycleEventIfFirst({
             tenantId,
-            dedupeKey: `application_received_thanks__${applicationId}__${thanksSuffix}`,
+            dedupeKey: thanksDedupeKey,
             eventType: 'application_received_thanks',
             context: { applicationId, userId, source: 'onCreate' },
           });
           if (!claimedThanks) {
             logger.info(
-              `Application ${applicationId}: application_received thanks deduped for wave ${thanksSuffix} (status handler or duplicate)`
+              `Application ${applicationId}: application_received dedupe hit (duplicate_create_or_status_path) key=${thanksDedupeKey}`
             );
             return { success: true, deduped: true };
           }
@@ -410,10 +445,12 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         return { success: true };
       }
 
-      if (normalizeStringToken(String(newStatus)) === 'waitlisted' && !ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS) {
-        logger.info(
-          `Application ${applicationId}: waitlisted notifications globally paused (ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS=false); skipping all channels`
-        );
+      if (isApplicationStatusWaitlisted(newStatus) && !shouldSendApplicationWaitlistNotifications()) {
+        logWaitlistNotificationsSuppressed('onApplicationStatusChanged', {
+          applicationId,
+          tenantId,
+          newStatus: String(newStatus ?? ''),
+        });
         return { success: true };
       }
 
@@ -890,23 +927,40 @@ export const onApplicationStatusChanged = onDocumentUpdated(
         if (message) {
           // Check notification settings
           const shouldSend = await shouldSendNotification(userId, 'applicationUpdates', 'sms');
-          
+
           if (!shouldSend) {
             logger.info(`SMS disabled for user ${userId} - skipping application status change notification`);
             return { success: true };
           }
 
           if (newStatus === 'submitted') {
-            const wave = applicationReceivedThanksDedupeSuffix(after);
+            const thanksDedupeKey = applicationReceivedThanksDedupeKey(applicationId, after, {
+              mode: 'update',
+              oldStatus,
+            });
+            const combinedResult = await sendCombinedApplicationInterviewFirstTouch({
+              tenantId,
+              applicationId,
+              applicationData: after as Record<string, unknown>,
+              userId,
+              userData: userData as Record<string, unknown>,
+              phoneE164,
+              thanksDedupeKey: thanksDedupeKey,
+              source: 'application_status_changed',
+            });
+            if (combinedResult === 'sent' || combinedResult === 'failed' || combinedResult === 'deduped_thanks') {
+              return { success: true };
+            }
+
             const claimedThanks = await markLifecycleEventIfFirst({
               tenantId,
-              dedupeKey: `application_received_thanks__${applicationId}__${wave}`,
+              dedupeKey: thanksDedupeKey,
               eventType: 'application_received_thanks',
               context: { applicationId, userId, source: 'onUpdate' },
             });
             if (!claimedThanks) {
               logger.info(
-                `Application ${applicationId}: application_received thanks deduped for wave ${wave} (onCreate already sent or duplicate)`
+                `Application ${applicationId}: application_received dedupe hit key=${thanksDedupeKey} (onCreate already sent or duplicate)`
               );
               return { success: true, deduped: true };
             }
@@ -928,7 +982,11 @@ export const onApplicationStatusChanged = onDocumentUpdated(
             jobPostId: after.jobId || after.postId,
           });
 
-          if (result.success) {
+          if (result.status === 'skipped_waitlist') {
+            logger.info(
+              `Application ${applicationId}: waitlist SMS suppressed (global gate; set ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS=true to allow)`
+            );
+          } else if (result.success) {
             logger.info(`SMS sent for application status change ${applicationId} (${oldStatus} → ${newStatus}) to ${phoneE164}`);
           } else {
             logger.warn(`Failed to send SMS for application ${applicationId}: ${result.error}`);

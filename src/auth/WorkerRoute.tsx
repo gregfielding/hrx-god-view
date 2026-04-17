@@ -22,7 +22,7 @@ const WorkerRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   const level = Number.parseInt(String(securityLevel ?? '0'), 10) || 0;

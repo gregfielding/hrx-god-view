@@ -44,6 +44,7 @@ const DEFAULT_QUIET_HOURS: QuietHoursConfig = {
     'help_response',
     // Application lifecycle — always deliver so user gets confirmation / status
     'application_received',
+    'application_received_interview_next_step',
     'application_screened',
     'application_advanced',
     'application_offered',

@@ -11,6 +11,11 @@ import { logger } from 'firebase-functions/v2';
 import { sendMessage } from './routingOrchestrator';
 import { dispatchSystemMessage } from './systemMessageDispatcher';
 import {
+  isApplicationStatusWaitlisted,
+  logWaitlistNotificationsSuppressed,
+  shouldSendApplicationWaitlistNotifications,
+} from './applicationWaitlistNotificationsGate';
+import {
   mapApplicationStatusToTriggerKey,
   mapAssignmentStatusToTriggerKey,
   SYSTEM_TRIGGER_KEYS,
@@ -35,13 +40,33 @@ export async function sendLegacyApplicationStatusMessage(args: {
   applicationData?: Record<string, any>;
   jobOrderId?: string;
   jobPostId?: string;
+  /** When set, SMS/email use this registry id instead of inferring from status (e.g. combined application + interview first touch). */
+  messageTypeIdOverride?: string;
 }): Promise<{ success: boolean; messageId: string | null; status: string; error?: string }> {
   try {
+    if (
+      args.source === 'application_status_changed' &&
+      isApplicationStatusWaitlisted(args.status) &&
+      !shouldSendApplicationWaitlistNotifications()
+    ) {
+      logWaitlistNotificationsSuppressed('sendLegacyApplicationStatusMessage', {
+        tenantId: args.tenantId,
+        userId: args.userId,
+        applicationId: args.applicationId,
+      });
+      return {
+        success: true,
+        messageId: null,
+        status: 'skipped_waitlist',
+        error: 'waitlist_notifications_disabled',
+      };
+    }
+
     const triggerKey =
       args.source === 'application_created'
         ? SYSTEM_TRIGGER_KEYS.applicationReceived
         : mapApplicationStatusToTriggerKey(args.status || '');
-    if (triggerKey) {
+    if (triggerKey && !args.messageTypeIdOverride) {
       const dispatched = await dispatchSystemMessage({
         tenantId: args.tenantId,
         triggerKey,
@@ -72,8 +97,8 @@ export async function sendLegacyApplicationStatusMessage(args: {
     }
 
     // Map source to message type
-    let messageTypeId = 'application_received';
-    if (args.source === 'application_status_changed') {
+    let messageTypeId = args.messageTypeIdOverride || 'application_received';
+    if (!args.messageTypeIdOverride && args.source === 'application_status_changed') {
       if (args.status === 'submitted') messageTypeId = 'application_received'; // re-apply: same as new application
       else if (args.status === 'screened') messageTypeId = 'application_screened';
       else if (args.status === 'advanced') messageTypeId = 'application_advanced';

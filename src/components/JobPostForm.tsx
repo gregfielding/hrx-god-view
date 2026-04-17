@@ -19,6 +19,7 @@ import {
   Alert,
   Stack,
   Snackbar,
+  Divider,
 } from '@mui/material';
 import { Close as CloseIcon, AutoAwesome as AutoAwesomeIcon, ContentCopy as ContentCopyIcon } from '@mui/icons-material';
 import JobPostWorksiteCityPlacesField, {
@@ -29,6 +30,7 @@ import {
   coerceStringArrayField,
   stripReadOnlyJobPostFields,
 } from '../services/recruiter/jobsBoardService';
+import { AccusourcePackageSelector } from './recruiter/AccusourcePackageSelector';
 import { useAuth } from '../contexts/AuthContext';
 import jobTitlesList from '../data/onetJobTitles.json';
 import onetSkills from '../data/onetSkills.json';
@@ -237,6 +239,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       workersNeeded: 1,
       showWorkersNeeded: false,
       eVerifyRequired: false,
+      screeningPackageId: '',
+      screeningPackageName: '',
       backgroundCheckPackages: [] as string[],
       showBackgroundChecks: false,
       drugScreeningPanels: [] as string[],
@@ -391,6 +395,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
       showAdditionalScreenings: fd.showAdditionalScreenings,
       shift: coerceStringArrayField(fd.shift),
       showShift: fd.showShift,
+      screeningPackageId: String(fd.screeningPackageId ?? '').trim() || null,
+      screeningPackageName: String(fd.screeningPackageName ?? '').trim() || null,
     } as Record<string, unknown>) as Partial<JobsBoardPost>;
   }, []);
 
@@ -975,19 +981,18 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
 
   const handleLocationChange = (locationId: string) => {
     setSelectedLocationId(locationId);
-    const selectedLocation = locations.find(l => l.id === locationId);
+    const selectedLocation = locationsForWorksiteSelect.find((l) => l.id === locationId);
     if (selectedLocation) {
-      setFormData({
-        ...formData,
+      setFormData((prev) => ({
+        ...prev,
         worksiteId: locationId,
         worksiteName: selectedLocation.nickname || selectedLocation.name,
         street: selectedLocation.address.street,
         city: selectedLocation.address.city,
         state: selectedLocation.address.state,
         zipCode: selectedLocation.address.zipCode,
-        // Store coordinates for distance calculations
-        coordinates: selectedLocation.address.coordinates
-      });
+        coordinates: selectedLocation.address.coordinates,
+      }));
       onHeaderPreviewChange?.({
         worksiteId: locationId,
         worksiteName: selectedLocation.nickname || selectedLocation.name,
@@ -1096,6 +1101,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
             showEnd: jobOrderData.showEnd ?? false,
             expDate: formatDateForInput(jobOrderData.expDate) || formData.expDate || '',
             eVerifyRequired: jobOrderData.eVerifyRequired || false,
+            screeningPackageId: String(jobOrderData.screeningPackageId ?? '').trim(),
+            screeningPackageName: String(jobOrderData.screeningPackageName ?? '').trim(),
             backgroundCheckPackages: jobOrderData.backgroundCheckPackages || [],
             showBackgroundChecks: (jobOrderData.backgroundCheckPackages || []).length > 0,
             drugScreeningPanels: jobOrderData.drugScreeningPanels || [],
@@ -1319,6 +1326,8 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
         showAdditionalScreenings: formData.showAdditionalScreenings,
         shift: coerceStringArrayField(formData.shift),
         showShift: formData.showShift,
+        screeningPackageId: String(formData.screeningPackageId ?? '').trim() || null,
+        screeningPackageName: String(formData.screeningPackageName ?? '').trim() || null,
       } as Record<string, unknown>) as Partial<JobsBoardPost>;
 
       await onSave(dataToSave);
@@ -1842,27 +1851,67 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   />
                 </Grid>
                 <Grid item xs={12} sm={6}>
-                  <FormControl fullWidth required disabled={hideJobOrderConnection || !selectedCompanyId}>
-                    <InputLabel>Worksite</InputLabel>
-                    <Select
-                      value={selectedLocationId}
-                      label="Worksite"
-                      onChange={(e) => handleLocationChange(e.target.value)}
-                      disabled={hideJobOrderConnection || loadingLocations || !selectedCompanyId}
-                    >
-                      {loadingLocations ? (
-                        <MenuItem value="">Loading locations...</MenuItem>
-                      ) : locationsForWorksiteSelect.length === 0 ? (
-                        <MenuItem value="">No locations available</MenuItem>
-                      ) : (
-                        locationsForWorksiteSelect.map((location) => (
-                          <MenuItem key={location.id} value={location.id}>
-                            {location.nickname || location.name}
-                          </MenuItem>
-                        ))
-                      )}
-                    </Select>
-                  </FormControl>
+                  <Autocomplete
+                    fullWidth
+                    options={locationsForWorksiteSelect}
+                    getOptionLabel={(option) => option.nickname || option.name}
+                    isOptionEqualToValue={(option, value) => option.id === value.id}
+                    value={
+                      locationsForWorksiteSelect.find((l) => l.id === selectedLocationId) || null
+                    }
+                    onChange={(event, newValue) => {
+                      if (newValue) {
+                        handleLocationChange(newValue.id);
+                      } else {
+                        setSelectedLocationId('');
+                        setFormData((prev) => ({
+                          ...prev,
+                          worksiteId: '',
+                          worksiteName: '',
+                          street: '',
+                          city: '',
+                          state: '',
+                          zipCode: '',
+                          coordinates: undefined,
+                        }));
+                        onHeaderPreviewChange?.({
+                          worksiteId: undefined,
+                          worksiteName: '',
+                          worksiteAddress: {
+                            street: '',
+                            city: '',
+                            state: '',
+                            zipCode: '',
+                          },
+                        });
+                        maybeTickPersist(0);
+                      }
+                    }}
+                    loading={loadingLocations}
+                    disabled={hideJobOrderConnection || loadingLocations || !selectedCompanyId}
+                    noOptionsText={
+                      loadingLocations ? 'Loading locations…' : 'No locations match your search'
+                    }
+                    renderInput={(params) => (
+                      <JobPostFormAutoSaveTextField
+                        {...params}
+                        label="Worksite"
+                        required
+                        helperText="Search or select a worksite"
+                        InputProps={{
+                          ...params.InputProps,
+                          endAdornment: (
+                            <>
+                              {loadingLocations ? (
+                                <CircularProgress color="inherit" size={20} />
+                              ) : null}
+                              {params.InputProps.endAdornment}
+                            </>
+                          ),
+                        }}
+                      />
+                    )}
+                  />
                 </Grid>
               </Grid>
             </Box>
@@ -2070,6 +2119,41 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
                   maybeTickPersist();
                 }}
                 />
+              </Box>
+            </Grid>
+          </Grid>
+        </Box>
+
+        {/* AccuSource screening package — same catalog as job orders; stored on this posting for hire/onboarding */}
+        <Box sx={{ mt: 2 }}>
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="h6" gutterBottom sx={{ mb: 2, color: 'primary.main' }}>
+            Compliance & requirements
+          </Typography>
+          <Grid container spacing={2} alignItems="flex-start">
+            <Grid item xs={12} md={7}>
+              <AccusourcePackageSelector
+                packageId={formData.screeningPackageId}
+                packageName={formData.screeningPackageName}
+                onChange={(next) => {
+                  setFormData((prev) => ({
+                    ...prev,
+                    screeningPackageId: next.packageId,
+                    screeningPackageName: next.packageName,
+                  }));
+                  maybeTickPersist();
+                }}
+                showDiagnostics
+                emptyMenuLabel="None"
+                helperText="Optional override for AccuSource screening from this posting (merge order: job post → linked job order → location → account)."
+              />
+            </Grid>
+            <Grid item xs={12} md={5}>
+              <Box sx={{ pt: { md: 0.5 } }}>
+                <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.5 }}>
+                  Choose a catalog package so hiring and onboarding can resolve which AccuSource package to use for
+                  candidates who applied to this post.
+                </Typography>
               </Box>
             </Grid>
           </Grid>

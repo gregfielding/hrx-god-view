@@ -13,7 +13,8 @@
     "startDate": "Start Date",
     "ok": "OK",
     "close": "Close",
-    "notifications": "Notifications"
+    "notifications": "Notifications",
+    "signIn": "Sign in"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -333,6 +334,23 @@
     },
     "openingMultiSelectHint": "Pick all that apply.",
     "placeholderShortAnswer": "A sentence or two is fine",
+    "openInMaps": "Open in Maps",
+    "dynamicOpts": {
+      "yes": "Yes",
+      "no": "No",
+      "not_sure": "Not sure"
+    },
+    "dynamic": {
+      "dyn_shift_punctuality": "Your shift starts at {startTime}. Can you reliably be there on time?",
+      "dyn_worksite_commute": "This job is located in {location}. Will you be able to reliably get there?",
+      "dyn_job_drug_screen": "This job requires a drug screen before starting. Are you able to complete that?",
+      "dyn_job_background_check": "This job requires a background check. Are you able to pass and complete it?",
+      "dyn_physical_job_fit": "This job involves physical work such as {list}. Are you comfortable with that?",
+      "dyn_cert_have": "This job requires {cert}. Do you have this certification?",
+      "dyn_cert_willing": "If you don't already have {cert}, are you willing to obtain it before or shortly after starting?",
+      "dyn_uniform_available": "This role requires {uniformText}. Do you have these available?",
+      "dyn_gig_path_willing": "We may have gig shifts available before a full-time role opens. Would you be willing to take gig shifts in the meantime?"
+    },
     "signInPrompt": "Sign in to complete this interview.",
     "backToDashboard": "Back to dashboard",
     "successTitle": "Interview submitted",
@@ -525,11 +543,17 @@
         "opt_yes": "Yes",
         "opt_not_sure": "Not sure"
       },
+      "drug_screen_detail": {
+        "prompt": "You indicated something may show on a drug screen. Briefly explain what we should know (dates/context help). If you tapped Yes by mistake, go Back to change your answer."
+      },
       "background_check": {
         "prompt": "If a role requires a background check, is there anything that might appear?",
         "opt_no": "No",
         "opt_yes": "Yes",
         "opt_not_sure": "Not sure"
+      },
+      "background_check_detail": {
+        "prompt": "You indicated something may appear on a background check. Briefly explain what we should know. If you tapped Yes by mistake, go Back to change your answer."
       },
       "supervisor_feedback": {
         "prompt": "What would your last supervisor say about you? Include:\n- one strength they might mention\n- one area you were working on (if any)"
@@ -844,6 +868,10 @@
     "last4Ssn": "Last 4 of SSN or ITIN",
     "last4SsnHelper": "Optional. Enter the last four digits of your SSN or ITIN.",
     "last4SsnInvalid": "If you enter the last four of your SSN or ITIN, it must be exactly 4 digits.",
+    "confirmWorkAuthBeforeSkipEeo": "Confirm your work authorization answers before skipping the optional EEO questions.",
+    "optionalEeoTitle": "Equal employment (optional)",
+    "optionalEeoHint": "Employers may use this information for diversity reporting. You can skip this section.",
+    "skipOptionalEeo": "Skip optional questions",
     "streetAddress": "Street Address",
     "unitApt": "Unit / Apt",
     "city": "City",
@@ -991,6 +1019,12 @@
     "estimatedStartLabel": "Estimated Start: {date}",
     "startsLabel": "Starts {date}",
     "nextShiftLabel": "Next Shift: {date}",
+    "dateTbd": "Date TBD",
+    "jobPostingNotFound": "We couldn't find this job posting.",
+    "scoreChip": "Score: {score}",
+    "mapEmbedTitle": "Map",
+    "stickyNextShiftFallback": "Next shift",
+    "stickyApplyNow": "Apply now",
     "applicationStatusSubmitted": "Application Submitted",
     "applicationStatusHired": "Hired",
     "applicationStatusWaitlisted": "Waitlisted",
@@ -1339,9 +1373,9 @@
       "everifyActionTitle": "E-Verify needs your action",
       "everifyActionDescription": "Your E-Verify case needs you to take the next step (for example, resolving a tentative non-confirmation).",
       "everifyActionPrimary": "Resolve issue",
-      "aiPrescreenInterviewTitle": "Complete your interview",
-      "aiPrescreenInterviewDescription": "We texted you a short C1 interview link. Complete it to keep your application moving.",
-      "aiPrescreenInterviewPrimary": "Start interview",
+      "aiPrescreenInterviewTitle": "Complete my interview",
+      "aiPrescreenInterviewDescription": "You haven’t finished your short interview yet. Continue to pick up where you left off and keep your application moving.",
+      "aiPrescreenInterviewPrimary": "Continue interview",
       "aiPrescreenProfileTitle": "Finish your profile first",
       "aiPrescreenProfileDescription": "We need a bit more profile information before we can text you the interview link. Update your profile and wait for the next message.",
       "aiPrescreenProfilePrimary": "Update profile",

@@ -8,7 +8,11 @@ import {
   MessageAutomationRule,
   toChannelList,
 } from './messageAutomationRules';
-import { SystemTriggerKey } from './triggerRegistry';
+import { SYSTEM_TRIGGER_KEYS, SystemTriggerKey } from './triggerRegistry';
+import {
+  logWaitlistNotificationsSuppressed,
+  shouldSendApplicationWaitlistNotifications,
+} from './applicationWaitlistNotificationsGate';
 
 const db = admin.firestore();
 
@@ -160,6 +164,22 @@ async function buildVariables(
 }
 
 export async function dispatchSystemMessage(args: DispatchSystemMessageArgs): Promise<DispatchSystemMessageResult> {
+  if (
+    args.triggerKey === SYSTEM_TRIGGER_KEYS.applicationStatusWaitlisted &&
+    !shouldSendApplicationWaitlistNotifications()
+  ) {
+    logWaitlistNotificationsSuppressed('dispatchSystemMessage', {
+      tenantId: args.tenantId,
+      userId: args.userId,
+    });
+    return {
+      handled: true,
+      sent: false,
+      ruleIds: [],
+      errors: [],
+    };
+  }
+
   const errors: string[] = [];
   const rules = await getActiveRulesByTrigger(args.tenantId, args.triggerKey);
 

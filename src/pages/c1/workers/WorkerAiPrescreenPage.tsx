@@ -26,7 +26,7 @@ import {
 import { alpha, useTheme } from '@mui/material/styles';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
 import {
@@ -114,7 +114,9 @@ function emptyAnswers(): WorkerAiPrescreenAnswers {
     backup_transportation: '',
     physical_comfort: '',
     drug_screen: '',
+    drug_screen_detail: '',
     background_check: '',
+    background_check_detail: '',
     supervisor_feedback: '',
     additional_notes: '',
   };
@@ -130,6 +132,8 @@ const SUBSTANTIVE_TEXT_STEP_IDS = new Set<WorkerAiPrescreenStepId>([
   'experience_details',
   'pressure_situation',
   'supervisor_feedback',
+  'drug_screen_detail',
+  'background_check_detail',
 ]);
 
 function wordCountAnswer(s: string): number {
@@ -161,6 +165,14 @@ function isCoreStepIncluded(
   const dynIds = new Set(dynamicSteps.map((s) => s.id));
   if (step.id === 'drug_screen' && dynIds.has(DYNAMIC_JOB_DRUG_SCREEN_ID)) return false;
   if (step.id === 'background_check' && dynIds.has(DYNAMIC_JOB_BACKGROUND_CHECK_ID)) return false;
+  if (step.id === 'drug_screen_detail') {
+    if (dynIds.has(DYNAMIC_JOB_DRUG_SCREEN_ID)) return false;
+    return String(a.drug_screen ?? '').trim().toLowerCase() === 'yes';
+  }
+  if (step.id === 'background_check_detail') {
+    if (dynIds.has(DYNAMIC_JOB_BACKGROUND_CHECK_ID)) return false;
+    return String(a.background_check ?? '').trim().toLowerCase() === 'yes';
+  }
   const rule = CONDITIONAL_CORE_STEP_IDS[step.id];
   return rule ? rule(a) : true;
 }
@@ -349,11 +361,34 @@ function buildWorksiteCommuteBlock(job: Record<string, unknown>): WorksiteCommut
   };
 }
 
+function localizedDynamicPrompt(
+  step: WorkerAiPrescreenDynamicStep | null | undefined,
+  tr: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  if (!step) return '';
+  if (step.promptKey) {
+    const s = tr(step.promptKey, step.promptParams);
+    if (s !== step.promptKey) return s;
+  }
+  return step.prompt;
+}
+
+function localizedDynamicOptionLabel(
+  value: string,
+  fallbackLabel: string,
+  tr: (key: string, params?: Record<string, string | number>) => string,
+): string {
+  const k = `workerAiPrescreen.dynamicOpts.${value}`;
+  const s = tr(k);
+  return s !== k ? s : fallbackLabel;
+}
+
 const WorkerAiPrescreenPage: React.FC = () => {
   const theme = useTheme();
   const t = useT();
   const { user, activeTenant } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const applicationId = searchParams.get('applicationId');
   const entryQuery = searchParams.get('entry');
@@ -935,7 +970,12 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const entryContextBanner = useMemo(() => {
     const e = entryQuery?.trim() || '';
     if (!e) return null;
-    if (e === 'user_group_backfill') {
+    if (
+      e === 'user_group_backfill' ||
+      e === 'user_group_ready_interview_invite' ||
+      e === 'user_group_profile_gap_interview_invite' ||
+      e === 'user_group_invite'
+    ) {
       return applicationId ? t('workerAiPrescreen.entryBanner.groupWithJob') : t('workerAiPrescreen.entryBanner.group');
     }
     if (e.startsWith('sms_')) {
@@ -987,11 +1027,16 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   if (!user) {
     return (
-      <Box sx={{ p: { xs: 1.5, sm: 2 } }}>
+      <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
         <Typography variant="body1">{t('workerAiPrescreen.signInPrompt')}</Typography>
-        <Button sx={{ mt: 2 }} variant="contained" onClick={() => navigate('/c1/workers/dashboard')}>
-          {t('workerAiPrescreen.backToDashboard')}
-        </Button>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} sx={{ mt: 2 }}>
+          <Button variant="contained" onClick={() => navigate('/login', { state: { from: location } })}>
+            {t('common.signIn')}
+          </Button>
+          <Button variant="outlined" onClick={() => navigate('/c1/workers/dashboard')}>
+            {t('workerAiPrescreen.backToDashboard')}
+          </Button>
+        </Stack>
       </Box>
     );
   }
@@ -1190,7 +1235,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
                 ? t('workerAiPrescreen.v2.followupPressurePrompt')
                 : t('workerAiPrescreen.v2.followupSupervisorPrompt')
             : isDynamicPhase
-              ? dynamicStep?.prompt
+              ? localizedDynamicPrompt(dynamicStep, t)
               : coreStep?.prompt}
         </Typography>
         {!isDynamicPhase &&
@@ -1344,7 +1389,12 @@ const WorkerAiPrescreenPage: React.FC = () => {
               }
             >
               {dynamicStep.options.map((o) => (
-                <FormControlLabel key={o.value} value={o.value} control={<Radio size="small" />} label={o.label} />
+                <FormControlLabel
+                  key={o.value}
+                  value={o.value}
+                  control={<Radio size="small" />}
+                  label={localizedDynamicOptionLabel(o.value, o.label, t)}
+                />
               ))}
             </RadioGroup>
           </FormControl>

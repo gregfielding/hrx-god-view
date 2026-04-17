@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Avatar,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
@@ -20,7 +21,7 @@ import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import WorkIcon from '@mui/icons-material/Work';
 import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
 import { doc, onSnapshot } from 'firebase/firestore';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { db } from '../../../firebase';
 import { useAuth } from '../../../contexts/AuthContext';
@@ -39,6 +40,7 @@ const WorkerProfile: React.FC = () => {
   const tenantId = authTenantId || activeTenant?.id || null;
   const t = useT();
   const navigate = useNavigate();
+  const location = useLocation();
   const uid = user?.uid;
   const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
 
@@ -140,9 +142,14 @@ const WorkerProfile: React.FC = () => {
   if (!uid) {
     return (
       <Container maxWidth="md" sx={{ py: 2 }}>
-        <Typography variant="body2" color="text.secondary">
-          {t('profile.signInToComplete')}
-        </Typography>
+        <Stack spacing={2}>
+          <Typography variant="body2" color="text.secondary">
+            {t('profile.signInToComplete')}
+          </Typography>
+          <Button variant="contained" onClick={() => navigate('/login', { state: { from: location } })}>
+            {t('common.signIn')}
+          </Button>
+        </Stack>
       </Container>
     );
   }

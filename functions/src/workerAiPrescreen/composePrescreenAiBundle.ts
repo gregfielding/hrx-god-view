@@ -109,9 +109,10 @@ export async function composePrescreenAiBundle(args: {
   const scored = scoreWorkerAiPrescreen(answersEffective, {
     answerQualityFlags: answerQualityEval.flags,
     scoreAdjustment: answerQualityEval.scoreAdjustment,
+    drugBackgroundMergeMeta: drugBackgroundMergeMeta,
   });
-  const riskProfile = computeRiskProfile(answersEffective);
-  const riskAdmission = shouldFlagRiskAdmission(answersEffective);
+  const riskProfile = computeRiskProfile(answersEffective, drugBackgroundMergeMeta);
+  const riskAdmission = shouldFlagRiskAdmission(answersEffective, drugBackgroundMergeMeta);
   const aiFlags = [...new Set([...scored.flags, ...(riskAdmission ? ['risk_admission_detected'] : [])])];
   const confidenceScore = computeConfidenceScore({
     overallScore: scored.overallScore,

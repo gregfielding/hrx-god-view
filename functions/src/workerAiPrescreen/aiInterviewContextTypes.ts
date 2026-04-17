@@ -94,7 +94,11 @@ export type DynamicPrescreenModule =
 export type DynamicPrescreenStep = {
   id: string;
   type: 'single_select';
+  /** English fallback (e.g. logs, older clients). */
   prompt: string;
+  /** Worker portal i18n key (e.g. `workerAiPrescreen.dynamic.dyn_shift_punctuality`). */
+  promptKey?: string;
+  promptParams?: Record<string, string | number>;
   options: { value: string; label: string }[];
   module: DynamicPrescreenModule;
 };

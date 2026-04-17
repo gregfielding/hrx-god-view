@@ -264,6 +264,150 @@ export function hardValidateInterviewInviteCandidate(args: {
   return { ok: true, blockReasons };
 }
 
+export type UserGroupInterviewInviteBucket = 'ready_for_interview' | 'needs_profile_update';
+
+/**
+ * Validates a row from `runUserGroupMemberNextStepEvaluation` for adaptive interview SMS.
+ * - `ready_for_interview`: must pass full profile eligibility (legacy interview path).
+ * - `needs_profile_update`: allows ineligible workers so adaptive interview can close gaps (job context preserved when application exists).
+ */
+export function hardValidateUserGroupInterviewInviteRow(args: {
+  tenantId: string;
+  groupMemberIds: string[];
+  userId: string;
+  userData: Record<string, unknown> | undefined;
+  applicationData: Record<string, unknown> | undefined;
+  applicationId: string | null;
+  groupId: string;
+  allowNonGroupApplication?: boolean;
+  employments: Array<Record<string, unknown>>;
+  c1SelectEntityId: string | null;
+  eligOpts: {
+    requireResumeOrSkill: boolean;
+    requirePhone: boolean;
+    requireLocation: boolean;
+    requireWorkAuthorization: boolean;
+  };
+  bucket: UserGroupInterviewInviteBucket;
+}): InterviewInviteHardCheck {
+  const {
+    tenantId,
+    groupMemberIds,
+    userId,
+    userData,
+    applicationData,
+    applicationId,
+    groupId,
+    allowNonGroupApplication,
+    employments,
+    c1SelectEntityId,
+    eligOpts,
+    bucket,
+  } = args;
+  const blockReasons: string[] = [];
+
+  if (!groupMemberIds.includes(userId)) {
+    blockReasons.push('User is no longer a member of this group');
+    return { ok: false, blockReasons };
+  }
+
+  if (!userData) {
+    blockReasons.push('User document not found');
+    return { ok: false, blockReasons };
+  }
+
+  if (getMaxTenantSecurityLevel(userData, tenantId) >= 5) {
+    blockReasons.push('Internal / staff-level user (security level ≥ 5)');
+    return { ok: false, blockReasons };
+  }
+
+  if (applicationId && !applicationData) {
+    blockReasons.push('Application not found');
+    return { ok: false, blockReasons };
+  }
+
+  if (applicationData) {
+    const app = applicationData;
+    if (!allowNonGroupApplication && String(app.groupId || '').trim() !== groupId) {
+      blockReasons.push('Application is not linked to this groupId');
+      return { ok: false, blockReasons };
+    }
+
+    const uidOnApp = String(app.userId || app.candidateId || '').trim();
+    if (uidOnApp !== userId) {
+      blockReasons.push('Application userId does not match member');
+      return { ok: false, blockReasons };
+    }
+
+    const appStatus = norm(app.status);
+    if (TERMINAL_EXCLUDED.has(appStatus)) {
+      blockReasons.push(`Application status excluded (${appStatus})`);
+      return { ok: false, blockReasons };
+    }
+
+    if (appStatus === 'accepted') {
+      blockReasons.push('Application already accepted');
+      return { ok: false, blockReasons };
+    }
+
+    const hl = app.hiringLifecycle as { stage?: string } | undefined;
+    const stage = norm(hl?.stage);
+    if (stage && LIFECYCLE_SUPPRESS_INVITE.has(stage)) {
+      blockReasons.push(`Hiring lifecycle stage “${stage}” (outreach suppressed)`);
+      return { ok: false, blockReasons };
+    }
+
+    if (app.workerAiPrescreenInterviewCompletedAt) {
+      blockReasons.push('AI prescreen interview already completed');
+      return { ok: false, blockReasons };
+    }
+  }
+
+  const emBlock = anyEmploymentBlocks(employments);
+  if (emBlock.blocks) {
+    blockReasons.push(emBlock.detail);
+    return { ok: false, blockReasons };
+  }
+
+  for (const rec of employments) {
+    if (!isC1SelectEmployment(rec, c1SelectEntityId)) continue;
+    const c1b = c1EmploymentBlocksInvite(rec);
+    if (c1b.blocks) {
+      blockReasons.push(`Already in C1 Select flow: ${c1b.detail}`);
+      return { ok: false, blockReasons };
+    }
+  }
+
+  const elig = evaluateAiPrescreenEligibility(userData, eligOpts);
+  if (bucket === 'ready_for_interview' && !elig.eligibleForInterview) {
+    blockReasons.push(`Profile eligibility: ${elig.reason}`);
+    return { ok: false, blockReasons };
+  }
+
+  if (!userDocHasUsablePhone(userData)) {
+    blockReasons.push('No valid SMS target (phone missing or unusable)');
+    return { ok: false, blockReasons };
+  }
+
+  const phone = phoneE164FromUser(userData);
+  if (!phone || !/^\+[1-9]\d{7,14}$/.test(phone)) {
+    blockReasons.push('Phone is not a valid E.164 SMS target');
+    return { ok: false, blockReasons };
+  }
+
+  if (userData.smsOptIn === false) {
+    blockReasons.push('User opted out of SMS (smsOptIn=false)');
+    return { ok: false, blockReasons };
+  }
+
+  if (userData.smsBlockedSystem === true) {
+    blockReasons.push('SMS blocked (STOP / system opt-out)');
+    return { ok: false, blockReasons };
+  }
+
+  return { ok: true, blockReasons: [] };
+}
+
 export function tenantEligOpts(tenantData: Record<string, unknown>) {
   const prescreenPolicy = resolveAiPrescreenTenantPolicy(tenantData);
   return {

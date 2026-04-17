@@ -48,6 +48,9 @@ const REQUIRED_KEYS = [
   'additional_notes',
 ] as const;
 
+/** Optional core rows persisted when present / applicable. */
+const OPTIONAL_CORE_STORED_KEYS = ['drug_screen_detail', 'background_check_detail'] as const;
+
 const MULTI_SELECT_ANSWER_KEYS = new Set<string>(['work_confidence', ...PRESCREEN_OPENING_MULTI_SELECT_KEYS]);
 
 const ALLOWED_ATTENDANCE_ISSUES = new Set(['yes', 'no']);
@@ -111,7 +114,47 @@ function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
   const bg = normLower(out.background_check).replace(/\s+/g, '_');
   if (!ALLOWED_DRUG_BG.has(bg)) throw new HttpsError('invalid-argument', 'background_check invalid');
 
+  const detail = (k: 'drug_screen_detail' | 'background_check_detail') => {
+    const v = o[k];
+    if (v === undefined || v === null) return;
+    if (typeof v !== 'string') {
+      throw new HttpsError('invalid-argument', `${k} must be a string`);
+    }
+    (out as Record<string, string>)[k] = String(v).trim();
+  };
+  detail('drug_screen_detail');
+  detail('background_check_detail');
+
   return out;
+}
+
+const COMPLIANCE_DETAIL_MIN_CHARS = 15;
+
+function validateComplianceDisclosureFollowUps(
+  answers: WorkerAiPrescreenAnswers,
+  dynamicStepIds: Set<string>,
+): void {
+  const drug = normLower(answers.drug_screen).replace(/\s+/g, '_');
+  const bg = normLower(answers.background_check).replace(/\s+/g, '_');
+
+  if (drug === 'yes' && !dynamicStepIds.has('dyn_job_drug_screen')) {
+    const d = String(answers.drug_screen_detail ?? '').trim();
+    if (d.length < COMPLIANCE_DETAIL_MIN_CHARS) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Please add a short explanation (${COMPLIANCE_DETAIL_MIN_CHARS}+ characters) for the drug screening question, or go back and change your answer.`,
+      );
+    }
+  }
+  if (bg === 'yes' && !dynamicStepIds.has('dyn_job_background_check')) {
+    const d = String(answers.background_check_detail ?? '').trim();
+    if (d.length < COMPLIANCE_DETAIL_MIN_CHARS) {
+      throw new HttpsError(
+        'invalid-argument',
+        `Please add a short explanation (${COMPLIANCE_DETAIL_MIN_CHARS}+ characters) for the background check question, or go back and change your answer.`,
+      );
+    }
+  }
 }
 
 function formatAnswerForStorage(key: string, answers: WorkerAiPrescreenAnswers): string {
@@ -197,7 +240,7 @@ function shouldOmitOpeningStoredQuestion(key: string, answers: WorkerAiPrescreen
 
 /** Omit core rows that were skipped in UI (conditionals) or replaced by job-specific dynamic steps (dedupe). */
 function shouldOmitCoreQuestionFromStoredInterview(
-  key: (typeof REQUIRED_KEYS)[number],
+  key: string,
   answers: WorkerAiPrescreenAnswers,
   dynamicStepIds: Set<string>,
 ): boolean {
@@ -205,6 +248,10 @@ function shouldOmitCoreQuestionFromStoredInterview(
   if (key === 'attendance_explanation' && normLower(answers.attendance_issues) !== 'yes') return true;
   if (key === 'drug_screen' && dynamicStepIds.has('dyn_job_drug_screen')) return true;
   if (key === 'background_check' && dynamicStepIds.has('dyn_job_background_check')) return true;
+  if (key === 'drug_screen_detail' && normLower(answers.drug_screen) !== 'yes') return true;
+  if (key === 'drug_screen_detail' && dynamicStepIds.has('dyn_job_drug_screen')) return true;
+  if (key === 'background_check_detail' && normLower(answers.background_check) !== 'yes') return true;
+  if (key === 'background_check_detail' && dynamicStepIds.has('dyn_job_background_check')) return true;
   return false;
 }
 
@@ -279,6 +326,8 @@ export const submitWorkerAiPrescreenInterview = onCall(
       dynamicAnswers = parseDynamicAnswers(data.dynamicAnswers, dynamicStepIds);
     }
 
+    validateComplianceDisclosureFollowUps(answers, dynamicStepIds);
+
     const interviewsCol = userRef.collection('interviews');
     const interviewRef = interviewsCol.doc();
     const interviewId = interviewRef.id;
@@ -348,14 +397,14 @@ export const submitWorkerAiPrescreenInterview = onCall(
     }
 
     const questions = [
-      ...REQUIRED_KEYS.filter((id) => !shouldOmitCoreQuestionFromStoredInterview(id, answers, dynamicStepIds)).map(
-        (id) => ({
-          id,
-          question: WORKER_AI_PRESCREEN_PROMPTS[id] || id,
-          answer: formatAnswerForStorage(id, answers),
-          type: questionTypeForKey(id),
-        }),
-      ),
+      ...[...REQUIRED_KEYS, ...OPTIONAL_CORE_STORED_KEYS].filter(
+        (id) => !shouldOmitCoreQuestionFromStoredInterview(id, answers, dynamicStepIds),
+      ).map((id) => ({
+        id,
+        question: WORKER_AI_PRESCREEN_PROMPTS[id] || id,
+        answer: formatAnswerForStorage(id, answers),
+        type: questionTypeForKey(id),
+      })),
       ...dynamicSteps.map((step) => ({
         id: step.id,
         question: step.prompt,

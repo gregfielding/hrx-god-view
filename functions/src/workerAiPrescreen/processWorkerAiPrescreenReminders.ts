@@ -382,6 +382,17 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       const data = docSnap.data() as Record<string, unknown>;
 
+      if (data.workerAiPrescreenFirstTouchCombinedAt) {
+        await docSnap.ref.update({
+          workerAiPrescreenReminderPending: false,
+          workerAiPrescreenReminderLastOutcome: 'skipped',
+          workerAiPrescreenReminderLastError: 'combined_first_touch_already_sent',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        skipped += 1;
+        continue;
+      }
+
       if (!(await tenantOutreachEnabled(tenantId))) {
         await docSnap.ref.update({
           workerAiPrescreenReminderPending: false,

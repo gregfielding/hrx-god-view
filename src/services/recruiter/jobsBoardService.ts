@@ -84,6 +84,16 @@ export const normalizeJobsBoardPostRecord = (id: string, data: Record<string, un
       out.payRate = null;
     }
   }
+  const spId = out.screeningPackageId;
+  out.screeningPackageId =
+    spId == null || spId === '' ? '' : typeof spId === 'string' ? spId.trim() : String(spId).trim();
+  const spName = out.screeningPackageName;
+  out.screeningPackageName =
+    spName == null || spName === ''
+      ? ''
+      : typeof spName === 'string'
+        ? spName.trim()
+        : String(spName).trim();
   return out as unknown as JobsBoardPost;
 };
 
@@ -227,6 +237,13 @@ export interface JobsBoardPost {
   workersNeeded?: number; // Optional for Gig jobs
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
   eVerifyRequired: boolean;
+  /**
+   * AccuSource screening package for this posting. Used when hiring / auto-hire so onboarding can resolve
+   * which package to order (e.g. auto-start background check). Optional override vs defaults
+   * (merge order: job post → linked job order → location → account).
+   */
+  screeningPackageId?: string | null;
+  screeningPackageName?: string | null;
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
   drugScreeningPanels: string[];
@@ -336,6 +353,8 @@ export interface CreatePostData {
   workersNeeded?: number; // Optional for Gig jobs
   showWorkersNeeded?: boolean; // Whether to show workers needed on public posting
   eVerifyRequired: boolean;
+  screeningPackageId?: string | null;
+  screeningPackageName?: string | null;
   backgroundCheckPackages: string[];
   showBackgroundChecks: boolean;
   drugScreeningPanels: string[];
@@ -726,6 +745,14 @@ export class JobsBoardService {
         workersNeeded: customData?.workersNeeded ?? (isGigJob ? 1 : (jobOrder.workersNeeded ?? 1)),
         showWorkersNeeded: customData?.showWorkersNeeded !== undefined ? customData.showWorkersNeeded : false, // Default to false so workers needed is hidden on job board unless explicitly enabled
         eVerifyRequired: customData?.eVerifyRequired !== undefined ? customData.eVerifyRequired : jobOrder.eVerifyRequired,
+        screeningPackageId:
+          customData?.screeningPackageId !== undefined
+            ? String(customData.screeningPackageId ?? '').trim() || null
+            : String(jobOrder.screeningPackageId ?? '').trim() || null,
+        screeningPackageName:
+          customData?.screeningPackageName !== undefined
+            ? String(customData.screeningPackageName ?? '').trim() || null
+            : String(jobOrder.screeningPackageName ?? '').trim() || null,
         backgroundCheckPackages: customData?.backgroundCheckPackages !== undefined ? customData.backgroundCheckPackages : jobOrder.backgroundCheckPackages,
         showBackgroundChecks: customData?.showBackgroundChecks !== undefined ? customData.showBackgroundChecks : false,
         drugScreeningPanels: customData?.drugScreeningPanels !== undefined ? customData.drugScreeningPanels : jobOrder.drugScreeningPanels,
@@ -894,6 +921,16 @@ export class JobsBoardService {
         ...(postData.workersNeeded !== undefined && { workersNeeded: postData.workersNeeded }),
         ...(postData.showWorkersNeeded !== undefined && { showWorkersNeeded: postData.showWorkersNeeded }),
         eVerifyRequired: postData.eVerifyRequired,
+        ...(postData.screeningPackageId !== undefined
+          ? {
+              screeningPackageId: String(postData.screeningPackageId ?? '').trim() || null,
+            }
+          : {}),
+        ...(postData.screeningPackageName !== undefined
+          ? {
+              screeningPackageName: String(postData.screeningPackageName ?? '').trim() || null,
+            }
+          : {}),
         backgroundCheckPackages: coerceStringArrayField(postData.backgroundCheckPackages),
         showBackgroundChecks: postData.showBackgroundChecks ?? false,
         drugScreeningPanels: coerceStringArrayField(postData.drugScreeningPanels),

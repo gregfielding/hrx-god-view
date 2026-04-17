@@ -27,6 +27,14 @@ import QuizOutlinedIcon from '@mui/icons-material/QuizOutlined';
 
 const drawerWidth = 240;
 
+/** Routes guests can use without signing in (full shell still shown). */
+const GUEST_NAV_PATHS = new Set([
+  '/c1/workers/dashboard',
+  '/c1/jobs-board',
+  '/c1/workers/profile',
+  C1_WORKER_AI_PRESCREEN_PATH,
+]);
+
 const baseNavConfig = [
   { key: 'nav.dashboard', path: '/c1/workers/dashboard', icon: <DashboardIcon /> },
   { key: 'nav.findWork', path: '/c1/jobs-board', icon: <WorkIcon /> },
@@ -180,9 +188,12 @@ const WorkerNav: React.FC = () => {
   const tenantDisplayName = activeTenant?.name || 'HRX Platform';
   const { showPrescreenNav } = useWorkerAiPrescreenSurfaceSignals(activeTenant?.id, user?.uid ?? null);
   const navItems = useMemo(() => {
+    if (!user) {
+      return baseNavConfig.filter((item) => GUEST_NAV_PATHS.has(item.path));
+    }
     if (showPrescreenNav) return baseNavConfig;
     return baseNavConfig.filter((item) => item.path !== C1_WORKER_AI_PRESCREEN_PATH);
-  }, [showPrescreenNav]);
+  }, [user, showPrescreenNav]);
 
   const closeMobileDrawer = () => setMobileOpen(false);
 

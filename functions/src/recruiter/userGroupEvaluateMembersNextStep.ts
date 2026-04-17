@@ -109,7 +109,7 @@ export const userGroupEvaluateMembersNextStep = onCall(
       auditId,
       committedAt,
       note:
-        'Preview/audit. To send interview invites to the Ready bucket, use Prepare send in the same dialog (server-enforced caps + revalidation).',
+        'Preview/audit. Interview invites (adaptive prescreen) cover both Ready for interview and Needs profile update buckets — use userGroupInterviewInviteSend.',
     };
   },
 );

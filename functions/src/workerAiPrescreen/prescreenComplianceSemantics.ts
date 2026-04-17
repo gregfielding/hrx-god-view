@@ -1,18 +1,20 @@
 /**
- * Drug / background prescreen answers — canonical semantics for scoring and risk.
+ * Drug / background prescreen answers — stored as yes | no | not_sure.
  *
- * Questions (worker-facing):
- * - "Are you able to complete/pass a drug screen?"
- * - "Are you able to pass/complete a background check?"
+ * Two product framings (same tokens, different meaning):
+ * - **disclosure** (core template): "Would anything show up?" → `no` = clean, `yes` = concern.
+ * - **ability** (job dynamic `dyn_job_*`): "Are you able to complete?" → `yes` = clean, `no` = concern.
  *
- * Stored values: yes | no | not_sure
- *
- * - yes   → worker reports they CAN pass / complete → LOW compliance concern
- * - no    → HIGH concern (may not pass / something would show up)
- * - not_sure → MEDIUM concern
+ * Scoring and enrichment must use {@link complianceConcernLevel} with the correct framing.
  */
 
 export type DrugBackgroundAnswer = 'yes' | 'no' | 'not_sure' | 'unknown';
+
+/** How the yes/no options should be interpreted for compliance. */
+export type ComplianceQuestionFraming = 'disclosure' | 'ability';
+
+/** Normalized concern for scoring (independent of raw yes/no wording). */
+export type ComplianceConcernLevel = 'clean' | 'concern' | 'uncertain' | 'empty';
 
 /**
  * Canonical values: yes | no | not_sure (stored lowercased, often with underscores).
@@ -60,19 +62,38 @@ export function normalizeDrugBackgroundAnswer(raw: unknown): DrugBackgroundAnswe
 }
 
 /**
- * Contribution to aggregate compliance risk (0 = best, 1 = worst).
- * Aligns with interview enrichment `complianceRisk` averaging.
+ * Map raw answer + question framing → concern level.
+ * - disclosure: yes = something to disclose, no = nothing to disclose.
+ * - ability: yes = can pass, no = cannot / unwilling.
  */
-export function complianceRiskFactorForDrugBackground(answer: DrugBackgroundAnswer): number {
-  switch (answer) {
-    case 'yes':
+export function complianceConcernLevel(
+  raw: unknown,
+  framing: ComplianceQuestionFraming,
+): ComplianceConcernLevel {
+  const n = normalizeDrugBackgroundAnswer(raw);
+  if (n === 'unknown') return 'empty';
+  if (n === 'not_sure') return 'uncertain';
+  if (framing === 'disclosure') {
+    if (n === 'no') return 'clean';
+    if (n === 'yes') return 'concern';
+  } else {
+    if (n === 'yes') return 'clean';
+    if (n === 'no') return 'concern';
+  }
+  return 'uncertain';
+}
+
+/** Risk factor 0–1 for enrichment / debug (0 = minimal concern). */
+export function complianceRiskFactorFromConcern(level: ComplianceConcernLevel): number {
+  switch (level) {
+    case 'clean':
       return 0.08;
-    case 'not_sure':
-    case 'unknown':
-      return 0.48;
-    case 'no':
+    case 'concern':
       return 0.92;
+    case 'uncertain':
+    case 'empty':
     default:
       return 0.48;
   }
 }
+

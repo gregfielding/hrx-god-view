@@ -25,6 +25,8 @@ export type MessageStatus =
   | 'not_sent' 
   | 'read'
   | 'suppressed_rate_limit'
+  | 'suppressed_early_funnel'
+  | 'suppressed_duplicate_message_guard'
   | 'suppressed_quiet_hours'
   | 'suppressed_notification_settings'
   | 'ai_draft_created'
@@ -347,6 +349,8 @@ export async function getMessageAnalytics(
         not_sent: 0,
         read: 0,
         suppressed_rate_limit: 0,
+        suppressed_early_funnel: 0,
+        suppressed_duplicate_message_guard: 0,
         suppressed_quiet_hours: 0,
         suppressed_notification_settings: 0,
         ai_draft_created: 0,

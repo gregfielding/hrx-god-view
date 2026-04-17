@@ -24,6 +24,14 @@ import { checkRateLimits } from './rateLimiter';
 import { isQuietHours } from './quietHours';
 import { getSystemSenderIdentity, resolveSenderIdentity, SenderIdentity } from './senderIdentity';
 import { findOrCreateEmailThread, addMessageToThread } from './emailThreading';
+import {
+  logWaitlistNotificationsSuppressed,
+  shouldSendApplicationWaitlistNotifications,
+} from './applicationWaitlistNotificationsGate';
+import {
+  checkEarlyFunnelSmsGate,
+  recordEarlyFunnelSmsSent,
+} from './earlyFunnelSmsPolicy';
 
 const db = admin.firestore();
 
@@ -75,7 +83,26 @@ export async function sendMessage(context: MessageContext): Promise<SendMessageR
   
   try {
     logger.info(`Routing message: ${context.messageTypeId} to user ${context.userId}`);
-    
+
+    if (context.messageTypeId === 'application_waitlisted' && !shouldSendApplicationWaitlistNotifications()) {
+      logWaitlistNotificationsSuppressed('routingOrchestrator.sendMessage', {
+        tenantId: context.tenantId,
+        userId: context.userId,
+      });
+      return {
+        success: true,
+        messageTypeId: context.messageTypeId,
+        userId: context.userId,
+        routingDecision: {
+          channels: [],
+          shouldSend: false,
+          reason: 'application_waitlisted notifications are disabled (set ENABLE_APPLICATION_WAITLIST_NOTIFICATIONS=true to allow)',
+          skippedChannels: [{ channel: 'sms', reason: 'waitlist_notifications_disabled' }],
+        },
+        deliveryResults: [],
+      };
+    }
+
     // 1. Get message type configuration
     const messageTypeConfig = await getMessageTypeConfig(context.tenantId, context.messageTypeId);
     if (!messageTypeConfig) {
@@ -662,6 +689,52 @@ async function deliverSMS(
       };
     }
 
+    // Early-funnel coordination: avoid stacked "next step" SMS within a short window
+    const earlyFunnel = isTestSend
+      ? { allowed: true as const }
+      : await checkEarlyFunnelSmsGate({
+          tenantId: context.tenantId,
+          userId: context.userId,
+          messageTypeId: context.messageTypeId,
+        });
+    if (earlyFunnel.allowed === false) {
+      const logRef = db
+        .collection('tenants')
+        .doc(context.tenantId)
+        .collection('messageLogs')
+        .doc();
+      const logDoc: Omit<MessageLog, 'id' | 'createdAt'> & {
+        createdAt: admin.firestore.FieldValue;
+      } = {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        threadId: context.metadata?.threadId || undefined,
+        messageTypeId: context.messageTypeId,
+        channel: 'sms',
+        direction: 'outbound',
+        fromIdentity: context.source === 'recruiter' ? 'recruiter' : 'system',
+        fromUserId: context.source === 'recruiter' ? context.sourceId : undefined,
+        contentOriginal: messageContent,
+        contentSent: messageContent,
+        language: preferredLanguage,
+        status: 'suppressed_early_funnel',
+        failureReason: JSON.stringify({
+          reason: earlyFunnel.reason,
+          lastMessageTypeId: earlyFunnel.lastMessageTypeId,
+          elapsedMs: earlyFunnel.elapsedMs,
+        }),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...outboundRecipientForChannel('sms', userData),
+      };
+      await logRef.set(logDoc);
+      return {
+        channel: 'sms',
+        success: false,
+        suppressed: true,
+        error: `Early-funnel cooldown: ${earlyFunnel.reason}`,
+      };
+    }
+
     // PHASE 5.2: Check quiet hours before sending (skip for test sends)
     const quietHoursCheck = isTestSend
       ? false
@@ -706,6 +779,61 @@ async function deliverSMS(
         success: false,
         suppressed: true,
         error: 'Message suppressed due to quiet hours',
+      };
+    }
+
+    // Last-line: same messageTypeId + tenant + user within 60s (smsDuplicateMessageGuard; same as sendWorkerMessageInternal).
+    const dupGuard = isTestSend
+      ? ({ allowed: true as const })
+      : await (async () => {
+          const { checkSmsDuplicateMessageTypeGuard } = await import('./smsDuplicateMessageGuard');
+          return checkSmsDuplicateMessageTypeGuard({
+            tenantId: context.tenantId,
+            userId: context.userId,
+            messageTypeId: context.messageTypeId,
+          });
+        })();
+    if (dupGuard.allowed === false) {
+      const logRefDup = db
+        .collection('tenants')
+        .doc(context.tenantId)
+        .collection('messageLogs')
+        .doc();
+      const logDocDup: Omit<MessageLog, 'id' | 'createdAt'> & {
+        createdAt: admin.firestore.FieldValue;
+      } = {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        threadId: context.metadata?.threadId || undefined,
+        messageTypeId: context.messageTypeId,
+        channel: 'sms',
+        direction: 'outbound',
+        fromIdentity: context.source === 'recruiter' ? 'recruiter' : 'system',
+        fromUserId: context.source === 'recruiter' ? context.sourceId : undefined,
+        contentOriginal: messageContent,
+        contentSent: messageContent,
+        language: preferredLanguage,
+        status: 'suppressed_duplicate_message_guard',
+        failureReason: JSON.stringify({
+          reason: 'duplicate_message_guard',
+          elapsedMs: dupGuard.elapsedMs,
+        }),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        ...outboundRecipientForChannel('sms', userData),
+      };
+      await logRefDup.set(logDocDup);
+      logger.info('duplicate_message_guard', {
+        tenantId: context.tenantId,
+        userId: context.userId,
+        messageTypeId: context.messageTypeId,
+        elapsedMs: dupGuard.elapsedMs,
+        source: 'orchestrator_deliverSMS',
+      });
+      return {
+        channel: 'sms',
+        success: false,
+        suppressed: true,
+        error: 'duplicate_message_guard',
       };
     }
 
@@ -780,7 +908,31 @@ async function deliverSMS(
     }
     
     await logRef.update(update);
-    
+
+    if (result.success) {
+      try {
+        await recordEarlyFunnelSmsSent({
+          tenantId: context.tenantId,
+          userId: context.userId,
+          messageTypeId: context.messageTypeId,
+        });
+      } catch (recErr: any) {
+        logger.warn(`recordEarlyFunnelSmsSent failed: ${recErr?.message || recErr}`);
+      }
+      if (!isTestSend) {
+        try {
+          const { recordSmsDuplicateMessageGuardSent } = await import('./smsDuplicateMessageGuard');
+          await recordSmsDuplicateMessageGuardSent({
+            tenantId: context.tenantId,
+            userId: context.userId,
+            messageTypeId: context.messageTypeId,
+          });
+        } catch (recErr: any) {
+          logger.warn(`recordSmsDuplicateMessageGuardSent failed: ${recErr?.message || recErr}`);
+        }
+      }
+    }
+
     logger.info(`SMS ${result.success ? 'sent' : 'failed'} for ${context.messageTypeId} to user ${context.userId}: ${result.providerMessageId || result.errorMessage}`);
     
     return {

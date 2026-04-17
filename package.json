@@ -71,6 +71,8 @@
     "smoke-test": "ts-node --project scripts/tsconfig.json scripts/smoke-test-phase2.ts",
     "verify-phase2-auth": "ts-node --project scripts/tsconfig.json scripts/verify-phase2-auth.ts",
     "validate:applications": "ts-node --project scripts/tsconfig.json scripts/validateApplicationsInvariants.ts",
+    "export:prescreen-interviews": "ts-node --project scripts/tsconfig.json scripts/exportLastWorkerAiPrescreenInterviews.ts",
+    "qa:prescreen-review": "ts-node --project scripts/tsconfig.json scripts/reviewPrescreenInterviewBatch.ts",
     "consolidation:dry-run": "ts-node --project scripts/tsconfig.consolidation.json scripts/applicationConsolidationDryRun.ts",
     "consolidation:execute": "ts-node --project scripts/tsconfig.consolidation.json scripts/applicationConsolidationExecute.ts",
     "consolidation:scan-nested": "ts-node --project scripts/tsconfig.consolidation.json scripts/scanNestedJobOrderApplications.ts",

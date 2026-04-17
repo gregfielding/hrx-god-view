@@ -31,7 +31,11 @@ export const WORKER_AI_PRESCREEN_PROMPTS: Record<string, string> = {
   physical_comfort:
     'Are you comfortable with jobs that may involve standing, lifting, or repetitive tasks?',
   drug_screen: 'If a role requires a drug screen, would anything show up that we should know about?',
+  drug_screen_detail:
+    'You indicated something may show on a drug screen. Briefly explain what we should know (dates/context help).',
   background_check: 'If a role requires a background check, is there anything that might appear?',
+  background_check_detail:
+    'You indicated something may appear on a background check. Briefly explain what we should know.',
   supervisor_feedback:
     'What would your last supervisor say about your work? Include:\n' +
     '- one strength they might mention\n' +

@@ -61,6 +61,12 @@ function main(): void {
   };
   run('US citizen + US_PASSPORT', usPass, true);
 
+  run(
+    'US_PASSPORT + empty document_sub_type_code gets default (ICA rejects "")',
+    { ...usPass, document_sub_type_code: '' },
+    true,
+  );
+
   const lpr = {
     ...base(),
     citizenship_status_code: 'LAWFUL_PERMANENT_RESIDENT',

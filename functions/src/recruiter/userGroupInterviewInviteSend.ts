@@ -19,12 +19,13 @@ import {
   buildInterviewInviteSmsBody,
   buildInterviewInviteSmsBodyBilingualTemplate,
   firstNameFromUser,
-  hardValidateInterviewInviteCandidate,
+  hardValidateUserGroupInterviewInviteRow,
   interviewInviteCooldownReason,
   phoneE164FromUser,
   prescreenAutomatedSmsCooldownReasons,
   resolveC1SelectEntityId,
   tenantEligOpts,
+  type UserGroupInterviewInviteBucket,
   workerInterviewInviteLang,
 } from './userGroupInterviewInviteValidation';
 import { userInInterviewReinviteCooldown } from '../workerAiPrescreen/interviewInviteCooldown';
@@ -41,7 +42,12 @@ export const HARD_CAP_RECIPIENTS = 25;
 
 export type InterviewInviteRecipientPreview = {
   userId: string;
-  applicationId: string;
+  /** Present when the evaluator bound an application (job-aware interview). */
+  applicationId: string | null;
+  /** Evaluator bucket — preserved for reporting; drives entry + message type. */
+  nextStepBucket: UserGroupInterviewInviteBucket;
+  /** Prescreen `entry` query param (adaptive routing / analytics). */
+  entry: string;
   displayName: string;
   firstName: string;
   prescreenLink: string;
@@ -59,7 +65,8 @@ export type SkippedRecipientRow = {
 
 export type PerSendResult = {
   userId: string;
-  applicationId: string;
+  applicationId: string | null;
+  nextStepBucket?: UserGroupInterviewInviteBucket;
   outcome: 'sent' | 'skipped' | 'failed';
   detail?: string;
   twilioMessageId?: string | null;
@@ -120,6 +127,13 @@ function cooldownWarningsForApplication(app: Record<string, unknown>): string[] 
   return w;
 }
 
+function entryAndMessageTypeForBucket(bucket: UserGroupInterviewInviteBucket): { entry: string; messageTypeId: string } {
+  if (bucket === 'ready_for_interview') {
+    return { entry: 'user_group_ready_interview_invite', messageTypeId: 'user_group_ready_interview_invite' };
+  }
+  return { entry: 'user_group_profile_gap_interview_invite', messageTypeId: 'user_group_profile_gap_interview_invite' };
+}
+
 async function runPrepare(
   authUid: string,
   tenantId: string,
@@ -149,42 +163,46 @@ async function runPrepare(
   const tenantData = (tenantSnap.data() || {}) as Record<string, unknown>;
   const eligOpts = tenantEligOpts(tenantData);
 
-  const readyRows = evalResult.rows
-    .filter((r) => r.bucket === 'ready_for_interview' && r.applicationId)
+  const inviteRows = evalResult.rows
+    .filter((r) => r.bucket === 'ready_for_interview' || r.bucket === 'needs_profile_update')
     .sort((a, b) => a.displayName.localeCompare(b.displayName));
 
-  const userIds = readyRows.map((r) => r.userId);
+  const userIds = inviteRows.map((r) => r.userId);
   const employmentByUser = await loadEmploymentsForUsers(tenantId, userIds);
 
   const skippedRecipients: SkippedRecipientRow[] = [];
   const passedWithMeta: Array<{
-    row: (typeof readyRows)[0];
+    row: (typeof inviteRows)[0];
     userData: Record<string, unknown>;
-    appData: Record<string, unknown>;
+    appData: Record<string, unknown> | undefined;
     cooldownWarnings: string[];
   }> = [];
 
-  for (const row of readyRows) {
-    const applicationId = row.applicationId as string;
+  for (const row of inviteRows) {
+    const applicationId = row.applicationId ? String(row.applicationId).trim() : null;
     const [userSnap, appSnap] = await Promise.all([
       db.doc(`users/${row.userId}`).get(),
-      db.doc(`tenants/${tenantId}/applications/${applicationId}`).get(),
+      applicationId
+        ? db.doc(`tenants/${tenantId}/applications/${applicationId}`).get()
+        : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
     ]);
     const userData = userSnap.data() as Record<string, unknown> | undefined;
-    const appData = appSnap.data() as Record<string, unknown> | undefined;
+    const appData = appSnap?.exists ? (appSnap.data() as Record<string, unknown>) : undefined;
     const employments = employmentByUser.get(row.userId) ?? [];
 
-    const hard = hardValidateInterviewInviteCandidate({
+    const hard = hardValidateUserGroupInterviewInviteRow({
       tenantId,
       groupMemberIds: memberIds,
       userId: row.userId,
       userData,
       applicationData: appData,
+      applicationId,
       groupId,
       allowNonGroupApplication: true,
       employments,
       c1SelectEntityId,
       eligOpts,
+      bucket: row.bucket as UserGroupInterviewInviteBucket,
     });
 
     if (!hard.ok) {
@@ -198,7 +216,7 @@ async function runPrepare(
     }
 
     const cd = appData ? cooldownWarningsForApplication(appData) : [];
-    passedWithMeta.push({ row, userData: userData as Record<string, unknown>, appData: appData as Record<string, unknown>, cooldownWarnings: cd });
+    passedWithMeta.push({ row, userData: userData as Record<string, unknown>, appData, cooldownWarnings: cd });
   }
 
   let pool = passedWithMeta;
@@ -233,12 +251,16 @@ async function runPrepare(
   const expiresAt = admin.firestore.Timestamp.fromMillis(Date.now() + PREVIEW_TTL_MS);
 
   const selectedRecipients: InterviewInviteRecipientPreview[] = selected.map((p) => {
-    const applicationId = p.row.applicationId as string;
-    const link = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'user_group_invite' });
+    const applicationId = p.row.applicationId ? String(p.row.applicationId).trim() : null;
+    const bucket = p.row.bucket as UserGroupInterviewInviteBucket;
+    const { entry } = entryAndMessageTypeForBucket(bucket);
+    const link = buildWorkerAiPrescreenInviteUrl({ applicationId, entry });
     const fn = firstNameFromUser(p.userData);
     return {
       userId: p.row.userId,
       applicationId,
+      nextStepBucket: bucket,
+      entry,
       displayName: p.row.displayName,
       firstName: fn,
       prescreenLink: link,
@@ -255,7 +277,12 @@ async function runPrepare(
     createdByUid: authUid,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     expiresAt,
-    recipients: selectedRecipients.map((r) => ({ userId: r.userId, applicationId: r.applicationId })),
+    recipients: selectedRecipients.map((r) => ({
+      userId: r.userId,
+      applicationId: r.applicationId,
+      nextStepBucket: r.nextStepBucket,
+      entry: r.entry,
+    })),
     includeCooldownWarnings,
     requestedMax: maxRecipients,
     templateKey: 'user_group_interview_invite_v1',
@@ -318,7 +345,12 @@ async function runSend(
     groupId?: string;
     createdByUid?: string;
     expiresAt?: admin.firestore.Timestamp;
-    recipients?: Array<{ userId?: string; applicationId?: string }>;
+    recipients?: Array<{
+      userId?: string;
+      applicationId?: string | null;
+      nextStepBucket?: UserGroupInterviewInviteBucket;
+      entry?: string;
+    }>;
     includeCooldownWarnings?: boolean;
   };
 
@@ -406,36 +438,56 @@ async function runSend(
 
     for (const rec of recipients) {
       const userId = String(rec.userId || '').trim();
-      const applicationId = String(rec.applicationId || '').trim();
-      if (!userId || !applicationId) {
-        results.push({ userId: userId || '—', applicationId: applicationId || '—', outcome: 'skipped', detail: 'Invalid preview row' });
+      const applicationIdRaw = rec.applicationId;
+      const applicationId =
+        applicationIdRaw != null && String(applicationIdRaw).trim() ? String(applicationIdRaw).trim() : null;
+      const nextStepBucket: UserGroupInterviewInviteBucket =
+        rec.nextStepBucket === 'needs_profile_update' ? 'needs_profile_update' : 'ready_for_interview';
+
+      if (!userId) {
+        results.push({
+          userId: '—',
+          applicationId: null,
+          outcome: 'skipped',
+          detail: 'Invalid preview row',
+        });
         skipped += 1;
         continue;
       }
 
       const [userSnap, appSnap] = await Promise.all([
         db.doc(`users/${userId}`).get(),
-        db.doc(`tenants/${tenantId}/applications/${applicationId}`).get(),
+        applicationId
+          ? db.doc(`tenants/${tenantId}/applications/${applicationId}`).get()
+          : Promise.resolve(null as admin.firestore.DocumentSnapshot | null),
       ]);
       const userData = userSnap.data() as Record<string, unknown> | undefined;
-      const appData = appSnap.data() as Record<string, unknown> | undefined;
+      const appData = appSnap?.exists ? (appSnap.data() as Record<string, unknown>) : undefined;
       const employments = employmentByUser.get(userId) ?? [];
 
-      const hard = hardValidateInterviewInviteCandidate({
+      const hard = hardValidateUserGroupInterviewInviteRow({
         tenantId,
         groupMemberIds: memberIds,
         userId,
         userData,
         applicationData: appData,
+        applicationId,
         groupId,
         allowNonGroupApplication: true,
         employments,
         c1SelectEntityId,
         eligOpts,
+        bucket: nextStepBucket,
       });
 
       if (!hard.ok) {
-        results.push({ userId, applicationId, outcome: 'skipped', detail: hard.blockReasons.join('; ') });
+        results.push({
+          userId,
+          applicationId,
+          nextStepBucket,
+          outcome: 'skipped',
+          detail: hard.blockReasons.join('; '),
+        });
         skipped += 1;
         continue;
       }
@@ -443,25 +495,40 @@ async function runSend(
       if (appData) {
         const cd = cooldownWarningsForApplication(appData);
         if (cd.length && !includeCooldownWarnings) {
-          results.push({ userId, applicationId, outcome: 'skipped', detail: cd.join('; ') });
+          results.push({
+            userId,
+            applicationId,
+            nextStepBucket,
+            outcome: 'skipped',
+            detail: cd.join('; '),
+          });
           skipped += 1;
           continue;
         }
       }
 
-      const appSnap2 = await db.doc(`tenants/${tenantId}/applications/${applicationId}`).get();
-      const latestApp = appSnap2.data() as Record<string, unknown> | undefined;
-      const priorKey = latestApp ? String(latestApp.userGroupInterviewInviteLastIdempotencyKey || '').trim() : '';
-      if (priorKey && priorKey === idempotencyKey) {
-        results.push({ userId, applicationId, outcome: 'skipped', detail: 'Already sent for this idempotency key' });
-        skipped += 1;
-        continue;
+      if (applicationId) {
+        const appSnap2 = await db.doc(`tenants/${tenantId}/applications/${applicationId}`).get();
+        const latestApp = appSnap2.data() as Record<string, unknown> | undefined;
+        const priorKey = latestApp ? String(latestApp.userGroupInterviewInviteLastIdempotencyKey || '').trim() : '';
+        if (priorKey && priorKey === idempotencyKey) {
+          results.push({
+            userId,
+            applicationId,
+            nextStepBucket,
+            outcome: 'skipped',
+            detail: 'Already sent for this idempotency key',
+          });
+          skipped += 1;
+          continue;
+        }
       }
 
       if (userData && userInInterviewReinviteCooldown(userData)) {
         results.push({
           userId,
           applicationId,
+          nextStepBucket,
           outcome: 'skipped',
           detail: 'Interview re-invite cooldown (lastInterviewInvitedAt / lastInterviewCompletedAt)',
         });
@@ -469,9 +536,15 @@ async function runSend(
         continue;
       }
 
-    const fn = firstNameFromUser(userData as Record<string, unknown>);
-    const link = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'user_group_invite' });
-    const body = buildInterviewInviteSmsBody(fn, applicationId, link, workerInterviewInviteLang(userData as Record<string, unknown>));
+      const { entry, messageTypeId } = entryAndMessageTypeForBucket(nextStepBucket);
+      const fn = firstNameFromUser(userData as Record<string, unknown>);
+      const link = buildWorkerAiPrescreenInviteUrl({ applicationId, entry });
+      const body = buildInterviewInviteSmsBody(
+        fn,
+        applicationId || '—',
+        link,
+        workerInterviewInviteLang(userData as Record<string, unknown>),
+      );
       const phone = phoneE164FromUser(userData as Record<string, unknown>);
 
       const sms = await sendWorkerMessageInternal(phone, body, {
@@ -479,7 +552,7 @@ async function runSend(
         userId,
         source: 'recruiter',
         sourceId: authUid,
-        messageTypeId: 'user_group_interview_invite',
+        messageTypeId,
       });
 
       if (sms.success) {
@@ -493,27 +566,42 @@ async function runSend(
           },
           { merge: true },
         );
-        await db.doc(`tenants/${tenantId}/applications/${applicationId}`).set(
-          {
-            userGroupInterviewInviteLastSentAt: admin.firestore.FieldValue.serverTimestamp(),
-            userGroupInterviewInviteLastPreviewToken: previewToken,
-            userGroupInterviewInviteLastIdempotencyKey: idempotencyKey,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-          },
-          { merge: true },
-        );
+        if (applicationId) {
+          await db.doc(`tenants/${tenantId}/applications/${applicationId}`).set(
+            {
+              userGroupInterviewInviteLastSentAt: admin.firestore.FieldValue.serverTimestamp(),
+              userGroupInterviewInviteLastPreviewToken: previewToken,
+              userGroupInterviewInviteLastIdempotencyKey: idempotencyKey,
+              updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            },
+            { merge: true },
+          );
+        }
         results.push({
           userId,
           applicationId,
+          nextStepBucket,
           outcome: 'sent',
           twilioMessageId: sms.messageId,
         });
       } else if (sms.status === 'skipped' || (sms.error && /opt/i.test(sms.error))) {
         skipped += 1;
-        results.push({ userId, applicationId, outcome: 'skipped', detail: sms.error || 'skipped' });
+        results.push({
+          userId,
+          applicationId,
+          nextStepBucket,
+          outcome: 'skipped',
+          detail: sms.error || 'skipped',
+        });
       } else {
         failed += 1;
-        results.push({ userId, applicationId, outcome: 'failed', detail: sms.error || 'send_failed' });
+        results.push({
+          userId,
+          applicationId,
+          nextStepBucket,
+          outcome: 'failed',
+          detail: sms.error || 'send_failed',
+        });
       }
     }
 
