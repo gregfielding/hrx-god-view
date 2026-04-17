@@ -23,6 +23,7 @@ import EducationStep from '../../../components/apply/steps/EducationStep';
 import WorkExperienceStep from '../../../components/apply/steps/WorkExperienceStep';
 import ShiftPreferencesCard from './ShiftPreferencesCard';
 import { toChipLabel } from '../../../utils/chipLabel';
+import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
 
 type Props = {
   uid: string;
@@ -107,10 +108,11 @@ const QualificationsTab: React.FC<Props> = ({ uid }) => {
       const bioComplete = Boolean(
         (data.professionalBio || data.bio || '').toString().trim()
       );
-      const prefs = data.preferences || data.workerProfile?.preferences || {};
+      const prefs = (data.workerProfile?.preferences || data.preferences || {}) as Record<string, unknown>;
+      const resolved = resolveWorkerPreferences(prefs);
       const availabilityComplete = Boolean(
-        (Array.isArray(prefs.targetIndustries) && prefs.targetIndustries.length > 0) ||
-          (Array.isArray(prefs.scheduleIntentOptions) && prefs.scheduleIntentOptions.length > 0) ||
+        resolved.legacyTargetIndustriesSubset.length > 0 ||
+          resolved.legacyScheduleIntentOptions.length > 0 ||
           (Array.isArray(prefs.shiftPreferences) && prefs.shiftPreferences.length > 0)
       );
 

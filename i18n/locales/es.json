@@ -283,10 +283,47 @@
     "titleOptional": "Entrevista opcional",
     "subtitleWithJob": "Complétala para seguir con este empleo.",
     "subtitleOptional": "Puedes completar esta breve entrevista para ayudar al equipo a conocerte mejor. No es obligatoria para continuar.",
+    "durationHintShort": "Tarda unos 2–3 minutos.",
+    "durationHintLong": "Tarda unos 3–5 minutos.",
+    "durationHintEstimate": "Suele ser unos 3–5 minutos, según tus respuestas.",
+    "durationHintOptionalShort": "Unos 2–3 minutos si la completas.",
+    "durationHintOptionalLong": "Unos 3–5 minutos si la completas.",
     "durationHint": "Tarda unos 2–3 minutos.",
     "durationHintOptional": "Unos 2–3 minutos si decides completarla.",
     "progressOf": "{current} de {total}",
-    "placeholderShortAnswer": "Escribe una respuesta breve (1–2 frases)",
+    "progressPhase": {
+      "preferences": "Empezando",
+      "experience": "Tu experiencia",
+      "reliability": "Confiabilidad y estilo de trabajo",
+      "wrapUp": "Casi listo",
+      "job_fit": "Ajuste al puesto"
+    },
+    "section": {
+      "preferences": "Tus preferencias de trabajo",
+      "experience": "Tu experiencia",
+      "reliability": "Confiabilidad y estilo de trabajo",
+      "wrapUp": "Antes de terminar",
+      "job_fit": "Ajuste al puesto"
+    },
+    "microConfirm": {
+      "experienceDetails": "Entendido — eso nos ayuda a conocer tu experiencia.",
+      "workConfidence": "Perfecto — eso nos da una idea de tus fortalezas."
+    },
+    "v2": {
+      "transitionAfterOpening": "Genial — eso nos ayuda a emparejarte con los trabajos adecuados.",
+      "transitionJobFit": "Ahora unas preguntas rápidas sobre este puesto.",
+      "transitionAlmostDone": "Último paso — solo para asegurarnos de poder ubicarte rápido.",
+      "transitionWrapUpSingleStep": "Termina esta última pregunta para que podamos ubicarte rápido.",
+      "followupExperiencePrompt": "¿Puedes dar uno o dos ejemplos?",
+      "followupExperiencePlaceholder": "Añade una o dos frases con un ejemplo concreto…",
+      "followupPressurePrompt": "¿Puedes dar uno o dos ejemplos?",
+      "followupPressurePlaceholder": "Breve ejemplo de cómo manejas la presión…",
+      "followupSupervisorPrompt": "¿Puedes dar uno o dos ejemplos?",
+      "followupSupervisorPlaceholder": "Breve ejemplo sobre retroalimentación o cómo trabajas con un supervisor…",
+      "followupTransitionLine": "Una pregunta breve para entenderlo mejor."
+    },
+    "openingMultiSelectHint": "Selecciona todas las que apliquen — puedes elegir varias opciones y combinarlas (por ejemplo, más de un tipo de trabajo o de horario).",
+    "placeholderShortAnswer": "Con una o dos frases basta (un poco más si la pregunta pide detalle)",
     "signInPrompt": "Inicia sesión para completar esta entrevista.",
     "backToDashboard": "Volver al panel",
     "successTitle": "Entrevista enviada",
@@ -297,6 +334,48 @@
     "alertChooseTenant": "Elige tu empleador en la parte superior si no ves los datos del puesto — eso ayuda a cargar las preguntas de esta solicitud.",
     "fallbackRoleTitle": "Este puesto",
     "submit": "Enviar",
+    "strengthen": {
+      "optionalHeader": "Opcional: fortalece tu perfil (recomendado)",
+      "optionalHeaderDone": "Extras del perfil — guardado",
+      "optionalSub": "Puedes enviar la entrevista sin abrir esto — despliega si quieres añadir currículum, teléfono o dirección.",
+      "optionalSubDone": "Lo que completaste abajo ya está guardado. Puedes enviar la entrevista.",
+      "title": "Fortalece tu perfil",
+      "body": "Unas actualizaciones rápidas pueden ayudarte a emparejarte más rápido.",
+      "skillsHeading": "Habilidades sugeridas según tus respuestas",
+      "skillsConfirm": "Añadir habilidades al perfil",
+      "skillsPickOne": "Selecciona al menos una habilidad para añadir.",
+      "skillsSaveFailed": "No se pudieron guardar las habilidades. Inténtalo de nuevo.",
+      "skillsDone": "Habilidades añadidas a tu perfil.",
+      "resumeHeading": "Currículum",
+      "resumePrompt": "¿Tienes un currículum que puedas subir?",
+      "resumeOnFileShort": "Ya tienes un currículum en tu perfil.",
+      "resumeSkippedNote": "Entendido — puedes añadir un currículum más tarde desde tu perfil.",
+      "phoneHeading": "Verifica tu teléfono",
+      "phoneHint": "Un teléfono verificado ayuda a que los empleadores te contacten.",
+      "phoneLabel": "Número móvil",
+      "phoneInvalid": "Ingresa un número válido (EE. UU.: 10 dígitos).",
+      "phoneSendFailed": "No se pudo enviar el código. Inténtalo de nuevo.",
+      "sendCode": "Enviar código",
+      "codeLabel": "Código de 6 dígitos",
+      "codeInvalid": "Ingresa el código de 6 dígitos.",
+      "codeFailed": "No se pudo verificar el código. Inténtalo de nuevo.",
+      "verifyCode": "Verificar",
+      "resend": "Reenviar código",
+      "resendIn": "Reenviar ({seconds}s)",
+      "skipForNow": "Omitir por ahora",
+      "phoneDone": "Teléfono verificado en tu perfil.",
+      "addressHeading": "Domicilio",
+      "street": "Calle y número",
+      "city": "Ciudad",
+      "state": "Estado",
+      "zip": "Código postal",
+      "addressPreview": "Buscar dirección",
+      "addressConfirmSave": "Guardar domicilio",
+      "addressFieldsRequired": "Completa calle, ciudad, estado y código postal.",
+      "addressPreviewFirst": "Busca tu dirección primero para confirmar la ubicación en el mapa.",
+      "addressSaveFailed": "No se pudo guardar la dirección. Inténtalo de nuevo.",
+      "addressDone": "Domicilio guardado."
+    },
     "errors": {
       "planPermission": "No pudimos cargar preguntas específicas del puesto para tu cuenta o esta solicitud. Aún puedes completar el resto de la entrevista. Si esta no es tu solicitud, inicia sesión con la cuenta correcta o abre el enlace de tu mensaje otra vez.",
       "submitPermission": "No pudimos guardar tu entrevista: tu cuenta podría no tener acceso para esta acción. Si estás seguro de que es el lugar correcto, inténtalo más tarde o contacta soporte.",
@@ -309,11 +388,87 @@
       "serverDetail": "{detail}"
     },
     "steps": {
+      "opening_target_work_types": {
+        "prompt": "¿Qué tipo de trabajo te interesa?",
+        "opt_hospitality": "Hostelería",
+        "opt_industrial": "Industrial",
+        "opt_events": "Eventos",
+        "opt_clerical_admin": "Administrativo / oficina",
+        "opt_healthcare": "Salud",
+        "opt_other": "Otro"
+      },
+      "opening_schedule_preferences": {
+        "prompt": "¿Qué tipo de horario te interesa?",
+        "opt_full_time": "Tiempo completo",
+        "opt_part_time": "Medio tiempo",
+        "opt_gig_work": "Trabajo por turnos / gig",
+        "opt_temp_to_hire": "Temporal con posible contratación",
+        "opt_seasonal": "Estacional"
+      },
+      "opening_experience_industrial": {
+        "prompt": "¿Qué tipo de trabajo industrial has hecho?",
+        "opt_warehouse": "Almacén",
+        "opt_assembly": "Ensamble",
+        "opt_packing_shipping": "Empaque / envío",
+        "opt_machine_operation": "Operación de máquina",
+        "opt_cleaning_janitorial": "Limpieza",
+        "opt_forklift": "Montacargas",
+        "opt_inventory_scanning": "Inventario / escaneo"
+      },
+      "opening_experience_hospitality": {
+        "prompt": "¿En qué roles de hostelería has trabajado?",
+        "opt_server": "Mesero/a",
+        "opt_bartender": "Bartender",
+        "opt_dishwasher": "Lavaplatos",
+        "opt_prep_line_cook": "Preparación / línea",
+        "opt_banquet_setup": "Montaje de banquetes",
+        "opt_housekeeping": "Limpieza de habitaciones",
+        "opt_cashier_concessions": "Cajero / concesiones"
+      },
+      "opening_experience_events": {
+        "prompt": "¿Qué tipo de trabajo de eventos has hecho?",
+        "opt_setup_teardown": "Montaje / desmontaje",
+        "opt_guest_services": "Atención a invitados",
+        "opt_usher_ticketing": "Acomodador / boletos",
+        "opt_concessions": "Concesiones",
+        "opt_catering_banquet": "Catering / banquetes",
+        "opt_registration_checkin": "Registro / check-in",
+        "opt_general_event_labor": "Mano de obra general"
+      },
+      "opening_experience_clerical": {
+        "prompt": "¿Qué trabajo administrativo has hecho?",
+        "opt_reception": "Recepción",
+        "opt_data_entry": "Captura de datos",
+        "opt_customer_service": "Servicio al cliente",
+        "opt_scheduling_coordination": "Agenda / coordinación",
+        "opt_office_assistant": "Asistente de oficina",
+        "opt_filing_records": "Archivo / expedientes",
+        "opt_call_center": "Call center"
+      },
+      "opening_experience_healthcare": {
+        "prompt": "¿En qué roles de apoyo en salud has trabajado?",
+        "opt_caregiving": "Cuidados",
+        "opt_patient_support": "Apoyo a pacientes",
+        "opt_medical_office": "Consultorio médico",
+        "opt_scheduling_front_desk": "Agenda / recepción",
+        "opt_environmental_services": "Servicios ambientales",
+        "opt_dietary_support": "Apoyo en dietas",
+        "opt_other_healthcare_support": "Otro apoyo en salud"
+      },
+      "opening_gig_types": {
+        "prompt": "¿Qué tipo de trabajo gig te interesa?",
+        "opt_event_shifts": "Turnos de eventos",
+        "opt_warehouse_day_shifts": "Turnos de almacén",
+        "opt_setup_teardown": "Montaje / desmontaje",
+        "opt_hospitality_shifts": "Turnos de hostelería",
+        "opt_delivery_driving": "Reparto / manejo",
+        "opt_general_labor": "Mano de obra general"
+      },
       "motivation": {
-        "prompt": "¿Qué te atrajo a este tipo de trabajo y qué buscas en tu próximo empleo? Incluye:\n- qué tipo de rol o industria te interesa\n- una meta para los próximos 3–6 meses"
+        "prompt": "¿Qué te atrajo a este tipo de trabajo y qué buscas ahora? Incluye:\n- qué tipo de rol o industria te interesa\n- una meta para los próximos meses"
       },
       "experience_details": {
-        "prompt": "Describe tu experiencia más relevante. Incluye:\n- dónde trabajaste (empleador o tipo de lugar)\n- cuánto tiempo estuviste allí (aproximado está bien)\n- cuáles eran tus responsabilidades principales"
+        "prompt": "En pocas palabras, ¿qué trabajo has hecho recientemente? Incluye:\n- dónde (empleador o tipo de lugar)\n- más o menos cuánto tiempo (aproximado está bien)\n- tus responsabilidades principales"
       },
       "work_confidence": {
         "prompt": "¿En qué tipo de trabajo te sientes con confianza? (Selecciona todas las que apliquen)",
@@ -326,7 +481,7 @@
         "opt_other": "Otro"
       },
       "pressure_situation": {
-        "prompt": "Cuéntanos una vez que tuviste que trabajar bajo presión o cumplir un plazo ajustado. ¿Qué pasó, qué hiciste y cómo terminó?"
+        "prompt": "Cuéntanos una vez que el trabajo se puso estresante — ¿qué pasó, qué hiciste y cómo terminó?"
       },
       "attendance_issues": {
         "prompt": "¿Has tenido problemas de asistencia o puntualidad en trabajos anteriores?",
@@ -337,7 +492,7 @@
         "prompt": "Si respondiste Sí arriba, explica qué pasó y cómo manejas la puntualidad ahora. Si respondiste No, puedes escribir «N/D»."
       },
       "transportation_plan": {
-        "prompt": "¿Cómo piensas llegar al trabajo de forma confiable?",
+        "prompt": "¿Tienes una forma confiable de llegar al trabajo?",
         "opt_own_vehicle": "Manejo yo mismo",
         "opt_ride_from_someone_else": "Viaje con otra persona",
         "opt_public_transportation": "Transporte público",
@@ -368,7 +523,7 @@
         "opt_not_sure": "No estoy seguro"
       },
       "supervisor_feedback": {
-        "prompt": "¿Qué diría tu último supervisor sobre tu trabajo? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas mejorando (si aplica)"
+        "prompt": "¿Qué diría tu último supervisor sobre ti? Incluye:\n- una fortaleza que podría mencionar\n- un área en la que estabas trabajando (si aplica)"
       },
       "additional_notes": {
         "prompt": "¿Algo más que quieras que sepamos? (Opcional — los detalles concretos ayudan.)"

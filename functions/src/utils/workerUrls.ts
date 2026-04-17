@@ -31,6 +31,36 @@ export function buildWorkerAiPrescreenUrl(applicationId: string): string {
   return `${base}/c1/workers/prescreen?applicationId=${encodeURIComponent(id)}`;
 }
 
+export type WorkerAiPrescreenEntrySource =
+  | 'sms_apply_wizard_invite'
+  | 'sms_auto_new_user'
+  | 'user_group_backfill'
+  | 'scheduled_invite'
+  | 'scheduled_gap_invite'
+  | 'followup_invite'
+  | 'chase_1'
+  | 'chase_2'
+  | 'direct'
+  | string;
+
+/**
+ * Interview deep link with `entry` for analytics / adaptive routing (client reads query params).
+ * Preserves application context when `applicationId` is set.
+ */
+export function buildWorkerAiPrescreenInviteUrl(params: {
+  applicationId?: string | null;
+  entry: WorkerAiPrescreenEntrySource | string;
+}): string {
+  const base = getWorkerWebBaseUrl();
+  const q = new URLSearchParams();
+  const aid = String(params.applicationId ?? '').trim();
+  if (aid) {
+    q.set('applicationId', aid);
+  }
+  q.set('entry', String(params.entry || 'direct').trim() || 'direct');
+  return `${base}/c1/workers/prescreen?${q.toString()}`;
+}
+
 /**
  * Worker entity employment onboarding hub. `employmentRecordId` is the `entity_employments` doc id
  * (same as `worker_onboarding` / pipeline id: `userId__entityKey`).

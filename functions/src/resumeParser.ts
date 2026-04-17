@@ -6,6 +6,7 @@ import { getStorage } from 'firebase-admin/storage';
 import { getStorageBucketName } from './utils/storageBucket';
 import { getOrCreateFirebaseDownloadReadUrl } from './utils/firebaseStorageDownloadReadUrl';
 import { logger } from './utils/logger';
+import { maybeEmitResumeUploadedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 import nlp from 'compromise';
 import OpenAI from 'openai';
 import { z } from 'zod';
@@ -681,6 +682,16 @@ async function commitMerge(uid: string, uploadId: string, acceptedChanges: any =
   });
   
   await batch.commit();
+
+  try {
+    await maybeEmitResumeUploadedCategoryScore(db, { uid, uploadId });
+  } catch (e) {
+    console.warn('commitMerge.activity_category_score_failed', {
+      uid,
+      uploadId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
 }
 
 /**

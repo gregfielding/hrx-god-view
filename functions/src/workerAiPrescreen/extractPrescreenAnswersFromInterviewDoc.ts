@@ -2,8 +2,9 @@
  * Reconstruct answer objects from a stored `users/{uid}/interviews/{id}` worker AI prescreen doc.
  */
 import type { WorkerAiPrescreenAnswers } from './scoreWorkerAiPrescreen';
+import { PRESCREEN_OPENING_MULTI_SELECT_KEYS } from './prescreenOpeningKeys';
 
-const REQUIRED_KEYS: (keyof WorkerAiPrescreenAnswers | string)[] = [
+const CORE_KEYS: (keyof WorkerAiPrescreenAnswers | string)[] = [
   'motivation',
   'experience_details',
   'work_confidence',
@@ -19,6 +20,13 @@ const REQUIRED_KEYS: (keyof WorkerAiPrescreenAnswers | string)[] = [
   'additional_notes',
 ];
 
+const REQUIRED_KEYS: (keyof WorkerAiPrescreenAnswers | string)[] = [
+  ...PRESCREEN_OPENING_MULTI_SELECT_KEYS,
+  ...CORE_KEYS,
+];
+
+const MULTI_SELECT_KEYS = new Set<string>(['work_confidence', ...PRESCREEN_OPENING_MULTI_SELECT_KEYS]);
+
 export function extractPrescreenAnswersFromInterviewDoc(data: Record<string, unknown>): {
   answers: WorkerAiPrescreenAnswers | null;
   dynamicAnswers: Record<string, string>;
@@ -33,9 +41,9 @@ export function extractPrescreenAnswersFromInterviewDoc(data: Record<string, unk
 
   const answers: Partial<WorkerAiPrescreenAnswers> = {};
   for (const key of REQUIRED_KEYS) {
-    if (key === 'work_confidence') {
+    if (MULTI_SELECT_KEYS.has(String(key))) {
       const s = byId[key] || '';
-      answers.work_confidence = s.split(',').map((x) => x.trim()).filter(Boolean);
+      (answers as Record<string, unknown>)[key] = s.split(',').map((x) => x.trim()).filter(Boolean);
       continue;
     }
     (answers as Record<string, string>)[key] = byId[key] ?? '';

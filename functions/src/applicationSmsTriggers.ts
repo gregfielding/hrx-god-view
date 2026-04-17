@@ -17,6 +17,7 @@ import { shouldSkipStaleApplicationReceivedSms } from './messaging/applicationRe
 import { normalizeApplicationStatus } from './utils/applicationStatusNormalize';
 import { DEFAULT_FIRESTORE_TRIGGER_MEMORY } from './utils/functionRuntimeDefaults';
 import { sendGridFromEmail, sendGridFromName } from './messaging/emailProviderFactory';
+import { maybeEmitJobAppliedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 
 /** Replace mis-saved placeholders like {Gregory} or {{Gregory}} with actual value when they match a resolved variable (fixes templates saved with example values). */
 function cleanupMisSavedPlaceholders(
@@ -142,6 +143,20 @@ export const onApplicationCreated = onDocumentCreated(
         `Application ${applicationId} created with status ${JSON.stringify(applicationData.status ?? '(none)')} — skipping application_received onCreate (only \`submitted\` sends thank-you here; in_progress/draft wait for status transition)`
       );
       return { success: true };
+    }
+
+    try {
+      await maybeEmitJobAppliedCategoryScore(db, {
+        tenantId,
+        applicationId,
+        applicationData: applicationData as Record<string, unknown>,
+      });
+    } catch (e) {
+      logger.warn('categoryScore.job_applied_emit_failed', {
+        applicationId,
+        tenantId,
+        error: e instanceof Error ? e.message : String(e),
+      });
     }
 
     try {
@@ -356,6 +371,26 @@ export const onApplicationStatusChanged = onDocumentUpdated(
 
       const oldStatus = before.status;
       const newStatus = after.status;
+
+      if (
+        isSubmittedApplicationStatus(newStatus) &&
+        !isSubmittedApplicationStatus(oldStatus) &&
+        !(after.statusChangeReason === 'assignment_cancelled' || after.revertedFromAssignmentCancel === true)
+      ) {
+        try {
+          await maybeEmitJobAppliedCategoryScore(db, {
+            tenantId,
+            applicationId,
+            applicationData: after as Record<string, unknown>,
+          });
+        } catch (e) {
+          logger.warn('categoryScore.job_applied_emit_failed', {
+            applicationId,
+            tenantId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
 
       // Do not send any notifications when the candidate withdraws
       if (newStatus === 'withdrawn') {

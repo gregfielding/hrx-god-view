@@ -41,6 +41,11 @@ export interface StartOnCallEmploymentPayload {
   workerType?: "w2" | "1099" | "entity_default" | null;
   screeningPackageId?: string | null;
   screeningPackageName?: string | null;
+  /**
+   * À la carte SourceDirect service IDs (same catalog as Backgrounds → Order screening).
+   * Sent on the same partial-profile request as `packageId` via `orders: [{ serviceId }]`.
+   */
+  screeningRequestedServiceIds?: string[] | null;
   note?: string | null;
 }
 
@@ -70,6 +75,7 @@ export async function runStartOnCallEmploymentFlow(
     workerType: workerTypeRaw,
     screeningPackageId,
     screeningPackageName,
+    screeningRequestedServiceIds,
     note,
     initiatedByUid,
     authForAccusource,
@@ -179,6 +185,9 @@ export async function runStartOnCallEmploymentFlow(
   }
 
   const pkg = String(screeningPackageId || "").trim();
+  const screeningServiceIdsNormalized = Array.isArray(screeningRequestedServiceIds)
+    ? screeningRequestedServiceIds.map((x) => String(x).trim()).filter(Boolean)
+    : [];
   if (pkg) {
     try {
       const { createBackgroundCheckInternal } = await import("../integrations/accusource/createBackgroundCheck");
@@ -211,6 +220,7 @@ export async function runStartOnCallEmploymentFlow(
             String(u.email || trimmedUser),
           requestedPackageId: pkg,
           requestedPackageName: screeningPackageName ? String(screeningPackageName).trim() : undefined,
+          requestedServices: screeningServiceIdsNormalized.length > 0 ? screeningServiceIdsNormalized : undefined,
           candidate,
         },
         initiatedByUid,
@@ -235,7 +245,12 @@ export async function runStartOnCallEmploymentFlow(
         userId: trimmedUser,
         outcome: "sent",
         hiringEntityId: trimmedEntity,
-        details: { backgroundCheckId: result.backgroundCheckId, packageId: pkg },
+        details: {
+          backgroundCheckId: result.backgroundCheckId,
+          packageId: pkg,
+          requestedServiceIds:
+            screeningServiceIdsNormalized.length > 0 ? screeningServiceIdsNormalized : undefined,
+        },
       });
     } catch (e: unknown) {
       logger.warn("on-call screening order failed", {
@@ -252,7 +267,11 @@ export async function runStartOnCallEmploymentFlow(
         outcome: "failed",
         hiringEntityId: trimmedEntity,
         skipReason: e instanceof Error ? e.message : String(e),
-        details: { packageId: pkg },
+        details: {
+          packageId: pkg,
+          requestedServiceIds:
+            screeningServiceIdsNormalized.length > 0 ? screeningServiceIdsNormalized : undefined,
+        },
       });
     }
   }

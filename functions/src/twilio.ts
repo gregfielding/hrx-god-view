@@ -18,6 +18,7 @@ import {
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
+import { maybeEmitPhoneVerifiedCategoryScore } from './categoryScoreEvolution/activityCategoryScoreEmit';
 
 // Twilio Verify is only used here (kept local)
 const verifyServiceSid = defineSecret('TWILIO_VERIFY_SERVICE_SID');
@@ -207,6 +208,9 @@ export const checkOtp = onCall(
 
     // Update user profile with verified phone
     if (uid) {
+      const prevSnap = await db.doc(`users/${uid}`).get();
+      const wasVerified =
+        prevSnap.exists && (prevSnap.data() as Record<string, unknown>)?.phoneVerified === true;
       await db.doc(`users/${uid}`).set({
         phoneE164,
         phoneVerified: true,
@@ -220,6 +224,16 @@ export const checkOtp = onCall(
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       }, { merge: true });
       logger.info(`Updated user ${uid} with verified phone: ${phoneE164}`);
+      if (!wasVerified) {
+        try {
+          await maybeEmitPhoneVerifiedCategoryScore(db, { uid });
+        } catch (e) {
+          logger.warn('checkOtp.activity_category_score_failed', {
+            uid,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
     } else {
       // If no UID available, try to find user by phone number
       const usersQuery = await db.collection('users')
@@ -229,6 +243,7 @@ export const checkOtp = onCall(
       
       if (!usersQuery.empty) {
         const userDoc = usersQuery.docs[0];
+        const wasVerified = (userDoc.data() as Record<string, unknown>)?.phoneVerified === true;
         await userDoc.ref.update({
           phoneVerified: true,
           phoneVerifiedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -241,6 +256,16 @@ export const checkOtp = onCall(
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         logger.info(`Updated user ${userDoc.id} with verified phone: ${phoneE164}`);
+        if (!wasVerified) {
+          try {
+            await maybeEmitPhoneVerifiedCategoryScore(db, { uid: userDoc.id });
+          } catch (e) {
+            logger.warn('checkOtp.activity_category_score_failed', {
+              uid: userDoc.id,
+              error: e instanceof Error ? e.message : String(e),
+            });
+          }
+        }
       } else {
         logger.warn(`Phone verified but no user found for ${phoneE164}`);
       }

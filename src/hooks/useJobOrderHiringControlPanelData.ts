@@ -16,12 +16,16 @@ import {
 import type { ApplicationHiringLifecycle } from '../types/applicationHiringLifecycle';
 import { normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
 import { formatAiAutomationRecruiterTooltip } from '../utils/formatAiAutomationRecruiterTooltip';
+import type { PrescreenCategoryEvidenceV1, PrescreenCategoryScoresV1 } from '../types/prescreenCategoryScores';
+import { parsePrescreenCategoryScoresFromFirestore } from '../utils/parseRecruiterCategoryScores';
 
 export type HiringDecisionKind = 'advance' | 'review' | 'hold' | 'reject' | 'unknown';
 
 export type RecentHiringDecisionRow = {
   applicationId: string;
   candidateName: string;
+  /** Firebase user id for `users/{uid}.categoryScoresCurrent` (when present on application). */
+  candidateUserId?: string | null;
   decision: HiringDecisionKind;
   reasonCodes: string[];
   evaluatedAtMs: number | null;
@@ -30,6 +34,9 @@ export type RecentHiringDecisionRow = {
   legacyStatusLabel?: string | null;
   /** Orchestrator line for tooltip only. */
   aiAutomationSummary?: string | null;
+  /** From `aiAutomation.categoryScores` when present (worker AI pre-screen Phase 1). */
+  categoryScores?: PrescreenCategoryScoresV1 | null;
+  categoryEvidence?: PrescreenCategoryEvidenceV1 | null;
 };
 
 function extractFinalDecision(data: Record<string, unknown>): {
@@ -211,15 +218,20 @@ export function useJobOrderHiringControlPanelData(
         const legacyStatusLabel = (
           normalizeApplicationStatus(legacyRaw) ?? legacyRaw
         ).replace(/_/g, ' ');
+        const cat = parsePrescreenCategoryScoresFromFirestore(data.aiAutomation);
+        const candidateUserId = String(data.userId || data.candidateId || '').trim() || null;
         recent.push({
           applicationId: d.id,
           candidateName: applicantDisplayName(data),
+          candidateUserId,
           decision: ext.decision,
           reasonCodes: ext.reasonCodes,
           evaluatedAtMs: ext.evaluatedAtMs ?? (t || null),
           hiringLifecycle: parseApplicationHiringLifecycle(data.hiringLifecycle),
           legacyStatusLabel,
           aiAutomationSummary: formatAiAutomationRecruiterTooltip(data),
+          categoryScores: cat.scores,
+          categoryEvidence: cat.evidence,
         });
       }
     }

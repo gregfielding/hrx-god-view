@@ -226,6 +226,10 @@ export {
   onUserCreatedScheduleApplyWizardReminder,
   processApplyWizardReminders,
 } from './applyWizardReminder';
+export {
+  onUserCreatedScheduleAutoInterviewInvite,
+  processScheduledInterviewInvites,
+} from './workerAiPrescreen/autoScheduledInterviewInvite';
 export { processWorkerAiPrescreenReminders } from './workerAiPrescreen/processWorkerAiPrescreenReminders';
 export { scheduleWorkerAiPrescreenFollowUpOnUserWrite } from './workerAiPrescreen/scheduleWorkerAiPrescreenFollowUpOnUserWrite';
 export { placementsCreateAssignments, placementsCancelAssignment, respondToAssignment, confirmAssignmentForWorker, resendAssignmentOffer, previewAssignmentDetailsEmail } from './placementsApi';
@@ -313,10 +317,13 @@ export {
 export { onWorkerI9SupportingDocumentExtract } from './onboarding/i9SupportingDocumentExtractionTrigger';
 export { submitWorkerAiPrescreenInterview } from './workerAiPrescreen/submitWorkerAiPrescreenInterview';
 export { getWorkerAiPrescreenInterviewPlan } from './workerAiPrescreen/getWorkerAiPrescreenInterviewPlan';
+export { backfillPrescreenCategoryScores } from './workerAiPrescreen/backfillPrescreenCategoryScoresCallable';
 export { userGroupHirePassedCandidates } from './recruiter/userGroupHirePassedCandidates';
 export { userGroupEvaluateMembersNextStep } from './recruiter/userGroupEvaluateMembersNextStep';
 export { userGroupInterviewInviteSend } from './recruiter/userGroupInterviewInviteSend';
+export { triggerUserGroupInterviewInvites } from './recruiter/triggerUserGroupInterviewInvites';
 export { userGroupProfileReminderSend } from './recruiter/userGroupProfileReminderSend';
+export { searchRecruiterTableUsers } from './recruiter/searchRecruiterTableUsers';
 export { onCallI9SupportingReminder } from './onboarding/onCallI9SupportingReminderCallable';
 export { processWorkerOnboardingReminders } from './onboarding/processWorkerOnboardingReminders';
 
@@ -11971,3 +11978,16 @@ export { scheduledCompleteRequirementsReminder } from './completeRequirementsRem
 
 // Job Title Management
 export { addJobTitle };
+
+// Category score evolution (server-only processor + HRX/secret-gated callable)
+export {
+  applyCategoryScoreEvent,
+  applyCategoryScoreEventInternal,
+  CATEGORY_SCORE_EVENTS_COLLECTION,
+  CATEGORY_SCORE_EVENT_KEYS_COLLECTION,
+  idempotencyKeyHash,
+  type ApplyCategoryScoreEventInput,
+  type ApplyCategoryScoreEventResult,
+} from './categoryScoreEvolution/applyCategoryScoreEvent';
+
+export { syncActivityCategoryScoreOnUserGeocodeWrite } from './categoryScoreEvolution/activityCategoryScoreOnUserWrite';

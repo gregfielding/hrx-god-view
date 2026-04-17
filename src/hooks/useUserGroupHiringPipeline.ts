@@ -7,6 +7,7 @@ import {
   buildPolicyImpactRows,
   buildQueuedCandidatePreview,
   dedupeApplicationsForOnCallPool,
+  displayNameFromUserDoc,
   extractStoredOrchestratorDecision,
   isOnCallMemberCentricPipeline,
   type GroupHiringPipelineMetrics,
@@ -49,6 +50,7 @@ export function useUserGroupHiringPipeline(
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [docs, setDocs] = useState<Record<string, unknown>[]>([]);
+  const [userDisplayNamesById, setUserDisplayNamesById] = useState<Map<string, string>>(() => new Map());
 
   useEffect(() => {
     if (!tenantId || !groupId) {
@@ -121,6 +123,48 @@ export function useUserGroupHiringPipeline(
     return dedupeApplicationsForOnCallPool(docs, groupId);
   }, [tenantId, groupId, docs, memberCentricOnCall]);
 
+  useEffect(() => {
+    if (!tenantId || pipelineDocs.length === 0) {
+      setUserDisplayNamesById(new Map());
+      return;
+    }
+    const ids = new Set<string>();
+    for (const d of pipelineDocs) {
+      const row = d as Record<string, unknown>;
+      const uid = typeof row.userId === 'string' ? row.userId.trim() : '';
+      const cid = typeof row.candidateId === 'string' ? row.candidateId.trim() : '';
+      const id = uid || cid;
+      if (id) ids.add(id);
+    }
+    if (ids.size === 0) {
+      setUserDisplayNamesById(new Map());
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const map = new Map<string, string>();
+      const idList = [...ids];
+      const CHUNK = 10;
+      for (let i = 0; i < idList.length; i += CHUNK) {
+        const chunk = idList.slice(i, i + CHUNK);
+        const snaps = await Promise.all(chunk.map((userId) => getDoc(doc(db, 'users', userId))));
+        for (let j = 0; j < chunk.length; j++) {
+          const userId = chunk[j];
+          const s = snaps[j];
+          if (!s.exists()) continue;
+          const label = displayNameFromUserDoc(s.data() as Record<string, unknown>);
+          if (label) map.set(userId, label);
+        }
+      }
+      if (!cancelled) setUserDisplayNamesById(map);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [tenantId, pipelineDocs]);
+
   const rawApplicationDocCount = docs.length;
 
   const metrics = useMemo(() => {
@@ -138,9 +182,15 @@ export function useUserGroupHiringPipeline(
     });
   }, [pipelineDocs]);
 
-  const queuedPreview = useMemo(() => buildQueuedCandidatePreview(pipelineDocs), [pipelineDocs]);
+  const queuedPreview = useMemo(
+    () => buildQueuedCandidatePreview(pipelineDocs, { userDisplayNamesById }),
+    [pipelineDocs, userDisplayNamesById],
+  );
 
-  const policyImpactRows = useMemo(() => buildPolicyImpactRows(pipelineDocs, cfg), [pipelineDocs, cfg]);
+  const policyImpactRows = useMemo(
+    () => buildPolicyImpactRows(pipelineDocs, cfg, { userDisplayNamesById }),
+    [pipelineDocs, cfg, userDisplayNamesById],
+  );
 
   return {
     loading,

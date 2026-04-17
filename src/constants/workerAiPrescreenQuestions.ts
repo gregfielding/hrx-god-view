@@ -2,9 +2,19 @@
  * Worker AI pre-screen steps — prompts aligned with `functions/.../prescreenQuestionLabels.ts`.
  */
 
+import { WORKER_AI_PRESCREEN_OPENING_STEPS } from './workerAiPrescreenOpeningSteps';
+
 export type WorkerAiPrescreenQuestionType = 'text' | 'single_select' | 'multi_select';
 
 export type WorkerAiPrescreenStepId =
+  | 'opening_target_work_types'
+  | 'opening_schedule_preferences'
+  | 'opening_experience_industrial'
+  | 'opening_experience_hospitality'
+  | 'opening_experience_events'
+  | 'opening_experience_clerical'
+  | 'opening_experience_healthcare'
+  | 'opening_gig_types'
   | 'motivation'
   | 'experience_details'
   | 'pressure_situation'
@@ -28,23 +38,8 @@ export interface WorkerAiPrescreenStep {
 }
 
 export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
-  {
-    id: 'motivation',
-    type: 'text',
-    prompt:
-      'What drew you to this type of work, and what are you hoping for in your next job? Include:\n' +
-      '- what kind of role or industry you want\n' +
-      '- one goal you have for the next 3–6 months',
-  },
-  {
-    id: 'experience_details',
-    type: 'text',
-    prompt:
-      'Describe your most relevant experience. Include:\n' +
-      '- where you worked (employer or type of workplace)\n' +
-      '- how long you were there (approximate is fine)\n' +
-      '- what your main responsibilities were',
-  },
+  ...(WORKER_AI_PRESCREEN_OPENING_STEPS as unknown as WorkerAiPrescreenStep[]),
+  /** Structured multi-select before first long text — reduces early “essay” friction (order is UI-only; same answer keys). */
   {
     id: 'work_confidence',
     type: 'multi_select',
@@ -60,10 +55,27 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     ],
   },
   {
+    id: 'motivation',
+    type: 'text',
+    prompt:
+      'What drew you to this kind of work — and what are you hoping for next? Include:\n' +
+      '- what kind of role or industry you want\n' +
+      '- one goal for the next few months',
+  },
+  {
+    id: 'experience_details',
+    type: 'text',
+    prompt:
+      'In a few words, what kind of work have you done recently? Include:\n' +
+      '- where (employer or type of workplace)\n' +
+      '- about how long (approximate is fine)\n' +
+      '- your main responsibilities',
+  },
+  {
     id: 'pressure_situation',
     type: 'text',
     prompt:
-      'Tell us about a time you had to work under pressure or meet a tight deadline. What happened, what did you do, and how did it turn out?',
+      'Tell us about a time work got stressful — what happened, what did you do, and how did it turn out?',
   },
   {
     id: 'attendance_issues',
@@ -83,7 +95,7 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
   {
     id: 'transportation_plan',
     type: 'single_select',
-    prompt: 'How do you plan to get to work reliably?',
+    prompt: 'Do you have a reliable way to get to work?',
     options: [
       { value: 'own_vehicle', label: 'I drive myself' },
       { value: 'ride_from_someone_else', label: 'Ride from someone else' },
@@ -135,9 +147,9 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     id: 'supervisor_feedback',
     type: 'text',
     prompt:
-      'What would your last supervisor say about your work? Include:\n' +
+      'What would your last supervisor say about you? Include:\n' +
       '- one strength they might mention\n' +
-      '- one area you were working to improve (if any)',
+      '- one area you were working on (if any)',
   },
   {
     id: 'additional_notes',

@@ -280,10 +280,6 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
     };
   });
 
-  /** Syndication URLs: standalone board posts, or any post edited from job order Jobs Board tab. */
-  const showSyndicationUrlFields =
-    hideJobOrderConnection || !(formData.jobOrderId && String(formData.jobOrderId).trim());
-
   /**
    * From job order detail → Jobs Board only: restrict Job Title to Positions on that order (not full O*NET).
    * Standalone / non–job-order posts keep the full list.
@@ -2703,40 +2699,38 @@ const JobPostForm: React.FC<JobPostFormProps> = ({
           noOptionsText={loadingUserGroups ? 'Loading...' : 'No user groups available'}
         />
 
-        {showSyndicationUrlFields && (
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
-            <JobPostFormAutoSaveTextField
-              label="Craigslist URL"
-              value={formData.craigslistUrl}
-              onChange={(e) => {
-                const craigslistUrl = e.target.value;
-                flushSync(() => {
-                  setFormData((prev) => ({ ...prev, craigslistUrl }));
-                });
-                const fd = formDataRef.current;
-                onHeaderPreviewChange?.({ craigslistUrl: fd.craigslistUrl, indeedUrl: fd.indeedUrl });
-              }}
-              fullWidth
-              placeholder="https://…"
-              helperText="Optional. Header icon opens this link in a new tab when set."
-            />
-            <JobPostFormAutoSaveTextField
-              label="Indeed URL"
-              value={formData.indeedUrl}
-              onChange={(e) => {
-                const indeedUrl = e.target.value;
-                flushSync(() => {
-                  setFormData((prev) => ({ ...prev, indeedUrl }));
-                });
-                const fd = formDataRef.current;
-                onHeaderPreviewChange?.({ craigslistUrl: fd.craigslistUrl, indeedUrl: fd.indeedUrl });
-              }}
-              fullWidth
-              placeholder="https://…"
-              helperText="Optional. Header icon opens this link in a new tab when set."
-            />
-          </Box>
-        )}
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+          <JobPostFormAutoSaveTextField
+            label="Craigslist URL"
+            value={formData.craigslistUrl}
+            onChange={(e) => {
+              const craigslistUrl = e.target.value;
+              flushSync(() => {
+                setFormData((prev) => ({ ...prev, craigslistUrl }));
+              });
+              const fd = formDataRef.current;
+              onHeaderPreviewChange?.({ craigslistUrl: fd.craigslistUrl, indeedUrl: fd.indeedUrl });
+            }}
+            fullWidth
+            placeholder="https://…"
+            helperText="Optional. When set, the Craigslist icon in the post header links here (new tab)."
+          />
+          <JobPostFormAutoSaveTextField
+            label="Indeed URL"
+            value={formData.indeedUrl}
+            onChange={(e) => {
+              const indeedUrl = e.target.value;
+              flushSync(() => {
+                setFormData((prev) => ({ ...prev, indeedUrl }));
+              });
+              const fd = formDataRef.current;
+              onHeaderPreviewChange?.({ craigslistUrl: fd.craigslistUrl, indeedUrl: fd.indeedUrl });
+            }}
+            fullWidth
+            placeholder="https://…"
+            helperText="Optional. When set, the Indeed icon in the post header links here (new tab)."
+          />
+        </Box>
 
         <Box sx={{ mb: 1, mt: 1, display: 'flex', flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
           <Button

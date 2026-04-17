@@ -139,6 +139,8 @@ export type EverifyDialogPrefillFromSupporting = {
   evDocCSelection: string;
   evDocBNumber: string;
   evDocCNumber: string;
+  /** Two-letter US state when List B is DRIVERS_LICENSE / GOVERNMENT_ID_CARD (`us_state_code`). */
+  evDocUsStateCode: string;
   evWorkerFirstName: string;
   evWorkerLastName: string;
   evWorkerDob: string;
@@ -155,6 +157,7 @@ function emptyDialogPrefill(): EverifyDialogPrefillFromSupporting {
     evDocCSelection: '',
     evDocBNumber: '',
     evDocCNumber: '',
+    evDocUsStateCode: '',
     evWorkerFirstName: '',
     evWorkerLastName: '',
     evWorkerDob: '',
@@ -307,6 +310,7 @@ export function i9CaseFlatPartialToDialogPrefill(flat: I9CaseFlatPartialFromSupp
     if (flat.document_bc_number) d.evDocBNumber = flat.document_bc_number;
     if (flat.document_c_number) d.evDocCNumber = flat.document_c_number;
     if (flat.expiration_date) d.evDocExpiration = flat.expiration_date;
+    if (flat.us_state_code) d.evDocUsStateCode = String(flat.us_state_code).trim().toUpperCase().slice(0, 2);
   }
 
   if (flat.first_name) d.evWorkerFirstName = flat.first_name;
@@ -335,6 +339,7 @@ export function mergeEverifyDialogPrefill(
     evDocCSelection: pick(primary.evDocCSelection, fallback.evDocCSelection),
     evDocBNumber: pick(primary.evDocBNumber, fallback.evDocBNumber),
     evDocCNumber: pick(primary.evDocCNumber, fallback.evDocCNumber),
+    evDocUsStateCode: pick(primary.evDocUsStateCode, fallback.evDocUsStateCode),
     evWorkerFirstName: pick(primary.evWorkerFirstName, fallback.evWorkerFirstName),
     evWorkerLastName: pick(primary.evWorkerLastName, fallback.evWorkerLastName),
     evWorkerDob: pick(primary.evWorkerDob, fallback.evWorkerDob),

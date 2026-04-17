@@ -7,7 +7,17 @@
 import { prescreenTextHasConcreteDetail } from '../shared/prescreenAnswerQuality';
 import { normalizeDrugBackgroundAnswer } from './prescreenComplianceSemantics';
 
+/** Opening fields are inclusive multi-select (`string[]` each), not mutually exclusive singles. */
 export type WorkerAiPrescreenAnswers = {
+  opening_target_work_types?: string[];
+  opening_schedule_preferences?: string[];
+  /** Per-vertical experience tags; a worker may have several categories selected upstream. */
+  opening_experience_industrial?: string[];
+  opening_experience_hospitality?: string[];
+  opening_experience_events?: string[];
+  opening_experience_clerical?: string[];
+  opening_experience_healthcare?: string[];
+  opening_gig_types?: string[];
   motivation?: string;
   experience_details?: string;
   pressure_situation?: string;

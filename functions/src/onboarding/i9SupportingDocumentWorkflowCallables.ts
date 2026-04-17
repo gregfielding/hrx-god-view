@@ -41,7 +41,7 @@ export type ReviewWorkerI9SupportingDocumentPayload = {
 };
 
 export const createWorkerI9SupportingDocumentRequest = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '256MiB' },
+  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');
@@ -102,7 +102,6 @@ export const reviewWorkerI9SupportingDocument = onCall(
   {
     enforceAppCheck: false,
     cors: CALLABLE_BROWSER_CORS,
-    memory: '256MiB',
     secrets: [
       TWILIO_ACCOUNT_SID,
       TWILIO_AUTH_TOKEN,
@@ -111,102 +110,113 @@ export const reviewWorkerI9SupportingDocument = onCall(
     ],
   },
   async (request) => {
-    if (!request.auth?.uid) {
-      throw new HttpsError('unauthenticated', 'Authentication required');
-    }
-    const caller = request.auth.uid;
-    const data = (request.data || {}) as ReviewWorkerI9SupportingDocumentPayload;
-    const tenantId = typeof data.tenantId === 'string' ? data.tenantId.trim() : '';
-    const documentId = typeof data.documentId === 'string' ? data.documentId.trim() : '';
-    const decision = data.decision;
-    if (!tenantId || !documentId || (decision !== 'approved' && decision !== 'rejected')) {
-      throw new HttpsError('invalid-argument', 'tenantId, documentId, and decision (approved|rejected) are required');
-    }
+    try {
+      if (!request.auth?.uid) {
+        throw new HttpsError('unauthenticated', 'Authentication required');
+      }
+      const caller = request.auth.uid;
+      const data = (request.data || {}) as ReviewWorkerI9SupportingDocumentPayload;
+      const tenantId = typeof data.tenantId === 'string' ? data.tenantId.trim() : '';
+      const documentId = typeof data.documentId === 'string' ? data.documentId.trim() : '';
+      const decision = data.decision;
+      if (!tenantId || !documentId || (decision !== 'approved' && decision !== 'rejected')) {
+        throw new HttpsError('invalid-argument', 'tenantId, documentId, and decision (approved|rejected) are required');
+      }
 
-    if (!(await canManageOnboarding(request.auth, tenantId, caller))) {
-      throw new HttpsError('permission-denied', 'Not authorized to review I-9 supporting documents');
-    }
+      if (!(await canManageOnboarding(request.auth, tenantId, caller))) {
+        throw new HttpsError('permission-denied', 'Not authorized to review I-9 supporting documents');
+      }
 
-    const reasonRaw = typeof data.rejectionReason === 'string' ? data.rejectionReason.trim() : '';
-    if (decision === 'rejected' && !reasonRaw) {
-      throw new HttpsError('invalid-argument', 'rejectionReason is required when decision is rejected');
-    }
+      const reasonRaw = typeof data.rejectionReason === 'string' ? data.rejectionReason.trim() : '';
+      if (decision === 'rejected' && !reasonRaw) {
+        throw new HttpsError('invalid-argument', 'rejectionReason is required when decision is rejected');
+      }
 
-    const docRef = db.doc(`tenants/${tenantId}/worker_i9_supporting_documents/${documentId}`);
-    const snap = await docRef.get();
-    if (!snap.exists) {
-      throw new HttpsError('not-found', 'Document not found');
-    }
-    const meta = snap.data() as Record<string, unknown>;
-    if (String(meta.tenantId || '').trim() !== tenantId) {
-      throw new HttpsError('failed-precondition', 'tenantId mismatch');
-    }
+      const docRef = db.doc(`tenants/${tenantId}/worker_i9_supporting_documents/${documentId}`);
+      const snap = await docRef.get();
+      if (!snap.exists) {
+        throw new HttpsError('not-found', 'Document not found');
+      }
+      const meta = snap.data() as Record<string, unknown>;
+      if (String(meta.tenantId || '').trim() !== tenantId) {
+        throw new HttpsError('failed-precondition', 'tenantId mismatch');
+      }
 
-    const storagePath = String(meta.storagePath || '').trim();
-    if (decision === 'approved' && !storagePath) {
-      throw new HttpsError('failed-precondition', 'Cannot approve without an uploaded file');
-    }
+      const storagePath = String(meta.storagePath || '').trim();
+      if (decision === 'approved' && !storagePath) {
+        throw new HttpsError('failed-precondition', 'Cannot approve without an uploaded file');
+      }
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    const targetUserId = String(meta.userId || '').trim();
-    const documentType = String(meta.documentType || '').trim();
-    if (decision === 'approved') {
-      await docRef.update({
-        status: 'approved',
-        reviewedAt: now,
-        reviewedBy: caller,
-        rejectionReason: null,
-        updatedAt: now,
-      });
-      logger.info('i9_supporting_document.review_approved', {
-        tenantId,
-        documentId,
-        targetUserId,
-        callerUid: caller,
-      });
-    } else {
-      await docRef.update({
-        status: 'rejected',
-        reviewedAt: now,
-        reviewedBy: caller,
-        rejectionReason: reasonRaw,
-        updatedAt: now,
-      });
-      logger.info('i9_supporting_document.review_rejected', {
-        tenantId,
-        documentId,
-        targetUserId,
-        callerUid: caller,
-      });
-    }
-
-    if (targetUserId) {
-      try {
-        await writeEverifyI9SupportingPrefillSnapshot(tenantId, targetUserId);
-      } catch (e) {
-        logger.warn('i9_supporting_review.everify_prefill_snapshot_failed', {
+      const now = admin.firestore.FieldValue.serverTimestamp();
+      const targetUserId = String(meta.userId || '').trim();
+      const documentType = String(meta.documentType || '').trim();
+      if (decision === 'approved') {
+        await docRef.update({
+          status: 'approved',
+          reviewedAt: now,
+          reviewedBy: caller,
+          rejectionReason: null,
+          updatedAt: now,
+        });
+        logger.info('i9_supporting_document.review_approved', {
           tenantId,
+          documentId,
           targetUserId,
-          error: e instanceof Error ? e.message : String(e),
+          callerUid: caller,
+        });
+      } else {
+        await docRef.update({
+          status: 'rejected',
+          reviewedAt: now,
+          reviewedBy: caller,
+          rejectionReason: reasonRaw,
+          updatedAt: now,
+        });
+        logger.info('i9_supporting_document.review_rejected', {
+          tenantId,
+          documentId,
+          targetUserId,
+          callerUid: caller,
         });
       }
-      try {
-        await notifyWorkerAfterI9SupportingReview({
-          tenantId,
-          targetUserId,
-          documentType,
-          decision,
-        });
-      } catch (e) {
-        logger.warn('i9_supporting_review.notify_failed', {
-          tenantId,
-          targetUserId,
-          error: e instanceof Error ? e.message : String(e),
-        });
-      }
-    }
 
-    return { ok: true as const, documentId, decision };
+      if (targetUserId) {
+        try {
+          await writeEverifyI9SupportingPrefillSnapshot(tenantId, targetUserId);
+        } catch (e) {
+          logger.warn('i9_supporting_review.everify_prefill_snapshot_failed', {
+            tenantId,
+            targetUserId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+        try {
+          await notifyWorkerAfterI9SupportingReview({
+            tenantId,
+            targetUserId,
+            documentType,
+            decision,
+          });
+        } catch (e) {
+          logger.warn('i9_supporting_review.notify_failed', {
+            tenantId,
+            targetUserId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      return { ok: true as const, documentId, decision };
+    } catch (err) {
+      if (err instanceof HttpsError) throw err;
+      const message = err instanceof Error ? err.message : String(err);
+      const stack = err instanceof Error ? err.stack : undefined;
+      logger.error('i9_supporting_document.review_unexpected_error', { message, stack });
+      throw new HttpsError(
+        'internal',
+        'Could not update document review. Please try again, or contact support if this continues.',
+      );
+    }
   },
 );
 
@@ -221,7 +231,7 @@ export type EnsureWorkerI9SlotsForMyEmploymentRecordPayload = {
  * when none exist yet (same shape as pipeline auto-create). Verifies `entity_employments` belongs to the caller.
  */
 export const ensureWorkerI9SlotsForMyEmploymentRecord = onCall(
-  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS, memory: '256MiB' },
+  { enforceAppCheck: false, cors: CALLABLE_BROWSER_CORS },
   async (request) => {
     if (!request.auth?.uid) {
       throw new HttpsError('unauthenticated', 'Authentication required');

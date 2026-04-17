@@ -25,7 +25,7 @@ import {
 } from '@mui/material';
 import { alpha, useTheme } from '@mui/material/styles';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useT } from '../../../i18n';
@@ -46,6 +46,33 @@ import type {
   WorkerAiPrescreenDynamicAnswer,
   WorkerAiPrescreenDynamicStep,
 } from '../../../types/workerAiPrescreenDynamic';
+import WorkerAiPrescreenStrengthenPanel from '../../../components/worker/WorkerAiPrescreenStrengthenPanel';
+import { buildPrescreenSessionProfileEnhancements } from '../../../utils/workerAiPrescreenSubmitProfileSnapshot';
+import type { WorkerAiPrescreenUiSection } from '../../../utils/workerAiPrescreenUiFlow';
+import {
+  buildPrescreenNavEntries,
+  ensureFastPathNarrativePadding,
+  mergeClientFollowUpsIntoAnswers,
+  navEntryStepId,
+  PRESCREEN_FAST_PATH_V2,
+  prescreenUiSectionForNavEntry,
+  shouldAskExpandedQuestions,
+  validatePrescreenNavEntry,
+  type PrescreenNavEntry,
+  type PrescreenSessionFollowupLocks,
+} from '../../../utils/workerAiPrescreenV2Flow';
+import {
+  logPrescreenAbandoned,
+  logPrescreenAdaptiveBootstrap,
+  logPrescreenCompleted,
+  logPrescreenInterviewEntered,
+  logPrescreenStepCompleted,
+  logPrescreenStepViewed,
+} from '../../../utils/prescreenAnalytics';
+import {
+  buildAnswersPatchFromUserPreferences,
+  computeAdaptiveFirstNavIndex,
+} from '../../../utils/workerAiPrescreenAdaptiveEntry';
 
 /** Dynamic step ids from `buildDynamicPrescreenQuestions` (must match functions). */
 const DYNAMIC_WORKSITE_COMMUTE_STEP_ID = 'dyn_worksite_commute';
@@ -69,6 +96,14 @@ type JobHeaderInfo = {
 
 function emptyAnswers(): WorkerAiPrescreenAnswers {
   return {
+    opening_target_work_types: [],
+    opening_schedule_preferences: [],
+    opening_experience_industrial: [],
+    opening_experience_hospitality: [],
+    opening_experience_events: [],
+    opening_experience_clerical: [],
+    opening_experience_healthcare: [],
+    opening_gig_types: [],
     motivation: '',
     experience_details: '',
     work_confidence: [],
@@ -101,11 +136,28 @@ function wordCountAnswer(s: string): number {
   return s.trim().split(/\s+/).filter(Boolean).length;
 }
 
+function openingTargetsSelected(a: WorkerAiPrescreenAnswers): Set<string> {
+  return new Set((a.opening_target_work_types || []).map((x) => String(x).trim()).filter(Boolean));
+}
+
+function openingSchedulesSelected(a: WorkerAiPrescreenAnswers): Set<string> {
+  return new Set((a.opening_schedule_preferences || []).map((x) => String(x).trim()).filter(Boolean));
+}
+
 function isCoreStepIncluded(
   step: WorkerAiPrescreenStep,
   a: WorkerAiPrescreenAnswers,
   dynamicSteps: WorkerAiPrescreenDynamicStep[],
 ): boolean {
+  const tw = openingTargetsSelected(a);
+  const sp = openingSchedulesSelected(a);
+  if (step.id === 'opening_experience_industrial' && !tw.has('industrial')) return false;
+  if (step.id === 'opening_experience_hospitality' && !tw.has('hospitality')) return false;
+  if (step.id === 'opening_experience_events' && !tw.has('events')) return false;
+  if (step.id === 'opening_experience_clerical' && !tw.has('clerical_admin')) return false;
+  if (step.id === 'opening_experience_healthcare' && !tw.has('healthcare')) return false;
+  if (step.id === 'opening_gig_types' && !sp.has('gig_work')) return false;
+
   const dynIds = new Set(dynamicSteps.map((s) => s.id));
   if (step.id === 'drug_screen' && dynIds.has(DYNAMIC_JOB_DRUG_SCREEN_ID)) return false;
   if (step.id === 'background_check' && dynIds.has(DYNAMIC_JOB_BACKGROUND_CHECK_ID)) return false;
@@ -165,7 +217,12 @@ function stepValid(step: WorkerAiPrescreenStep, a: WorkerAiPrescreenAnswers): bo
       return v.length > 0;
     }
     case 'multi_select': {
-      const arr = a.work_confidence || [];
+      const arr =
+        step.id === 'work_confidence'
+          ? a.work_confidence || []
+          : Array.isArray((a as Record<string, unknown>)[step.id])
+            ? ((a as Record<string, unknown>)[step.id] as string[])
+            : [];
       return arr.length > 0;
     }
     default:
@@ -299,6 +356,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const applicationId = searchParams.get('applicationId');
+  const entryQuery = searchParams.get('entry');
   const tenantId = activeTenant?.id ?? null;
 
   const [stepIndex, setStepIndex] = useState(0);
@@ -313,9 +371,29 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const [submittedInterviewId, setSubmittedInterviewId] = useState<string | null>(null);
+  const [userDoc, setUserDoc] = useState<Record<string, unknown> | null>(null);
+  /** Client-only follow-up merged into `experience_details` on submit (not a server key). */
+  const [experienceFollowupOptional, setExperienceFollowupOptional] = useState('');
+  const [pressureFollowupOptional, setPressureFollowupOptional] = useState('');
+  const [supervisorFollowupOptional, setSupervisorFollowupOptional] = useState('');
+  /** Sticky session: once a follow-up is in the path, keep it so step count does not churn while editing. */
+  const [sessionFollowupLocks, setSessionFollowupLocks] = useState<PrescreenSessionFollowupLocks>({
+    experienceFollowup: false,
+    pressureFollowup: false,
+    supervisorFollowup: false,
+  });
+  const interviewStartedAtMs = useRef<number | null>(null);
+  const lastStepIdLogged = useRef<string>('');
+  const stepIndexRef = useRef(0);
+  const doneRef = useRef(false);
+  /** Latches true if `experience_details` was ever “weak” this session; keeps expanded narrative in nav. */
+  const expandedNarrativeEverWeakRef = useRef(false);
+  const adaptiveBootstrapDoneRef = useRef(false);
+  const [userProfileSnapshotReady, setUserProfileSnapshotReady] = useState(false);
 
   const prevVisibleCoreRef = useRef<WorkerAiPrescreenStep[]>([]);
   const prevCoreLenRef = useRef(0);
+  const prevNavLenRef = useRef(0);
 
   // `t` is a stable function ref; depend on a resolved string so this memo recomputes after locale JSON loads (otherwise step prompts stay as raw keys).
   const i18nWorkerPrescreenReady = t('workerAiPrescreen.title');
@@ -334,14 +412,53 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const visibleCoreSteps = useMemo(
     () => localizedCoreSteps.filter((step) => isCoreStepIncluded(step, answers, dynamicSteps)),
-    [localizedCoreSteps, answers.attendance_issues, dynamicSteps],
+    [
+      localizedCoreSteps,
+      answers,
+      answers.attendance_issues,
+      answers.opening_target_work_types,
+      answers.opening_schedule_preferences,
+      dynamicSteps,
+    ],
   );
 
-  const coreLen = visibleCoreSteps.length;
-  const totalSteps = coreLen + dynamicSteps.length;
-  const isDynamicPhase = stepIndex >= coreLen;
-  const coreStep = !isDynamicPhase ? visibleCoreSteps[stepIndex] ?? null : null;
-  const dynamicStep = isDynamicPhase ? dynamicSteps[stepIndex - coreLen] : null;
+  if (PRESCREEN_FAST_PATH_V2 && shouldAskExpandedQuestions(answers)) {
+    expandedNarrativeEverWeakRef.current = true;
+  }
+
+  const navEntries = useMemo(
+    () =>
+      buildPrescreenNavEntries({
+        isFastPath: PRESCREEN_FAST_PATH_V2,
+        visibleCoreSteps,
+        dynamicSteps,
+        answers,
+        experienceFollowupText: experienceFollowupOptional,
+        sessionFollowupLocks,
+        expandedNarrativeSticky: expandedNarrativeEverWeakRef.current,
+      }),
+    [
+      visibleCoreSteps,
+      dynamicSteps,
+      answers,
+      answers.experience_details,
+      answers.opening_target_work_types,
+      answers.opening_schedule_preferences,
+      answers.attendance_issues,
+      answers.pressure_situation,
+      answers.supervisor_feedback,
+      experienceFollowupOptional,
+      sessionFollowupLocks,
+    ],
+  );
+
+  const totalSteps = navEntries.length;
+  const currentEntry: PrescreenNavEntry | null = totalSteps > 0 ? navEntries[stepIndex] ?? null : null;
+  const isDynamicPhase = currentEntry?.kind === 'dynamic';
+  const coreStep = currentEntry?.kind === 'core' ? currentEntry.step : null;
+  const dynamicStep = currentEntry?.kind === 'dynamic' ? currentEntry.step : null;
+  const clientFollowupKind =
+    currentEntry?.kind === 'client_followup' ? currentEntry.followup : null;
 
   useEffect(() => {
     const prev = prevVisibleCoreRef.current;
@@ -364,13 +481,18 @@ const WorkerAiPrescreenPage: React.FC = () => {
       });
     }
 
-    if (totalSteps > 0) {
-      setStepIndex((i) => (i >= totalSteps ? totalSteps - 1 : i));
-    }
-
     prevVisibleCoreRef.current = visibleCoreSteps;
     prevCoreLenRef.current = newLen;
-  }, [visibleCoreSteps, totalSteps, answers.attendance_issues, dynamicSteps.length]);
+  }, [visibleCoreSteps, answers.attendance_issues, dynamicSteps.length]);
+
+  useEffect(() => {
+    const n = navEntries.length;
+    setStepIndex((i) => {
+      if (n <= 0) return 0;
+      return i >= n ? n - 1 : i;
+    });
+    prevNavLenRef.current = n;
+  }, [navEntries.length]);
 
   useEffect(() => {
     if (String(answers.attendance_issues ?? '').trim().toLowerCase() === 'yes') return;
@@ -381,9 +503,149 @@ const WorkerAiPrescreenPage: React.FC = () => {
     setStepIndex(0);
     setDone(false);
     setSubmittedInterviewId(null);
+    setExperienceFollowupOptional('');
+    setPressureFollowupOptional('');
+    setSupervisorFollowupOptional('');
+    setSessionFollowupLocks({ experienceFollowup: false, pressureFollowup: false, supervisorFollowup: false });
+    expandedNarrativeEverWeakRef.current = false;
+    adaptiveBootstrapDoneRef.current = false;
     prevVisibleCoreRef.current = [];
     prevCoreLenRef.current = 0;
   }, [applicationId]);
+
+  useEffect(() => {
+    setSessionFollowupLocks((prev) => {
+      const expWc = wordCountAnswer(String(answers.experience_details ?? ''));
+      const pWc = wordCountAnswer(String(answers.pressure_situation ?? ''));
+      const sWc = wordCountAnswer(String(answers.supervisor_feedback ?? ''));
+      const expanded = PRESCREEN_FAST_PATH_V2 && shouldAskExpandedQuestions(answers);
+      const next: PrescreenSessionFollowupLocks = {
+        experienceFollowup:
+          prev.experienceFollowup || (PRESCREEN_FAST_PATH_V2 && expWc >= 3 && expWc < 9),
+        pressureFollowup:
+          prev.pressureFollowup ||
+          (expanded && PRESCREEN_FAST_PATH_V2 && pWc >= 3 && pWc < 9),
+        supervisorFollowup:
+          prev.supervisorFollowup || (PRESCREEN_FAST_PATH_V2 && sWc >= 3 && sWc < 9),
+      };
+      if (
+        next.experienceFollowup === prev.experienceFollowup &&
+        next.pressureFollowup === prev.pressureFollowup &&
+        next.supervisorFollowup === prev.supervisorFollowup
+      ) {
+        return prev;
+      }
+      return next;
+    });
+  }, [answers.experience_details, answers.pressure_situation, answers.supervisor_feedback]);
+
+  useEffect(() => {
+    interviewStartedAtMs.current = Date.now();
+  }, [applicationId, user?.uid]);
+
+  useEffect(() => {
+    stepIndexRef.current = stepIndex;
+  }, [stepIndex]);
+
+  useEffect(() => {
+    doneRef.current = done;
+  }, [done]);
+
+  const prescreenViewKeyRef = useRef<string>('');
+  useEffect(() => {
+    if (done || totalSteps <= 0) return;
+    const entry = navEntries[stepIndex];
+    if (!entry) return;
+    const id = navEntryStepId(entry);
+    const key = `${stepIndex}:${id}`;
+    if (prescreenViewKeyRef.current === key) return;
+    prescreenViewKeyRef.current = key;
+    logPrescreenStepViewed({ stepId: id, stepIndex, totalSteps });
+    lastStepIdLogged.current = id;
+  }, [stepIndex, totalSteps, done, navEntries]);
+
+  useEffect(
+    () => () => {
+      if (doneRef.current) return;
+      logPrescreenAbandoned({
+        lastStepId: lastStepIdLogged.current || 'unknown',
+        stepIndex: stepIndexRef.current,
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!user?.uid) {
+      setUserDoc(null);
+      setUserProfileSnapshotReady(true);
+      return;
+    }
+    setUserProfileSnapshotReady(false);
+    const userRef = doc(db, 'users', user.uid);
+    const unsub = onSnapshot(userRef, (snap) => {
+      setUserDoc(snap.exists() ? (snap.data() as Record<string, unknown>) : null);
+      setUserProfileSnapshotReady(true);
+    });
+    return () => {
+      unsub();
+      setUserProfileSnapshotReady(false);
+    };
+  }, [user?.uid]);
+
+  useEffect(() => {
+    if (!user?.uid) return;
+    logPrescreenInterviewEntered({
+      entry: entryQuery,
+      hasApplication: Boolean(applicationId),
+      applicationId,
+    });
+  }, [user?.uid, entryQuery, applicationId]);
+
+  useEffect(() => {
+    if (!user?.uid || !userProfileSnapshotReady || done || planLoading || navEntries.length === 0 || adaptiveBootstrapDoneRef.current) {
+      return;
+    }
+    const patch = buildAnswersPatchFromUserPreferences(userDoc);
+    const synthetic: WorkerAiPrescreenAnswers = { ...answers, ...patch };
+    const { index, reason, firstStepId } = computeAdaptiveFirstNavIndex({
+      navEntries,
+      baseAnswers: synthetic,
+      patchFromProfile: {},
+      dynamicAnswers,
+      experienceFollowupOptional,
+      pressureFollowupOptional,
+      supervisorFollowupOptional,
+      dynamicStepValid,
+      hasApplicationId: Boolean(applicationId),
+    });
+    adaptiveBootstrapDoneRef.current = true;
+    if (Object.keys(patch).length > 0) {
+      setAnswers((prev) => ({ ...prev, ...patch }));
+    }
+    logPrescreenAdaptiveBootstrap({
+      reason,
+      firstStepId,
+      firstStepIndex: index,
+      hadProfilePrefsPatch: Object.keys(patch).length > 0,
+    });
+    if (index > 0) {
+      setStepIndex(index);
+    }
+  }, [
+    user?.uid,
+    userProfileSnapshotReady,
+    done,
+    planLoading,
+    navEntries,
+    userDoc,
+    applicationId,
+    answers,
+    dynamicAnswers,
+    experienceFollowupOptional,
+    pressureFollowupOptional,
+    supervisorFollowupOptional,
+  ]);
 
   useEffect(() => {
     if (!applicationId || !tenantId || !user?.uid) {
@@ -470,6 +732,56 @@ const WorkerAiPrescreenPage: React.FC = () => {
 
   const progress = totalSteps > 0 ? ((stepIndex + 1) / totalSteps) * 100 : 0;
 
+  const currentUiSection = useMemo((): WorkerAiPrescreenUiSection | null => {
+    if (!currentEntry) return null;
+    return prescreenUiSectionForNavEntry(currentEntry);
+  }, [currentEntry]);
+
+  const showSectionHeader = useMemo(() => {
+    if (totalSteps <= 0 || !currentEntry) return false;
+    const curr = prescreenUiSectionForNavEntry(currentEntry);
+    if (stepIndex === 0) return curr !== null;
+    const prevE = navEntries[stepIndex - 1];
+    if (!prevE) return true;
+    return curr !== prescreenUiSectionForNavEntry(prevE);
+  }, [stepIndex, totalSteps, currentEntry, navEntries]);
+
+  const microConfirmKey = useMemo((): 'experienceDetails' | 'workConfidence' | null => {
+    if (stepIndex <= 0) return null;
+    const prevE = navEntries[stepIndex - 1];
+    if (!prevE || prevE.kind !== 'core') return null;
+    if (prevE.step.id === 'experience_details') return 'experienceDetails';
+    if (prevE.step.id === 'work_confidence') return 'workConfidence';
+    return null;
+  }, [stepIndex, navEntries]);
+
+  const openingCompleteBanner = useMemo(() => {
+    if (coreStep?.id !== 'work_confidence' || stepIndex < 1) return false;
+    const prev = navEntries[stepIndex - 1];
+    if (!prev || prev.kind !== 'core') return false;
+    return String(prev.step.id).startsWith('opening_');
+  }, [coreStep?.id, stepIndex, navEntries]);
+
+  const showJobFitTransition = useMemo(() => {
+    if (!isDynamicPhase || !dynamicStep || stepIndex < 1) return false;
+    const prevNav = navEntries[stepIndex - 1];
+    return prevNav?.kind === 'core' && prevNav.step.id === 'work_confidence';
+  }, [isDynamicPhase, dynamicStep, stepIndex, navEntries]);
+
+  /** Only in the last two steps so “almost done” does not appear when wrap-up still has several screens left. */
+  const showWrapUpAlmostDoneTransition = useMemo(() => {
+    if (totalSteps <= 1) return false;
+    if (!showSectionHeader || currentUiSection !== 'wrapUp') return false;
+    return stepIndex >= totalSteps - 2;
+  }, [showSectionHeader, currentUiSection, stepIndex, totalSteps]);
+
+  /** Single-step flows: reassuring line without implying “almost” when there is only one screen. */
+  const showWrapUpSingleStepTransition = useMemo(() => {
+    if (totalSteps !== 1) return false;
+    if (!showSectionHeader || currentUiSection !== 'wrapUp') return false;
+    return true;
+  }, [showSectionHeader, currentUiSection, totalSteps]);
+
   const setText = useCallback((id: string, value: string) => {
     setAnswers((prev) => ({ ...prev, [id]: value }));
   }, []);
@@ -487,15 +799,48 @@ const WorkerAiPrescreenPage: React.FC = () => {
     });
   }, []);
 
+  const toggleMultiField = useCallback((stepId: WorkerAiPrescreenStepId, value: string) => {
+    setAnswers((prev) => {
+      const prevArr =
+        stepId === 'work_confidence'
+          ? prev.work_confidence || []
+          : Array.isArray((prev as Record<string, unknown>)[stepId])
+            ? ((prev as Record<string, unknown>)[stepId] as string[])
+            : [];
+      const cur = new Set(prevArr);
+      if (cur.has(value)) cur.delete(value);
+      else cur.add(value);
+      const nextArr = Array.from(cur);
+      if (stepId === 'work_confidence') return { ...prev, work_confidence: nextArr };
+      return { ...prev, [stepId]: nextArr };
+    });
+  }, []);
+
+  const getMultiFieldValues = useCallback((stepId: WorkerAiPrescreenStepId, a: WorkerAiPrescreenAnswers): string[] => {
+    if (stepId === 'work_confidence') return a.work_confidence || [];
+    const v = (a as Record<string, unknown>)[stepId];
+    return Array.isArray(v) ? (v as string[]) : [];
+  }, []);
+
   const canNext = useMemo(() => {
-    if (isDynamicPhase) {
-      return dynamicStep ? dynamicStepValid(dynamicStep, dynamicAnswers) : false;
-    }
-    return coreStep ? stepValid(coreStep, answers) : false;
-  }, [isDynamicPhase, dynamicStep, dynamicAnswers, coreStep, answers]);
+    if (!currentEntry) return false;
+    return validatePrescreenNavEntry(
+      currentEntry,
+      answers,
+      dynamicAnswers,
+      experienceFollowupOptional,
+      PRESCREEN_FAST_PATH_V2,
+      dynamicStepValid,
+      pressureFollowupOptional,
+      supervisorFollowupOptional,
+    );
+  }, [currentEntry, answers, dynamicAnswers, experienceFollowupOptional, pressureFollowupOptional, supervisorFollowupOptional]);
 
   const goNext = () => {
     if (!canNext) return;
+    if (currentEntry) {
+      logPrescreenStepCompleted({ stepId: navEntryStepId(currentEntry) });
+    }
     if (stepIndex < totalSteps - 1) setStepIndex((i) => i + 1);
   };
 
@@ -517,12 +862,28 @@ const WorkerAiPrescreenPage: React.FC = () => {
           payloadDyn[s.id] = v;
         }
       }
+      if (currentEntry) {
+        logPrescreenStepCompleted({ stepId: navEntryStepId(currentEntry) });
+      }
+      const merged = mergeClientFollowUpsIntoAnswers(
+        answers,
+        experienceFollowupOptional,
+        pressureFollowupOptional,
+        supervisorFollowupOptional,
+      );
+      const expandedNarrativeShown = navEntries.some(
+        (e) => e.kind === 'core' && (e.step.id === 'motivation' || e.step.id === 'pressure_situation'),
+      );
+      const padded = ensureFastPathNarrativePadding(merged, expandedNarrativeShown);
       const result = await submitWorkerAiPrescreenInterview({
-        answers: buildAnswersForSubmit(answers, dynamicSteps, dynamicAnswers),
+        answers: buildAnswersForSubmit(padded, dynamicSteps, dynamicAnswers),
         applicationId: applicationId || null,
         tenantId,
         dynamicAnswers: Object.keys(payloadDyn).length > 0 ? payloadDyn : undefined,
+        sessionProfileEnhancements: buildPrescreenSessionProfileEnhancements(userDoc ?? undefined),
       });
+      const started = interviewStartedAtMs.current ?? Date.now();
+      logPrescreenCompleted({ totalSteps, durationMs: Math.max(0, Date.now() - started) });
       setSubmittedInterviewId(
         typeof result?.interviewId === 'string' && result.interviewId.trim() ? result.interviewId.trim() : null,
       );
@@ -537,6 +898,21 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const displayJobTitle = jobHeaderInfo?.title?.trim()
     ? jobHeaderInfo.title
     : t('workerAiPrescreen.fallbackRoleTitle');
+
+  const durationHintText = (opts?: { loading?: boolean }) => {
+    if (!workerAiPrescreenRequired) {
+      if (totalSteps > 0) {
+        return totalSteps < 12
+          ? t('workerAiPrescreen.durationHintOptionalShort')
+          : t('workerAiPrescreen.durationHintOptionalLong');
+      }
+      return t('workerAiPrescreen.durationHintOptional');
+    }
+    if (opts?.loading || totalSteps <= 0) {
+      return t('workerAiPrescreen.durationHintEstimate');
+    }
+    return totalSteps < 12 ? t('workerAiPrescreen.durationHintShort') : t('workerAiPrescreen.durationHintLong');
+  };
 
   const renderFramingHeader = (opts?: { loading?: boolean }) => (
     <Stack spacing={0.5} sx={{ mt: 0, mb: 1.25 }}>
@@ -563,7 +939,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
         </Stack>
       ) : null}
       <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.35, pt: 0.25 }}>
-        {workerAiPrescreenRequired ? t('workerAiPrescreen.durationHint') : t('workerAiPrescreen.durationHintOptional')}
+        {durationHintText(opts)}
       </Typography>
     </Stack>
   );
@@ -652,6 +1028,12 @@ const WorkerAiPrescreenPage: React.FC = () => {
       <LinearProgress variant="determinate" value={progress} sx={{ mb: 0.75, borderRadius: 1, height: 6 }} />
       <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.25 }}>
         {t('workerAiPrescreen.progressOf', { current: stepIndex + 1, total: totalSteps })}
+        {currentUiSection ? (
+          <>
+            {' '}
+            · {t(`workerAiPrescreen.progressPhase.${currentUiSection}`)}
+          </>
+        ) : null}
       </Typography>
 
       {planError ? (
@@ -667,9 +1049,81 @@ const WorkerAiPrescreenPage: React.FC = () => {
       ) : null}
 
       <Box sx={{ minHeight: { xs: 160, sm: 180 } }}>
-        <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 1, lineHeight: 1.35 }}>
-          {isDynamicPhase ? dynamicStep?.prompt : coreStep?.prompt}
+        {showSectionHeader && currentUiSection ? (
+          <Typography
+            variant="overline"
+            color="primary"
+            sx={{ fontWeight: 800, letterSpacing: 0.6, mb: 1, display: 'block', lineHeight: 1.3 }}
+          >
+            {t(`workerAiPrescreen.section.${currentUiSection}`)}
+          </Typography>
+        ) : null}
+        {openingCompleteBanner ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.v2.transitionAfterOpening')}
+          </Typography>
+        ) : null}
+        {showJobFitTransition ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.v2.transitionJobFit')}
+          </Typography>
+        ) : null}
+        {showWrapUpAlmostDoneTransition ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.v2.transitionAlmostDone')}
+          </Typography>
+        ) : null}
+        {showWrapUpSingleStepTransition ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.v2.transitionWrapUpSingleStep')}
+          </Typography>
+        ) : null}
+        {microConfirmKey ? (
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{
+              mb: 1.25,
+              px: 1.25,
+              py: 1,
+              borderRadius: 1,
+              bgcolor: (mui) => alpha(mui.palette.success.main, 0.08),
+              border: (mui) => `1px solid ${alpha(mui.palette.success.main, 0.25)}`,
+            }}
+          >
+            {microConfirmKey === 'experienceDetails'
+              ? t('workerAiPrescreen.microConfirm.experienceDetails')
+              : t('workerAiPrescreen.microConfirm.workConfidence')}
+          </Typography>
+        ) : null}
+        {clientFollowupKind ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, lineHeight: 1.45 }}>
+            {t('workerAiPrescreen.v2.followupTransitionLine')}
+          </Typography>
+        ) : null}
+        <Typography
+          variant="subtitle1"
+          fontWeight={600}
+          sx={{ mb: 1, lineHeight: 1.35, whiteSpace: 'pre-line' }}
+        >
+          {clientFollowupKind
+            ? clientFollowupKind === 'experience'
+              ? t('workerAiPrescreen.v2.followupExperiencePrompt')
+              : clientFollowupKind === 'pressure'
+                ? t('workerAiPrescreen.v2.followupPressurePrompt')
+                : t('workerAiPrescreen.v2.followupSupervisorPrompt')
+            : isDynamicPhase
+              ? dynamicStep?.prompt
+              : coreStep?.prompt}
         </Typography>
+        {!isDynamicPhase &&
+        !clientFollowupKind &&
+        coreStep?.type === 'multi_select' &&
+        String(coreStep.id).startsWith('opening_') ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.4 }}>
+            {t('workerAiPrescreen.openingMultiSelectHint')}
+          </Typography>
+        ) : null}
 
         {isDynamicPhase &&
         dynamicStep?.id === DYNAMIC_WORKSITE_COMMUTE_STEP_ID &&
@@ -721,7 +1175,36 @@ const WorkerAiPrescreenPage: React.FC = () => {
           </Paper>
         ) : null}
 
-        {!isDynamicPhase && coreStep?.type === 'text' && (
+        {clientFollowupKind ? (
+          <TextField
+            fullWidth
+            multiline
+            minRows={3}
+            value={
+              clientFollowupKind === 'experience'
+                ? experienceFollowupOptional
+                : clientFollowupKind === 'pressure'
+                  ? pressureFollowupOptional
+                  : supervisorFollowupOptional
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              if (clientFollowupKind === 'experience') setExperienceFollowupOptional(v);
+              else if (clientFollowupKind === 'pressure') setPressureFollowupOptional(v);
+              else setSupervisorFollowupOptional(v);
+            }}
+            placeholder={
+              clientFollowupKind === 'experience'
+                ? t('workerAiPrescreen.v2.followupExperiencePlaceholder')
+                : clientFollowupKind === 'pressure'
+                  ? t('workerAiPrescreen.v2.followupPressurePlaceholder')
+                  : t('workerAiPrescreen.v2.followupSupervisorPlaceholder')
+            }
+            sx={{ '& .MuiInputBase-root': { pt: 0.5 } }}
+          />
+        ) : null}
+
+        {!clientFollowupKind && !isDynamicPhase && coreStep?.type === 'text' && (
           <TextField
             fullWidth
             multiline
@@ -733,7 +1216,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
           />
         )}
 
-        {!isDynamicPhase && coreStep?.type === 'single_select' && coreStep.options && (
+        {!clientFollowupKind && !isDynamicPhase && coreStep?.type === 'single_select' && coreStep.options && (
           <FormControl component="fieldset" fullWidth sx={{ mt: 0.5 }}>
             <RadioGroup
               value={String((answers as Record<string, string>)[coreStep.id] ?? '')}
@@ -746,7 +1229,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
           </FormControl>
         )}
 
-        {!isDynamicPhase && coreStep?.type === 'multi_select' && coreStep.options && (
+        {!clientFollowupKind && !isDynamicPhase && coreStep?.type === 'multi_select' && coreStep.options && (
           <Stack spacing={0.75}>
             {coreStep.options.map((o) => (
               <FormControlLabel
@@ -754,16 +1237,20 @@ const WorkerAiPrescreenPage: React.FC = () => {
                 control={
                   <Checkbox
                     size="small"
-                    checked={(answers.work_confidence || []).includes(o.value)}
-                    onChange={() => toggleMulti(o.value)}
+                    checked={getMultiFieldValues(coreStep.id, answers).includes(o.value)}
+                    onChange={() =>
+                      coreStep.id === 'work_confidence'
+                        ? toggleMulti(o.value)
+                        : toggleMultiField(coreStep.id, o.value)
+                    }
                   />
                 }
                 label={o.label}
               />
             ))}
-            {(answers.work_confidence || []).length > 0 && (
+            {getMultiFieldValues(coreStep.id, answers).length > 0 && (
               <Stack direction="row" gap={0.5} flexWrap="wrap" sx={{ mt: 0.5 }}>
-                {(answers.work_confidence || []).map((v) => (
+                {getMultiFieldValues(coreStep.id, answers).map((v) => (
                   <Chip key={v} size="small" label={coreStep.options!.find((x) => x.value === v)?.label || v} />
                 ))}
               </Stack>
@@ -786,6 +1273,16 @@ const WorkerAiPrescreenPage: React.FC = () => {
           </FormControl>
         )}
       </Box>
+
+      {user?.uid ? (
+        <WorkerAiPrescreenStrengthenPanel
+          userId={user.uid}
+          tenantId={tenantId}
+          userDoc={userDoc}
+          answers={answers}
+          isLastStep={isLast}
+        />
+      ) : null}
 
       <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
         <Button

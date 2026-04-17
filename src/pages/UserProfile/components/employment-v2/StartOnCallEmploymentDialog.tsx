@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -16,10 +16,15 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { collection, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
+import { useAuth } from '../../../../contexts/AuthContext';
 import { db, functions } from '../../../../firebase';
 import { p } from '../../../../data/firestorePaths';
+import { AccusourcePackageSelector } from '../../../../components/recruiter/AccusourcePackageSelector';
+import { useAccusourceCatalog } from '../../../../hooks/useAccusourceCatalog';
+import { formatFirebaseHttpsError } from '../../../../utils/firebaseHttpsErrors';
+import { canAccusourceAdminFromUserDoc } from '../backgroundsComplianceModel';
 import type { EmploymentEntityKey } from './employmentV2Types';
 import { EMPLOYMENT_ENTITY_KEYS, resolveEntityFirestoreIdForTab } from '../../../../utils/employmentEntityPresentation';
 
@@ -40,13 +45,18 @@ const startOnCallFn = httpsCallable<
     tenantId: string;
     userId: string;
     entityId: string;
+    /** Omitted: server uses each entity’s Worker type from Tenant → Entities (e.g. C1 Events = 1099, C1 Select / Workforce = W2). */
     workerType?: 'w2' | '1099' | 'entity_default';
     screeningPackageId?: string | null;
     screeningPackageName?: string | null;
+    /** À la carte service IDs; same partial-profile request as the package. */
+    screeningRequestedServiceIds?: string[] | null;
     note?: string | null;
   },
   { pipelineId: string; created: boolean; entityKey: string; hiringEntityId: string; entityName: string }
 >(functions, 'startOnCallOnboarding');
+
+const syncAccusourcePackageCatalog = httpsCallable(functions, 'syncAccusourcePackageCatalog');
 
 const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = ({
   open,
@@ -56,17 +66,65 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
   entityKey,
   onSuccess,
 }) => {
+  const { user } = useAuth();
+  const [viewerUserDoc, setViewerUserDoc] = useState<Record<string, unknown> | null | undefined>(undefined);
   const [entities, setEntities] = useState<EntityOption[]>([]);
   const [loadingEntities, setLoadingEntities] = useState(false);
   const [entityId, setEntityId] = useState('');
-  const [workerType, setWorkerType] = useState<'entity_default' | 'w2' | '1099'>('entity_default');
   const [packageId, setPackageId] = useState('');
   const [packageName, setPackageName] = useState('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [catalogSyncing, setCatalogSyncing] = useState(false);
+  const [catalogSyncMessage, setCatalogSyncMessage] = useState<string | null>(null);
+  const { catalog: accusourceCatalog, loading: catalogLoading, refetch: refetchAccusourceCatalog } =
+    useAccusourceCatalog();
   /** Synchronous guard — state updates async, so double-clicks could otherwise fire two callable invocations. */
   const submitInFlightRef = useRef(false);
+
+  const canAccusourceAdmin = useMemo(() => {
+    if (viewerUserDoc === undefined) return false;
+    return canAccusourceAdminFromUserDoc(viewerUserDoc, tenantId);
+  }, [viewerUserDoc, tenantId]);
+
+  useEffect(() => {
+    const vid = user?.uid;
+    if (!open || !vid) {
+      if (!open) setViewerUserDoc(undefined);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(db, 'users', vid))
+      .then((s) => {
+        if (cancelled) return;
+        setViewerUserDoc(s.exists() ? (s.data() as Record<string, unknown>) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setViewerUserDoc(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, user?.uid]);
+
+  const handleRefreshAccusourceCatalog = async () => {
+    if (!canAccusourceAdmin) return;
+    setCatalogSyncing(true);
+    setCatalogSyncMessage(null);
+    try {
+      await syncAccusourcePackageCatalog({ tenantId: tenantId || undefined });
+      const read = await refetchAccusourceCatalog();
+      if (read.ok === false) {
+        setCatalogSyncMessage(`Synced on the server but could not re-read catalog: ${read.error}`);
+      }
+    } catch (e: unknown) {
+      setCatalogSyncMessage(formatFirebaseHttpsError(e));
+    } finally {
+      setCatalogSyncing(false);
+    }
+  };
 
   useEffect(() => {
     if (!open) {
@@ -95,7 +153,16 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
   useEffect(() => {
     if (!open) return;
     void loadEntities();
-  }, [open, loadEntities]);
+    void refetchAccusourceCatalog();
+  }, [open, loadEntities, refetchAccusourceCatalog]);
+
+  useEffect(() => {
+    if (!open) return;
+    setPackageId('');
+    setPackageName('');
+    setSelectedServiceIds([]);
+    setCatalogSyncMessage(null);
+  }, [open]);
 
   useEffect(() => {
     if (!open || entities.length === 0) return;
@@ -115,6 +182,10 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
       setError('Select a hiring entity.');
       return;
     }
+    if (selectedServiceIds.length > 0 && !packageId.trim()) {
+      setError('Select a screening package when adding additional services.');
+      return;
+    }
     submitInFlightRef.current = true;
     setSubmitting(true);
     try {
@@ -122,9 +193,9 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
         tenantId,
         userId: profileUserId,
         entityId: entityId.trim(),
-        workerType,
         screeningPackageId: packageId.trim() || null,
         screeningPackageName: packageName.trim() || null,
+        screeningRequestedServiceIds: selectedServiceIds.length > 0 ? selectedServiceIds : null,
         note: note.trim() || null,
       });
       onClose();
@@ -181,35 +252,36 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
               <CircularProgress size={24} />
             </Box>
           ) : null}
-          <FormControl fullWidth size="small" disabled={submitting}>
-            <InputLabel id="oncall-wt-label">Worker type</InputLabel>
-            <Select
-              labelId="oncall-wt-label"
-              label="Worker type"
-              value={workerType}
-              onChange={(e) => setWorkerType(e.target.value as 'entity_default' | 'w2' | '1099')}
-            >
-              <MenuItem value="entity_default">Use entity default</MenuItem>
-              <MenuItem value="w2">W-2</MenuItem>
-              <MenuItem value="1099">1099</MenuItem>
-            </Select>
-          </FormControl>
-          <TextField
-            label="Screening package ID (optional)"
-            value={packageId}
-            onChange={(e) => setPackageId(e.target.value)}
-            size="small"
-            fullWidth
-            disabled={submitting}
-            helperText="AccuSource / SourceDirect package id — orders only when integration is enabled and you have access."
-          />
-          <TextField
-            label="Screening package name (optional)"
-            value={packageName}
-            onChange={(e) => setPackageName(e.target.value)}
-            size="small"
-            fullWidth
-            disabled={submitting}
+          <Typography variant="caption" color="text.secondary" display="block">
+            W-2 vs 1099 follows the <strong>Worker type</strong> saved on the hiring entity (Tenant → Entities → Overview),
+            not a choice here.
+          </Typography>
+          {catalogSyncMessage ? (
+            <Alert severity="warning" onClose={() => setCatalogSyncMessage(null)}>
+              {catalogSyncMessage}
+            </Alert>
+          ) : null}
+          <AccusourcePackageSelector
+            catalog={accusourceCatalog}
+            catalogLoading={catalogLoading || catalogSyncing}
+            packageId={packageId}
+            packageName={packageName}
+            onChange={(next) => {
+              setPackageId(next.packageId);
+              setPackageName(next.packageName);
+            }}
+            selectedServiceIds={selectedServiceIds}
+            onServicesChange={setSelectedServiceIds}
+            showCatalogMeta
+            showRefresh
+            onRefreshCatalog={() => void handleRefreshAccusourceCatalog()}
+            catalogRefreshing={catalogSyncing}
+            canRefreshCatalog={canAccusourceAdmin}
+            emptyCatalogSeverity="warning"
+            selectLabel="Screening package"
+            emptyMenuLabel="None (optional)"
+            packageNameFieldLabel="Package name (from selection)"
+            description="Same synced catalog as User → Backgrounds → Order screening (AccuSource). One package plus optional add-on services are sent in a single SourceDirect request; leave empty to skip screening."
           />
           <TextField
             label="Internal note (optional)"
@@ -234,7 +306,7 @@ const StartOnCallEmploymentDialog: React.FC<StartOnCallEmploymentDialogProps> = 
         <Button
           variant="contained"
           onClick={() => void handleSubmit()}
-          disabled={submitting || !entityId}
+          disabled={submitting || catalogSyncing || !entityId}
           aria-busy={submitting}
         >
           {submitting ? (

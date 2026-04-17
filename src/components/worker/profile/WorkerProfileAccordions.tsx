@@ -24,6 +24,7 @@ import BioStep from '../../apply/steps/BioStep';
 import ShiftPreferencesCard from '../../../pages/UserProfile/components/ShiftPreferencesCard';
 import type { DesiredWorkType, TargetIndustry } from '../../../utils/jobReadinessOpportunityMap';
 import { buildReadinessIntentWritePatch } from '../../../utils/workerReadinessWriteModel';
+import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
 import { userDocHasStoredResume } from '../../../utils/workerProfilePrerequisites';
 import ResumeUpload from '../../ResumeUpload';
 
@@ -134,24 +135,15 @@ const WorkerProfileAccordions: React.FC<Props> = ({
       setRequirementAttestations(mapped);
       const workerProfile = (data?.workerProfile || {}) as Record<string, unknown>;
       const workerPreferences = (workerProfile.preferences || {}) as Record<string, unknown>;
-      const persistedIndustries = (Array.isArray(workerPreferences.targetIndustries)
-        ? workerPreferences.targetIndustries
-        : [])
-        .map((v) => String(v || '').toLowerCase())
-        .filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial');
-      setTargetIndustries(persistedIndustries);
+      const resolved = resolveWorkerPreferences(workerPreferences);
+      setTargetIndustries(Array.from(new Set(resolved.legacyTargetIndustriesSubset)));
 
-      const hasPersistedScheduleOptions = Object.prototype.hasOwnProperty.call(
-        workerPreferences,
-        'scheduleIntentOptions',
-      );
-      const persistedScheduleOptions = (Array.isArray(workerPreferences.scheduleIntentOptions)
-        ? workerPreferences.scheduleIntentOptions
-        : [])
-        .map((v) => String(v || '').toLowerCase())
-        .filter((v): v is ScheduleIntentOption => v === 'full_time' || v === 'part_time' || v === 'gig');
-      if (hasPersistedScheduleOptions) {
-        setSelectedScheduleIntent(Array.from(new Set(persistedScheduleOptions)));
+      const legacySched = resolved.legacyScheduleIntentOptions as ScheduleIntentOption[];
+      const hasLegacyScheduleField =
+        Object.prototype.hasOwnProperty.call(workerPreferences, 'scheduleIntentOptions') ||
+        Object.prototype.hasOwnProperty.call(workerPreferences, 'schedulePreferences');
+      if (hasLegacyScheduleField || legacySched.length > 0) {
+        setSelectedScheduleIntent(Array.from(new Set(legacySched)));
       } else {
         const persistedWorkType = String(workerPreferences.desiredWorkType || '').toLowerCase();
         if (persistedWorkType === 'full_time' || persistedWorkType === 'part_time' || persistedWorkType === 'gig') {

@@ -1,8 +1,10 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { didRelevantAssignmentFieldsChange } from '../utils/didRelevantAssignmentFieldsChange';
 import { persistAssignmentReadinessV1IfChanged } from './assignmentReadinessPersist';
 import { shouldRecomputeNoShowRiskForAssignmentWrite } from './noShowRiskAssignmentWriteGate';
+import { maybeEmitCategoryScoreOnAssignmentWrite } from '../categoryScoreEvolution/emitCategoryScoreFromDomainEvents';
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -29,6 +31,14 @@ export const syncAssignmentReadinessV1OnAssignmentWrite = onDocumentWritten(
     const assignmentId = event.params.assignmentId as string;
     if (!event.data?.after?.exists) return;
 
+    const beforeData = event.data?.before?.exists ? (event.data.before.data() as Record<string, unknown>) : null;
+    const afterData = event.data.after.data() as Record<string, unknown>;
+
+    if (!didRelevantAssignmentFieldsChange(beforeData, afterData)) {
+      logger.debug('[assignment-readiness] skipped — no relevant field changes', { tenantId, assignmentId });
+      return;
+    }
+
     try {
       const { wrote } = await persistAssignmentReadinessV1IfChanged(db, tenantId, assignmentId);
       if (wrote) {
@@ -52,8 +62,6 @@ export const syncAssignmentReadinessV1OnAssignmentWrite = onDocumentWritten(
       });
     }
 
-    const beforeData = event.data?.before?.exists ? (event.data.before.data() as Record<string, unknown>) : null;
-    const afterData = event.data?.after?.exists ? (event.data.after.data() as Record<string, unknown>) : null;
     if (shouldRecomputeNoShowRiskForAssignmentWrite({ before: beforeData, after: afterData })) {
       try {
         // Lazy-load persist so this trigger does not synchronously require the full no-show module graph at cold start.
@@ -67,5 +75,7 @@ export const syncAssignmentReadinessV1OnAssignmentWrite = onDocumentWritten(
         });
       }
     }
+
+    await maybeEmitCategoryScoreOnAssignmentWrite(db, tenantId, assignmentId, beforeData, afterData);
   }
 );

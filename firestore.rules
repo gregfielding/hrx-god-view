@@ -596,6 +596,34 @@ service cloud.firestore {
         );
       }
 
+      // --- CATEGORY SCORE EVENTS (append-only audit; writes via Cloud Functions Admin SDK only) ---
+      match /category_score_events/{eventId} {
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if false;
+      }
+
+      // Idempotency keys for category score events (server-written; clients read-only for debugging)
+      match /category_score_event_keys/{keyId} {
+        function targetTenantId() {
+          let target = get(/databases/$(database)/documents/users/$(userId)).data;
+          return target.activeTenantId != null ? target.activeTenantId : target.tenantId;
+        }
+        allow read: if isAuthenticated() && (
+          request.auth.uid == userId ||
+          isHRX() ||
+          (targetTenantId() != null && hasSecurityLevel(targetTenantId(), 5))
+        );
+        allow create, update, delete: if false;
+      }
+
       // --- REVIEWS (star ratings) ---
       match /reviews/{reviewId} {
         // Internal team (securityLevel >= 5) can read/write; user can read their own (optional).

@@ -24,6 +24,7 @@ import { getEverifyAuthArchitectureDiagnostics } from './everifyConfig';
 import { createEverifyCase } from './everifyCases';
 import { EverifySoapEmployeeDataSchema, EverifySoapError } from './everifyTypes';
 import { canManageOnboarding } from '../../onboarding/workerOnboardingPipeline';
+import { sanitizeCaseCreatorNameForIca } from './everifyIcaSanitize';
 
 const db = admin.firestore();
 
@@ -139,7 +140,10 @@ export const everifyCreateCase = onCall(
     }
 
     const email = auth.token?.email ?? '';
-    const name = auth.token?.name ?? auth.token?.email ?? 'User';
+    const name = sanitizeCaseCreatorNameForIca(
+      String(auth.token?.name || auth.token?.email || '').trim(),
+      'HRX Verifier',
+    );
     const phone10 = (auth.token?.phone_number ?? '').replace(/\D/g, '').slice(-10) || '0000000000';
     const caseCreator = { name, email, phone10 };
 

@@ -23,8 +23,16 @@ import {
   firestoreSafeHiringLifecycle,
   hiringLifecycleCoreFromApplicationData,
 } from '../shared/hiringLifecycleFirestore';
+import {
+  mergeEnrichedUserDocForPrescreenSubmit,
+  parseSessionProfileEnhancements,
+} from './mergeEnrichedUserDocForPrescreenSubmit';
+import { PRESCREEN_OPENING_MULTI_SELECT_KEYS } from './prescreenOpeningKeys';
+import { buildPrescreenOpeningProfilePatch } from './prescreenOpeningProfileWrite';
+import { maybeEmitInterviewCompletedCategoryScores } from '../categoryScoreEvolution/activityCategoryScoreEmit';
 
 const REQUIRED_KEYS = [
+  ...PRESCREEN_OPENING_MULTI_SELECT_KEYS,
   'motivation',
   'experience_details',
   'work_confidence',
@@ -39,6 +47,8 @@ const REQUIRED_KEYS = [
   'supervisor_feedback',
   'additional_notes',
 ] as const;
+
+const MULTI_SELECT_ANSWER_KEYS = new Set<string>(['work_confidence', ...PRESCREEN_OPENING_MULTI_SELECT_KEYS]);
 
 const ALLOWED_ATTENDANCE_ISSUES = new Set(['yes', 'no']);
 const ALLOWED_TRANSPORT = new Set([
@@ -67,11 +77,12 @@ function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
 
   for (const key of REQUIRED_KEYS) {
     const v = o[key];
-    if (key === 'work_confidence') {
+    if (MULTI_SELECT_ANSWER_KEYS.has(key)) {
       if (!Array.isArray(v)) {
-        throw new HttpsError('invalid-argument', 'work_confidence must be an array of strings');
+        throw new HttpsError('invalid-argument', `${key} must be an array of strings`);
       }
-      out.work_confidence = v.map((x) => String(x).trim()).filter(Boolean);
+      const arr = v.map((x) => String(x).trim()).filter(Boolean);
+      (out as Record<string, unknown>)[key] = arr;
       continue;
     }
     if (typeof v !== 'string') {
@@ -104,8 +115,12 @@ function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
 }
 
 function formatAnswerForStorage(key: string, answers: WorkerAiPrescreenAnswers): string {
-  if (key === 'work_confidence') {
-    return (answers.work_confidence || []).join(', ');
+  if (MULTI_SELECT_ANSWER_KEYS.has(key)) {
+    const arr = (answers as Record<string, unknown>)[key];
+    if (Array.isArray(arr)) {
+      return arr.map((x) => String(x).trim()).filter(Boolean).join(', ');
+    }
+    return '';
   }
   return String((answers as Record<string, string>)[key] ?? '');
 }
@@ -136,7 +151,7 @@ function parseDynamicAnswers(raw: unknown, allowedIds: Set<string>): Record<stri
 }
 
 function questionTypeForKey(key: string): 'text' | 'single_select' | 'multi_select' {
-  if (key === 'work_confidence') return 'multi_select';
+  if (MULTI_SELECT_ANSWER_KEYS.has(key)) return 'multi_select';
   if (
     key === 'attendance_issues' ||
     key === 'transportation_plan' ||
@@ -150,12 +165,43 @@ function questionTypeForKey(key: string): 'text' | 'single_select' | 'multi_sele
   return 'text';
 }
 
+function openingTargets(answers: WorkerAiPrescreenAnswers): Set<string> {
+  return new Set((answers.opening_target_work_types || []).map((x) => String(x).trim()).filter(Boolean));
+}
+
+function openingSchedules(answers: WorkerAiPrescreenAnswers): Set<string> {
+  return new Set((answers.opening_schedule_preferences || []).map((x) => String(x).trim()).filter(Boolean));
+}
+
+/** Omit opening follow-ups not shown in UI. */
+function shouldOmitOpeningStoredQuestion(key: string, answers: WorkerAiPrescreenAnswers): boolean {
+  const tw = openingTargets(answers);
+  const sp = openingSchedules(answers);
+  switch (key) {
+    case 'opening_experience_industrial':
+      return !tw.has('industrial');
+    case 'opening_experience_hospitality':
+      return !tw.has('hospitality');
+    case 'opening_experience_events':
+      return !tw.has('events');
+    case 'opening_experience_clerical':
+      return !tw.has('clerical_admin');
+    case 'opening_experience_healthcare':
+      return !tw.has('healthcare');
+    case 'opening_gig_types':
+      return !sp.has('gig_work');
+    default:
+      return false;
+  }
+}
+
 /** Omit core rows that were skipped in UI (conditionals) or replaced by job-specific dynamic steps (dedupe). */
 function shouldOmitCoreQuestionFromStoredInterview(
   key: (typeof REQUIRED_KEYS)[number],
   answers: WorkerAiPrescreenAnswers,
   dynamicStepIds: Set<string>,
 ): boolean {
+  if (shouldOmitOpeningStoredQuestion(key, answers)) return true;
   if (key === 'attendance_explanation' && normLower(answers.attendance_issues) !== 'yes') return true;
   if (key === 'drug_screen' && dynamicStepIds.has('dyn_job_drug_screen')) return true;
   if (key === 'background_check' && dynamicStepIds.has('dyn_job_background_check')) return true;
@@ -175,8 +221,11 @@ export const submitWorkerAiPrescreenInterview = onCall(
       applicationId?: unknown;
       tenantId?: unknown;
       dynamicAnswers?: unknown;
+      /** Client snapshot of profile fields at submit time (merged with fresh server read for scoring). */
+      sessionProfileEnhancements?: unknown;
     };
     const answers = parseAnswers(data.answers);
+    const sessionProfileEnhancements = parseSessionProfileEnhancements(data.sessionProfileEnhancements);
     const applicationIdRaw = data.applicationId;
     const applicationId =
       applicationIdRaw == null || applicationIdRaw === ''
@@ -189,8 +238,11 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     const db = admin.firestore();
     const userRef = db.collection('users').doc(auth.uid);
-    const userSnap = await userRef.get();
-    const ud = (userSnap.data() || {}) as Record<string, unknown>;
+    const freshUserSnap = await userRef.get();
+    const enrichedUd = mergeEnrichedUserDocForPrescreenSubmit(
+      (freshUserSnap.data() || {}) as Record<string, unknown>,
+      sessionProfileEnhancements,
+    );
 
     let interviewContext: AiInterviewContext | null = null;
     if (applicationId) {
@@ -198,11 +250,12 @@ export const submitWorkerAiPrescreenInterview = onCall(
         userId: auth.uid,
         applicationId,
         tenantId: tenantIdHint,
+        userDoc: enrichedUd,
       });
     }
 
     const pe = interviewContext?.businessRules?.aiPrescreen;
-    const eligibility = evaluateAiPrescreenEligibility(ud, {
+    const eligibility = evaluateAiPrescreenEligibility(enrichedUd, {
       requireResumeOrSkill: pe?.eligibility.requireResumeOrSkill ?? true,
       requirePhone: pe?.eligibility.requirePhone ?? true,
       requireLocation: pe?.eligibility.requireLocation ?? true,
@@ -214,6 +267,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
       eligibleForInterview: eligibility.eligibleForInterview,
       reason: eligibility.reason,
       missingFields: eligibility.missingFields,
+      sessionProfileOverlay: Boolean(sessionProfileEnhancements),
     });
 
     let dynamicSteps: ReturnType<typeof buildDynamicPrescreenSteps> = [];
@@ -238,7 +292,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
       applicationId,
       tenantIdHint,
       interviewId,
-      userDoc: ud,
+      userDoc: enrichedUd,
     });
     const {
       scored,
@@ -250,6 +304,9 @@ export const submitWorkerAiPrescreenInterview = onCall(
       recommendedActions,
       aiFlags,
       score10,
+      categoryScores,
+      categoryEvidence,
+      categoryConfidence,
     } = bundle;
 
     const assignmentReadiness = aiBlockCore.assignmentReadiness as { status?: string };
@@ -266,9 +323,28 @@ export const submitWorkerAiPrescreenInterview = onCall(
       assignmentReadiness: assignmentReadiness?.status,
       gigEligible: (aiBlockCore.alternatePaths as { gigEligible?: boolean })?.gigEligible === true,
     });
-    const fn = String(ud.firstName || '').trim();
-    const ln = String(ud.lastName || '').trim();
+    const fn = String(enrichedUd.firstName || '').trim();
+    const ln = String(enrichedUd.lastName || '').trim();
     const createdByName = fn || ln ? `${fn} ${ln}`.trim() : 'Worker';
+
+    try {
+      const openingPatch = buildPrescreenOpeningProfilePatch(answers);
+      await userRef.set(
+        {
+          ...openingPatch,
+          interviewStatus: 'completed',
+          lastInterviewCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+          'workerProfile.preferences.prescreenOpeningCapturedAt': admin.firestore.FieldValue.serverTimestamp(),
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (eOpen) {
+      logger.warn('submitWorkerAiPrescreenInterview.opening_profile_write_failed', {
+        userId: auth.uid,
+        message: eOpen instanceof Error ? eOpen.message : String(eOpen),
+      });
+    }
 
     const questions = [
       ...REQUIRED_KEYS.filter((id) => !shouldOmitCoreQuestionFromStoredInterview(id, answers, dynamicStepIds)).map(
@@ -344,6 +420,16 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     await interviewRef.set(interviewPayload);
 
+    try {
+      await maybeEmitInterviewCompletedCategoryScores(db, { uid: auth.uid, interviewId });
+    } catch (e) {
+      logger.warn('submitWorkerAiPrescreenInterview.activity_category_score_failed', {
+        userId: auth.uid,
+        interviewId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     if (applicationId && tenantIdForApp) {
       const appRef = db.doc(`tenants/${tenantIdForApp}/applications/${applicationId}`);
       let prevLifecycleCore = null as ReturnType<typeof hiringLifecycleCoreFromApplicationData>;
@@ -367,6 +453,9 @@ export const submitWorkerAiPrescreenInterview = onCall(
               recommendedActions,
               reasonCodes: hiringResult.reasonCodes,
               score: scored.overallScore,
+              categoryScores,
+              categoryEvidence,
+              categoryConfidence,
               noShowRisk: {
                 engineVersion: applicationNoShowRisk.engineVersion,
                 score: applicationNoShowRisk.score,

@@ -13,7 +13,7 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
 import { sendWorkerMessageInternal } from '../twilio';
-import { buildWorkerAiPrescreenUrl } from '../utils/workerUrls';
+import { buildWorkerAiPrescreenInviteUrl } from '../utils/workerUrls';
 import { runUserGroupMemberNextStepEvaluation } from './userGroupMemberNextStepEvaluationCore';
 import {
   buildInterviewInviteSmsBody,
@@ -27,6 +27,7 @@ import {
   tenantEligOpts,
   workerInterviewInviteLang,
 } from './userGroupInterviewInviteValidation';
+import { userInInterviewReinviteCooldown } from '../workerAiPrescreen/interviewInviteCooldown';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -233,7 +234,7 @@ async function runPrepare(
 
   const selectedRecipients: InterviewInviteRecipientPreview[] = selected.map((p) => {
     const applicationId = p.row.applicationId as string;
-    const link = buildWorkerAiPrescreenUrl(applicationId);
+    const link = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'user_group_invite' });
     const fn = firstNameFromUser(p.userData);
     return {
       userId: p.row.userId,
@@ -457,8 +458,19 @@ async function runSend(
         continue;
       }
 
+      if (userData && userInInterviewReinviteCooldown(userData)) {
+        results.push({
+          userId,
+          applicationId,
+          outcome: 'skipped',
+          detail: 'Interview re-invite cooldown (lastInterviewInvitedAt / lastInterviewCompletedAt)',
+        });
+        skipped += 1;
+        continue;
+      }
+
     const fn = firstNameFromUser(userData as Record<string, unknown>);
-    const link = buildWorkerAiPrescreenUrl(applicationId);
+    const link = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'user_group_invite' });
     const body = buildInterviewInviteSmsBody(fn, applicationId, link, workerInterviewInviteLang(userData as Record<string, unknown>));
       const phone = phoneE164FromUser(userData as Record<string, unknown>);
 
@@ -472,6 +484,15 @@ async function runSend(
 
       if (sms.success) {
         sent += 1;
+        const sentAt = admin.firestore.Timestamp.now();
+        await db.doc(`users/${userId}`).set(
+          {
+            lastInterviewInvitedAt: sentAt,
+            interviewInviteSentAt: sentAt,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          { merge: true },
+        );
         await db.doc(`tenants/${tenantId}/applications/${applicationId}`).set(
           {
             userGroupInterviewInviteLastSentAt: admin.firestore.FieldValue.serverTimestamp(),

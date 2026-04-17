@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Card,
@@ -25,7 +26,13 @@ import {
   Divider,
 } from '@mui/material';
 import { collection, doc, getDoc, getDocs, serverTimestamp, updateDoc } from 'firebase/firestore';
-import { db } from '../../../firebase';
+import { httpsCallable } from 'firebase/functions';
+import { useAuth } from '../../../contexts/AuthContext';
+import { db, functions } from '../../../firebase';
+import { AccusourcePackageSelector } from '../AccusourcePackageSelector';
+import { useAccusourceCatalog } from '../../../hooks/useAccusourceCatalog';
+import { canAccusourceAdminFromUserDoc } from '../../../pages/UserProfile/components/backgroundsComplianceModel';
+import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
 import { useUserGroupHiringPipeline } from '../../../hooks/useUserGroupHiringPipeline';
 import {
   DEFAULT_USER_GROUP_HIRING_CONFIG,
@@ -50,6 +57,8 @@ import UserGroupHiringDecisionFlowPreview from './UserGroupHiringDecisionFlowPre
 import UserGroupHiringPipelineStatus from './UserGroupHiringPipelineStatus';
 import UserGroupHiringQueuePreview from './UserGroupHiringQueuePreview';
 import UserGroupHiringSummaryCard from './UserGroupHiringSummaryCard';
+import type { Option } from '../../../fields/FieldTypes';
+import { getOptionsForField } from '../../../utils/fieldOptions';
 
 export type UserGroupMemberProfilePreview = {
   userId: string;
@@ -71,6 +80,8 @@ export type UserGroupHiringControlPanelProps = {
  * Compared to the **selected** Hiring entity dropdown option’s label — same source as the menu.
  */
 const EVERIFY_REQUIRED_ENTITY_NAME = 'C1 Select LLC';
+
+const syncAccusourcePackageCatalog = httpsCallable(functions, 'syncAccusourcePackageCatalog');
 
 function parseOptionalInt(raw: string): number | undefined {
   const t = raw.trim();
@@ -157,6 +168,12 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
   );
   const [entityOptions, setEntityOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [entitiesLoading, setEntitiesLoading] = useState(false);
+  const { user } = useAuth();
+  const [viewerUserDoc, setViewerUserDoc] = useState<Record<string, unknown> | null | undefined>(undefined);
+  const [catalogSyncing, setCatalogSyncing] = useState(false);
+  const [catalogSyncMessage, setCatalogSyncMessage] = useState<string | null>(null);
+  const { catalog: accusourceCatalog, loading: catalogLoading, refetch: refetchAccusourceCatalog } =
+    useAccusourceCatalog();
 
   const useTenantMode = cfg.useTenantDefaults === true;
   const effectiveCfg = useMemo(
@@ -171,6 +188,28 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
     () => getEffectiveHiringThresholdSummaryLines(effectiveCfg),
     [effectiveCfg],
   );
+
+  const canAccusourceAdmin = useMemo(() => {
+    if (viewerUserDoc === undefined) return false;
+    return canAccusourceAdminFromUserDoc(viewerUserDoc, tenantId);
+  }, [viewerUserDoc, tenantId]);
+
+  const handleRefreshAccusourceCatalog = useCallback(async () => {
+    if (!canAccusourceAdmin) return;
+    setCatalogSyncing(true);
+    setCatalogSyncMessage(null);
+    try {
+      await syncAccusourcePackageCatalog({ tenantId: tenantId || undefined });
+      const read = await refetchAccusourceCatalog();
+      if (read.ok === false) {
+        setCatalogSyncMessage(`Synced on the server but could not re-read catalog: ${read.error}`);
+      }
+    } catch (e: unknown) {
+      setCatalogSyncMessage(formatFirebaseHttpsError(e));
+    } finally {
+      setCatalogSyncing(false);
+    }
+  }, [canAccusourceAdmin, refetchAccusourceCatalog, tenantId]);
 
   const {
     loading: pipelineLoading,
@@ -222,6 +261,26 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
       cancelled = true;
     };
   }, [tenantId, groupId]);
+
+  useEffect(() => {
+    const vid = user?.uid;
+    if (!vid || !tenantId) {
+      if (!vid) setViewerUserDoc(undefined);
+      return;
+    }
+    let cancelled = false;
+    getDoc(doc(db, 'users', vid))
+      .then((s) => {
+        if (cancelled) return;
+        setViewerUserDoc(s.exists() ? (s.data() as Record<string, unknown>) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setViewerUserDoc(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.uid, tenantId]);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -360,7 +419,18 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
     setEmployment({ eVerifyRequired: derivedEverifyRequired });
   }, [derivedEverifyRequired, emp.eVerifyRequired, setEmployment]);
 
-  const certText = (req.requiredCertificationIds ?? []).join(', ');
+  const certificationFieldOptions = useMemo(() => getOptionsForField('licensesCerts', undefined), []);
+
+  const selectedCertificationOptions = useMemo((): Option[] => {
+    const ids = req.requiredCertificationIds ?? [];
+    const byValue = new Map(certificationFieldOptions.map((o) => [o.value, o]));
+    return ids.map((id) => {
+      const found = byValue.get(id);
+      if (found) return found;
+      return { value: id, label: id };
+    });
+  }, [certificationFieldOptions, req.requiredCertificationIds]);
+
   const targetN = tgt.targetOnboardingCount;
   const showQueuePreview =
     typeof targetN === 'number' &&
@@ -403,12 +473,19 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
     const he = String(emp.hiringEntityId ?? '').trim();
     lines.push(he ? `Hiring entity: ${he}` : 'Hiring entity: not set');
     lines.push(`Worker type: ${emp.workerType ?? 'W2'} · ${emp.employmentType === 'on_call' ? 'On-call' : 'Standard'}`);
-    if (req.drugScreenRequired) lines.push('Drug screen: required');
-    if (req.backgroundCheckRequired) lines.push('Background check: required');
-    const pkg = String(req.accusourcePackageId ?? '').trim();
-    if (pkg) lines.push(`Accusource package: ${pkg}`);
+    if (req.accusourceScreeningRequired) {
+      const pkg = String(req.accusourcePackageId ?? '').trim();
+      const pn = String(req.accusourcePackageName ?? '').trim();
+      if (pkg) {
+        lines.push(pn ? `AccuSource screening: ${pn} (${pkg})` : `AccuSource screening: ${pkg}`);
+        const svcs = (req.accusourceRequestedServiceIds ?? []).filter(Boolean);
+        if (svcs.length) lines.push(`AccuSource add-on services: ${svcs.join(', ')}`);
+      } else {
+        lines.push('AccuSource screening: required (no package selected)');
+      }
+    }
     const certs = (req.requiredCertificationIds ?? []).filter(Boolean);
-    if (certs.length) lines.push(`Certification IDs: ${certs.join(', ')}`);
+    if (certs.length) lines.push(`Required certifications: ${certs.join(', ')}`);
     return lines;
   }, [auto, emp, req]);
 
@@ -895,41 +972,93 @@ const UserGroupHiringControlPanel: React.FC<UserGroupHiringControlPanelProps> = 
               <FormControlLabel
                 control={
                   <Switch
-                    checked={!!req.drugScreenRequired}
-                    onChange={(_, v) => setRequirements({ drugScreenRequired: v })}
+                    checked={!!req.accusourceScreeningRequired}
+                    onChange={(_, v) => {
+                      if (!v) {
+                        setRequirements({
+                          accusourceScreeningRequired: false,
+                          accusourcePackageId: '',
+                          accusourcePackageName: '',
+                          accusourceRequestedServiceIds: [],
+                        });
+                      } else {
+                        setRequirements({ accusourceScreeningRequired: true });
+                      }
+                    }}
                   />
                 }
-                label="Require drug screen"
+                label="Require AccuSource screening package"
               />
-              <FormControlLabel
-                control={
-                  <Switch
-                    checked={!!req.backgroundCheckRequired}
-                    onChange={(_, v) => setRequirements({ backgroundCheckRequired: v })}
-                  />
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', pl: 0 }}>
+                For on-call pool hires, <strong>Hire passed candidates</strong> uses the same screening package as{' '}
+                <strong>Start on-call employment</strong> on a user profile.
+              </Typography>
+              {catalogSyncMessage ? (
+                <Alert severity="warning" onClose={() => setCatalogSyncMessage(null)}>
+                  {catalogSyncMessage}
+                </Alert>
+              ) : null}
+              <AccusourcePackageSelector
+                catalog={accusourceCatalog}
+                catalogLoading={catalogLoading || catalogSyncing}
+                packageId={req.accusourcePackageId ?? ''}
+                packageName={req.accusourcePackageName ?? ''}
+                onChange={(next) =>
+                  setRequirements({
+                    accusourcePackageId: next.packageId.trim(),
+                    accusourcePackageName: next.packageName.trim(),
+                  })
                 }
-                label="Require background check"
+                selectedServiceIds={req.accusourceRequestedServiceIds ?? []}
+                onServicesChange={(ids) => setRequirements({ accusourceRequestedServiceIds: ids })}
+                disabled={!req.accusourceScreeningRequired}
+                showCatalogMeta
+                showRefresh
+                onRefreshCatalog={() => void handleRefreshAccusourceCatalog()}
+                catalogRefreshing={catalogSyncing}
+                canRefreshCatalog={canAccusourceAdmin}
+                emptyCatalogSeverity="info"
+                selectLabel="AccuSource screening package"
+                emptyMenuLabel="None"
+                packageNameFieldLabel="Package name (from catalog)"
+                description="Synced catalog from User → Backgrounds → Order screening (AccuSource). Package plus optional add-on services are sent in one SourceDirect order. Required when the toggle above is on."
               />
-              <TextField
-                size="small"
-                label="Accusource package ID"
-                value={req.accusourcePackageId ?? ''}
-                onChange={(e) => setRequirements({ accusourcePackageId: e.target.value.trim() })}
-                fullWidth
-              />
-              <TextField
-                size="small"
-                label="Required certification IDs (comma-separated)"
-                value={certText}
-                onChange={(e) => {
-                  const ids = e.target.value
-                    .split(',')
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                  setRequirements({ requiredCertificationIds: ids });
+              <Autocomplete
+                multiple
+                disableCloseOnSelect
+                options={certificationFieldOptions}
+                value={selectedCertificationOptions}
+                onChange={(_, newValue) => {
+                  setRequirements({
+                    requiredCertificationIds: newValue.map((o) => o.value),
+                  });
                 }}
-                fullWidth
-                helperText="Stored as an array of string IDs"
+                getOptionLabel={(o) => o.label}
+                isOptionEqualToValue={(a, b) => a.value === b.value}
+                filterSelectedOptions
+                renderTags={(value, getTagProps) =>
+                  value.map((option, index) => {
+                    const { key, ...chipProps } = getTagProps({ index });
+                    return (
+                      <Chip
+                        key={key}
+                        variant="outlined"
+                        size="small"
+                        label={option.label}
+                        {...chipProps}
+                      />
+                    );
+                  })
+                }
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    size="small"
+                    label="Required certifications"
+                    placeholder="Search credentials…"
+                    helperText="Same standard list as deal scoping and job compliance (credentials catalog). Stored as credential names."
+                  />
+                )}
               />
             </Stack>
           </SectionCard>

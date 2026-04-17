@@ -7,6 +7,7 @@
  * - onUserCreatedScheduleApplyWizardReminder sets applyWizardReminderDueAt = now + 15m.
  * - processApplyWizardReminders (scheduled) sends SMS once, then clears pending flags.
  * - Successful wizard submit removes snapshot + pending (no SMS if they finished).
+ * - SMS links to worker AI prescreen (`entry=sms_apply_wizard_invite`) instead of the apply wizard resume URL.
  */
 
 import * as admin from 'firebase-admin';
@@ -14,13 +15,14 @@ import { onDocumentCreated } from 'firebase-functions/v2/firestore';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import { sendWorkerMessageInternal } from './twilio';
-import { buildApplyWizardResumeUrl } from './utils/workerUrls';
+import { buildWorkerAiPrescreenInviteUrl } from './utils/workerUrls';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
   TWILIO_MESSAGING_PHONE_NUMBER,
   TWILIO_A2P_CAMPAIGN,
 } from './messaging/twilioSecrets';
+import { userInInterviewReinviteCooldown } from './workerAiPrescreen/interviewInviteCooldown';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -40,6 +42,42 @@ function phoneE164FromUser(data: Record<string, unknown>): string {
   if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
   return '';
+}
+
+/**
+ * Best-effort: find an application doc for this user + tenant + job posting id from the apply snapshot
+ * so the interview stays job-aware (dynamic prescreen plan + context).
+ */
+async function resolveApplicationIdForInterviewInvite(
+  uid: string,
+  snapshot: Record<string, unknown>,
+): Promise<string | null> {
+  const tenantId = String(snapshot.tenantId || '').trim();
+  const jobId = String(snapshot.jobId || '').trim();
+  if (!tenantId || !jobId) return null;
+  try {
+    const apps = await db
+      .collection(`tenants/${tenantId}/applications`)
+      .where('userId', '==', uid)
+      .limit(40)
+      .get();
+    for (const d of apps.docs) {
+      const o = d.data() as Record<string, unknown>;
+      const jp = String(o.jobPostingId || o.jobPostId || '').trim();
+      const jid = String(o.jobId || '').trim();
+      if (jp === jobId || jid === jobId) return d.id;
+    }
+    for (const d of apps.docs) {
+      if (d.id.includes(jobId)) return d.id;
+    }
+  } catch (e) {
+    logger.warn('applyWizardReminder: resolveApplicationIdForInterviewInvite failed', {
+      uid,
+      tenantId,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  return null;
 }
 
 function resolveTenantIdForLog(data: Record<string, unknown>, snapshot: Record<string, unknown>): string {
@@ -142,12 +180,20 @@ export const processApplyWizardReminders = onSchedule(
         continue;
       }
 
-      const url = buildApplyWizardResumeUrl({
-        path: snapshot.path as string,
-        tenantSlug: snapshot.tenantSlug as string,
-        tenantId: snapshot.tenantId as string,
-        jobId: snapshot.jobId as string,
-        signupGroupId: snapshot.signupGroupId as string,
+      if (userInInterviewReinviteCooldown(data)) {
+        await docSnap.ref.update({
+          applyWizardReminderPending: false,
+          applyWizardReminderAbortedReason: 'interview_reinvite_cooldown',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        aborted += 1;
+        continue;
+      }
+
+      const applicationIdResolved = await resolveApplicationIdForInterviewInvite(uid, snapshot);
+      const url = buildWorkerAiPrescreenInviteUrl({
+        applicationId: applicationIdResolved,
+        entry: 'sms_apply_wizard_invite',
       });
 
       const firstName =
@@ -156,11 +202,13 @@ export const processApplyWizardReminders = onSchedule(
       const preferredLanguage = String(data.preferredLanguage || 'en').toLowerCase() === 'es' ? 'es' : 'en';
 
       const english =
-        `Hi ${firstName}, you started an application with C1 Staffing but have not finished yet. ` +
-        `Continue here: ${url}`;
+        applicationIdResolved
+          ? `Hi ${firstName}, quick next step: answer a few questions so we can consider you for this job and match you with the right opportunities. Start here: ${url}`
+          : `Hi ${firstName}, answer a few quick questions so we can get you job-ready and match you with work. Start here: ${url}`;
       const spanish =
-        `Hola ${firstName}, empezaste una solicitud con C1 Staffing pero no la has terminado. ` +
-        `Continua aqui: ${url}`;
+        applicationIdResolved
+          ? `Hola ${firstName}, siguiente paso rápido: responde unas preguntas para que podamos considerarte para este trabajo y emparejarte con las oportunidades adecuadas. Empieza aquí: ${url}`
+          : `Hola ${firstName}, responde unas preguntas rápidas para prepararte para trabajar y emparejarte con empleos. Empieza aquí: ${url}`;
       const body = preferredLanguage === 'es' ? spanish : english;
 
       const tenantId = resolveTenantIdForLog(data, snapshot);
@@ -169,7 +217,7 @@ export const processApplyWizardReminders = onSchedule(
         tenantId,
         userId: uid,
         source: 'system',
-        messageTypeId: 'apply_wizard_resume_reminder',
+        messageTypeId: 'apply_wizard_interview_invite',
         systemContext: true,
       });
 
@@ -189,21 +237,23 @@ export const processApplyWizardReminders = onSchedule(
       await docSnap.ref.update({
         applyWizardReminderPending: false,
         applyWizardReminderSentAt: sentAt,
+        lastInterviewInvitedAt: sentAt,
         applyWizardReminderLastError: admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
       try {
         await docSnap.ref.collection('activityLogs').add({
-          action: 'Apply wizard resume reminder',
+          action: 'Apply wizard interview invite',
           actionType: 'sms_sent',
-          description: 'Automated SMS with link to continue application',
+          description: 'Automated SMS with link to guided worker interview (adaptive entry)',
           severity: 'low',
           source: 'system',
           metadata: {
-            reminderType: 'apply_wizard_resume',
+            reminderType: 'apply_wizard_interview_invite',
             phoneE164: phone,
-            resumeUrl: url,
+            interviewUrl: url,
+            applicationIdResolved: applicationIdResolved || null,
             tenantId,
             preferredLanguage,
           },

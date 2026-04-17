@@ -1,11 +1,13 @@
 import * as admin from 'firebase-admin';
 import { logger } from 'firebase-functions/v2';
 import { onDocumentWritten } from 'firebase-functions/v2/firestore';
+import { didRelevantBackgroundCheckFieldsChange } from '../utils/didRelevantBackgroundCheckFieldsChange';
 import {
   persistAssignmentReadinessV1IfChanged,
   resolveAssignmentReadinessLinkagesFromBackgroundCheckData,
   type AssignmentReadinessLinkage,
 } from './assignmentReadinessPersist';
+import { maybeEmitCategoryScoreOnBackgroundCheckWrite } from '../categoryScoreEvolution/emitCategoryScoreFromDomainEvents';
 
 if (!admin.apps.length) admin.initializeApp();
 
@@ -45,6 +47,13 @@ export const syncAssignmentReadinessV1OnBackgroundCheckWrite = onDocumentWritten
     const after = event.data?.after?.exists
       ? (event.data.after.data() as Record<string, unknown>)
       : null;
+
+    if (before && after && !didRelevantBackgroundCheckFieldsChange(before, after)) {
+      logger.debug('[background-check-readiness] skipped — no relevant field changes', { checkId });
+      return;
+    }
+
+    await maybeEmitCategoryScoreOnBackgroundCheckWrite(db, checkId, before, after);
 
     let beforeLinks: AssignmentReadinessLinkage[] = [];
     let afterLinks: AssignmentReadinessLinkage[] = [];

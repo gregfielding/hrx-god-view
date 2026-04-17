@@ -3,6 +3,14 @@
  */
 
 export const WORKER_AI_PRESCREEN_PROMPTS: Record<string, string> = {
+  opening_target_work_types: 'What type of work are you interested in?',
+  opening_schedule_preferences: 'What kind of schedule are you open to?',
+  opening_experience_industrial: 'Which types of industrial work have you done before?',
+  opening_experience_hospitality: 'Which hospitality roles have you worked in?',
+  opening_experience_events: 'What kind of event work have you done?',
+  opening_experience_clerical: 'Which clerical or admin work have you done?',
+  opening_experience_healthcare: 'Which healthcare support roles have you done?',
+  opening_gig_types: 'What kinds of gig work are you open to?',
   motivation:
     'What drew you to this type of work, and what are you hoping for in your next job? Include:\n' +
     '- what kind of role or industry you want\n' +

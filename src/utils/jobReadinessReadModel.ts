@@ -1,4 +1,8 @@
 import type { DesiredWorkType, TargetIndustry } from './jobReadinessOpportunityMap';
+import {
+  legacyTargetIndustriesSubsetFromTargetWorkTypes,
+  normalizeTargetWorkTypes,
+} from './workerPreferencesCanonical';
 
 export type ReadModelDomain = 'durable_profile' | 'attestation_only' | 'verified_compliance';
 
@@ -13,7 +17,12 @@ export const READINESS_INPUT_DOMAIN_MAP: ReadinessInputFieldMapRow[] = [
   {
     domain: 'durable_profile',
     signal: 'desired work intent',
-    canonicalPaths: ['workerProfile.preferences.desiredWorkType', 'workerProfile.preferences.targetIndustries'],
+    canonicalPaths: [
+      'workerProfile.preferences.desiredWorkType',
+      'workerProfile.preferences.targetWorkTypes',
+      'workerProfile.preferences.schedulePreferences',
+      'workerProfile.preferences.targetIndustries',
+    ],
     legacyFallbackPaths: ['jobReadiness.intent.desiredWorkType', 'jobReadiness.intent.targetIndustries'],
   },
   {
@@ -186,10 +195,12 @@ export function buildJobReadinessReadModel(userDocInput: Record<string, unknown>
   })();
 
   const targetIndustries = (() => {
-    const canonical = toStringList(preferences.targetIndustries)
+    const fromWorkTypes = legacyTargetIndustriesSubsetFromTargetWorkTypes(normalizeTargetWorkTypes(preferences));
+    if (fromWorkTypes.length) return fromWorkTypes;
+    const canonicalLegacy = toStringList(preferences.targetIndustries)
       .map((v) => v.toLowerCase())
       .filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial');
-    if (canonical.length) return canonical;
+    if (canonicalLegacy.length) return canonicalLegacy;
     const legacy = toStringList(toRecord(toRecord(userDoc.jobReadiness).intent).targetIndustries)
       .map((v) => v.toLowerCase())
       .filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial');

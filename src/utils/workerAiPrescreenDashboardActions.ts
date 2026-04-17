@@ -55,7 +55,7 @@ export function buildWorkerAiPrescreenDashboardActions(args: {
         sortOrder: 550,
         primaryLabelKey: 'dashboard.actionItems.aiPrescreenInterviewPrimary',
         primaryKind: 'navigate',
-        href: `${C1_WORKER_AI_PRESCREEN_PATH}?applicationId=${encodeURIComponent(pick.id)}`,
+        href: `${C1_WORKER_AI_PRESCREEN_PATH}?applicationId=${encodeURIComponent(pick.id)}&entry=dashboard_cta`,
         sourceReason: 'AI pre-screen SMS sent; interview not completed for application',
         qaEvaluatedFields: { applicationId: pick.id },
       },

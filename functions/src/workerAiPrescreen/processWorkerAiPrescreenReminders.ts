@@ -14,9 +14,10 @@ import {
 } from '../messaging/twilioSecrets';
 import { evaluateAiPrescreenEligibility, userDocHasUsablePhone } from './evaluateAiPrescreenEligibility';
 import { resolveAiPrescreenTenantPolicy } from './aiPrescreenJobSlice';
-import { buildWorkerAiPrescreenUrl, buildWorkerProfileUrl } from '../utils/workerUrls';
+import { buildWorkerAiPrescreenInviteUrl } from '../utils/workerUrls';
 import { normalizeApplicationStatus } from '../utils/applicationStatusNormalize';
 import { resolveHiringInterviewPolicyForApplication } from './aiHiringPolicyResolution';
+import { touchLastInterviewInvitedAt } from './interviewInviteCooldown';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -235,7 +236,10 @@ async function processPrescreenChaseSms(args: {
     requireWorkAuthorization: prescreenPolicy.eligibility.requireWorkAuthorization,
   });
 
-  const prescreenUrl = buildWorkerAiPrescreenUrl(applicationId);
+  const prescreenUrl = buildWorkerAiPrescreenInviteUrl({
+    applicationId,
+    entry: chase === 1 ? 'chase_1' : 'chase_2',
+  });
   const firstName = firstNameFromUser(ud);
   const preferredLanguage = String(ud.preferredLanguage || 'en').toLowerCase() === 'es' ? 'es' : 'en';
   const jobTitle = jobTitleFromApplicationForSms(data, preferredLanguage);
@@ -298,6 +302,8 @@ async function processPrescreenChaseSms(args: {
     [errKey]: admin.firestore.FieldValue.delete(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  await touchLastInterviewInvitedAt(db, userId, sentAt);
 
   return 'sent';
 }
@@ -489,8 +495,8 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         requireLocation: prescreenPolicy.eligibility.requireLocation,
         requireWorkAuthorization: prescreenPolicy.eligibility.requireWorkAuthorization,
       });
-      const prescreenUrl = buildWorkerAiPrescreenUrl(applicationId);
-      const profileUrl = buildWorkerProfileUrl();
+      const prescreenUrl = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'scheduled_invite' });
+      const prescreenGapUrl = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'scheduled_gap_invite' });
 
       const firstName = firstNameFromUser(ud);
       const preferredLanguage = String(ud.preferredLanguage || 'en').toLowerCase() === 'es' ? 'es' : 'en';
@@ -502,16 +508,16 @@ export const processWorkerAiPrescreenReminders = onSchedule(
       if (eligibility.eligibleForInterview) {
         outcome = 'eligible_invite';
         if (preferredLanguage === 'es') {
-          body = `Hola ${firstName} — estás muy cerca de comenzar en ${jobTitle}.\n\nCompleta esta entrevista rápida de 2 minutos para avanzar:\n${prescreenUrl}`;
+          body = `Hola ${firstName}, siguiente paso rápido: responde unas preguntas para que podamos considerarte para ${jobTitle} y emparejarte bien. Empieza aquí:\n${prescreenUrl}`;
         } else {
-          body = `Hi ${firstName} — you're almost set for ${jobTitle}.\n\nComplete this quick 2-minute interview to move forward:\n${prescreenUrl}`;
+          body = `Hi ${firstName}, quick next step: answer a few questions so we can consider you for ${jobTitle} and match you with the right opportunities. Start here:\n${prescreenUrl}`;
         }
       } else {
         outcome = 'ineligible_nudge';
         if (preferredLanguage === 'es') {
-          body = `Hola ${firstName} — ¡ya casi estás listo!\n\nCompleta tu perfil para que podamos conectarte con trabajos disponibles:\n${profileUrl}`;
+          body = `Hola ${firstName}, responde unas preguntas rápidas para prepararte para trabajar y completar lo que falta. Empieza aquí:\n${prescreenGapUrl}`;
         } else {
-          body = `Hi ${firstName} — you're close!\n\nFinish your profile so we can match you with available jobs:\n${profileUrl}`;
+          body = `Hi ${firstName}, answer a few quick questions so we can get you job-ready and fill in what’s missing. Start here:\n${prescreenGapUrl}`;
         }
       }
 
@@ -520,7 +526,7 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         userId,
         source: 'system',
         messageTypeId:
-          outcome === 'eligible_invite' ? 'worker_ai_prescreen_invite' : 'worker_ai_prescreen_profile_nudge',
+          outcome === 'eligible_invite' ? 'worker_ai_prescreen_invite' : 'worker_ai_prescreen_gap_interview_invite',
         systemContext: true,
       });
 
@@ -556,6 +562,8 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         ...(outcome === 'eligible_invite' ? scheduleInterviewChaseFields(sentAt) : {}),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+
+      await touchLastInterviewInvitedAt(db, userId, sentAt);
 
       sent += 1;
     }
@@ -684,7 +692,7 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         requireWorkAuthorization: prescreenPolicy.eligibility.requireWorkAuthorization,
       });
 
-      const prescreenUrl = buildWorkerAiPrescreenUrl(applicationId);
+      const prescreenUrl = buildWorkerAiPrescreenInviteUrl({ applicationId, entry: 'followup_invite' });
       const firstName = firstNameFromUser(ud);
       const preferredLanguage = String(ud.preferredLanguage || 'en').toLowerCase() === 'es' ? 'es' : 'en';
       const jobTitle = jobTitleFromApplicationForSms(data, preferredLanguage);
@@ -701,9 +709,9 @@ export const processWorkerAiPrescreenReminders = onSchedule(
 
       let body: string;
       if (preferredLanguage === 'es') {
-        body = `Hola ${firstName} — estás muy cerca de comenzar en ${jobTitle}.\n\nCompleta esta entrevista rápida de 2 minutos para avanzar:\n${prescreenUrl}`;
+        body = `Hola ${firstName}, siguiente paso rápido: responde unas preguntas para que podamos considerarte para ${jobTitle} y emparejarte bien. Empieza aquí:\n${prescreenUrl}`;
       } else {
-        body = `Hi ${firstName} — you're almost set for ${jobTitle}.\n\nComplete this quick 2-minute interview to move forward:\n${prescreenUrl}`;
+        body = `Hi ${firstName}, quick next step: answer a few questions so we can consider you for ${jobTitle} and match you with the right opportunities. Start here:\n${prescreenUrl}`;
       }
 
       const smsResult = await sendWorkerMessageInternal(phone, body, {
@@ -746,6 +754,8 @@ export const processWorkerAiPrescreenReminders = onSchedule(
         ...scheduleInterviewChaseFields(sentAt),
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+
+      await touchLastInterviewInvitedAt(db, userId, sentAt);
 
       followUpSent += 1;
     }

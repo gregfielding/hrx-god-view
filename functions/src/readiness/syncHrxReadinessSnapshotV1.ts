@@ -84,7 +84,7 @@ export async function recomputeHrxReadinessSnapshotForAssignment(
     existingComparable &&
     readinessSnapshotV1ComparableJson(existingComparable) === readinessSnapshotV1ComparableJson(nextComparable)
   ) {
-    logger.info('readinessSnapshotV1 unchanged; skip write', { tenantId, assignmentId });
+    logger.debug('readinessSnapshotV1 unchanged; skip write', { tenantId, assignmentId });
     return { skipped: true, missingAssignment: false, snapshot: nextComparable };
   }
 

@@ -18,6 +18,7 @@ import { getEverifyEnv } from './everifyConfig';
 import type { EverifyCase, EverifyCaseEvent, EverifyCaseStatus, I9CaseFlat } from './everifySchemas';
 import type { EverifyCredentials } from './everifyAuth';
 import type { SubmitCaseResponse } from './everifySchemas';
+import { sanitizeCaseCreatorNameForIca } from './everifyIcaSanitize';
 
 /** Legacy OAuth credentials (EAAT stub / rollback only) */
 export interface EverifyOAuthCredentials {
@@ -215,11 +216,15 @@ export async function createAndSubmitCase(params: {
 }): Promise<{ caseId: string; everifyCaseNumber?: string; status: EverifyCaseStatus }> {
   const env = getEverifyEnv();
   const now = admin.firestore.FieldValue.serverTimestamp();
-  const creator = await resolveCaseCreatorForIca({
+  const creatorRaw = await resolveCaseCreatorForIca({
     tenantId: params.tenantId,
     entityId: params.entityId,
     caseCreator: params.caseCreator ?? undefined,
   });
+  const creator = {
+    ...creatorRaw,
+    name: sanitizeCaseCreatorNameForIca(creatorRaw.name, DEFAULT_CASE_CREATOR.name),
+  };
   const dateOfHire = params.startDate.split('T')[0] || params.startDate;
 
   if (getEverifyFakeProvider()) {

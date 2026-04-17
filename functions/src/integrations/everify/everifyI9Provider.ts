@@ -16,6 +16,7 @@ import {
   i9SupportingApprovedToI9CaseFlatPartial,
   type I9SupportingDocLike,
 } from '../../utils/i9SupportingToEverifyMerge';
+import { sanitizeCaseCreatorNameForIca, sanitizeEverifyDocumentNumber } from './everifyIcaSanitize';
 
 const REQUIRED_FIELDS = [
   'first_name',
@@ -49,6 +50,26 @@ function nonEmptyString(v: unknown): boolean {
   if (v === undefined || v === null) return false;
   if (typeof v === 'string') return v.trim() !== '';
   return false;
+}
+
+/** ICA ATTRIBUTE_FORMAT: document numbers `^[a-zA-Z0-9*-]*$`, case_creator_name letters/apostrophe/hyphen/period/space only. */
+function sanitizeIcaFormatFieldsInPayload(merged: Record<string, unknown>): void {
+  const bc = merged.document_bc_number;
+  if (typeof bc === 'string' && bc.trim()) {
+    const s = sanitizeEverifyDocumentNumber(bc);
+    if (s) merged.document_bc_number = s;
+    else delete merged.document_bc_number;
+  }
+  const cnum = merged.document_c_number;
+  if (typeof cnum === 'string' && cnum.trim()) {
+    const s = sanitizeEverifyDocumentNumber(cnum);
+    if (s) merged.document_c_number = s;
+    else delete merged.document_c_number;
+  }
+  const cname = merged.case_creator_name;
+  if (typeof cname === 'string' && cname.trim()) {
+    merged.case_creator_name = sanitizeCaseCreatorNameForIca(cname, 'HRX System');
+  }
 }
 
 /**
@@ -169,8 +190,8 @@ function normalizeAlienNumberInI9Payload(data: Record<string, unknown>): void {
 }
 
 /**
- * ICA create-draft expects a conventional US phone pattern; bare 10-digit strings are normalized to ###-###-####.
- * Non-US or non-10-digit values are left unchanged for provider validation to surface.
+ * REST create-draft: `case_creator_phone_number` must be exactly 10 digits (`/^\\d{10}$/`, max length 10).
+ * Strip formatting from profile/env values; normalize +1XXXXXXXXXX to 10 digits.
  */
 function normalizeCaseCreatorPhoneForEverifyRest(data: Record<string, unknown>): void {
   const v = data.case_creator_phone_number;
@@ -179,7 +200,7 @@ function normalizeCaseCreatorPhoneForEverifyRest(data: Record<string, unknown>):
   let d = raw.replace(/\D/g, '');
   if (d.length === 11 && d.startsWith('1')) d = d.slice(1);
   if (d.length !== 10) return;
-  data.case_creator_phone_number = `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`;
+  data.case_creator_phone_number = d;
 }
 
 /** E-Verify returns ATTRIBUTE_EXTRANEOUS_FIELD for no_expiration_date on FORM_I551 cases. */
@@ -344,6 +365,7 @@ export async function resolveI9PayloadForCreateCase(params: {
 
   assignDefined(merged, params.serviceOverrides as Record<string, unknown>);
 
+  sanitizeIcaFormatFieldsInPayload(merged);
   normalizeSsnInI9Payload(merged);
   normalizeCitizenshipStatusCodeInI9Payload(merged);
   validateI9ListDocumentsForEverifyRest(merged);
@@ -367,6 +389,7 @@ export function resolveI9PayloadFromFixture(overrides?: Partial<I9CaseFlat>): I9
   }
 
   const merged: Record<string, unknown> = overrides ? { ...data, ...overrides } : { ...data };
+  sanitizeIcaFormatFieldsInPayload(merged);
   normalizeSsnInI9Payload(merged);
   normalizeCitizenshipStatusCodeInI9Payload(merged);
   validateI9ListDocumentsForEverifyRest(merged);

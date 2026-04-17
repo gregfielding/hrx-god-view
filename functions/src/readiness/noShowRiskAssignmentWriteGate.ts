@@ -2,7 +2,7 @@
  * Pure gate for whether to recompute assignment no-show risk (no Firebase imports).
  */
 
-const WATCH_KEYS = new Set([
+export const NO_SHOW_RISK_ASSIGNMENT_WATCH_KEYS = [
   'startDate',
   'endDate',
   'startTime',
@@ -17,7 +17,9 @@ const WATCH_KEYS = new Set([
   'readinessSnapshotV1',
   'confirmedAt',
   'declinedAt',
-]);
+] as const;
+
+const WATCH_KEYS = new Set<string>(NO_SHOW_RISK_ASSIGNMENT_WATCH_KEYS);
 
 export function shouldRecomputeNoShowRiskForAssignmentWrite(args: {
   before: Record<string, unknown> | null;

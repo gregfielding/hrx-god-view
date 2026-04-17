@@ -1,4 +1,7 @@
 import { serverTimestamp } from 'firebase/firestore';
+import {
+  scheduleIntentOptionsToSchedulePreferences,
+} from './workerPreferencesCanonical';
 
 type AnyMap = Record<string, unknown>;
 
@@ -156,15 +159,27 @@ export function buildReadinessIntentWritePatch(
   targetIndustries: string[],
   scheduleIntentOptions?: string[],
 ): AnyMap {
+  const normalizedIndustries = targetIndustries
+    .map((x) => String(x).toLowerCase().trim())
+    .filter((x) => x === 'hospitality' || x === 'industrial');
+
   const patch = buildCanonicalWorkerProfileWritePatch({
     'workerProfile.preferences.desiredWorkType': desiredWorkType,
     'workerProfile.preferences.targetIndustries': targetIndustries,
     updatedAt: serverTimestamp(),
   });
 
+  /** Canonical prescreen-aligned work types — UI today only toggles hospitality/industrial. */
+  patch['workerProfile.preferences.targetWorkTypes'] =
+    normalizedIndustries.length > 0 ? normalizedIndustries : targetIndustries.map((x) => String(x).toLowerCase().trim())
+      .filter(Boolean);
+
   if (Array.isArray(scheduleIntentOptions)) {
     patch['workerProfile.preferences.scheduleIntentOptions'] = scheduleIntentOptions;
     patch['jobReadiness.intent.scheduleIntentOptions'] = scheduleIntentOptions;
+    const schedulePreferences = scheduleIntentOptionsToSchedulePreferences(scheduleIntentOptions, desiredWorkType);
+    patch['workerProfile.preferences.schedulePreferences'] = schedulePreferences;
+    patch['workerProfile.preferences.openToGigWork'] = schedulePreferences.includes('gig_work');
   }
 
   return patch;

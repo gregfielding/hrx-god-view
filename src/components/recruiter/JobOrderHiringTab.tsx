@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useCategoryScoresCurrentMap } from '../../hooks/useCategoryScoresCurrentMap';
 import { Alert, Box, CircularProgress, Grid, Stack, Typography } from '@mui/material';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase';
@@ -87,6 +88,20 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId }) => {
 
   const panel = useJobOrderHiringControlPanelData(tenantId, jobOrder?.id ?? null, workerAiPrescreenRequired);
 
+  const recentDecisionUserIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          panel.recentDecisions
+            .map((r) => r.candidateUserId)
+            .filter((x): x is string => Boolean(x && String(x).trim())),
+        ),
+      ),
+    [panel.recentDecisions],
+  );
+  const { scoresByUserId: recentDecisionCategoryScoresByUserId, loading: recentDecisionCategoryScoresLoading } =
+    useCategoryScoresCurrentMap(recentDecisionUserIds);
+
   const { targetReadyCount, targetReadyLabel } = computeTargetReady(jobOrder, effectivePolicy);
 
   const fillProgress = useMemo(() => {
@@ -116,6 +131,8 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId }) => {
       <Typography variant="h6">{jobOrder.jobOrderName || 'Job order'} — hiring</Typography>
       <Typography variant="body2" color="text.secondary">
         Policy and funnel summary for this job order. Applicant rows and actions live only on the Applications tab.
+        Worker AI pre-screen category scores (six categories, 0–100) are read-only on each applicant’s Interview column
+        and in Recent decisions when present on the application.
       </Typography>
 
       {loadError ? (
@@ -194,7 +211,11 @@ const JobOrderHiringTab: React.FC<Props> = ({ jobOrder, tenantId }) => {
               decisionCounts={panel.decisionCounts}
               noShowBandCounts={panel.noShowBandCounts}
             />
-            <JobOrderHiringRecentDecisions rows={panel.recentDecisions} />
+            <JobOrderHiringRecentDecisions
+              rows={panel.recentDecisions}
+              categoryScoresCurrentByUserId={recentDecisionCategoryScoresByUserId}
+              categoryScoresCurrentLoading={recentDecisionCategoryScoresLoading}
+            />
           </Stack>
         </Grid>
       </Grid>

@@ -1151,6 +1151,14 @@
       ]
     },
     {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "interviewStatus", "order": "ASCENDING" },
+        { "fieldPath": "interviewInviteScheduledAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "entity_employments",
       "queryScope": "COLLECTION",
       "fields": [

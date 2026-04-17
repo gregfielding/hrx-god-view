@@ -463,7 +463,37 @@ export const DEFAULT_MESSAGE_TYPES: MessageTypeConfig[] = [
     description: 'Reminder about expiring certifications',
     enabled: true,
   },
-  
+  {
+    id: 'auto_new_user_interview_invite',
+    label: 'Auto new-user adaptive interview invite',
+    category: 'engagement',
+    defaultChannels: ['sms'],
+    critical: false,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: true,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Scheduled ~15 minutes after user account creation; deep link to prescreen with entry=sms_auto_new_user. Dedupe key interview_invite__user__{uid}.',
+    enabled: true,
+  },
+  {
+    id: 'user_group_backfill_interview_invite',
+    label: 'User group interview backfill invite',
+    category: 'engagement',
+    defaultChannels: ['sms'],
+    critical: false,
+    allowReply: true,
+    requiresExplicitSmsOptIn: true,
+    requiresTemplate: true,
+    aiAllowedToDraft: false,
+    aiAllowedToAutoSend: true,
+    description:
+      'Bulk invite from User Groups admin action; entry=user_group_backfill. Dedupe interview_invite__group__{groupId}user{uid}.',
+    enabled: true,
+  },
+
   // Engagement Messages
   {
     id: 'recruiter_chat',

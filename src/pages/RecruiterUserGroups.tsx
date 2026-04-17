@@ -28,6 +28,7 @@ import { db } from '../firebase';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 
 import type { RecruiterOutletContext } from './RecruiterDashboard';
+import { TriggerGroupInterviewDialog } from '../components/recruiter/userGroup/TriggerGroupInterviewDialog';
 
 type UserGroup = {
   id: string;
@@ -58,6 +59,8 @@ const RecruiterUserGroups: React.FC = () => {
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDescription, setNewDescription] = useState('');
+  const [interviewInviteOpen, setInterviewInviteOpen] = useState(false);
+  const [interviewInviteGroup, setInterviewInviteGroup] = useState<{ id: string; title: string } | null>(null);
 
   useEffect(() => {
     if (!tenantId) return;
@@ -200,12 +203,15 @@ const RecruiterUserGroups: React.FC = () => {
               <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
                 Members
               </TableCell>
+              <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem' }}>
+                Actions
+              </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {loading && (
               <TableRow>
-                <TableCell colSpan={4} sx={{ py: 4, textAlign: 'center' }}>
+                <TableCell colSpan={5} sx={{ py: 4, textAlign: 'center' }}>
                   <Typography variant="body2" color="text.secondary">
                     Loading user groups…
                   </Typography>
@@ -214,7 +220,7 @@ const RecruiterUserGroups: React.FC = () => {
             )}
             {!loading && paginatedGroups.length === 0 && (
               <TableRow>
-                <TableCell colSpan={4} sx={{ py: 6, textAlign: 'center' }}>
+                <TableCell colSpan={5} sx={{ py: 6, textAlign: 'center' }}>
                   <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
                     <Avatar sx={{ width: 72, height: 72, bgcolor: 'rgba(0,0,0,0.04)' }}>
                       <GroupIcon sx={{ color: 'rgba(0,0,0,0.35)' }} />
@@ -282,6 +288,20 @@ const RecruiterUserGroups: React.FC = () => {
                     <TableCell>
                       <Typography variant="body2">{memberCount}</Typography>
                     </TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        sx={{ textTransform: 'none' }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInterviewInviteGroup({ id: g.id, title });
+                          setInterviewInviteOpen(true);
+                        }}
+                      >
+                        Trigger Interviews
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -299,6 +319,19 @@ const RecruiterUserGroups: React.FC = () => {
           setPage(0);
         }}
       />
+
+      {tenantId && interviewInviteGroup ? (
+        <TriggerGroupInterviewDialog
+          open={interviewInviteOpen}
+          onClose={() => {
+            setInterviewInviteOpen(false);
+            setInterviewInviteGroup(null);
+          }}
+          tenantId={tenantId}
+          groupId={interviewInviteGroup.id}
+          groupTitle={interviewInviteGroup.title}
+        />
+      ) : null}
 
       <Dialog open={showCreateDialog} onClose={closeCreateDialog} maxWidth="sm" fullWidth>
         <DialogTitle>New User Group</DialogTitle>

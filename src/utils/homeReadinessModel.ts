@@ -7,6 +7,10 @@ import type {
 } from '../types/homeReadiness';
 import type { HomeReadinessLaunchStep } from '../components/worker/home/types';
 import { userDocHasCompleteWorkAuthorization, userDocHasStoredResume } from './workerProfilePrerequisites';
+import {
+  legacyTargetIndustriesSubsetFromTargetWorkTypes,
+  normalizeTargetWorkTypes,
+} from './workerPreferencesCanonical';
 
 type TargetIndustry = 'hospitality' | 'industrial';
 
@@ -114,6 +118,8 @@ function isSnapshotStale(snapshot: FirestoreReadinessSnapshotV1): boolean {
 function getIndustryContext(userDoc: Record<string, unknown> | null): TargetIndustry[] {
   const prefs = ((userDoc?.workerProfile as Record<string, unknown> | undefined)?.preferences ||
     {}) as Record<string, unknown>;
+  const fromCanonical = legacyTargetIndustriesSubsetFromTargetWorkTypes(normalizeTargetWorkTypes(prefs));
+  if (fromCanonical.length) return fromCanonical;
   const industriesRaw = Array.isArray(prefs.targetIndustries) ? prefs.targetIndustries : [];
   const industries = industriesRaw
     .map((v) => String(v || '').toLowerCase())

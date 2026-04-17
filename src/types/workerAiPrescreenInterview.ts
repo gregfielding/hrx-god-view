@@ -2,6 +2,8 @@
  * Optional fields on users/{uid}/interviews/* when interviewKind === 'worker_ai_prescreen'.
  */
 
+import type { PrescreenCategoryEvidenceV1, PrescreenCategoryScoresV1 } from './prescreenCategoryScores';
+
 export type WorkerAiPrescreenInterviewKind = 'worker_ai_prescreen';
 
 export type WorkerAiPrescreenRecommendation = 'proceed' | 'review' | 'caution' | 'decline';
@@ -50,4 +52,8 @@ export interface WorkerInterviewAiBlock {
   aiInterviewContext?: Record<string, unknown>;
   /** Rules-based hiring decision (separate from score `recommendation`). */
   hiringDecision?: WorkerInterviewHiringDecisionBlock;
+  /** Phase 1: six 0–100 category snapshots (same shape as `applications/.../aiAutomation.categoryScores`). */
+  categoryScores?: PrescreenCategoryScoresV1;
+  /** Short audit tags per category (optional). */
+  categoryEvidence?: PrescreenCategoryEvidenceV1;
 }

@@ -53,9 +53,11 @@ import {
   EVERIFY_LIST_A_PRESETS,
   EVERIFY_LIST_B_PRESETS,
   EVERIFY_LIST_C_PRESETS,
+  everifyListBRequiresUsStateCode,
   filterDocPresetsByCitizenship,
   type EverifyListANumberField,
 } from '../../../constants/everifyI9DocumentWizard';
+import { US_STATE_CODES } from '../../../utils/unemploymentRates';
 import { useAuth } from '../../../contexts/AuthContext';
 import { canManageEverifyFromClaims } from './backgroundsComplianceModel';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
@@ -246,6 +248,8 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   const [evDocCSelection, setEvDocCSelection] = useState('');
   const [evDocCCustomCode, setEvDocCCustomCode] = useState('');
   const [evDocCNumber, setEvDocCNumber] = useState('');
+  /** List B issuing state (`us_state_code`); required for DRIVERS_LICENSE / GOVERNMENT_ID_CARD per E-Verify preflight. */
+  const [evDocUsStateCode, setEvDocUsStateCode] = useState('');
   /** Loading tenants/…/entities to resolve C1 Select LLC for E-Verify. */
   const [tenantEntitiesLoading, setTenantEntitiesLoading] = useState(false);
   /** Resolved Firestore entity for EVERIFY_HIRING_ENTITY_LABEL; required to create employment from this modal. */
@@ -293,6 +297,12 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     [evCitizenshipCode]
   );
 
+  const listBResolvedIcaCode = useMemo(() => {
+    if (evDocMode !== 'list_bc') return '';
+    return evDocBSelection === EVERIFY_DOC_CUSTOM ? evDocBCustomCode.trim() : evDocBSelection;
+  }, [evDocMode, evDocBSelection, evDocBCustomCode]);
+  const showListBStateField = everifyListBRequiresUsStateCode(listBResolvedIcaCode);
+
   const everifyDocFormValid = useMemo(() => {
     if (!evCitizenshipCode.trim()) return false;
     if (evDocMode === 'list_a') {
@@ -323,7 +333,14 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     const listBcExpOk =
       evDocNoExpiration ||
       (evDocExpiration.trim() !== '' && /^\d{4}-\d{2}-\d{2}$/.test(evDocExpiration.trim()));
-    return bOk && cOk && listBcExpOk;
+    const resolvedBCode =
+      evDocBSelection === EVERIFY_DOC_CUSTOM ? evDocBCustomCode.trim() : evDocBSelection;
+    const listBNeedsState = everifyListBRequiresUsStateCode(resolvedBCode);
+    const stUpper = evDocUsStateCode.trim().toUpperCase();
+    const listBcStateOk =
+      !listBNeedsState ||
+      (stUpper.length === 2 && (US_STATE_CODES as readonly string[]).includes(stUpper));
+    return bOk && cOk && listBcExpOk && listBcStateOk;
   }, [
     evCitizenshipCode,
     evDocMode,
@@ -337,6 +354,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     evDocANumberValue,
     evDocExpiration,
     evDocNoExpiration,
+    evDocUsStateCode,
   ]);
 
   /** `i551_number` invalid while non-empty (custom List A only; Green Card preset uses Alien # only). */
@@ -462,6 +480,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
       if (i9Pre.evDocBNumber) setEvDocBNumber(i9Pre.evDocBNumber);
       if (i9Pre.evDocCNumber) setEvDocCNumber(i9Pre.evDocCNumber);
       if (i9Pre.evDocExpiration) setEvDocExpiration(i9Pre.evDocExpiration);
+      if (i9Pre.evDocUsStateCode) setEvDocUsStateCode(i9Pre.evDocUsStateCode);
     }
   }, []);
 
@@ -561,7 +580,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
         }
       } else {
         msgs.push(
-          'Complete List B and List C document types, List B identity document number (document_bc_number), and expiration (YYYY-MM-DD) or “no expiration” per ICA.',
+          'Complete List B and List C document types, List B identity document number (document_bc_number), issuing state for driver license / state ID (us_state_code), and expiration (YYYY-MM-DD) or “no expiration” per ICA.',
         );
       }
     }
@@ -628,6 +647,7 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     setEvDocBSelection('');
     setEvDocBCustomCode('');
     setEvDocBNumber('');
+    setEvDocUsStateCode('');
     setEvDocCSelection('');
     setEvDocCCustomCode('');
     setEvDocCNumber('');
@@ -807,6 +827,14 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
       docFields.document_c_type_code = cCode;
       if (evDocBNumber.trim()) docFields.document_bc_number = evDocBNumber.trim();
       if (evDocCNumber.trim()) docFields.document_c_number = evDocCNumber.trim();
+      if (everifyListBRequiresUsStateCode(bCode)) {
+        const st = evDocUsStateCode.trim().toUpperCase();
+        if (st.length !== 2 || !(US_STATE_CODES as readonly string[]).includes(st)) {
+          setEvMessage('Select the issuing state (2-letter us_state_code) for this List B document.');
+          return;
+        }
+        docFields.us_state_code = st;
+      }
       if (evDocNoExpiration) {
         docFields.no_expiration_date = true;
       } else if (evDocExpiration.trim()) {
@@ -1325,6 +1353,30 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                             required
                             autoComplete="off"
                           />
+                        ) : null}
+                        {showListBStateField ? (
+                          <FormControl fullWidth size="small" required>
+                            <InputLabel id="ev-doc-b-us-state-label">Issuing state (us_state_code)</InputLabel>
+                            <Select
+                              labelId="ev-doc-b-us-state-label"
+                              label="Issuing state (us_state_code)"
+                              value={evDocUsStateCode}
+                              displayEmpty
+                              onChange={(e) => setEvDocUsStateCode(String(e.target.value))}
+                            >
+                              <MenuItem value="">
+                                <em>Select state…</em>
+                              </MenuItem>
+                              {US_STATE_CODES.map((code) => (
+                                <MenuItem key={code} value={code}>
+                                  {code}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                            <FormHelperText>
+                              Required for List B driver license and state-issued ID (E-Verify ICA preflight).
+                            </FormHelperText>
+                          </FormControl>
                         ) : null}
                         <TextField
                           size="small"

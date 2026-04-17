@@ -371,6 +371,8 @@ async function run(): Promise<void> {
               recommendedActions: bundle.recommendedActions,
               reasonCodes: bundle.hiringResult.reasonCodes,
               score: bundle.scored.overallScore,
+              categoryScores: bundle.categoryScores,
+              categoryEvidence: bundle.categoryEvidence,
               noShowRisk: {
                 engineVersion: bundle.applicationNoShowRisk.engineVersion,
                 score: bundle.applicationNoShowRisk.score,

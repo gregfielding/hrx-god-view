@@ -32,6 +32,7 @@ import EducationStep from '../../../components/apply/steps/EducationStep';
 import WorkExperienceStep from '../../../components/apply/steps/WorkExperienceStep';
 import WorkerSkillsEditor from '../../../components/worker/profile/WorkerSkillsEditor';
 import { buildReadinessIntentWritePatch } from '../../../utils/workerReadinessWriteModel';
+import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
 import { openUserResumeInNewTab, pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
 
 type SectionKey =
@@ -160,14 +161,11 @@ const WorkerProfileSection: React.FC = () => {
       const data = snap.data() as Record<string, unknown>;
       setUserDoc(data);
       const prefs = ((data.workerProfile || {}) as Record<string, unknown>).preferences as Record<string, unknown> | undefined;
-      const industries = Array.isArray(prefs?.targetIndustries)
-        ? prefs?.targetIndustries.map((v) => String(v || '').toLowerCase()).filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial')
-        : [];
-      const schedule = Array.isArray(prefs?.scheduleIntentOptions)
-        ? prefs?.scheduleIntentOptions.map((v) => String(v || '').toLowerCase()).filter((v): v is ScheduleIntentOption => v === 'full_time' || v === 'part_time' || v === 'gig')
-        : [];
-      setIndustryPrefs(Array.from(new Set(industries)));
-      setSchedulePrefs(Array.from(new Set(schedule)));
+      const resolved = resolveWorkerPreferences(prefs || {});
+      setIndustryPrefs(Array.from(new Set(resolved.legacyTargetIndustriesSubset)));
+      setSchedulePrefs(
+        Array.from(new Set(resolved.legacyScheduleIntentOptions)) as ScheduleIntentOption[],
+      );
 
       const lang = data.preferredLanguage;
       if (lang === 'en' || lang === 'es') setPreferredLanguageState(lang);

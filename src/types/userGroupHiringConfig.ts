@@ -48,9 +48,15 @@ export type UserGroupHiringConfigV1 = {
     eVerifyRequired?: boolean;
   };
   requirements?: {
-    drugScreenRequired?: boolean;
-    backgroundCheckRequired?: boolean;
+    /**
+     * When true, **Hire passed candidates** (on-call) passes this package into `runStartOnCallEmploymentFlow`,
+     * same as User → Start on-call employment.
+     */
+    accusourceScreeningRequired?: boolean;
     accusourcePackageId?: string;
+    accusourcePackageName?: string;
+    /** À la carte SourceDirect service IDs (same request as package via `orders` on partial profile). */
+    accusourceRequestedServiceIds?: string[];
     requiredCertificationIds?: string[];
   };
   quality?: {
@@ -89,9 +95,10 @@ export const DEFAULT_USER_GROUP_HIRING_CONFIG: UserGroupHiringConfigV1 = {
     eVerifyRequired: false,
   },
   requirements: {
-    drugScreenRequired: false,
-    backgroundCheckRequired: false,
+    accusourceScreeningRequired: false,
     accusourcePackageId: '',
+    accusourcePackageName: '',
+    accusourceRequestedServiceIds: [],
     requiredCertificationIds: [],
   },
   quality: {
@@ -225,21 +232,42 @@ export function parseUserGroupHiringConfig(raw: unknown): UserGroupHiringConfigV
       eVerifyRequired:
         typeof employment?.eVerifyRequired === 'boolean' ? employment.eVerifyRequired : d.employment!.eVerifyRequired,
     },
-    requirements: {
-      drugScreenRequired:
-        typeof requirements?.drugScreenRequired === 'boolean'
-          ? requirements.drugScreenRequired
-          : d.requirements!.drugScreenRequired,
-      backgroundCheckRequired:
-        typeof requirements?.backgroundCheckRequired === 'boolean'
-          ? requirements.backgroundCheckRequired
-          : d.requirements!.backgroundCheckRequired,
-      accusourcePackageId:
+    requirements: (() => {
+      const legacyDrug = requirements?.drugScreenRequired === true;
+      const legacyBg = requirements?.backgroundCheckRequired === true;
+      const rawPkg =
+        typeof requirements?.accusourcePackageId === 'string' ? requirements.accusourcePackageId.trim() : '';
+      const hasLegacyPkg = rawPkg.length > 0;
+
+      let accusourceScreeningRequired: boolean;
+      if (typeof requirements?.accusourceScreeningRequired === 'boolean') {
+        accusourceScreeningRequired = requirements.accusourceScreeningRequired;
+      } else {
+        accusourceScreeningRequired = legacyDrug || legacyBg || hasLegacyPkg;
+      }
+
+      const accusourcePackageId =
         typeof requirements?.accusourcePackageId === 'string'
-          ? requirements.accusourcePackageId
-          : d.requirements!.accusourcePackageId,
-      requiredCertificationIds: certIds,
-    },
+          ? requirements.accusourcePackageId.trim()
+          : d.requirements!.accusourcePackageId;
+      const accusourcePackageName =
+        typeof requirements?.accusourcePackageName === 'string'
+          ? requirements.accusourcePackageName.trim()
+          : d.requirements!.accusourcePackageName ?? '';
+
+      const rawSvc = requirements?.accusourceRequestedServiceIds;
+      const accusourceRequestedServiceIds = Array.isArray(rawSvc)
+        ? rawSvc.map((x) => String(x).trim()).filter(Boolean)
+        : d.requirements!.accusourceRequestedServiceIds ?? [];
+
+      return {
+        accusourceScreeningRequired,
+        accusourcePackageId,
+        accusourcePackageName,
+        accusourceRequestedServiceIds,
+        requiredCertificationIds: certIds,
+      };
+    })(),
     quality: {
       preset: readPreset(quality?.preset) ?? d.quality!.preset,
       interviewMinimumScoreToAdvance:
@@ -324,6 +352,18 @@ export function validateUserGroupHiringConfig(cfg: UserGroupHiringConfigV1): Use
     if (jf === undefined || jf === null || !Number.isFinite(jf)) {
       errors.push('Set a job-fit minimum score when the job-fit score gate is enabled.');
     }
+  }
+
+  const req = cfg.requirements ?? {};
+  if (req.accusourceScreeningRequired === true) {
+    const pkg = String(req.accusourcePackageId ?? '').trim();
+    if (!pkg) {
+      errors.push('Select an AccuSource screening package when screening is required.');
+    }
+  }
+  const addOnServices = (req.accusourceRequestedServiceIds ?? []).filter(Boolean);
+  if (addOnServices.length > 0 && !String(req.accusourcePackageId ?? '').trim()) {
+    errors.push('Select an AccuSource package when additional screening services are selected.');
   }
 
   return errors.length === 0 ? { ok: true } : { ok: false, errors };

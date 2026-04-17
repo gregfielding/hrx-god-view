@@ -1,3 +1,5 @@
+import { sanitizeEverifyDocumentNumber } from '../integrations/everify/everifyIcaSanitize';
+
 /**
  * **Must stay in sync** with `src/utils/i9SupportingToEverifyPrefill.ts` (`i9SupportingApprovedToI9CaseFlatPartial`).
  * Functions `rootDir` is `src` only; duplicate by design.
@@ -220,8 +222,8 @@ export function i9SupportingApprovedToI9CaseFlatPartial(
     if (cCode) out.document_c_type_code = cCode;
     const bf = effectiveFieldsForEverify(b);
     const cf = effectiveFieldsForEverify(c);
-    const bNum = String(bf?.documentNumber || '').trim();
-    const cNum = String(cf?.documentNumber || '').trim();
+    const bNum = sanitizeEverifyDocumentNumber(String(bf?.documentNumber || '').trim());
+    const cNum = sanitizeEverifyDocumentNumber(String(cf?.documentNumber || '').trim());
     if (bNum) out.document_bc_number = bNum;
     if (cNum) out.document_c_number = cNum;
     const bExp = normalizeExpirationToYmd(bf?.expirationDate);

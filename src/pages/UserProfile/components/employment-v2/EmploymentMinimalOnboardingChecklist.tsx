@@ -275,10 +275,14 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
   const employmentAuthorizedInHrx = entityEverifyStatus === 'employment_authorized';
   const manualOutsideHrx = entityEverifyStatus === 'manual_outside_hrx';
   const employmentIdForEverify = overview.entityEmployment?.id?.trim() || '';
-  /** Show manual outside-HRX confirmation whenever Select E-Verify is in scope and the worker is not already authorized via integrated HRX (case). */
+  /**
+   * Manual "E-Verify completed outside HRX" must not be tied to `showManualExternalStepVerify` / `historical`.
+   * When `hasOpenOnboardingDemand` is false, `historical` is true and other external-verify rows hide — but recruiters
+   * still need to mark E-Verify done outside the system (same as `setEntityEmploymentEverifyOutsideHrx` callable).
+   */
   const showEverifyManualComplete =
     showEverify &&
-    showManualExternalStepVerify &&
+    actionContext.viewer === 'recruiter' &&
     Boolean(employmentIdForEverify) &&
     !employmentAuthorizedInHrx;
 

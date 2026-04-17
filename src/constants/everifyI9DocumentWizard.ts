@@ -68,6 +68,14 @@ export const EVERIFY_LIST_B_PRESETS: EverifyListBCPresetRow[] = [
   },
 ];
 
+/** ICA / E-Verify preflight: these List B codes require `us_state_code` (2-letter). */
+const LIST_B_TYPE_CODES_REQUIRING_US_STATE = new Set(['DRIVERS_LICENSE', 'GOVERNMENT_ID_CARD']);
+
+export function everifyListBRequiresUsStateCode(documentBTypeCode: string): boolean {
+  const c = String(documentBTypeCode || '').trim();
+  return LIST_B_TYPE_CODES_REQUIRING_US_STATE.has(c);
+}
+
 export const EVERIFY_LIST_C_PRESETS: EverifyListBCPresetRow[] = [
   {
     label: 'U.S. Social Security card (List C)',

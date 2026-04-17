@@ -2,6 +2,7 @@ import { httpsCallable } from 'firebase/functions';
 import { functions } from '../firebase';
 import type { WorkerAiPrescreenDynamicStep } from '../types/workerAiPrescreenDynamic';
 import type { WorkerAiPrescreenAnswers } from '../utils/workerAiPrescreenScore';
+import type { PrescreenSessionProfileEnhancements } from '../utils/workerAiPrescreenSubmitProfileSnapshot';
 
 export type SubmitWorkerAiPrescreenInput = {
   answers: WorkerAiPrescreenAnswers;
@@ -10,6 +11,11 @@ export type SubmitWorkerAiPrescreenInput = {
   tenantId?: string | null;
   /** Answers for deterministic dynamic modules, keyed by step id. */
   dynamicAnswers?: Record<string, 'yes' | 'no' | 'not_sure'>;
+  /**
+   * Latest profile fields from the client session (merged on the server with a fresh `users/{uid}` read)
+   * so scoring and hiring automation use end-of-interview profile state.
+   */
+  sessionProfileEnhancements?: PrescreenSessionProfileEnhancements;
 };
 
 export type SubmitWorkerAiPrescreenResult = {
@@ -35,6 +41,7 @@ export async function submitWorkerAiPrescreenInterview(
     applicationId: input.applicationId ?? null,
     tenantId: input.tenantId ?? null,
     dynamicAnswers: input.dynamicAnswers ?? null,
+    sessionProfileEnhancements: input.sessionProfileEnhancements ?? null,
   });
   return res.data as SubmitWorkerAiPrescreenResult;
 }

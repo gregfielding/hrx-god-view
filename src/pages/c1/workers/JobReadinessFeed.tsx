@@ -29,6 +29,7 @@ import {
   buildReadinessIntentWritePatch,
   buildReadinessResponseWritePatch,
 } from '../../../utils/workerReadinessWriteModel';
+import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
 import type { HomeReadinessLaunchStep } from '../../../components/worker/home/types';
 
 type ScheduleIntentOption = 'full_time' | 'part_time' | 'gig';
@@ -172,34 +173,26 @@ const JobReadinessFeed: React.FC<JobReadinessFeedProps> = ({ launchStep = 'start
       });
 
       const prefs = ((data.workerProfile as Record<string, unknown> | undefined)?.preferences || {}) as Record<string, unknown>;
-      const hasPersistedScheduleOptions = Object.prototype.hasOwnProperty.call(
-        prefs,
-        'scheduleIntentOptions',
-      );
-      const persistedScheduleOptions = (Array.isArray(prefs.scheduleIntentOptions) ? prefs.scheduleIntentOptions : [])
-        .map((v) => String(v || '').toLowerCase())
-        .filter((v): v is ScheduleIntentOption => v === 'full_time' || v === 'part_time' || v === 'gig');
-      if (hasPersistedScheduleOptions) {
-        setSelectedScheduleIntent(Array.from(new Set(persistedScheduleOptions)));
+      const resolved = resolveWorkerPreferences(prefs);
+      const hasScheduleFields =
+        Object.prototype.hasOwnProperty.call(prefs, 'scheduleIntentOptions') ||
+        Object.prototype.hasOwnProperty.call(prefs, 'schedulePreferences');
+      const legacySched = resolved.legacyScheduleIntentOptions as ScheduleIntentOption[];
+      if (hasScheduleFields || legacySched.length > 0) {
+        setSelectedScheduleIntent(Array.from(new Set(legacySched)));
       } else {
         const persistedWorkType = String(prefs.desiredWorkType || '').toLowerCase();
         if (persistedWorkType === 'full_time' || persistedWorkType === 'part_time' || persistedWorkType === 'gig' || persistedWorkType === 'any') {
           if (persistedWorkType === 'any') {
             setSelectedScheduleIntent(ALL_SCHEDULE_OPTIONS);
           } else {
-            setSelectedScheduleIntent([persistedWorkType]);
+            setSelectedScheduleIntent([persistedWorkType as ScheduleIntentOption]);
           }
         }
       }
 
-      const persistedIndustriesRaw = prefs.targetIndustries;
-      if (Array.isArray(persistedIndustriesRaw)) {
-        const normalized = persistedIndustriesRaw
-          .map((v) => String(v || '').toLowerCase())
-          .filter((v): v is TargetIndustry => v === 'hospitality' || v === 'industrial');
-        if (normalized.length > 0) {
-          setTargetIndustries(normalized);
-        }
+      if (resolved.legacyTargetIndustriesSubset.length > 0) {
+        setTargetIndustries(resolved.legacyTargetIndustriesSubset);
       }
 
       const responseMap = (

@@ -7,6 +7,14 @@ import { prescreenTextHasConcreteDetail } from './prescreenTextAnswerQuality';
 import { normalizeDrugBackgroundAnswer } from './prescreenComplianceSemantics';
 
 export type WorkerAiPrescreenAnswers = {
+  opening_target_work_types?: string[];
+  opening_schedule_preferences?: string[];
+  opening_experience_industrial?: string[];
+  opening_experience_hospitality?: string[];
+  opening_experience_events?: string[];
+  opening_experience_clerical?: string[];
+  opening_experience_healthcare?: string[];
+  opening_gig_types?: string[];
   motivation?: string;
   experience_details?: string;
   pressure_situation?: string;

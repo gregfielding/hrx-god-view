@@ -1,4 +1,8 @@
 import * as admin from 'firebase-admin';
+import {
+  legacyTargetIndustriesSubsetFromTargetWorkTypes,
+  normalizeTargetWorkTypes,
+} from '../utils/workerPreferencesCanonical';
 
 type TargetIndustry = 'hospitality' | 'industrial';
 type ReadinessChecklistPriority = 'required' | 'high_impact' | 'optional';
@@ -130,6 +134,8 @@ function responseExists(userDoc: Record<string, unknown>, key: string): boolean 
 function getIndustryContext(userDoc: Record<string, unknown>): TargetIndustry[] {
   const prefs = ((userDoc.workerProfile as Record<string, unknown> | undefined)?.preferences ||
     {}) as Record<string, unknown>;
+  const fromCanonical = legacyTargetIndustriesSubsetFromTargetWorkTypes(normalizeTargetWorkTypes(prefs));
+  if (fromCanonical.length) return fromCanonical;
   const industriesRaw = Array.isArray(prefs.targetIndustries) ? prefs.targetIndustries : [];
   const industries = industriesRaw
     .map((v) => normalizeString(v).toLowerCase())

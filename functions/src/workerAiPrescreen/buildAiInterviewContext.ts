@@ -114,14 +114,28 @@ function syntheticPostingFromApplication(app: Record<string, unknown>): Record<s
 
 /**
  * Load structured interview context for a worker application (returns null if application missing or not owned by user).
+ *
+ * When `userDoc` is passed (e.g. submit-time enriched snapshot), it is used instead of a fresh read so eligibility
+ * and `worker` fields stay consistent with the same document used for scoring.
  */
 export async function buildAiInterviewContext(
   db: admin.firestore.Firestore,
-  args: { userId: string; applicationId: string; tenantId?: string | null },
+  args: {
+    userId: string;
+    applicationId: string;
+    tenantId?: string | null;
+    /** Submit-time enriched profile; omit to read `users/{userId}` from Firestore. */
+    userDoc?: Record<string, unknown> | null;
+  },
 ): Promise<AiInterviewContext | null> {
   const { userId, applicationId, tenantId: tenantIdHint } = args;
-  const userSnap = await db.doc(`users/${userId}`).get();
-  const userDoc = (userSnap.data() || {}) as Record<string, unknown>;
+  let userDoc: Record<string, unknown>;
+  if (args.userDoc && typeof args.userDoc === 'object') {
+    userDoc = args.userDoc;
+  } else {
+    const userSnap = await db.doc(`users/${userId}`).get();
+    userDoc = (userSnap.data() || {}) as Record<string, unknown>;
+  }
   const hints: string[] = [];
   if (tenantIdHint) hints.push(norm(tenantIdHint));
   const resolved = await resolveApplicationDoc(db, userId, applicationId, hints, userDoc);

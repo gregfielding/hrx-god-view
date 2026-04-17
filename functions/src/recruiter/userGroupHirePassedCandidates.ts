@@ -144,6 +144,48 @@ function readGroupOnCallHiringContext(groupData: Record<string, unknown>): {
   return { hiringEntityId, workerType, employmentType };
 }
 
+/**
+ * Group hiring tab: `hiringConfig.requirements` AccuSource package for on-call execute.
+ * Aligns with Recruiter UI (`accusourceScreeningRequired` + package id/name) and migrates legacy drug/bg toggles.
+ */
+function resolveAccusourceScreeningFromGroupHiringConfig(groupData: Record<string, unknown>): {
+  screeningPackageId: string | null;
+  screeningPackageName: string | null;
+  screeningRequestedServiceIds: string[] | null;
+} {
+  const hc = groupData.hiringConfig as Record<string, unknown> | undefined;
+  const req =
+    hc && typeof hc === 'object' ? (hc.requirements as Record<string, unknown> | undefined) : undefined;
+  if (!req || typeof req !== 'object') {
+    return { screeningPackageId: null, screeningPackageName: null, screeningRequestedServiceIds: null };
+  }
+  const pkgId = String(req.accusourcePackageId ?? '').trim();
+  if (!pkgId) return { screeningPackageId: null, screeningPackageName: null, screeningRequestedServiceIds: null };
+  if (req.accusourceScreeningRequired === false) {
+    return { screeningPackageId: null, screeningPackageName: null, screeningRequestedServiceIds: null };
+  }
+  const explicit = req.accusourceScreeningRequired === true;
+  const legacy = req.drugScreenRequired === true || req.backgroundCheckRequired === true;
+  const legacyPackageOnly =
+    req.accusourceScreeningRequired === undefined &&
+    req.drugScreenRequired !== true &&
+    req.backgroundCheckRequired !== true;
+  const rawSvc = req.accusourceRequestedServiceIds;
+  const screeningRequestedServiceIds =
+    Array.isArray(rawSvc) && rawSvc.length > 0
+      ? rawSvc.map((x) => String(x).trim()).filter(Boolean)
+      : null;
+  if (explicit || legacy || legacyPackageOnly) {
+    const name = String(req.accusourcePackageName ?? '').trim();
+    return {
+      screeningPackageId: pkgId,
+      screeningPackageName: name || null,
+      screeningRequestedServiceIds,
+    };
+  }
+  return { screeningPackageId: null, screeningPackageName: null, screeningRequestedServiceIds: null };
+}
+
 export const userGroupHirePassedCandidates = onCall(
   {
     enforceAppCheck: false,
@@ -499,6 +541,7 @@ export const userGroupHirePassedCandidates = onCall(
         eligibleUids.push(r.userId.trim());
       }
 
+      const screening = resolveAccusourceScreeningFromGroupHiringConfig(groupData);
       const authTok = request.auth?.token as Record<string, unknown> | undefined;
       for (const uid of eligibleUids) {
         try {
@@ -511,6 +554,9 @@ export const userGroupHirePassedCandidates = onCall(
             authForAccusource: { token: authTok },
             enforceOnCallOnboardingPolicy: true,
             note: `user_group_hire_passed:${groupId}`,
+            screeningPackageId: screening.screeningPackageId,
+            screeningPackageName: screening.screeningPackageName,
+            screeningRequestedServiceIds: screening.screeningRequestedServiceIds,
           });
           onboardingStarted += 1;
         } catch (e: unknown) {

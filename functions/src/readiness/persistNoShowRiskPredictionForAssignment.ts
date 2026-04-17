@@ -125,7 +125,7 @@ export async function recomputeNoShowRiskPredictionForAssignment(
       String(existing.band) === prediction.band &&
       JSON.stringify(existing.adjustments || {}) === JSON.stringify(prediction.adjustments || {});
     if (same) {
-      logger.info('noShowRiskPredictionV1 unchanged', { tenantId, assignmentId });
+      logger.debug('noShowRiskPredictionV1 unchanged', { tenantId, assignmentId });
       return { skipped: true, reason: 'unchanged' };
     }
   }

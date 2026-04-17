@@ -32,6 +32,12 @@ import {
 } from './hiringContainerStats';
 import { runAiHiringOrchestratorV1 } from './runAiHiringOrchestratorV1';
 import { mergeDynamicDrugBackgroundIntoCoreAnswers } from './prescreenAnswerMerge';
+import {
+  computePrescreenCategoryScores,
+  type PrescreenCategoryEvidenceV1,
+  type PrescreenCategoryConfidenceV1,
+  type PrescreenCategoryScoresV1,
+} from './prescreenCategoryScores';
 
 export function priorityBucketForDecision(d: HiringDecision): string {
   switch (d) {
@@ -75,6 +81,9 @@ export type ComposedPrescreenAiBundle = {
   gigPathEligible: boolean;
   aiFlags: string[];
   score10: number;
+  categoryScores: PrescreenCategoryScoresV1;
+  categoryEvidence: PrescreenCategoryEvidenceV1;
+  categoryConfidence: PrescreenCategoryConfidenceV1;
 };
 
 /**
@@ -131,6 +140,12 @@ export async function composePrescreenAiBundle(args: {
     complianceRisk: riskProfile.complianceRisk,
   });
 
+  const { categoryScores, categoryEvidence, categoryConfidence } = computePrescreenCategoryScores({
+    answers: answersEffective,
+    scored,
+    dynamicAnswers,
+  });
+
   const aiBlockCore: Record<string, unknown> = {
     overallScore: scored.overallScore,
     recommendation: scored.recommendation,
@@ -143,6 +158,19 @@ export async function composePrescreenAiBundle(args: {
     assignmentReadiness,
     alternatePaths,
     debug: complianceDebug,
+    categoryScores,
+    categoryEvidence,
+    categoryConfidence,
+    prescreenOpeningPreferences: {
+      targetWorkTypes: answers.opening_target_work_types ?? [],
+      schedulePreferences: answers.opening_schedule_preferences ?? [],
+      experienceIndustrial: answers.opening_experience_industrial ?? [],
+      experienceHospitality: answers.opening_experience_hospitality ?? [],
+      experienceEvents: answers.opening_experience_events ?? [],
+      experienceClerical: answers.opening_experience_clerical ?? [],
+      experienceHealthcare: answers.opening_experience_healthcare ?? [],
+      gigWorkInterestCategories: answers.opening_gig_types ?? [],
+    },
   };
 
   if (interviewContext) {
@@ -289,5 +317,8 @@ export async function composePrescreenAiBundle(args: {
     gigPathEligible,
     aiFlags,
     score10,
+    categoryScores,
+    categoryEvidence,
+    categoryConfidence,
   };
 }

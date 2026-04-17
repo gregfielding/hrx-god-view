@@ -330,6 +330,33 @@ function applicationLabel(data: Record<string, unknown>): string {
   return 'Candidate';
 }
 
+/**
+ * Build a recruiter-facing name from `users/{uid}` (used when application docs have no embedded applicant name).
+ */
+export function displayNameFromUserDoc(u: Record<string, unknown>): string | null {
+  const fn = String(u.firstName ?? '').trim();
+  const ln = String(u.lastName ?? '').trim();
+  const combined = [fn, ln].filter(Boolean).join(' ');
+  if (combined) return combined;
+  const dn = String(u.displayName ?? u.name ?? '').trim();
+  return dn || null;
+}
+
+/** Prefer application fields; use `users/{uid}` only when the app doc has no name (label would be the raw UID). */
+function candidateDisplayName(
+  data: Record<string, unknown>,
+  userDisplayNamesById?: Map<string, string>,
+): string {
+  const fromApp = applicationLabel(data);
+  const uidRaw = data.userId ?? data.candidateId;
+  const uid = typeof uidRaw === 'string' && uidRaw.trim() ? uidRaw.trim() : '';
+  if (uid && fromApp === uid && userDisplayNamesById?.size) {
+    const fromProfile = userDisplayNamesById.get(uid);
+    if (fromProfile) return fromProfile;
+  }
+  return fromApp;
+}
+
 const STAGE_LABELS: Partial<Record<string, string>> = {
   submitted: 'Submitted',
   under_review: 'Under review',
@@ -607,7 +634,9 @@ export function derivePolicyImpactWhy(data: Record<string, unknown>, cfg: UserGr
 export function buildPolicyImpactRows(
   docs: Record<string, unknown>[],
   cfg: UserGroupHiringConfigV1,
+  options?: { userDisplayNamesById?: Map<string, string> },
 ): PolicyImpactCandidateRow[] {
+  const names = options?.userDisplayNamesById;
   const rows: PolicyImpactCandidateRow[] = docs.map((data) => {
     const ai = getAi(data);
     const fields = derivePolicyImpactFields(data, cfg);
@@ -617,7 +646,7 @@ export function buildPolicyImpactRows(
     return {
       id: appId,
       userId,
-      candidateName: applicationLabel(data),
+      candidateName: candidateDisplayName(data, names),
       stage: formatApplicationStageLabel(data),
       interviewScore: num(ai?.score),
       decision: fields.decision,
@@ -633,7 +662,11 @@ export function buildPolicyImpactRows(
 }
 
 /** Top rows for waitlist preview (best-effort). */
-export function buildQueuedCandidatePreview(docs: Record<string, unknown>[]): GroupQueuedCandidateRow[] {
+export function buildQueuedCandidatePreview(
+  docs: Record<string, unknown>[],
+  options?: { userDisplayNamesById?: Map<string, string> },
+): GroupQueuedCandidateRow[] {
+  const names = options?.userDisplayNamesById;
   const out: GroupQueuedCandidateRow[] = [];
   for (const data of docs) {
     const ai = getAi(data);
@@ -650,7 +683,7 @@ export function buildQueuedCandidatePreview(docs: Record<string, unknown>[]): Gr
     let holdReason = 'Hold pool';
     if (statusLower === 'waitlisted') holdReason = 'Waitlisted';
     if (reasonCodesCapacity(ai)) holdReason = 'Target reached / capacity';
-    out.push({ id, label: applicationLabel(data), score, holdReason });
+    out.push({ id, label: candidateDisplayName(data, names), score, holdReason });
   }
   return out.slice(0, 5);
 }

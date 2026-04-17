@@ -56,6 +56,12 @@ import {
   readDynamicAnswersFromAiContext,
   WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP,
 } from '../../../utils/workerAiHiringDecisionDisplay';
+import {
+  RecruiterCategoryScoresInlineChip,
+  RecruiterCategoryScoresPanel,
+} from '../../../components/recruiter/RecruiterCategoryScoresReadOnly';
+import { parsePrescreenCategoryScoresFromFirestore } from '../../../utils/parseRecruiterCategoryScores';
+import { useCategoryScoresCurrent } from '../../../hooks/useCategoryScoresCurrent';
 
 interface InterviewQuestion {
   id: string;
@@ -142,6 +148,8 @@ function parseInterviewAi(raw: unknown): WorkerInterviewAiBlock | undefined {
     }
   }
 
+  const parsedCats = parsePrescreenCategoryScoresFromFirestore(o);
+
   return {
     overallScore,
     recommendation,
@@ -154,6 +162,8 @@ function parseInterviewAi(raw: unknown): WorkerInterviewAiBlock | undefined {
     alternatePaths,
     aiInterviewContext,
     hiringDecision,
+    categoryScores: parsedCats.scores ?? undefined,
+    categoryEvidence: parsedCats.evidence ?? undefined,
   };
 }
 
@@ -184,6 +194,7 @@ interface InterviewTabProps {
 
 const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
   const { currentUser } = useAuth();
+  const { scores: profileCategoryScores, userDocReady: profileScoresReady } = useCategoryScoresCurrent(uid);
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
@@ -521,6 +532,34 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      <Card variant="outlined">
+        <CardHeader
+          title="Current category scores (worker profile)"
+          subheader="Evolving scores on this worker profile — not the same as historical interview rows below."
+          titleTypographyProps={{ variant: 'h6', fontWeight: 700 }}
+          subheaderTypographyProps={{ variant: 'caption', color: 'text.secondary' }}
+        />
+        <CardContent sx={{ pt: 0 }}>
+          {!profileScoresReady ? (
+            <Typography variant="body2" color="text.secondary">
+              Loading…
+            </Typography>
+          ) : profileCategoryScores ? (
+            <RecruiterCategoryScoresPanel
+              scores={profileCategoryScores}
+              evidence={null}
+              showHeading={false}
+              scoreKind="profile_current"
+            />
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No evolving profile scores yet. Category chips in the interview history table are historical interview
+              snapshots.
+            </Typography>
+          )}
+        </CardContent>
+      </Card>
+
       {latestWorkerAiPrescreen?.ai && (
         <Card variant="outlined" sx={{ borderColor: 'secondary.light' }}>
           <CardHeader
@@ -765,6 +804,11 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                       </Tooltip>
                     </TableCell>
                     <TableCell sx={{ fontWeight: 600 }}>Flags</TableCell>
+                    <TableCell sx={{ fontWeight: 600 }}>
+                      <Tooltip title="Historical interview snapshot (six 0–100 scores) from that interview record — not the evolving worker profile score.">
+                        <span>Categories</span>
+                      </Tooltip>
+                    </TableCell>
                     <TableCell sx={{ fontWeight: 600 }} align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
@@ -830,6 +874,20 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                         <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 220 }} noWrap title={historyFlagsSummary(interview)}>
                           {historyFlagsSummary(interview)}
                         </Typography>
+                      </TableCell>
+                      <TableCell>
+                        {interview.interviewKind === 'worker_ai_prescreen' &&
+                        interview.ai?.categoryScores ? (
+                          <RecruiterCategoryScoresInlineChip
+                            scores={interview.ai.categoryScores}
+                            evidence={interview.ai.categoryEvidence ?? null}
+                            scoreContext="interview_snapshot"
+                          />
+                        ) : (
+                          <Typography variant="caption" color="text.secondary">
+                            —
+                          </Typography>
+                        )}
                       </TableCell>
                       <TableCell align="right" onClick={(e) => e.stopPropagation()}>
                         <Tooltip title="Delete interview">
@@ -1014,6 +1072,17 @@ const InterviewTab: React.FC<InterviewTabProps> = ({ uid }) => {
                     <Divider sx={{ mt: 2 }} />
                   </Box>
                 )}
+
+                {viewInterviewDialog.interview.ai?.categoryScores ? (
+                  <Box>
+                    <RecruiterCategoryScoresPanel
+                      scores={viewInterviewDialog.interview.ai.categoryScores}
+                      evidence={viewInterviewDialog.interview.ai.categoryEvidence ?? null}
+                      scoreKind="interview_snapshot"
+                    />
+                    <Divider sx={{ mt: 2 }} />
+                  </Box>
+                ) : null}
 
                 {viewInterviewDialog.interview.questions.map((q) => (
                   <Box key={q.id}>

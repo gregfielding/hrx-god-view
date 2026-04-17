@@ -283,10 +283,47 @@
     "titleOptional": "Optional interview",
     "subtitleWithJob": "Complete this to move forward with this job.",
     "subtitleOptional": "You can complete this short interview to help the team learn more about you. It is not required to move forward.",
+    "durationHintShort": "Takes about 2–3 minutes.",
+    "durationHintLong": "Takes about 3–5 minutes.",
+    "durationHintEstimate": "Usually about 3–5 minutes, depending on your answers.",
+    "durationHintOptionalShort": "About 2–3 minutes if you complete it.",
+    "durationHintOptionalLong": "About 3–5 minutes if you complete it.",
     "durationHint": "Takes about 2–3 minutes.",
     "durationHintOptional": "About 2–3 minutes if you choose to complete it.",
     "progressOf": "{current} of {total}",
-    "placeholderShortAnswer": "Write a short answer (1–2 sentences)",
+    "progressPhase": {
+      "preferences": "Getting started",
+      "experience": "About your experience",
+      "reliability": "Reliability & work style",
+      "wrapUp": "Almost done",
+      "job_fit": "Job-specific"
+    },
+    "section": {
+      "preferences": "About your work preferences",
+      "experience": "Your experience",
+      "reliability": "Reliability & work style",
+      "wrapUp": "Before you finish",
+      "job_fit": "Job fit"
+    },
+    "microConfirm": {
+      "experienceDetails": "Got it — that helps us understand your background.",
+      "workConfidence": "Nice — that gives us a sense of your strengths."
+    },
+    "v2": {
+      "transitionAfterOpening": "Great — that helps us match you with the right jobs.",
+      "transitionJobFit": "Now a few quick questions about this job.",
+      "transitionAlmostDone": "Last step — just making sure we can get you placed quickly.",
+      "transitionWrapUpSingleStep": "Finish this last question so we can get you placed quickly.",
+      "followupExperiencePrompt": "Can you give one or two examples?",
+      "followupExperiencePlaceholder": "Add a sentence or two with a concrete example…",
+      "followupPressurePrompt": "Can you give one or two examples?",
+      "followupPressurePlaceholder": "Brief example of how you handled pressure…",
+      "followupSupervisorPrompt": "Can you give one or two examples?",
+      "followupSupervisorPlaceholder": "Brief example of feedback or how you work with a supervisor…",
+      "followupTransitionLine": "One quick follow-up so we understand that better."
+    },
+    "openingMultiSelectHint": "Select all that apply — you can choose multiple options and combine them (for example, more than one work type or schedule).",
+    "placeholderShortAnswer": "A sentence or two is fine (add a bit more if the question asks for detail)",
     "signInPrompt": "Sign in to complete this interview.",
     "backToDashboard": "Back to dashboard",
     "successTitle": "Interview submitted",
@@ -297,6 +334,48 @@
     "alertChooseTenant": "Choose your employer in the header if job details do not appear — that helps load questions for this application.",
     "fallbackRoleTitle": "This role",
     "submit": "Submit",
+    "strengthen": {
+      "optionalHeader": "Optional: strengthen your profile (recommended)",
+      "optionalHeaderDone": "Profile extras — saved",
+      "optionalSub": "You can submit without opening this — expand if you want to add resume, phone, or address.",
+      "optionalSubDone": "Anything you finished below is saved. You’re all set to submit the interview.",
+      "title": "Strengthen your profile",
+      "body": "A few quick updates can improve your chances of getting matched faster.",
+      "skillsHeading": "Suggested skills from your answers",
+      "skillsConfirm": "Add skills to profile",
+      "skillsPickOne": "Select at least one skill to add.",
+      "skillsSaveFailed": "Could not save skills. Try again.",
+      "skillsDone": "Skills added to your profile.",
+      "resumeHeading": "Resume",
+      "resumePrompt": "Do you have a resume you can upload?",
+      "resumeOnFileShort": "We already have a resume on your profile.",
+      "resumeSkippedNote": "Got it — you can add a resume later from your profile.",
+      "phoneHeading": "Verify your phone",
+      "phoneHint": "A verified phone helps employers reach you. Use the same number for texts if you opt in.",
+      "phoneLabel": "Mobile number",
+      "phoneInvalid": "Enter a valid phone number (US numbers: 10 digits).",
+      "phoneSendFailed": "Could not send code. Try again.",
+      "sendCode": "Send code",
+      "codeLabel": "6-digit code",
+      "codeInvalid": "Enter the 6-digit code.",
+      "codeFailed": "Could not verify code. Try again.",
+      "verifyCode": "Verify",
+      "resend": "Resend code",
+      "resendIn": "Resend ({seconds}s)",
+      "skipForNow": "Skip for now",
+      "phoneDone": "Phone verified on your profile.",
+      "addressHeading": "Home address",
+      "street": "Street address",
+      "city": "City",
+      "state": "State",
+      "zip": "ZIP",
+      "addressPreview": "Look up address",
+      "addressConfirmSave": "Save home address",
+      "addressFieldsRequired": "Enter street, city, state, and ZIP.",
+      "addressPreviewFirst": "Look up your address first so we can confirm the map location.",
+      "addressSaveFailed": "Could not save address. Try again.",
+      "addressDone": "Home address saved."
+    },
     "errors": {
       "planPermission": "We could not load job-specific questions for your account or this application. You can still complete the rest of the interview. If this is not your application, sign in with the correct account or open the link from your message again.",
       "submitPermission": "We could not save your interview — your account may not have access for this action. If you are sure you are in the right place, try again later or contact support.",
@@ -309,11 +388,87 @@
       "serverDetail": "{detail}"
     },
     "steps": {
+      "opening_target_work_types": {
+        "prompt": "What type of work are you interested in?",
+        "opt_hospitality": "Hospitality",
+        "opt_industrial": "Industrial",
+        "opt_events": "Events",
+        "opt_clerical_admin": "Clerical / Admin",
+        "opt_healthcare": "Healthcare",
+        "opt_other": "Other"
+      },
+      "opening_schedule_preferences": {
+        "prompt": "What kind of schedule are you open to?",
+        "opt_full_time": "Full-time",
+        "opt_part_time": "Part-time",
+        "opt_gig_work": "Gig work",
+        "opt_temp_to_hire": "Temporary-to-hire",
+        "opt_seasonal": "Seasonal"
+      },
+      "opening_experience_industrial": {
+        "prompt": "Which types of industrial work have you done before?",
+        "opt_warehouse": "Warehouse",
+        "opt_assembly": "Assembly",
+        "opt_packing_shipping": "Packing / shipping",
+        "opt_machine_operation": "Machine operation",
+        "opt_cleaning_janitorial": "Cleaning / janitorial",
+        "opt_forklift": "Forklift",
+        "opt_inventory_scanning": "Inventory / scanning"
+      },
+      "opening_experience_hospitality": {
+        "prompt": "Which hospitality roles have you worked in?",
+        "opt_server": "Server",
+        "opt_bartender": "Bartender",
+        "opt_dishwasher": "Dishwasher",
+        "opt_prep_line_cook": "Prep / line cook",
+        "opt_banquet_setup": "Banquet setup",
+        "opt_housekeeping": "Housekeeping",
+        "opt_cashier_concessions": "Cashier / concessions"
+      },
+      "opening_experience_events": {
+        "prompt": "What kind of event work have you done?",
+        "opt_setup_teardown": "Setup / teardown",
+        "opt_guest_services": "Guest services",
+        "opt_usher_ticketing": "Usher / ticketing",
+        "opt_concessions": "Concessions",
+        "opt_catering_banquet": "Catering / banquet service",
+        "opt_registration_checkin": "Registration / check-in",
+        "opt_general_event_labor": "General event labor"
+      },
+      "opening_experience_clerical": {
+        "prompt": "Which clerical or admin work have you done?",
+        "opt_reception": "Reception",
+        "opt_data_entry": "Data entry",
+        "opt_customer_service": "Customer service",
+        "opt_scheduling_coordination": "Scheduling / coordination",
+        "opt_office_assistant": "Office assistant",
+        "opt_filing_records": "Filing / records",
+        "opt_call_center": "Call center"
+      },
+      "opening_experience_healthcare": {
+        "prompt": "Which healthcare support roles have you done?",
+        "opt_caregiving": "Caregiving",
+        "opt_patient_support": "Patient support",
+        "opt_medical_office": "Medical office",
+        "opt_scheduling_front_desk": "Scheduling / front desk",
+        "opt_environmental_services": "Environmental services",
+        "opt_dietary_support": "Dietary support",
+        "opt_other_healthcare_support": "Other healthcare support"
+      },
+      "opening_gig_types": {
+        "prompt": "What kinds of gig work are you open to?",
+        "opt_event_shifts": "Event shifts",
+        "opt_warehouse_day_shifts": "Warehouse day shifts",
+        "opt_setup_teardown": "Setup / teardown",
+        "opt_hospitality_shifts": "Hospitality shifts",
+        "opt_delivery_driving": "Delivery / driving",
+        "opt_general_labor": "General labor"
+      },
       "motivation": {
-        "prompt": "What drew you to this type of work, and what are you hoping for in your next job? Include:\n- what kind of role or industry you want\n- one goal you have for the next 3–6 months"
+        "prompt": "What drew you to this kind of work — and what are you hoping for next? Include:\n- what kind of role or industry you want\n- one goal for the next few months"
       },
       "experience_details": {
-        "prompt": "Describe your most relevant experience. Include:\n- where you worked (employer or type of workplace)\n- how long you were there (approximate is fine)\n- what your main responsibilities were"
+        "prompt": "In a few words, what kind of work have you done recently? Include:\n- where (employer or type of workplace)\n- about how long (approximate is fine)\n- your main responsibilities"
       },
       "work_confidence": {
         "prompt": "What kinds of work do you feel confident doing? (Select all that apply)",
@@ -326,7 +481,7 @@
         "opt_other": "Other"
       },
       "pressure_situation": {
-        "prompt": "Tell us about a time you had to work under pressure or meet a tight deadline. What happened, what did you do, and how did it turn out?"
+        "prompt": "Tell us about a time work got stressful — what happened, what did you do, and how did it turn out?"
       },
       "attendance_issues": {
         "prompt": "Have you had attendance or lateness issues at past jobs?",
@@ -337,7 +492,7 @@
         "prompt": "If you answered Yes above, explain what happened and how you handle reliability now. If No, you may write “N/A”."
       },
       "transportation_plan": {
-        "prompt": "How do you plan to get to work reliably?",
+        "prompt": "Do you have a reliable way to get to work?",
         "opt_own_vehicle": "I drive myself",
         "opt_ride_from_someone_else": "Ride from someone else",
         "opt_public_transportation": "Public transportation",
@@ -368,7 +523,7 @@
         "opt_not_sure": "Not sure"
       },
       "supervisor_feedback": {
-        "prompt": "What would your last supervisor say about your work? Include:\n- one strength they might mention\n- one area you were working to improve (if any)"
+        "prompt": "What would your last supervisor say about you? Include:\n- one strength they might mention\n- one area you were working on (if any)"
       },
       "additional_notes": {
         "prompt": "Anything else you want us to know? (Optional — specific details help.)"

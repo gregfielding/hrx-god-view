@@ -47,7 +47,9 @@ import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import { useFavorites } from '../hooks/useFavorites';
 import { useAuth } from '../contexts/AuthContext';
-import { db } from '../firebase';
+import { db, functions } from '../firebase';
+import { callSearchRecruiterTableUsers } from '../services/searchRecruiterTableUsersCallable';
+import { formatFirebaseHttpsError } from '../utils/firebaseHttpsErrors';
 import { calculateProfileScore } from '../utils/applicantScoring';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { normalizeUsStateCode } from '../utils/usStateNormalize';
@@ -317,6 +319,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [groups, setGroups] = useState<TenantUserGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  /** All-users scope: full-collection Firestore search via callable (not limited to first 500 rows). */
+  const [searchFirestoreLoading, setSearchFirestoreLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [usersScope, setUsersScope] = useState<'all' | 'my'>(
@@ -361,12 +365,90 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (!activeTenant?.id) return;
 
     loadGroups(activeTenant.id);
-    // Reset and load fresh data when filters/sort change
+    // All Users + active search: list is filled by `searchRecruiterTableUsers` + hydrate (not paginated `loadUsers`).
+    if (effectiveScope === 'all' && searchTerm.trim()) {
+      setUsers([]);
+      setLastVisibleDoc(null);
+      setHasMore(false);
+      setSearchFirestoreLoading(true);
+      return;
+    }
+    setSearchFirestoreLoading(false);
     setUsers([]);
     setLastVisibleDoc(null);
     setHasMore(true);
     loadUsers(activeTenant.id, true);
-  }, [activeTenant?.id, effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy]);
+  }, [
+    activeTenant?.id,
+    effectiveScope,
+    securityLevelFilter,
+    groupFilter,
+    skillFilter,
+    stateFilter,
+    sortBy,
+    searchTerm,
+  ]);
+
+  /** Debounced server-side search across all tenant listable users (not just the first page by createdAt). */
+  useEffect(() => {
+    if (!activeTenant?.id || !tenantId) return;
+    if (effectiveScope !== 'all') return;
+    const q = searchTerm.trim();
+    if (!q) {
+      setSearchFirestoreLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setSearchFirestoreLoading(true);
+      setError(null);
+      try {
+        const { data } = await callSearchRecruiterTableUsers(functions, {
+          tenantId,
+          searchQuery: q,
+        });
+        if (cancelled) return;
+        const ids = data.userIds;
+        if (ids.length === 0) {
+          setUsers([]);
+          return;
+        }
+        const usersRef = collection(db, 'users');
+        const chunk = <T,>(arr: T[], size: number): T[][] => {
+          const out: T[][] = [];
+          for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+          return out;
+        };
+        const IN_LIMIT = 30;
+        const byId = new Map<string, RecruiterUser>();
+        for (const idChunk of chunk(ids, IN_LIMIT)) {
+          if (cancelled) return;
+          const snap = await getDocs(query(usersRef, where(documentId(), 'in', idChunk)));
+          snap.docs.forEach((d) => {
+            const u = mapUserDocToRecruiterUser(d, tenantId);
+            if (u) byId.set(d.id, u);
+          });
+        }
+        if (cancelled) return;
+        const ordered = ids.map((id) => byId.get(id)).filter((u): u is RecruiterUser => !!u);
+        setUsers(ordered);
+      } catch (e: unknown) {
+        if (!cancelled) {
+          console.warn('RecruiterUsers: searchRecruiterTableUsers failed', e);
+          setError(formatFirebaseHttpsError(e));
+          setUsers([]);
+        }
+      } finally {
+        if (!cancelled) setSearchFirestoreLoading(false);
+      }
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [searchTerm, effectiveScope, tenantId, activeTenant?.id]);
 
   // Update cache when filters change
   useEffect(() => {
@@ -596,12 +678,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       // Add ordering for pagination (required for startAfter)
       q = query(q, orderBy('createdAt', 'desc'));
       
-      // When search or filters are active, load more aggressively (up to 500 users)
-      // This ensures search/filters query the full collection
-      const hasActiveFilters = searchTerm || 
-        securityLevelFilter !== 'all' || 
-        groupFilter !== 'all' || 
-        skillFilter !== 'all' || 
+      // When non-search filters are active, load more aggressively (up to 500 users).
+      // Text search uses `searchRecruiterTableUsers` (full scan) instead of local filtering.
+      const hasActiveFilters =
+        securityLevelFilter !== 'all' ||
+        groupFilter !== 'all' ||
+        skillFilter !== 'all' ||
         stateFilter !== 'all';
       
       const effectivePageSize = hasActiveFilters ? 500 : PAGE_SIZE;
@@ -659,6 +741,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
 
   useEffect(() => {
     if (effectiveScope === 'my') return;
+    if (effectiveScope === 'all' && searchTerm.trim()) return;
     if (!activeTenant?.id) return;
     const q = searchTerm.trim();
     if (!q) return;
@@ -995,13 +1078,16 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   // If user paginates beyond what's loaded, auto-fetch more in the background
   useEffect(() => {
     if (!activeTenant?.id) return;
+    if (effectiveScope === 'all' && searchTerm.trim()) return;
     if (!hasMore || loadingMore) return;
     const needed = (page + 1) * rowsPerPage;
     if (needed > users.length) {
       loadMoreUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, rowsPerPage, users.length, hasMore, loadingMore, activeTenant?.id]);
+  }, [page, rowsPerPage, users.length, hasMore, loadingMore, activeTenant?.id, effectiveScope, searchTerm]);
+
+  const tableLoading = loading || searchFirestoreLoading;
 
   if (error) {
     return (
@@ -1258,17 +1344,17 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         </Box>
 
         {/* Initial loading indicator */}
-        {loading && users.length === 0 && (
+        {tableLoading && users.length === 0 && (
           <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: 200, py: 4 }}>
             <CircularProgress size={24} />
           </Box>
         )}
 
-        {!loading || users.length > 0 ? (
+        {!tableLoading || users.length > 0 ? (
           <>
           <Box sx={{ position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
             {/* Loading overlay */}
-            {loading && users.length > 0 && (
+            {tableLoading && users.length > 0 && (
               <Box
                 sx={{
                   position: 'absolute',
@@ -1289,7 +1375,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             )}
             
             {/* No Results Found message */}
-            {!loading && filteredUsers.length === 0 && (
+            {!tableLoading && filteredUsers.length === 0 && (
               <Box
                 sx={{
                   position: 'absolute',

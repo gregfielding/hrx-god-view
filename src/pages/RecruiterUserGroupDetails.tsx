@@ -49,6 +49,7 @@ import { getEVerifyComfortStatusFromUserData, compareEVerifyComfort } from '../u
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
 import EVerifyComfortChip from '../components/EVerifyComfortChip';
 import UserGroupHiringControlPanel from '../components/recruiter/userGroup/UserGroupHiringControlPanel';
+import { TriggerGroupInterviewDialog } from '../components/recruiter/userGroup/TriggerGroupInterviewDialog';
 
 type SecurityLevel =
   | '0'
@@ -123,6 +124,7 @@ const RecruiterUserGroupDetails: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'members' | 'hiring' | 'settings'>('members');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
+  const [interviewInviteOpen, setInterviewInviteOpen] = useState(false);
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
 
@@ -564,6 +566,22 @@ const RecruiterUserGroupDetails: React.FC = () => {
               </>
             ) : null}
 
+            {tenantId && groupId ? (
+              <Button
+                variant="contained"
+                onClick={() => setInterviewInviteOpen(true)}
+                sx={{
+                  textTransform: 'none',
+                  borderRadius: '24px',
+                  height: '40px',
+                  px: 2,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Trigger Interviews
+              </Button>
+            ) : null}
+
             <Button
               variant="outlined"
               onClick={() => navigate('/recruiter/user-groups')}
@@ -580,6 +598,16 @@ const RecruiterUserGroupDetails: React.FC = () => {
           </Box>
         }
       />
+
+      {tenantId && groupId ? (
+        <TriggerGroupInterviewDialog
+          open={interviewInviteOpen}
+          onClose={() => setInterviewInviteOpen(false)}
+          tenantId={tenantId}
+          groupId={groupId}
+          groupTitle={group.title}
+        />
+      ) : null}
 
       <Box sx={{ flex: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
         {activeTab === 'settings' ? (

@@ -127,9 +127,11 @@ import PlacementsTab from '../components/recruiter/PlacementsTab';
 import LaborPoolSelector from '../components/recruiter/LaborPoolSelector';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { useFavorites } from '../hooks/useFavorites';
+import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
 import { useEntity } from '../hooks/useEntity';
 import FavoriteButton from '../components/FavoriteButton';
 import InterviewCell from '../components/InterviewCell';
+import { RecruiterApplicantCategoryScoresRow } from '../components/recruiter/RecruiterApplicantCategoryScoresRow';
 import { calculateProfileScore, getScoreColor, getScoreLabel } from '../utils/applicantScoring';
 import { normalizeScoreSummary, formatOneDecimal, getUserScore } from '../utils/scoreSummary';
 import { getOrComputeJobScoreSummary } from '../utils/jobScore';
@@ -147,6 +149,16 @@ import {
   RECRUITER_LIFECYCLE_BUCKET_SHORT_LABELS,
   type RecruiterLifecycleFilterBucket,
 } from '../utils/recruiterApplicationLifecycleBucket';
+import type { PrescreenCategoryId } from '../types/prescreenCategoryScores';
+import { PRESCREEN_CATEGORY_IDS } from '../types/prescreenCategoryScores';
+import { averageCategoryScore } from '../utils/parseRecruiterCategoryScores';
+import {
+  applicantPassesCategoryScoreFilters,
+  compareApplicantsByCategoryScore,
+  getEffectiveCategoryScoresForApplicantRow,
+  CATEGORY_SCORE_FILTER_THRESHOLDS,
+} from '../utils/recruiterApplicantCategoryScoreFilter';
+import { formatPrescreenCategoryLabel } from '../utils/categoryScoreEvolution';
 import {
   RECRUITER_LIFECYCLE_FILTER_GUIDANCE,
   summarizeNextActionsInApplicantList,
@@ -219,6 +231,14 @@ const SectionCard: React.FC<{ title: string; action?: React.ReactNode; children:
     </CardContent>
   </Card>
 );
+
+/** Applicants table sort: legacy columns, category average, or single category (current→snapshot). */
+type ApplicantsTableSortKey =
+  | null
+  | 'interview'
+  | 'jobScore'
+  | 'category_avg'
+  | PrescreenCategoryId;
 
 // ApplicantsTable Component
 interface ApplicantsTableProps {
@@ -315,8 +335,12 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   const [applicants, setApplicants] = useState<Applicant[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionMenuAnchor, setActionMenuAnchor] = useState<{ [key: string]: HTMLElement | null }>({});
-  const [applicantsSortBy, setApplicantsSortBy] = useState<'interview' | 'jobScore' | null>(null);
+  const [applicantsSortBy, setApplicantsSortBy] = useState<ApplicantsTableSortKey>(null);
   const [applicantsSortDirection, setApplicantsSortDirection] = useState<'asc' | 'desc'>('desc');
+  /** Min average (current→snapshot); null = no filter. */
+  const [categoryFilterMinAvg, setCategoryFilterMinAvg] = useState<number | null>(null);
+  const [categoryFilterCategoryId, setCategoryFilterCategoryId] = useState<PrescreenCategoryId | ''>('');
+  const [categoryFilterCategoryMin, setCategoryFilterCategoryMin] = useState<number | null>(null);
   const defaultSortAppliedRef = useRef(false);
 
   // Shift and day selectors (for Gig jobs - filter applicants by shift and optionally by day)
@@ -358,6 +382,13 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   // Favorites hook for starring applicants
   const { isFavorite, toggleFavorite } = useFavorites('users');
+
+  const applicantUserIdsForCategoryScores = useMemo(
+    () => Array.from(new Set(applicants.map((a) => a.uid).filter(Boolean))),
+    [applicants],
+  );
+  const { scoresByUserId: categoryScoresCurrentByUserId, loading: categoryScoresCurrentLoading } =
+    useCategoryScoresCurrentMap(applicantUserIdsForCategoryScores);
 
   const fetchApplicants = useCallback(async () => {
     try {
@@ -614,6 +645,36 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     );
   }, [filteredByShiftAndDay, lifecycleStageFilter]);
 
+  const filteredByCategoryScores = useMemo(() => {
+    const catId = categoryFilterCategoryId || null;
+    const catMin =
+      catId && categoryFilterCategoryMin != null ? categoryFilterCategoryMin : null;
+    return filteredByLifecycle.filter((a) =>
+      applicantPassesCategoryScoreFilters(
+        a.uid,
+        a.applicationData,
+        categoryScoresCurrentByUserId,
+        {
+          minAvg: categoryFilterMinAvg,
+          filterCategoryId: catId,
+          filterCategoryMin: catMin,
+        },
+      ),
+    );
+  }, [
+    filteredByLifecycle,
+    categoryScoresCurrentByUserId,
+    categoryFilterMinAvg,
+    categoryFilterCategoryId,
+    categoryFilterCategoryMin,
+  ]);
+
+  const categoryScoreFilterEmpty =
+    (categoryFilterMinAvg != null ||
+      (categoryFilterCategoryId && categoryFilterCategoryMin != null)) &&
+    filteredByLifecycle.length > 0 &&
+    filteredByCategoryScores.length === 0;
+
   const lifecycleFilterEmpty =
     lifecycleStageFilter !== 'all' && filteredByShiftAndDay.length > 0 && filteredByLifecycle.length === 0;
 
@@ -621,8 +682,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
     () =>
       lifecycleStageFilter === 'all'
         ? []
-        : summarizeNextActionsInApplicantList(filteredByLifecycle),
-    [lifecycleStageFilter, filteredByLifecycle],
+        : summarizeNextActionsInApplicantList(filteredByCategoryScores),
+    [lifecycleStageFilter, filteredByCategoryScores],
   );
 
   const handleRefreshScores = useCallback(async () => {
@@ -783,7 +844,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
 
   const sortedApplicants = React.useMemo(() => {
     if (applicantsSortBy === 'interview') {
-      const data = [...filteredByLifecycle];
+      const data = [...filteredByCategoryScores];
       data.sort((a, b) => {
         const aM = toMillis(a.scoreSummary?.interviewLastAt);
         const bM = toMillis(b.scoreSummary?.interviewLastAt);
@@ -793,7 +854,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       return data;
     }
     if (applicantsSortBy === 'jobScore') {
-      const data = [...filteredByLifecycle];
+      const data = [...filteredByCategoryScores];
       data.sort((a, b) => {
         const aScore = a.jobScoreSummary?.jobScore ?? -1;
         const bScore = b.jobScoreSummary?.jobScore ?? -1;
@@ -802,10 +863,54 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
       });
       return data;
     }
-    return filteredByLifecycle;
-  }, [filteredByLifecycle, applicantsSortBy, applicantsSortDirection]);
+    if (applicantsSortBy === 'category_avg') {
+      const data = [...filteredByCategoryScores];
+      data.sort((a, b) => {
+        const sa = getEffectiveCategoryScoresForApplicantRow(
+          a.uid,
+          a.applicationData,
+          categoryScoresCurrentByUserId,
+        ).scores;
+        const sb = getEffectiveCategoryScoresForApplicantRow(
+          b.uid,
+          b.applicationData,
+          categoryScoresCurrentByUserId,
+        ).scores;
+        const av = sa ? averageCategoryScore(sa) : null;
+        const bv = sb ? averageCategoryScore(sb) : null;
+        return compareApplicantsByCategoryScore(av, bv, applicantsSortDirection);
+      });
+      return data;
+    }
+    if (applicantsSortBy && PRESCREEN_CATEGORY_IDS.includes(applicantsSortBy as PrescreenCategoryId)) {
+      const cat = applicantsSortBy as PrescreenCategoryId;
+      const data = [...filteredByCategoryScores];
+      data.sort((a, b) => {
+        const sa = getEffectiveCategoryScoresForApplicantRow(
+          a.uid,
+          a.applicationData,
+          categoryScoresCurrentByUserId,
+        ).scores;
+        const sb = getEffectiveCategoryScoresForApplicantRow(
+          b.uid,
+          b.applicationData,
+          categoryScoresCurrentByUserId,
+        ).scores;
+        const av = sa ? sa[cat] : null;
+        const bv = sb ? sb[cat] : null;
+        return compareApplicantsByCategoryScore(av, bv, applicantsSortDirection);
+      });
+      return data;
+    }
+    return filteredByCategoryScores;
+  }, [
+    filteredByCategoryScores,
+    applicantsSortBy,
+    applicantsSortDirection,
+    categoryScoresCurrentByUserId,
+  ]);
 
-  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByLifecycle;
+  const displayedApplicants = applicantsSortBy ? sortedApplicants : filteredByCategoryScores;
 
   // Notify parent of count changes (use displayed count)
   useEffect(() => {
@@ -878,11 +983,19 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
   };
 
   const renderInterviewCell = (applicant: Applicant) => (
-    <InterviewCell
-      userId={applicant.uid}
-      scoreSummary={applicant.scoreSummary}
-      formatDate={formatInterviewDate}
-    />
+    <Stack spacing={0.5} alignItems="flex-start">
+      <InterviewCell
+        userId={applicant.uid}
+        scoreSummary={applicant.scoreSummary}
+        formatDate={formatInterviewDate}
+      />
+      <RecruiterApplicantCategoryScoresRow
+        userId={applicant.uid}
+        applicationData={applicant.applicationData}
+        currentCategoryScores={categoryScoresCurrentByUserId[applicant.uid] ?? null}
+        currentScoresLoading={categoryScoresCurrentLoading}
+      />
+    </Stack>
   );
 
   const handleChangeStatus = async (applicant: Applicant, newStatus: string) => {
@@ -1448,6 +1561,133 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
               ))}
             </Stack>
           </Box>
+          <Box
+            sx={{
+              px: 2,
+              py: 1.5,
+              borderBottom: 1,
+              borderColor: 'divider',
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 2,
+              alignItems: 'flex-end',
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ width: '100%', mb: -0.5 }}>
+              Category scores — filters & sort use <strong>current worker profile</strong> scores when loaded; if not set,
+              the <strong>interview snapshot on this application</strong> is used. Applicants with neither score are excluded
+              when a minimum threshold is set. Sorting uses the same rule; missing scores sort to the bottom.
+            </Typography>
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>Avg ≥</InputLabel>
+              <Select
+                label="Avg ≥"
+                value={categoryFilterMinAvg == null ? '' : String(categoryFilterMinAvg)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCategoryFilterMinAvg(v === '' ? null : Number(v));
+                }}
+              >
+                <MenuItem value="">
+                  <em>All</em>
+                </MenuItem>
+                {CATEGORY_SCORE_FILTER_THRESHOLDS.map((t) => (
+                  <MenuItem key={t} value={String(t)}>
+                    {t}+
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>Category min</InputLabel>
+              <Select
+                label="Category min"
+                value={categoryFilterCategoryId || ''}
+                onChange={(e) => {
+                  const v = e.target.value as PrescreenCategoryId | '';
+                  setCategoryFilterCategoryId(v);
+                  if (!v) setCategoryFilterCategoryMin(null);
+                }}
+              >
+                <MenuItem value="">
+                  <em>Any category</em>
+                </MenuItem>
+                {PRESCREEN_CATEGORY_IDS.map((id) => (
+                  <MenuItem key={id} value={id}>
+                    {formatPrescreenCategoryLabel(id)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 120 }} disabled={!categoryFilterCategoryId}>
+              <InputLabel>Min</InputLabel>
+              <Select
+                label="Min"
+                value={categoryFilterCategoryMin == null ? '' : String(categoryFilterCategoryMin)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setCategoryFilterCategoryMin(v === '' ? null : Number(v));
+                }}
+              >
+                <MenuItem value="">
+                  <em>—</em>
+                </MenuItem>
+                {CATEGORY_SCORE_FILTER_THRESHOLDS.map((t) => (
+                  <MenuItem key={t} value={String(t)}>
+                    {t}+
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControl size="small" sx={{ minWidth: 260 }}>
+              <InputLabel>Sort by</InputLabel>
+              <Select
+                label="Sort by"
+                value={
+                  applicantsSortBy == null
+                    ? ''
+                    : applicantsSortBy === 'category_avg'
+                      ? 'category_avg'
+                      : String(applicantsSortBy)
+                }
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === '') {
+                    setApplicantsSortBy(null);
+                    return;
+                  }
+                  if (v === 'interview' || v === 'jobScore') {
+                    setApplicantsSortBy(v);
+                    setApplicantsSortDirection('desc');
+                    return;
+                  }
+                  if (v === 'category_avg') {
+                    setApplicantsSortBy('category_avg');
+                    setApplicantsSortDirection('desc');
+                    return;
+                  }
+                  if (PRESCREEN_CATEGORY_IDS.includes(v as PrescreenCategoryId)) {
+                    setApplicantsSortBy(v as PrescreenCategoryId);
+                    setApplicantsSortDirection('desc');
+                  }
+                }}
+              >
+                <MenuItem value="">
+                  <em>Applied date (default)</em>
+                </MenuItem>
+                {jobOrder?.requirementPackId ? (
+                  <MenuItem value="jobScore">Job score (requirement pack)</MenuItem>
+                ) : null}
+                <MenuItem value="interview">Interview activity (date)</MenuItem>
+                <MenuItem value="category_avg">Current category average</MenuItem>
+                {PRESCREEN_CATEGORY_IDS.map((id) => (
+                  <MenuItem key={`sort-${id}`} value={id}>
+                    Current — {formatPrescreenCategoryLabel(id)}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Box>
           {lifecycleStageFilter !== 'all' && (
             <Box
               sx={{
@@ -1596,7 +1836,7 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                     <TableCell>Missing</TableCell>
                   </>
                 ) : null}
-                <TableCell>
+                <TableCell sx={{ minWidth: 120 }}>
                   <TableSortLabel
                     active={applicantsSortBy === 'interview'}
                     direction={applicantsSortBy === 'interview' ? applicantsSortDirection : 'desc'}
@@ -1604,6 +1844,11 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                   >
                     Interview
                   </TableSortLabel>
+                  <Tooltip title="Date and score from the latest interview; category chip shows the six category snapshot from the worker AI pre-screen when saved on this application (read-only).">
+                    <Typography component="span" variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                      + categories
+                    </Typography>
+                  </Tooltip>
                 </TableCell>
                 <TableCell>Compliance</TableCell>
                 <TableCell>Lifecycle</TableCell>
@@ -1621,6 +1866,8 @@ const ApplicantsTable: React.FC<ApplicantsTableProps> = ({
                         ? 'No applications received yet for this job order.'
                         : lifecycleFilterEmpty
                           ? 'No applicants match this lifecycle filter. Choose "All stages" or tap another lifecycle chip.'
+                        : categoryScoreFilterEmpty
+                          ? 'No applicants match these category score filters. Try lowering thresholds, set Avg ≥ to All, or set Category min to Any category.'
                         : isGigJob && selectedShiftId
                         ? selectedDay
                           ? 'No applicants for this shift and day. Try "All days" to see everyone who applied to this shift.'

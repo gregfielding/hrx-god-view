@@ -32,6 +32,7 @@ import { buildI9SupportingDocumentsEmploymentViewModel } from '../../../utils/i9
 import { buildWorkerMyEmploymentListRowModel } from '../../../utils/workerMyEmploymentListRowModel';
 import { filterI9RowsForEntityEmployment } from '../../../utils/workerEmploymentWorkerSurface';
 import { C1_WORKER_SCREENING_PATH } from '../../../constants/c1WorkerRoutes';
+import { resolveWorkerPreferences } from '../../../utils/workerPreferencesCanonical';
 
 const WorkerProfile: React.FC = () => {
   const { user, avatarUrl, logout, tenantId: authTenantId, activeTenant } = useAuth();
@@ -112,9 +113,9 @@ const WorkerProfile: React.FC = () => {
   const languagesComplete = Boolean(Array.isArray(userDoc?.languages) && userDoc?.languages.length > 0);
   const preferences = ((userDoc?.workerProfile as Record<string, unknown> | undefined)?.preferences ||
     {}) as Record<string, unknown>;
+  const resolvedPrefs = resolveWorkerPreferences(preferences);
   const availabilityPreferencesPresent = Boolean(
-    (Array.isArray(preferences.targetIndustries) && preferences.targetIndustries.length > 0) ||
-      (Array.isArray(preferences.scheduleIntentOptions) && preferences.scheduleIntentOptions.length > 0)
+    resolvedPrefs.legacyTargetIndustriesSubset.length > 0 || resolvedPrefs.legacyScheduleIntentOptions.length > 0
   );
   const basicInfoSectionComplete = personalDetailsComplete && locationComplete;
   const workProfileSectionComplete =
