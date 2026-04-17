@@ -333,6 +333,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
         {
           ...openingPatch,
           interviewStatus: 'completed',
+          hasWorkerAiPrescreenInterview: true,
           lastInterviewCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
           'workerProfile.preferences.prescreenOpeningCapturedAt': admin.firestore.FieldValue.serverTimestamp(),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -419,6 +420,21 @@ export const submitWorkerAiPrescreenInterview = onCall(
     };
 
     await interviewRef.set(interviewPayload);
+
+    try {
+      await userRef.set(
+        {
+          hasWorkerAiPrescreenInterview: true,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    } catch (eFlag) {
+      logger.warn('submitWorkerAiPrescreenInterview.has_prescreen_flag_write_failed', {
+        userId: auth.uid,
+        message: eFlag instanceof Error ? eFlag.message : String(eFlag),
+      });
+    }
 
     try {
       await maybeEmitInterviewCompletedCategoryScores(db, { uid: auth.uid, interviewId });

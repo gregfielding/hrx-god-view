@@ -15,6 +15,10 @@
  * Or with ts-node:
  *   npx ts-node src/scripts/backfillWorkerAiPrescreenInterviews.ts --dry-run --limit=5
  *   npx ts-node src/scripts/backfillWorkerAiPrescreenInterviews.ts --tenantId=T --limit=50 --print-changed --dry-run
+ *
+ * Denormalized flag: new submits set `users/{uid}.hasWorkerAiPrescreenInterview`. For legacy users, either rely on
+ * `interviewStatus === 'completed'` + subcollection fallback in functions, or batch-set the flag for uids that have
+ * any `users/{uid}/interviews/*` doc with `interviewKind === 'worker_ai_prescreen'` (small one-off script or console).
  */
 import * as admin from 'firebase-admin';
 import { extractPrescreenAnswersFromInterviewDoc } from '../workerAiPrescreen/extractPrescreenAnswersFromInterviewDoc';

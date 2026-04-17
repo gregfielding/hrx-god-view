@@ -560,9 +560,16 @@ const WorkerAiPrescreenPage: React.FC = () => {
     const key = `${stepIndex}:${id}`;
     if (prescreenViewKeyRef.current === key) return;
     prescreenViewKeyRef.current = key;
-    logPrescreenStepViewed({ stepId: id, stepIndex, totalSteps });
+    logPrescreenStepViewed({
+      stepId: id,
+      stepIndex,
+      totalSteps,
+      entry: entryQuery,
+      hasApplication: Boolean(applicationId),
+      isOptionalFollowup: id.endsWith('_followup_optional'),
+    });
     lastStepIdLogged.current = id;
-  }, [stepIndex, totalSteps, done, navEntries]);
+  }, [stepIndex, totalSteps, done, navEntries, entryQuery, applicationId]);
 
   useEffect(
     () => () => {
@@ -628,6 +635,8 @@ const WorkerAiPrescreenPage: React.FC = () => {
       firstStepId,
       firstStepIndex: index,
       hadProfilePrefsPatch: Object.keys(patch).length > 0,
+      entry: entryQuery,
+      hasApplication: Boolean(applicationId),
     });
     if (index > 0) {
       setStepIndex(index);
@@ -839,7 +848,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
   const goNext = () => {
     if (!canNext) return;
     if (currentEntry) {
-      logPrescreenStepCompleted({ stepId: navEntryStepId(currentEntry) });
+      logPrescreenStepCompleted({
+        stepId: navEntryStepId(currentEntry),
+        entry: entryQuery,
+        hasApplication: Boolean(applicationId),
+      });
     }
     if (stepIndex < totalSteps - 1) setStepIndex((i) => i + 1);
   };
@@ -863,7 +876,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
         }
       }
       if (currentEntry) {
-        logPrescreenStepCompleted({ stepId: navEntryStepId(currentEntry) });
+        logPrescreenStepCompleted({
+          stepId: navEntryStepId(currentEntry),
+          entry: entryQuery,
+          hasApplication: Boolean(applicationId),
+        });
       }
       const merged = mergeClientFollowUpsIntoAnswers(
         answers,
@@ -914,6 +931,26 @@ const WorkerAiPrescreenPage: React.FC = () => {
     return totalSteps < 12 ? t('workerAiPrescreen.durationHintShort') : t('workerAiPrescreen.durationHintLong');
   };
 
+  /** SMS / group invite entry — reinforces why the worker opened this link. */
+  const entryContextBanner = useMemo(() => {
+    const e = entryQuery?.trim() || '';
+    if (!e) return null;
+    if (e === 'user_group_backfill') {
+      return applicationId ? t('workerAiPrescreen.entryBanner.groupWithJob') : t('workerAiPrescreen.entryBanner.group');
+    }
+    if (e.startsWith('sms_')) {
+      return applicationId ? t('workerAiPrescreen.entryBanner.smsWithJob') : t('workerAiPrescreen.entryBanner.sms');
+    }
+    return null;
+  }, [entryQuery, applicationId, t]);
+
+  /** Light nudge in the first third of steps (conversion — not shown on step 0). */
+  const showFirstThirdEncouragement = useMemo(() => {
+    if (totalSteps < 3 || stepIndex === 0) return false;
+    const n = Math.max(1, Math.ceil(totalSteps / 3));
+    return stepIndex < n;
+  }, [totalSteps, stepIndex]);
+
   const renderFramingHeader = (opts?: { loading?: boolean }) => (
     <Stack spacing={0.5} sx={{ mt: 0, mb: 1.25 }}>
       <Typography variant="h6" fontWeight={700} component="h1" sx={{ fontSize: { xs: '1.1rem', sm: '1.25rem' } }}>
@@ -925,7 +962,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
             ? t('workerAiPrescreen.subtitleWithJob')
             : t('workerAiPrescreen.subtitleOptional')}
         </Typography>
-      ) : null}
+      ) : (
+        <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.35 }}>
+          {t('workerAiPrescreen.subtitleNoJob')}
+        </Typography>
+      )}
       {applicationId && jobHeaderInfo && !opts?.loading ? (
         <Stack spacing={0.25} sx={{ pt: 0.25 }}>
           <Typography variant="subtitle1" fontWeight={600} sx={{ lineHeight: 1.3 }}>
@@ -1019,6 +1060,24 @@ const WorkerAiPrescreenPage: React.FC = () => {
     <Box sx={{ p: { xs: 1.5, sm: 2 }, pb: { xs: 3, sm: 4 }, maxWidth: 560, mx: 'auto' }}>
       {renderFramingHeader()}
 
+      {entryContextBanner ? (
+        <Alert
+          severity="info"
+          variant="outlined"
+          sx={{
+            mb: 1.25,
+            py: 0.75,
+            borderColor: 'info.light',
+            bgcolor: (mui) => alpha(mui.palette.info.main, 0.06),
+            '& .MuiAlert-message': { width: '100%' },
+          }}
+        >
+          <Typography variant="body2" sx={{ lineHeight: 1.45 }}>
+            {entryContextBanner}
+          </Typography>
+        </Alert>
+      ) : null}
+
       {applicationId && !tenantId ? (
         <Alert severity="info" sx={{ mb: 1.5, py: 0.75 }}>
           {t('workerAiPrescreen.alertChooseTenant')}
@@ -1026,7 +1085,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
       ) : null}
 
       <LinearProgress variant="determinate" value={progress} sx={{ mb: 0.75, borderRadius: 1, height: 6 }} />
-      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: 1.25 }}>
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mb: showFirstThirdEncouragement ? 0.5 : 1.25 }}>
         {t('workerAiPrescreen.progressOf', { current: stepIndex + 1, total: totalSteps })}
         {currentUiSection ? (
           <>
@@ -1035,6 +1094,16 @@ const WorkerAiPrescreenPage: React.FC = () => {
           </>
         ) : null}
       </Typography>
+      {showFirstThirdEncouragement ? (
+        <Typography
+          variant="caption"
+          color="primary"
+          display="block"
+          sx={{ mb: 1.25, fontWeight: 600, letterSpacing: 0.02 }}
+        >
+          {t('workerAiPrescreen.earlyEncouragement')}
+        </Typography>
+      ) : null}
 
       {planError ? (
         <Alert severity="warning" sx={{ mb: 1.5, py: 0.75 }}>
@@ -1097,9 +1166,17 @@ const WorkerAiPrescreenPage: React.FC = () => {
           </Typography>
         ) : null}
         {clientFollowupKind ? (
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 0.75, lineHeight: 1.45 }}>
-            {t('workerAiPrescreen.v2.followupTransitionLine')}
-          </Typography>
+          <Stack direction="row" alignItems="flex-start" gap={1} sx={{ mb: 0.75 }}>
+            <Chip
+              size="small"
+              label={t('workerAiPrescreen.optionalFollowupChip')}
+              variant="outlined"
+              sx={{ mt: 0.15, flexShrink: 0, fontWeight: 600 }}
+            />
+            <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.45, flex: 1 }}>
+              {t('workerAiPrescreen.v2.followupTransitionLine')}
+            </Typography>
+          </Stack>
         ) : null}
         <Typography
           variant="subtitle1"
@@ -1179,7 +1256,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
           <TextField
             fullWidth
             multiline
-            minRows={3}
+            minRows={2}
             value={
               clientFollowupKind === 'experience'
                 ? experienceFollowupOptional

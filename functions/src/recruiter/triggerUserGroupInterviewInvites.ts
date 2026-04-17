@@ -22,6 +22,7 @@ import {
   workerInterviewInviteLang,
 } from './userGroupInterviewInviteValidation';
 import { userInInterviewReinviteCooldown } from '../workerAiPrescreen/interviewInviteCooldown';
+import { scanInterviewsSubcollectionForWorkerAiPrescreen } from '../workerAiPrescreen/hasWorkerAiPrescreenDenormalized';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -88,20 +89,6 @@ async function resolveApplicationIdForUser(uid: string, data: Record<string, unk
     }
   }
   return null;
-}
-
-async function userHasWorkerAiPrescreenInterview(uid: string): Promise<boolean> {
-  try {
-    const snap = await db.collection(`users/${uid}/interviews`).limit(25).get();
-    for (const d of snap.docs) {
-      if (String((d.data() as { interviewKind?: string }).interviewKind || '') === 'worker_ai_prescreen') {
-        return true;
-      }
-    }
-  } catch {
-    /* fail open */
-  }
-  return false;
 }
 
 export type TriggerUserGroupInterviewInvitesResult = {
@@ -217,12 +204,17 @@ export const triggerUserGroupInterviewInvites = onCall(
           continue;
         }
 
+        if (userData.hasWorkerAiPrescreenInterview === true) {
+          skippedBreakdown.hasPrescreenInterviewDoc += 1;
+          continue;
+        }
+
         if (userData.interviewStatus === 'completed') {
           skippedBreakdown.completed += 1;
           continue;
         }
 
-        if (await userHasWorkerAiPrescreenInterview(uid)) {
+        if (await scanInterviewsSubcollectionForWorkerAiPrescreen(db.doc(`users/${uid}`))) {
           skippedBreakdown.hasPrescreenInterviewDoc += 1;
           continue;
         }

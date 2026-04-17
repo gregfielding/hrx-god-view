@@ -8,7 +8,8 @@
  * - `onUserCreatedScheduleAutoInterviewInvite` sets `interviewStatus = never_invited` and
  *   `interviewInviteScheduledAt = now + 15m` when appropriate.
  * - `processScheduledInterviewInvites` sends SMS once, then sets `invited` + `interviewInviteSentAt`.
- * Suppression when `users/{uid}/interviews` already has `interviewKind === 'worker_ai_prescreen'` only (not other interview kinds).
+ * Suppression when `hasWorkerAiPrescreenInterview` or legacy `interviewStatus === 'completed'`, else capped
+ * `users/{uid}/interviews` scan for `worker_ai_prescreen` (not other interview kinds).
  */
 
 import * as admin from 'firebase-admin';
@@ -25,34 +26,12 @@ import {
   TWILIO_A2P_CAMPAIGN,
 } from '../messaging/twilioSecrets';
 import { userInInterviewReinviteCooldown } from './interviewInviteCooldown';
+import { userHasWorkerAiPrescreenWithFallback } from './hasWorkerAiPrescreenDenormalized';
 
 if (!admin.apps.length) {
   admin.initializeApp();
 }
 const db = admin.firestore();
-
-/** Only this kind blocks auto prescreen SMS; other interview docs (future micro-interviews, etc.) must not. */
-const WORKER_AI_PRESCREEN = 'worker_ai_prescreen';
-/** Cap reads; prescreen count per user is expected to be low. */
-const INTERVIEWS_SCAN_LIMIT = 50;
-
-/**
- * True if the user already has at least one stored worker AI prescreen interview doc.
- * Uses in-memory filter (no composite index on interviews).
- */
-async function userHasWorkerAiPrescreenInterviewDoc(userRef: admin.firestore.DocumentReference): Promise<boolean> {
-  try {
-    const snap = await userRef.collection('interviews').limit(INTERVIEWS_SCAN_LIMIT).get();
-    for (const d of snap.docs) {
-      if (String((d.data() as { interviewKind?: string }).interviewKind || '') === WORKER_AI_PRESCREEN) {
-        return true;
-      }
-    }
-  } catch {
-    /* fail open: do not suppress invite */
-  }
-  return false;
-}
 
 const REMINDER_DELAY_MS = 15 * 60 * 1000;
 const BATCH_LIMIT = 75;
@@ -190,7 +169,7 @@ export const onUserCreatedScheduleAutoInterviewInvite = onDocumentCreated(
       return;
     }
 
-    if (await userHasWorkerAiPrescreenInterviewDoc(snap.ref)) {
+    if (await userHasWorkerAiPrescreenWithFallback(snap.ref, data)) {
       await snap.ref.set(
         {
           interviewStatus: 'completed',
@@ -293,7 +272,7 @@ export const processScheduledInterviewInvites = onSchedule(
         continue;
       }
 
-      if (await userHasWorkerAiPrescreenInterviewDoc(docSnap.ref)) {
+      if (await userHasWorkerAiPrescreenWithFallback(docSnap.ref, data)) {
         await docSnap.ref.set(
           {
             interviewStatus: 'completed',
