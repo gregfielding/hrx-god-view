@@ -141,7 +141,8 @@ export function evaluatePrescreenAnswerQuality(answers: PrescreenAnswersForQuali
   const vagueOk = (s: string) =>
     wordCount(s) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS && !prescreenTextHasConcreteDetail(s);
   const coreVagueCount = coreNarratives.filter((s) => vagueOk(s)).length;
-  if (coreVagueCount >= 2) {
+  /** Require ≥3 thin narrative fields before global `vague_response` (reduces false positives). */
+  if (coreVagueCount >= 3) {
     flagSet.add('vague_response');
   }
 

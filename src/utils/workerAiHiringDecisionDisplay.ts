@@ -3,9 +3,9 @@
  * Reason codes align with `evaluateAiHiringDecision` in functions + RECRUITER_AI_DECISION_UI.md.
  */
 
-/** Shown near Worker AI prescreen recommendation vs hiring decision chips (they may differ, e.g. Review + Advance). */
+/** Shown near Worker AI prescreen recommendation vs hiring decision chips. */
 export const WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP =
-  'Interview recommendation reflects answer quality and scoring signals. Hiring decision applies policy, capacity, thresholds, and automation. The two can differ (for example, Review with Advance).';
+  'Interview recommendation reflects answer quality and scoring signals. Hiring decision applies policy, capacity, and thresholds. When the interview is Review, the hiring decision stays Review (aligned).';
 
 export type HiringDecisionUi = 'advance' | 'review' | 'hold' | 'reject';
 
@@ -23,6 +23,8 @@ const REASON_LABELS: Record<string, string> = {
   critical_flag_physical: 'Physical requirement concern',
   not_in_top_percent: 'Outside top percent pool',
   recommendation_decline: 'Interview recommendation: decline',
+  interview_recommendation_review: 'Interview review recommended — hiring decision aligned',
+  advance_with_caution_flags: 'Strong score; caution flags recorded on file',
 };
 
 export function labelForAiHiringReasonCode(code: string): string {
@@ -131,6 +133,12 @@ export function explanationLineForHiringDecision(args: {
   const codes = new Set(args.reasonCodes.map((c) => String(c).trim()));
   if (codes.has('passed_all_checks') && d === 'advance') {
     return 'Strong score and no blocking issues. Candidate may be moved forward.';
+  }
+  if (codes.has('advance_with_caution_flags') && d === 'advance') {
+    return 'Score clears the bar; interview flags remain for recruiter awareness.';
+  }
+  if (codes.has('interview_recommendation_review') && d === 'review') {
+    return 'Interview signals warrant recruiter review before advancing.';
   }
   if (d === 'hold' && (codes.has('failed_job_requirement') || codes.has('gig_path_eligible'))) {
     return 'Candidate scored well, but job-specific answers suggest this role may not fit — see reasons.';

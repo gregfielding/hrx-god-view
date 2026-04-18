@@ -199,7 +199,7 @@ function buildReviewSummaryShort(args: {
         if (drugUnk && !bgUnk) return `${prefix}drug screening answer unclear; confirm status before advancing.`;
         return `${prefix}drug/background screening unclear; confirm what applies before advancing.`;
       }
-      return `${prefix}screening answers were unclear — needs confirmation (not a rejection signal).`;
+      return `${prefix}unknown drug/background response — review (not an auto-rejection signal).`;
     case 'compliance_disclosure': {
       const rs = args.riskSummary;
       const d = rs?.drug?.level;
@@ -214,11 +214,11 @@ function buildReviewSummaryShort(args: {
         ? `${prefix}attendance history needs a quick review despite strong answers elsewhere.`
         : `${prefix}attendance or reliability concerns to verify.`;
     case 'reliability_transport':
-      return `${prefix}transportation or commute reliability needs confirmation.`;
+      return `${prefix}transportation reliability concern — confirm backup plan if needed.`;
     case 'physical_job_fit':
       return `${prefix}physical demands may not match what the candidate prefers — check role fit.`;
     case 'answer_quality':
-      return `${prefix}answers were thin or vague in places — worth a quick detail check.`;
+      return `${prefix}answer quality soft concern — quick detail check if other signals are strong.`;
     case 'borderline_score':
       return `${prefix}score is below the auto-advance bar — assess fit before moving forward.`;
     case 'mixed_review':

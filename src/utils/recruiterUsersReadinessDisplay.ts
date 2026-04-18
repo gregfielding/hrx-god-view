@@ -1,12 +1,11 @@
 /**
  * Presentation helpers for Recruiter Users table (/users/all): work readiness, breakdown, top concern.
  *
- * **Readiness breakdown** (Users table column) is a **decision surface**: deployability blockers only — interview,
- * I-9 / work authorization, E-Verify when entity rules require it, and background screening status. It is **not** a
- * payroll or policy checklist; handbook, policies, direct deposit, and tax forms stay on the Employment tab / worker UI.
+ * **Readiness breakdown** (Users + group members tables): mirrors the **Employment** onboarding checklist for the
+ * primary entity — Direct deposit, Work auth, I-9, W-4 / 1099 (W-9), E-Verify, Handbook, Policies. **Background
+ * screening stays in the Backgrounds column only**, not here.
  *
- * **Backgrounds** column (separate cell): detailed AccuSource line items + legacy orders — richer than the single
- * readiness “Background · …” line.
+ * **Backgrounds** column (separate cell): AccuSource line items + legacy orders.
  */
 
 import type { ScoreSummary } from './scoreSummary';
@@ -17,8 +16,14 @@ import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { RecruiterUserEmploymentBreakdownContext } from '../types/recruiterEmploymentBreakdownContext';
 import type { EmploymentEntityOverview } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import { resolveEffectiveEmploymentWorkerType } from './employmentWorkerTypeResolution';
-import { buildTaxIdentityChecklistItems } from './employmentMinimalChecklistModel';
-import { parseExternalOnboardingSteps } from './externalOnboardingSteps';
+import {
+  buildDirectDepositItem,
+  buildHandbookPoliciesItems,
+  buildTaxIdentityChecklistItems,
+  type MinimalChecklistItem,
+} from './employmentMinimalChecklistModel';
+import { mapExternalOnboardingStepToPathStatus, parseExternalOnboardingSteps } from './externalOnboardingSteps';
+import type { ExternalOnboardingStepRecord } from '../types/externalOnboardingSteps';
 import { accusourceScreeningLineItems } from './accusourceScreeningLineItems';
 export type ReadinessOperationalKind = 'ready' | 'needs_action' | 'blocked' | 'incomplete';
 
@@ -127,14 +132,6 @@ function toMillisSafe(input: unknown): number {
   return 0;
 }
 
-function formatShortUsDate(timestamp: unknown): string {
-  const ms = toMillisSafe(timestamp);
-  if (!ms) return '—';
-  const d = new Date(ms);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
 function humanizeScreeningToken(raw: string): string {
   const s = raw.trim();
   if (!s) return '';
@@ -161,41 +158,29 @@ function pickLatestScreeningRow<T extends Record<string, unknown>>(rows: T[], da
   return scored[0]?.row;
 }
 
-function formatInterviewBreakdownLine(
-  user: RecruiterUserReadinessLike,
-  opts?: ReadinessBreakdownOpts,
-): string {
-  const hasInterview =
-    (user.scoreSummary?.interviewCount ?? 0) > 0 || !!user.scoreSummary?.interviewLastAt;
-  if (!hasInterview) return 'Interview —';
-  const date = formatShortUsDate(user.scoreSummary?.interviewLastAt);
-  const author = (opts?.lastInterviewSubmitterName ?? '').trim() || 'System';
-  return `Interview ✓ · ${date} · ${author}`;
-}
-
 function formatI9BreakdownLine(user: RecruiterUserReadinessLike, entityItems?: UserListEntityOnboardingItem[]): string {
   const emp = String(user.employeeOnboardStatus || '').toLowerCase();
   const con = String(user.contractorOnboardStatus || '').toLowerCase();
-  if (emp === 'in progress' || con === 'in progress') return 'I-9 · In progress';
-  if (emp === 'completed' || con === 'completed') return 'I-9 · Complete';
+  if (emp === 'in progress' || con === 'in progress') return 'I-9: In progress';
+  if (emp === 'completed' || con === 'completed') return 'I-9: Complete';
 
   if (entityItems?.length) {
     const hay = entityItems.map((i) => `${i.statusLabel} ${i.entityLabel}`).join(' ');
     if (/i-?9|i9/i.test(hay)) {
       const needs = entityItems.some((i) => i.tone === 'needs_attention');
       const onboarding = entityItems.some((i) => i.tone === 'onboarding');
-      if (needs) return 'I-9 · In progress';
-      if (onboarding) return 'I-9 · In progress';
+      if (needs) return 'I-9: In progress';
+      if (onboarding) return 'I-9: In progress';
       const anyReady = entityItems.some((i) => i.tone === 'ready');
-      if (anyReady) return 'I-9 · Complete';
+      if (anyReady) return 'I-9: Complete';
     }
   }
 
   if (emp || con) {
-    if (emp === 'not started' || con === 'not started') return 'I-9 · Not started';
+    if (emp === 'not started' || con === 'not started') return 'I-9: Not started';
   }
 
-  return 'I-9 · Not started';
+  return 'I-9: Not started';
 }
 
 function formatEverifyBreakdownLine(user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras): string {
@@ -208,11 +193,11 @@ function formatEverifyBreakdownLine(user: RecruiterUserReadinessLike & Recruiter
     ]) as { status?: string; result?: string } | undefined;
     if (latest) {
       const raw = String(latest.result || latest.status || '').trim();
-      if (raw) return `E-Verify · ${humanizeScreeningToken(raw)}`;
+      if (raw) return `E-Verify: ${humanizeScreeningToken(raw)}`;
     }
-    return 'E-Verify · Submitted';
+    return 'E-Verify: Submitted';
   }
-  return 'E-Verify · Not started';
+  return 'E-Verify: Not started';
 }
 
 function formatBackgroundBreakdownLine(
@@ -304,67 +289,15 @@ function buildChecklistOverview(ctx: RecruiterUserEmploymentBreakdownContext): E
   } as EmploymentEntityOverview;
 }
 
-/** Single decision line from TempWorks external I-9 step + work-eligibility attestation (W-2) or work auth only (1099). */
-function formatI9WorkAuthDecisionLine(user: RecruiterUserReadinessLike, overview: EmploymentEntityOverview): string {
-  const auth = getWorkAuthorizedStatus(user);
-  if (overview.workerType === '1099') {
-    if (auth === 'no') return 'Work auth · Not authorized';
-    if (auth === 'skipped') return 'Work auth · Pending';
-    return 'Work auth · Authorized';
-  }
-
-  const { i9 } = buildTaxIdentityChecklistItems(overview);
-  const raw = overview.workerOnboarding?.externalOnboardingSteps;
-  const steps = parseExternalOnboardingSteps(raw) ?? {};
-  const i9rec = steps.i9_employee_section;
-  const st = String(i9rec?.status || '');
-
-  if (auth === 'no') return 'I-9 / Work auth · Issue';
-  if (auth === 'skipped') return 'I-9 / Work auth · Pending';
-  if (st === 'error') return 'I-9 / Work auth · Issue';
-
-  if (i9.completed && auth === 'yes') return 'I-9 / Work auth · Complete';
-
-  if (st && st !== 'not_started') return 'I-9 / Work auth · In progress';
-
-  return 'I-9 / Work auth · Not started';
-}
-
-/** Fallback when `employmentBreakdown` is missing — same coarse labels, legacy root + entity chip hints. */
-function formatI9WorkAuthDecisionLineLegacy(
-  user: RecruiterUserReadinessLike,
-  entityItems?: UserListEntityOnboardingItem[],
-): string {
-  const auth = getWorkAuthorizedStatus(user);
-  const ot = String(user.onboardingType || '').toLowerCase();
-  const is1099 = ot === '1099' || ot === 'contractor';
-
-  if (is1099) {
-    if (auth === 'no') return 'Work auth · Not authorized';
-    if (auth === 'skipped') return 'Work auth · Pending';
-    return 'Work auth · Authorized';
-  }
-
-  const i9Line = formatI9BreakdownLine(user, entityItems);
-  if (auth === 'no') return 'I-9 / Work auth · Issue';
-  if (auth === 'skipped') return 'I-9 / Work auth · Pending';
-
-  if (i9Line.includes('Complete')) {
-    return auth === 'yes' ? 'I-9 / Work auth · Complete' : 'I-9 / Work auth · In progress';
-  }
-  if (i9Line.includes('In progress')) return 'I-9 / Work auth · In progress';
-  return 'I-9 / Work auth · Not started';
-}
-
 function formatEverifyBreakdownLineShort(user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras): string {
   const line = formatEverifyBreakdownLine(user);
   const lower = line.toLowerCase();
-  if (lower.includes('submitted')) return 'E-Verify · In progress';
+  if (lower.includes('submitted')) return 'E-Verify: In progress';
   if (/authorized|employment authorized|authorized to work|photo match|close match/i.test(line)) {
-    return 'E-Verify · Employment authorized';
+    return 'E-Verify: Employment authorized';
   }
   if (/tentative|dhs|ssa|referral|no match|not eligible|final nonconfirmation|error/i.test(line)) {
-    return 'E-Verify · Issue';
+    return 'E-Verify: Issue';
   }
   return line;
 }
@@ -390,79 +323,124 @@ function formatEverifyDecisionShort(
   const manualOutside = evs === 'manual_outside_hrx';
   const employmentAuthorized = evs === 'employment_authorized';
 
-  if (manualOutside) return 'E-Verify · Outside HRX';
-  if (employmentAuthorized || pipeDone) return 'E-Verify · Employment authorized';
-  if (evs === 'error' || stepStatus === 'error') return 'E-Verify · Issue';
-  if (['in_progress', 'incomplete', 'active', 'pending'].includes(stepStatus)) return 'E-Verify · In progress';
+  if (manualOutside) return 'E-Verify: Outside HRX';
+  if (employmentAuthorized || pipeDone) return 'E-Verify: Employment authorized';
+  if (evs === 'error' || stepStatus === 'error') return 'E-Verify: Issue';
+  if (['in_progress', 'incomplete', 'active', 'pending'].includes(stepStatus)) return 'E-Verify: In progress';
 
   return formatEverifyBreakdownLineShort(user);
 }
 
-function formatBackgroundDecisionShort(
-  user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
-  entityItems: UserListEntityOnboardingItem[] | undefined,
-  latestBg: BackgroundCheckRecord | null | undefined,
+function checklistItemToTableLine(
+  label: string,
+  item: MinimalChecklistItem,
+  record?: ExternalOnboardingStepRecord | null,
 ): string {
-  const isAccusourceDoc = latestBg && (!latestBg.provider || latestBg.provider === 'accusource');
-  if (isAccusourceDoc && latestBg) {
-    const st = String(latestBg.hrxStatus || '').toLowerCase();
-    if (['completed', 'report_ready', 'drug_report_ready'].includes(st)) return 'Background · Clear';
-    if (['in_progress', 'submitted', 'awaiting_applicant', 'queued'].includes(st)) return 'Background · In progress';
-    if (st === 'error') return 'Background · Issue';
-    if (st === 'canceled') return 'Background · Review / Issue';
-    if (st === 'draft') return 'Background · Not started';
-    return 'Background · In progress';
+  if (item.completed) return `${label}: Complete`;
+  if (record) {
+    const m = mapExternalOnboardingStepToPathStatus(record, 'admin');
+    if (m.status === 'completed') return `${label}: Complete`;
+    if (m.status === 'error') return `${label}: Issue`;
+    if (m.status === 'not_started') return `${label}: Not started`;
+    return `${label}: In progress`;
   }
+  return `${label}: Not started`;
+}
 
-  const legacy = formatBackgroundBreakdownLine(user, entityItems);
-  if (legacy === 'Background —') return 'Background · Not started';
-  if (/Needs attention/i.test(legacy)) return 'Background · Review / Issue';
-  if (/In progress|Pending/i.test(legacy)) return 'Background · In progress';
-  if (/Clear|complete/i.test(legacy)) return 'Background · Clear';
-  return 'Background · Not started';
+function formatWorkAuthTableLine(user: RecruiterUserReadinessLike): string {
+  const auth = getWorkAuthorizedStatus(user);
+  if (auth === 'no') return 'Work auth: Not authorized';
+  if (auth === 'skipped') return 'Work auth: Pending';
+  return 'Work auth: Authorized';
+}
+
+function formatEverifyTableLineEmployment(
+  ctx: RecruiterUserEmploymentBreakdownContext,
+  user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
+): string {
+  const short = formatEverifyDecisionShort(ctx, user);
+  if (short) return short;
+  const ee = ctx.entityEmployment;
+  if (String(ee.entityKey || '').toLowerCase() !== 'select') return 'E-Verify: Not required';
+  if (ee.everifyRequired === false) return 'E-Verify: Not required';
+  return formatEverifyBreakdownLineShort(user);
 }
 
 function getReadinessBreakdownRowsFromEmployment(
   user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
   ctx: RecruiterUserEmploymentBreakdownContext,
-  opts?: ReadinessBreakdownOpts,
 ): ReadinessBreakdownRow[] {
   const overview = buildChecklistOverview(ctx);
-  const rows: ReadinessBreakdownRow[] = [
-    { key: 'interview', text: formatInterviewBreakdownLine(user, opts) },
-    { key: 'i9', text: formatI9WorkAuthDecisionLine(user, overview) },
+  const raw = overview.workerOnboarding?.externalOnboardingSteps;
+  const steps = parseExternalOnboardingSteps(raw) ?? {};
+
+  const directDeposit = buildDirectDepositItem(overview);
+  const directDepositLine = checklistItemToTableLine('Direct deposit', directDeposit, steps.direct_deposit ?? null);
+
+  const workAuthLine = formatWorkAuthTableLine(user);
+
+  const { i9, w4OrW9 } = buildTaxIdentityChecklistItems(overview);
+  const i9Line = checklistItemToTableLine('I-9', i9, steps.i9_employee_section ?? null);
+
+  const taxKey = overview.workerType === '1099' ? 'contractor_tax_form_w9' : 'tax_withholding_forms';
+  const taxRec = steps[taxKey] ?? null;
+
+  let w4Line: string;
+  let form1099Line: string;
+  if (overview.workerType === '1099') {
+    w4Line = 'W-4: N/A';
+    form1099Line = checklistItemToTableLine('1099', w4OrW9, taxRec);
+  } else {
+    w4Line = checklistItemToTableLine('W-4', w4OrW9, taxRec);
+    form1099Line = '1099: N/A';
+  }
+
+  const everifyLine = formatEverifyTableLineEmployment(ctx, user);
+
+  const { handbook, policies } = buildHandbookPoliciesItems(overview);
+  const handbookLine = checklistItemToTableLine('Handbook', handbook, steps.handbook_acknowledgment ?? null);
+  const policiesLine = checklistItemToTableLine('Policies', policies, steps.policies_acknowledgment ?? null);
+
+  return [
+    { key: 'direct_deposit', text: directDepositLine },
+    { key: 'work_auth', text: workAuthLine },
+    { key: 'i9', text: i9Line },
+    { key: 'w4', text: w4Line },
+    { key: 'tax_1099', text: form1099Line },
+    { key: 'everify', text: everifyLine },
+    { key: 'handbook', text: handbookLine },
+    { key: 'policies', text: policiesLine },
   ];
-
-  const evLine = formatEverifyDecisionShort(ctx, user);
-  if (evLine) rows.push({ key: 'everify', text: evLine });
-
-  rows.push({
-    key: 'background',
-    text: formatBackgroundDecisionShort(user, undefined, opts?.latestAccusourceBackground ?? null),
-  });
-
-  return rows;
 }
 
-/** Decision-oriented readiness lines (interview, I-9/work auth, E-Verify, background) — not a payroll checklist. */
+function getReadinessBreakdownRowsLegacy(
+  user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
+  entityItems?: UserListEntityOnboardingItem[],
+): ReadinessBreakdownRow[] {
+  const ot = String(user.onboardingType || '').toLowerCase();
+  const is1099 = ot === '1099' || ot === 'contractor';
+  return [
+    { key: 'direct_deposit', text: 'Direct deposit: —' },
+    { key: 'work_auth', text: formatWorkAuthTableLine(user) },
+    { key: 'i9', text: formatI9BreakdownLine(user, entityItems) },
+    { key: 'w4', text: is1099 ? 'W-4: N/A' : 'W-4: —' },
+    { key: 'tax_1099', text: is1099 ? '1099: —' : '1099: N/A' },
+    { key: 'everify', text: formatEverifyBreakdownLineShort(user) },
+    { key: 'handbook', text: 'Handbook: —' },
+    { key: 'policies', text: 'Policies: —' },
+  ];
+}
+
+/** Employment checklist mirror for the primary entity (same signals as the Employment tab). No background rows. */
 export function getReadinessBreakdownRows(
   user: RecruiterUserReadinessLike & RecruiterUserBreakdownExtras,
   entityItems?: UserListEntityOnboardingItem[],
   opts?: ReadinessBreakdownOpts,
 ): ReadinessBreakdownRow[] {
   if (opts?.employmentBreakdown) {
-    return getReadinessBreakdownRowsFromEmployment(user, opts.employmentBreakdown, opts);
+    return getReadinessBreakdownRowsFromEmployment(user, opts.employmentBreakdown);
   }
-
-  return [
-    { key: 'interview', text: formatInterviewBreakdownLine(user, opts) },
-    { key: 'i9', text: formatI9WorkAuthDecisionLineLegacy(user, entityItems) },
-    { key: 'everify', text: formatEverifyBreakdownLineShort(user) },
-    {
-      key: 'background',
-      text: formatBackgroundDecisionShort(user, entityItems, opts?.latestAccusourceBackground ?? null),
-    },
-  ];
+  return getReadinessBreakdownRowsLegacy(user, entityItems);
 }
 
 /** Letter grade for displayed (0–100) score — matches prescreen banding for recruiter consistency. */

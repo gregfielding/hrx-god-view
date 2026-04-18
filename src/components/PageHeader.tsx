@@ -8,6 +8,7 @@
 import React from 'react';
 import { Box, Typography, useTheme, useMediaQuery } from '@mui/material';
 import { Divider } from '@mui/material';
+import type { SxProps, Theme } from '@mui/material/styles';
 
 interface PageHeaderProps {
   title: string | React.ReactNode; // Can be string or custom React element (e.g., with avatar)
@@ -16,6 +17,10 @@ interface PageHeaderProps {
   filters?: React.ReactNode;     // Left side: filter chips, toggles, etc.
   rightActions?: React.ReactNode; // Right side: search + primary CTA
   showDivider?: boolean;          // Default: true
+  /** Tighter padding and toolbar height (e.g. user record header + tab strip). */
+  dense?: boolean;
+  /** Merged onto the root container (after defaults; can override `pt`, etc.). */
+  sx?: SxProps<Theme>;
 }
 
 const PageHeader: React.FC<PageHeaderProps> = ({
@@ -25,28 +30,31 @@ const PageHeader: React.FC<PageHeaderProps> = ({
   filters,
   rightActions,
   showDivider = true,
+  dense = false,
+  sx,
 }) => {
   const theme = useTheme();
   // Inbox standard: stack the toolbar on md and smaller so filters don't get squeezed/clipped
   const isStackedToolbar = useMediaQuery(theme.breakpoints.down('md'));
 
+  const rootSx: SxProps<Theme> = {
+    px: { xs: 2, md: 3 }, // 16px mobile, 24px desktop
+    pt: dense ? 0.875 : 2,
+    pb: 0,
+    ...(sx && typeof sx === 'object' && !Array.isArray(sx) ? sx : {}),
+  };
+
   return (
-    <Box
-      sx={{
-        px: { xs: 2, md: 3 }, // 16px mobile, 24px desktop
-        pt: 2, // 16px top padding
-        pb: 0,
-      }}
-    >
+    <Box sx={rootSx}>
       {/* Title and Subtitle */}
-      <Box sx={{ mb: subtitle ? 1 : 2 }}>
+      <Box sx={{ mb: subtitle ? (dense ? 0.5 : 1) : dense ? 0.65 : 2 }}>
         <Box
           sx={{
             display: 'flex',
             flexDirection: { xs: 'column', md: 'row' },
             alignItems: { xs: 'stretch', md: 'flex-start' },
             justifyContent: { xs: 'flex-start', md: 'space-between' },
-            gap: { xs: 1.5, md: 2 },
+            gap: { xs: dense ? 1 : 1.25, md: dense ? 1.25 : 2 },
           }}
         >
           <Box
@@ -72,7 +80,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
                 {title}
               </Typography>
             ) : (
-              <Box sx={{ mb: subtitle ? 1 : 0 }}>
+              <Box sx={{ mb: subtitle ? (dense ? 0.75 : 1) : dense ? 0.5 : 0 }}>
                 {title}
               </Box>
             )}
@@ -84,8 +92,9 @@ const PageHeader: React.FC<PageHeaderProps> = ({
                 display: 'flex',
                 justifyContent: { xs: 'flex-start', md: 'flex-end' },
                 alignItems: 'center',
-                gap: 1.5,
+                gap: dense ? 0.75 : 1.5,
                 flexShrink: 0,
+                pt: dense ? 0.25 : 0,
               }}
             >
               {titleRightActions}
@@ -100,13 +109,13 @@ const PageHeader: React.FC<PageHeaderProps> = ({
                 fontSize: '14px',
                 fontWeight: 400,
                 color: 'rgba(0, 0, 0, 0.55)',
-                mt: 1, // 8px spacing from title
+                mt: dense ? 0.75 : 1, // 8px spacing from title
               }}
             >
               {subtitle}
             </Typography>
           ) : (
-            <Box sx={{ mt: 1 }}>
+            <Box sx={{ mt: dense ? 0.75 : 1 }}>
               {subtitle}
             </Box>
           )
@@ -120,9 +129,9 @@ const PageHeader: React.FC<PageHeaderProps> = ({
             display: 'flex',
             flexDirection: isStackedToolbar ? 'column' : 'row',
             alignItems: isStackedToolbar ? 'stretch' : 'center',
-            gap: isStackedToolbar ? 1.5 : 2,
-            minHeight: '48px',
-            mb: showDivider ? 1.5 : 0, // space to divider when present; none when no divider
+            gap: isStackedToolbar ? (dense ? 1 : 1.25) : dense ? 1 : 2,
+            minHeight: dense ? 36 : 48,
+            mb: showDivider ? (dense ? 0.65 : 1.5) : 0, // space to divider when present; none when no divider
             width: '100%',
             overflow: 'visible',
           }}
@@ -185,7 +194,7 @@ const PageHeader: React.FC<PageHeaderProps> = ({
       {showDivider && (
         <Divider
           sx={{
-            mt: 1.5, // 12px spacing from toolbar
+            mt: dense ? 0.65 : 1.5,
             height: '1px',
             backgroundColor: 'rgba(0, 0, 0, 0.08)',
           }}

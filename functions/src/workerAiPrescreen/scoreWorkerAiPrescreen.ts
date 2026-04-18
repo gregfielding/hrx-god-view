@@ -129,23 +129,24 @@ export function prescreenScoreBandLabel(score: number): string {
  */
 const FLAG_SCORE_PENALTIES: Record<string, number> = {
   drug_risk_low: 3,
-  drug_risk_moderate: 15,
+  /** Review-tier: proportional hit — not collapse (calibrated QA batch). */
+  drug_risk_moderate: 8,
   drug_risk_high: 32,
   background_risk_low: 3,
-  background_risk_moderate: 15,
+  background_risk_moderate: 8,
   background_risk_high: 32,
-  drug_unknown: 8,
-  background_unknown: 8,
+  drug_unknown: 5,
+  background_unknown: 5,
   attendance_risk: 12,
-  transportation_risk: 10,
-  no_backup_transport: 10,
+  transportation_risk: 7,
+  no_backup_transport: 6,
   limited_relevant_experience: 12,
   physical_mismatch: 20,
   /** Only used for attendance admissions — no stack with drug/bg severity (see compose bundle). */
   risk_admission_detected: 8,
   /** Narrative quality (also emitted by `evaluatePrescreenAnswerQuality`; penalties stack for multiple issues). */
-  vague_response: 10,
-  low_effort_response: 14,
+  vague_response: 5,
+  low_effort_response: 10,
 };
 
 /** Max total points subtracted from flag penalties (sum of per-flag penalties can exceed this). */
@@ -415,9 +416,9 @@ function applyRecruiterTrustScoreCaps(score: number, flags: string[]): number {
   if (highRisk) {
     s = Math.min(s, 65);
   } else if (moderateRisk) {
-    s = Math.min(s, 88);
+    s = Math.min(s, 93);
   } else if (screeningUnknown) {
-    s = Math.min(s, 84);
+    s = Math.min(s, 88);
   }
   return Math.max(0, Math.min(100, Math.round(s)));
 }
@@ -437,8 +438,14 @@ function recommendationFromScoreAndFlags(
   const anyDrugBg = hasAnyDrugBgScreeningFlag(flags);
   const complianceHeavy = hasDrugBgComplianceReview(flags);
 
-  if (overallScore < 60) {
+  /** Auto-decline only on clearly weak scores; 58–59 → review to avoid over-reject on moderate compliance alone. */
+  if (overallScore < 58) {
     return { recommendation: 'decline', reviewKind: undefined };
+  }
+  if (overallScore < 60) {
+    const reviewKind: PrescreenReviewKind =
+      complianceHeavy || screeningUncertain || anyDrugBg ? 'review_risk' : 'review_quality';
+    return { recommendation: 'review', reviewKind };
   }
 
   if (overallScore >= 80) {
@@ -479,7 +486,8 @@ function buildRecruiterSummaryLine(
     return 'Strong pre-screen; cleared for next-step consideration.';
   }
   if (recommendation === 'decline') {
-    if (highRx || modRx) return 'Score band is below threshold with elevated drug/background signals.';
+    if (highRx) return 'Score band is below threshold with high-severity screening signals.';
+    if (modRx) return 'Score band is below threshold; moderate compliance signals — recruiter judgment if policy allows.';
     if (lowRx) return 'Overall score is below the proceed threshold (minor screening signals may still be present).';
     if (unknown) return 'Screening unknowns pull the score below a confident proceed.';
     if (vagueQ) return 'Thin or vague answers hold the score below the proceed bar.';
@@ -488,7 +496,7 @@ function buildRecruiterSummaryLine(
 
   if (reviewKind === 'review_risk') {
     if (highRx) return 'Elevated drug or background signals — recruiter review recommended.';
-    if (modRx) return 'Moderate drug or background signals — confirm fit before proceeding.';
+    if (modRx) return 'Moderate compliance concern — recruiter review recommended.';
     if (lowRx) return 'Minor screening disclosures present — quick recruiter confirmation recommended.';
     if (unknown) return 'Solid score; confirm drug or background screening before proceeding.';
     return 'Screening flags warrant review despite a workable score.';

@@ -1,6 +1,32 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Box, Tabs, Tab, Typography, Button, Paper, Alert, Badge, Avatar, IconButton, Tooltip, Stack, Link as MUILink, Rating, Chip, CircularProgress, Snackbar } from '@mui/material';
+import {
+  Box,
+  Tabs,
+  Tab,
+  Typography,
+  Button,
+  Paper,
+  Alert,
+  Badge,
+  Avatar,
+  IconButton,
+  Tooltip,
+  Stack,
+  Link as MUILink,
+  Chip,
+  CircularProgress,
+  Snackbar,
+  Table,
+  TableBody,
+  TableRow,
+  TableCell,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+} from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import PersonIcon from '@mui/icons-material/Person';
+import CloseIcon from '@mui/icons-material/Close';
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined';
 import MessageIcon from '@mui/icons-material/Message';
 import EmailOutlinedIcon from '@mui/icons-material/EmailOutlined';
@@ -9,12 +35,24 @@ import NoteIcon from '@mui/icons-material/Note';
 import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import AddTaskIcon from '@mui/icons-material/AddTask';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
-import InsightsIcon from '@mui/icons-material/Insights';
 import { useParams, useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
 import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, getDocs, getCountFromServer } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  onSnapshot,
+  updateDoc,
+  collection,
+  query,
+  where,
+  orderBy,
+  getDocs,
+  getCountFromServer,
+  type DocumentData,
+  type QueryDocumentSnapshot,
+} from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { FirebaseError } from 'firebase/app';
@@ -34,8 +72,14 @@ import { useFavorites } from '../../hooks/useFavorites';
 import MissingHomeAddressAlert from '../../components/MissingHomeAddressAlert';
 
 import { toChipLabel } from '../../utils/chipLabel';
+import RecruiterUserProfileTableHeader from './components/RecruiterUserProfileTableHeader';
+import AiScoreGradeDisplay from './components/AiScoreGradeDisplay';
 import ProfileOverview from './components/ProfileOverview';
 import UserProfileHeader from './components/UserProfileHeader';
+import RecordHeaderActionIcon from './components/RecordHeaderActionIcon';
+import RecordHeaderLanguagePreferenceBadge from './components/RecordHeaderLanguagePreferenceBadge';
+import RecordHeaderTransportMethodIcon from './components/RecordHeaderTransportMethodIcon';
+import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './components/recordHeaderStyles';
 import UserGroupsTab from './components/UserGroupsTab';
 import SkillsTab from './components/SkillsTab';
 import BackgroundsComplianceTab from './components/BackgroundsComplianceTab';
@@ -63,20 +107,29 @@ import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import { logUserActivity } from '../../utils/activityLogger';
+import { normalizeLast4SsnDigits } from '../../utils/last4Ssn';
+import { buildRecordHeaderAddressLines } from '../../utils/recordHeaderAddress';
 import {
   normalizeScoreSummary,
   type ScoreSummary,
   formatOneDecimal,
-  getCanonicalStoredAiScore,
 } from '../../utils/scoreSummary';
 import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData, type EVerifyComfortStatus } from '../../utils/eVerifyComfortDisplay';
-import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
-import EVerifyComfortChip from '../../components/EVerifyComfortChip';
 import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
 import { useScoringDistribution } from '../../hooks/useScoringDistribution';
 import { useUserProfileEntityEmploymentChips } from '../../hooks/useUserProfileEntityEmploymentChips';
+import { useRecruiterUsersEntityEmploymentChips } from '../../hooks/useRecruiterUsersEntityEmploymentChips';
+import { useRecruiterUsersLatestBackgroundChecks } from '../../hooks/useRecruiterUsersLatestBackgroundChecks';
+import { useRecruiterUsersRowExtras } from '../../hooks/useRecruiterUsersRowExtras';
 import UserEntityOnboardingStatusCell from '../../components/tables/UserEntityOnboardingStatusCell';
+import { getReadinessBreakdownRows } from '../../utils/recruiterUsersReadinessDisplay';
+import type { RecruiterUserBreakdownExtras, RecruiterUserReadinessLike } from '../../utils/recruiterUsersReadinessDisplay';
+import { getRecordHeaderEntitySlots } from '../../utils/recruiterUsersEntityWorkReadiness';
+import { useCategoryScoresCurrent } from '../../hooks/useCategoryScoresCurrent';
+import { formatOverviewInterviewLine } from './utils/overviewDashboardComposer';
+import { accusourceScreeningLineItems } from '../../utils/accusourceScreeningLineItems';
+import { normalizeRiskProfileFromUserDoc } from '../../utils/workerRiskProfileDisplay';
 import {
   backgroundComplianceScreeningRowElementId,
   employmentOnboardingEverifyRowElementId,
@@ -84,6 +137,10 @@ import {
 import { EMPLOYMENT_I9_SECTION_ELEMENT_ID } from '../../utils/workerReadinessBannerModel';
 import { sendBulkSmsToWorkerUsers, sendNewEmailFromRecruiter } from '../../utils/sendWorkerQuickNotification';
 import { I9_MESSAGE_REQUEST_UPLOAD_EMAIL_SUBJECT } from '../../constants/i9SupportingDocumentsEmploymentStrings';
+import type { EmergencyContact } from '../../types/UserProfile';
+import { p } from '../../data/firestorePaths';
+import { enrichUserAssignmentRow } from '../../utils/enrichAssignmentRowForDisplay';
+import { pickRecordHeaderAssignments, type RecordHeaderAssignmentLine } from '../../utils/recordHeaderAssignments';
 
 const UserProfilePage = () => {
   const { uid } = useParams<{ uid: string }>();
@@ -122,6 +179,7 @@ const UserProfilePage = () => {
   const [email, setEmail] = useState<string>('');
   const [city, setCity] = useState<string>('');
   const [state, setState] = useState<string>('');
+  const [recordHeaderAddressLines, setRecordHeaderAddressLines] = useState<{ line1: string; line2: string } | null>(null);
   const [linkedinUrl, setLinkedinUrl] = useState<string>('');
   const [workStatus, setWorkStatus] = useState<string>('');
   const [employmentType, setEmploymentType] = useState<string>('');
@@ -155,6 +213,11 @@ const UserProfilePage = () => {
   const [latestInterviewFromSubcollection, setLatestInterviewFromSubcollection] = useState<{ lastAt: Date; lastScore10: number } | null>(null);
   const [employeeOnboardStatus, setEmployeeOnboardStatus] = useState<string | undefined>();
   const [contractorOnboardStatus, setContractorOnboardStatus] = useState<string | undefined>();
+  /** Denormalized from `users/{uid}` for recruiter readiness lines (same as Users table). */
+  const [profileOnboardingType, setProfileOnboardingType] = useState<string | undefined>();
+  const [profileComfortableEVerify, setProfileComfortableEVerify] = useState<unknown>();
+  const [profileWorkerAttestations, setProfileWorkerAttestations] = useState<unknown>();
+  const [profileWorkEligibilityAttestation, setProfileWorkEligibilityAttestation] = useState<unknown>();
   const [onboardingCompletionPct, setOnboardingCompletionPct] = useState<number>(0);
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
   const [emailComposeOpen, setEmailComposeOpen] = useState(false);
@@ -171,10 +234,12 @@ const UserProfilePage = () => {
   const [showAddUserNoteDialog, setShowAddUserNoteDialog] = useState(false);
   const [showCreateTaskDialog, setShowCreateTaskDialog] = useState(false);
   const [showLogActivityDialog, setShowLogActivityDialog] = useState(false);
+  const [quickProfileDialogOpen, setQuickProfileDialogOpen] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
   const [activityLogRefreshKey, setActivityLogRefreshKey] = useState(0);
   const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
+  const [recordHeaderAssignmentLines, setRecordHeaderAssignmentLines] = useState<RecordHeaderAssignmentLine[]>([]);
   const [recordHeaderAvatarHover, setRecordHeaderAvatarHover] = useState(false);
   const [recordHeaderCropOpen, setRecordHeaderCropOpen] = useState(false);
   const [pendingRecordAvatarSrc, setPendingRecordAvatarSrc] = useState<string | null>(null);
@@ -233,6 +298,17 @@ const UserProfilePage = () => {
       );
     } finally {
       setRecordHeaderAvatarBusy(false);
+    }
+  }, [uid]);
+
+  const handleIndeedFlexToggle = useCallback(async (checked: boolean) => {
+    if (!uid) return;
+    try {
+      await updateDoc(doc(db, 'users', uid), { addedToIndeedFlex: checked, updatedAt: new Date() });
+      setAddedToIndeedFlex(checked);
+      setSkillsData((prev: any) => (prev ? { ...prev, addedToIndeedFlex: checked } : prev));
+    } catch (err) {
+      console.error('Failed to update Indeed Flex flag:', err);
     }
   }, [uid]);
 
@@ -407,6 +483,7 @@ const UserProfilePage = () => {
           // then legacy address object fallbacks.
           setCity(data.city || data.addressInfo?.city || data.address?.city || '');
           setState(data.state || data.addressInfo?.state || data.address?.state || '');
+          setRecordHeaderAddressLines(buildRecordHeaderAddressLines(data as Record<string, unknown>));
           setLinkedinUrl(data.linkedinUrl || '');
           setCustomerId(effectiveTenantId || null);
           // Resolve header user groups (ids -> titles)
@@ -593,6 +670,8 @@ const UserProfilePage = () => {
             })
           );
           setEVerifyComfortStatus(getEVerifyComfortStatusFromUserData(data));
+        } else {
+          setRecordHeaderAddressLines(null);
         }
       }
     };
@@ -706,7 +785,16 @@ const UserProfilePage = () => {
           emergencyContact: data.emergencyContact || null,
           transportMethod: data.transportMethod || null,
           addedToIndeedFlex: data.addedToIndeedFlex === true,
+          riskProfile: data.riskProfile ?? null,
+          preferredLanguage:
+            String(data.preferredLanguage || '').toLowerCase() === 'es' ? 'es' : 'en',
+          last4SSN: normalizeLast4SsnDigits(data.last4SSN ?? ''),
         });
+
+        setProfileOnboardingType(typeof data.onboardingType === 'string' ? data.onboardingType : undefined);
+        setProfileComfortableEVerify(data.comfortableEVerify);
+        setProfileWorkerAttestations(data.workerAttestations);
+        setProfileWorkEligibilityAttestation(data.workEligibilityAttestation);
 
         // Load onboarding status
         setEmployeeOnboardStatus(data.employeeOnboardStatus);
@@ -1155,11 +1243,198 @@ const UserProfilePage = () => {
     viewerSecurityLevelForEntityChips <= 7 &&
     Boolean(effectiveTenantId);
 
-  const { items: recordHeaderEntityChips, loading: recordHeaderEntityChipsLoading } = useUserProfileEntityEmploymentChips(
+  /** Recruiter `/users/:uid` (not Workforce) — match All Users table row in the record header. */
+  const showRecruiterUsersTableHeaderHook = showRecordHeaderEntityStatus && !isWorkforceUserRouteForEntityChips;
+
+  /** Same primary-entity pipeline + payroll as `/users` table — used for header readiness lines on every record header view. */
+  const loadRecordHeaderEmploymentBreakdown = showRecordHeaderEntityStatus && Boolean(uid);
+
+  const { itemsByUserId: recruiterEntityItemsByUserId, employmentBreakdownByUserId: recruiterEmploymentBreakdownByUserId, loading: recruiterEntityChipsLoading } =
+    useRecruiterUsersEntityEmploymentChips(
+      effectiveTenantId ?? undefined,
+      loadRecordHeaderEmploymentBreakdown && uid ? [uid] : [],
+    );
+
+  const { latestByUserId: recruiterLatestBgByUserId } = useRecruiterUsersLatestBackgroundChecks(
+    effectiveTenantId ?? undefined,
+    loadRecordHeaderEmploymentBreakdown && uid ? [uid] : [],
+  );
+
+  const { latestNoteByUserId: recruiterLatestNoteByUserId, latestInterviewByUserId: recruiterLatestInterviewByUserId } =
+    useRecruiterUsersRowExtras(loadRecordHeaderEmploymentBreakdown && uid ? [uid] : []);
+
+  const { items: profileOnlyEntityChips, loading: profileOnlyEntityChipsLoading } = useUserProfileEntityEmploymentChips(
     effectiveTenantId ?? undefined,
     uid,
-    showRecordHeaderEntityStatus
+    showRecordHeaderEntityStatus && !showRecruiterUsersTableHeaderHook,
   );
+
+  const recordHeaderEntityChips = showRecruiterUsersTableHeaderHook
+    ? (uid ? recruiterEntityItemsByUserId.get(uid) ?? [] : [])
+    : profileOnlyEntityChips;
+  const recordHeaderEntityChipsLoading = showRecruiterUsersTableHeaderHook
+    ? recruiterEntityChipsLoading
+    : profileOnlyEntityChipsLoading;
+
+  /** Record header: formatted account created date (hooks must run before any early return). */
+  const recordHeaderCreatedLabel = useMemo(() => {
+    if (!createdAt) return null;
+    try {
+      let date: Date | null = null;
+      if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
+        date = createdAt.toDate();
+      } else if (createdAt instanceof Date) {
+        date = createdAt;
+      } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+        date = new Date(createdAt);
+      } else if (createdAt?._seconds && typeof createdAt._seconds === 'number') {
+        date = new Date(createdAt._seconds * 1000);
+      }
+      if (date && !Number.isNaN(date.getTime())) {
+        return date.toLocaleDateString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        });
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, [createdAt]);
+
+  const recruiterReadinessUser = useMemo((): RecruiterUserReadinessLike & RecruiterUserBreakdownExtras => {
+    return {
+      securityLevel: targetUserSecurityLevel,
+      employeeOnboardStatus,
+      contractorOnboardStatus,
+      onboardingType: profileOnboardingType,
+      scoreSummary,
+      workEligibility: skillsData?.workEligibility,
+      workEligibilityAttestation: profileWorkEligibilityAttestation as RecruiterUserReadinessLike['workEligibilityAttestation'],
+      comfortableEVerify:
+        typeof profileComfortableEVerify === 'string' ? profileComfortableEVerify : undefined,
+      workerAttestations: profileWorkerAttestations as RecruiterUserReadinessLike['workerAttestations'],
+      eVerifyOrders,
+      backgroundCheckOrders,
+    };
+  }, [
+    targetUserSecurityLevel,
+    employeeOnboardStatus,
+    contractorOnboardStatus,
+    profileOnboardingType,
+    scoreSummary,
+    skillsData?.workEligibility,
+    profileWorkEligibilityAttestation,
+    profileComfortableEVerify,
+    profileWorkerAttestations,
+    eVerifyOrders,
+    backgroundCheckOrders,
+  ]);
+
+  const userDocForRecruiterTableIcons = useMemo(
+    () =>
+      ({
+        resume: skillsData?.resume,
+        skills: skillsData?.skills,
+        addedToIndeedFlex,
+      }) as Record<string, unknown>,
+    [skillsData?.resume, skillsData?.skills, addedToIndeedFlex],
+  );
+
+  const viewerIsAdminContent = parseInt(String(securityLevel || '0'), 10) >= 5;
+  const { scores: categoryScoresCurrent } = useCategoryScoresCurrent(viewerIsAdminContent && uid ? uid : null);
+
+  const recordHeaderEntitySlots = useMemo(
+    () => getRecordHeaderEntitySlots(recordHeaderEntityChips),
+    [recordHeaderEntityChips],
+  );
+
+  const recordHeaderScreeningLines = useMemo(() => {
+    if (!uid) return [];
+    const bg = recruiterLatestBgByUserId.get(uid);
+    if (!bg) return [];
+    return accusourceScreeningLineItems(bg).slice(0, 12);
+  }, [uid, recruiterLatestBgByUserId]);
+
+  const recordHeaderScreeningPackageHint = useMemo(() => {
+    if (!uid) return null;
+    const bg = recruiterLatestBgByUserId.get(uid);
+    if (!bg) return null;
+    const parts = [bg.requestedPackageName, bg.requestedPackageId].filter(Boolean);
+    return parts.length ? parts.join(' · ') : null;
+  }, [uid, recruiterLatestBgByUserId]);
+
+  const recordHeaderInterviewLine = useMemo(() => formatOverviewInterviewLine(scoreSummary), [scoreSummary]);
+
+  const recordHeaderRiskProfile = useMemo(
+    () => normalizeRiskProfileFromUserDoc((skillsData as { riskProfile?: unknown })?.riskProfile),
+    [skillsData],
+  );
+
+  const recruiterReadinessBreakdownRows = useMemo(() => {
+    if (!showRecordHeaderEntityStatus || !uid) return [];
+    const eb =
+      recruiterEmploymentBreakdownByUserId.has(uid) && recruiterEmploymentBreakdownByUserId.get(uid)
+        ? { employmentBreakdown: recruiterEmploymentBreakdownByUserId.get(uid)! }
+        : {};
+    return getReadinessBreakdownRows(recruiterReadinessUser, recordHeaderEntityChips, {
+      lastInterviewSubmitterName: recruiterLatestInterviewByUserId.get(uid)?.createdByName ?? null,
+      latestAccusourceBackground: recruiterLatestBgByUserId.get(uid) ?? null,
+      ...eb,
+    });
+  }, [
+    showRecordHeaderEntityStatus,
+    uid,
+    recruiterReadinessUser,
+    recordHeaderEntityChips,
+    recruiterEmploymentBreakdownByUserId,
+    recruiterLatestInterviewByUserId,
+    recruiterLatestBgByUserId,
+  ]);
+
+  useEffect(() => {
+    if (!uid || !effectiveTenantId || !showRecruiterUsersTableHeaderHook) {
+      setRecordHeaderAssignmentLines([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const col = collection(db, p.assignments(effectiveTenantId));
+        const byId = new Map<string, QueryDocumentSnapshot<DocumentData>>();
+        try {
+          const byUser = await getDocs(query(col, where('userId', '==', uid), orderBy('startDate', 'desc')));
+          byUser.docs.forEach((d) => byId.set(d.id, d));
+        } catch {
+          /* composite index may be missing */
+        }
+        const byCandidate = await getDocs(query(col, where('candidateId', '==', uid)));
+        byCandidate.docs.forEach((d) => {
+          if (!byId.has(d.id)) byId.set(d.id, d);
+        });
+        if (byId.size === 0) {
+          const byUserFallback = await getDocs(query(col, where('userId', '==', uid)));
+          byUserFallback.docs.forEach((d) => byId.set(d.id, d));
+        }
+        const merged = Array.from(byId.values()).sort((a, b) => {
+          const sa = String((a.data() as { startDate?: string }).startDate || '');
+          const sb = String((b.data() as { startDate?: string }).startDate || '');
+          return sb.localeCompare(sa);
+        });
+        const enriched = await Promise.all(merged.map((d) => enrichUserAssignmentRow(effectiveTenantId, d)));
+        if (!cancelled) {
+          setRecordHeaderAssignmentLines(pickRecordHeaderAssignments(enriched, 3));
+        }
+      } catch (e) {
+        console.warn('UserProfile: record header assignments', e);
+        if (!cancelled) setRecordHeaderAssignmentLines([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid, effectiveTenantId, showRecruiterUsersTableHeaderHook]);
 
   const handleSkillsUpdate = async (updated: any) => {
     if (!uid) return;
@@ -1338,7 +1613,7 @@ const UserProfilePage = () => {
     }
 
     return {
-      text: `Interviewed: ${formatShortDate(lastAt)} — ${formatOneDecimal(lastScore)}/10`,
+      text: `Interviewed ${formatShortDate(lastAt)} · ${formatOneDecimal(lastScore)}/10`,
       color: 'rgba(0, 0, 0, 0.55)',
     };
   })();
@@ -1416,13 +1691,15 @@ const UserProfilePage = () => {
   const renderQuickChip = (label: string, content: string) => (
     <Tooltip
       arrow
-      enterDelay={250}
+      enterDelay={300}
+      placement="top"
+      componentsProps={recordHeaderTooltipComponentsProps}
       title={
-        <Box sx={{ p: 1, maxWidth: 420, whiteSpace: 'pre-wrap' }}>
-          <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5, color: 'white' }}>
+        <Box sx={{ p: 0.75, maxWidth: 380, whiteSpace: 'pre-wrap' }}>
+          <Typography variant="caption" sx={{ fontWeight: 700, mb: 0.25, display: 'block', color: 'inherit' }}>
             {label}
           </Typography>
-          <Typography variant="body2" sx={{ color: 'white' }}>
+          <Typography variant="body2" sx={{ color: 'inherit', fontSize: '0.8125rem', lineHeight: 1.4 }}>
             {content || '—'}
           </Typography>
         </Box>
@@ -1433,9 +1710,12 @@ const UserProfilePage = () => {
         label={label}
         variant="outlined"
         sx={{
-          fontWeight: 700,
+          height: 26,
+          fontWeight: 600,
+          fontSize: '0.75rem',
           cursor: 'help',
-          opacity: content ? 1 : 0.5,
+          opacity: content ? 1 : 0.45,
+          '& .MuiChip-label': { px: 1 },
         }}
       />
     </Tooltip>
@@ -1645,10 +1925,181 @@ const UserProfilePage = () => {
 
         {/* Use Record PageHeader for Workforce + Recruiter record views */}
         {useRecordHeader ? (
+          <Box sx={{ pt: '18px' }}>
           <PageHeader
+            dense
+            sx={{ pt: 0 }}
             title={
+              showRecruiterUsersTableHeaderHook ? (
               <Box>
-                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 2.5 }}>
+                <RecruiterUserProfileTableHeader
+                  firstName={firstName}
+                  lastName={lastName}
+                  initials={initials}
+                  email={email}
+                  recordHeaderAddressLines={recordHeaderAddressLines}
+                  phone={phone}
+                  avatarUrl={avatarUrl}
+                  onboardingInProgress={onboardingInProgress}
+                  onboardingAccent={onboardingAccent}
+                  uid={uid!}
+                  canViewAdminContent={canViewAdminContent}
+                  targetUserSecurityLevel={targetUserSecurityLevel}
+                  isFavorite={isFavorite}
+                  toggleFavorite={toggleFavorite}
+                  scoreSummary={scoreSummary}
+                  scoringDistribution={scoringDistribution}
+                  categoryScores={categoryScoresCurrent}
+                  riskProfile={recordHeaderRiskProfile}
+                  recordHeaderCreatedLabel={recordHeaderCreatedLabel}
+                  headerUserGroups={headerUserGroups}
+                  viewerSecurityLevel={viewerSecurityLevel}
+                  userDocForTableIcons={userDocForRecruiterTableIcons}
+                  entitySlots={recordHeaderEntitySlots}
+                  interviewSummaryLine={recordHeaderInterviewLine}
+                  screeningLines={recordHeaderScreeningLines}
+                  screeningPackageHint={recordHeaderScreeningPackageHint}
+                  readinessRows={recruiterReadinessBreakdownRows}
+                  addedToIndeedFlex={addedToIndeedFlex}
+                  onIndeedFlexChange={handleIndeedFlexToggle}
+                  canEditIndeedFlex={viewerSecurityLevel >= 4}
+                  recordHeaderFileInputRef={recordHeaderFileInputRef}
+                  handleRecordHeaderAvatarFileChange={handleRecordHeaderAvatarFileChange}
+                  canEditRecordAvatar={canEditRecordAvatar}
+                  recordHeaderAvatarHover={recordHeaderAvatarHover}
+                  setRecordHeaderAvatarHover={setRecordHeaderAvatarHover}
+                  handleRecordHeaderAvatarClick={handleRecordHeaderAvatarClick}
+                  recordHeaderAvatarBusy={recordHeaderAvatarBusy}
+                  dateOfBirth={skillsData?.dateOfBirth ?? null}
+                  lastFourSsnDigits={skillsData?.last4SSN ?? ''}
+                  emergencyContact={(skillsData?.emergencyContact as EmergencyContact | undefined) ?? null}
+                  onContactEditClick={
+                    viewerSecurityLevel >= 4 ? () => setQuickProfileDialogOpen(true) : undefined
+                  }
+                  assignmentLines={recordHeaderAssignmentLines}
+                  contactActionIcons={
+                    <Stack direction="row" alignItems="center" flexWrap="wrap" sx={{ gap: '3px' }}>
+                      {phone && (
+                        <>
+                          <RecordHeaderActionIcon
+                            tooltip={`Call ${phone}`}
+                            component="a"
+                            href={`tel:${phone.replace(/\D/g, '')}`}
+                          >
+                            <PhoneOutlinedIcon />
+                          </RecordHeaderActionIcon>
+                          <RecordHeaderActionIcon
+                            tooltip="Send Message"
+                            onClick={() => {
+                              if (viewerHasSmsSender) {
+                                setSmsComposeOpen(true);
+                                return;
+                              }
+                              const digits = phone.replace(/\D/g, '');
+                              if (digits) {
+                                window.location.href = `sms:${digits}`;
+                              }
+                            }}
+                          >
+                            <MessageIcon />
+                          </RecordHeaderActionIcon>
+                        </>
+                      )}
+                      {email && (
+                        <RecordHeaderActionIcon
+                          tooltip={
+                            canComposeEmailViaGmail
+                              ? `Email ${email} (send from your Gmail)`
+                              : `Email ${email} (open mail app)`
+                          }
+                          onClick={() => {
+                            if (canComposeEmailViaGmail) {
+                              setEmailComposeOpen(true);
+                            } else {
+                              window.location.href = `mailto:${email}`;
+                            }
+                          }}
+                        >
+                          <EmailOutlinedIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      {skillsData?.resume && skillsData.resume.fileName && (
+                        <RecordHeaderActionIcon
+                          tooltip={`View Resume: ${skillsData.resume.fileName}`}
+                          onClick={async () => {
+                            const resume = skillsData.resume;
+                            if (resume.downloadUrl) {
+                              window.open(resume.downloadUrl, '_blank');
+                            } else if (resume.storagePath) {
+                              const encodedPath = encodeURIComponent(resume.storagePath);
+                              const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+                              window.open(publicUrl, '_blank');
+                            }
+                          }}
+                        >
+                          <DescriptionIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      {toSafeHref(linkedinUrl) && (
+                        <RecordHeaderActionIcon
+                          tooltip="LinkedIn Profile"
+                          component="a"
+                          href={toSafeHref(linkedinUrl)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <LinkedInIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      {isAdminView && (
+                        <Tooltip
+                          title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}
+                          componentsProps={recordHeaderTooltipComponentsProps}
+                        >
+                          <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                setShowAddUserNoteDialog(true);
+                              }}
+                              sx={recordHeaderActionIconButtonSx}
+                            >
+                              <NoteIcon />
+                            </IconButton>
+                          </Badge>
+                        </Tooltip>
+                      )}
+                      {isAdminView && (
+                        <RecordHeaderActionIcon tooltip="Add Task" onClick={() => setShowCreateTaskDialog(true)}>
+                          <AddTaskIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      {isAdminView && (
+                        <RecordHeaderActionIcon tooltip="Log Activity" onClick={() => setShowLogActivityDialog(true)}>
+                          <CheckCircleIcon />
+                        </RecordHeaderActionIcon>
+                      )}
+                      <RecordHeaderLanguagePreferenceBadge
+                        language={skillsData?.preferredLanguage === 'es' ? 'es' : 'en'}
+                      />
+                      <RecordHeaderTransportMethodIcon transportMethod={skillsData?.transportMethod} />
+                    </Stack>
+                  }
+                />
+                {/* Bio / Skills / Certifications / Education / Work / Languages quick chips — hidden
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', mt: 0.35 }}>
+                  {renderQuickChip('Bio', quickBio)}
+                  {renderQuickChip('Skills', quickSkills.join('\n'))}
+                  {renderQuickChip('Certifications', quickCerts.join('\n'))}
+                  {renderQuickChip('Education', quickEducation.join('\n'))}
+                  {renderQuickChip('Work Experience', quickWork.join('\n'))}
+                  {renderQuickChip('Languages', quickLangs.join('\n'))}
+                </Box>
+                */}
+              </Box>
+              ) : (
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5 }}>
                   <Box
                     position="relative"
                     onMouseEnter={() => setRecordHeaderAvatarHover(true)}
@@ -1658,12 +2109,12 @@ const UserProfilePage = () => {
                     <Avatar
                       src={avatarUrl || undefined}
                       sx={{
-                        width: 108,
-                        height: 108,
+                        width: 120,
+                        height: 120,
                         bgcolor: avatarUrl ? 'transparent' : 'primary.main',
-                        fontSize: '40px',
+                        fontSize: '2.5rem',
                         fontWeight: 600,
-                        border: onboardingInProgress ? `6px solid ${onboardingAccent}` : undefined,
+                        border: onboardingInProgress ? `4px solid ${onboardingAccent}` : undefined,
                         boxSizing: 'border-box',
                       }}
                     >
@@ -1702,15 +2153,15 @@ const UserProfilePage = () => {
                       </Tooltip>
                     )}
                   </Box>
-                  <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: 108 }}>
-                    {/* Line 1: Name */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 1 }}>
-                      <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
+                  <Box sx={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'flex-start', minHeight: 120 }}>
+                    {/* Line 1: Name → star → score */}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 0.35 }}>
+                      <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0, flexWrap: 'wrap', rowGap: 0.25 }}>
                         <Typography
-                          variant="h6"
+                          variant="h5"
                           sx={{
-                            fontSize: { xs: '20px', md: '24px' },
-                            fontWeight: 600,
+                            fontSize: { xs: '1.25rem', md: '1.5rem' },
+                            fontWeight: 700,
                             lineHeight: 1.2,
                             minWidth: 0,
                             overflow: 'hidden',
@@ -1731,6 +2182,7 @@ const UserProfilePage = () => {
                                 isFavorite={isFavorite}
                                 toggleFavorite={toggleFavorite}
                                 size="small"
+                                sx={{ p: 0.25, opacity: 0.88, '& .MuiSvgIcon-root': { fontSize: 17 } }}
                                 tooltipText={{
                                   favorited: 'Remove from favorites',
                                   notFavorited: 'Add to favorites',
@@ -1738,471 +2190,330 @@ const UserProfilePage = () => {
                               />
                             )}
 
-                        {canViewAdminContent && (() => {
-                          const canonical = getCanonicalStoredAiScore(scoreSummary);
-                          if (canonical === null) {
-                            return (
-                              <Tooltip title="No stored AI score yet (same field as Users table — interview submit or profile save after edit).">
-                                <Chip
-                                  icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                                  label="Score —"
-                                  color="default"
-                                  size="small"
-                                  variant="outlined"
-                                  sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
-                                />
-                              </Tooltip>
-                            );
-                          }
-                          return (
-                            <Tooltip title={`Stored AI score: ${Math.round(canonical)} (scoreSummary.aiScore)`}>
-                              <Chip
-                                icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                                label={`Score ${Math.round(canonical)}`}
-                                color="primary"
-                                size="small"
-                                variant="outlined"
-                                sx={{ fontWeight: 700, flexShrink: 0 }}
-                              />
-                            </Tooltip>
-                          );
-                        })()}
+                        {canViewAdminContent && (
+                          <AiScoreGradeDisplay scoreSummary={scoreSummary} scoringDistribution={scoringDistribution} />
+                        )}
                       </Stack>
                     </Box>
-                    {/* Line 2: Contact Action Icons Row */}
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mb: 1 }}>
-                    <Stack direction="row" spacing={0.5} alignItems="center" flexWrap="wrap">
+                    {/* Line 2: Contact action icons */}
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.125, mb: 0.5 }}>
+                    <Stack direction="row" alignItems="center" flexWrap="wrap" sx={{ gap: '3px' }}>
                   {phone && (
                     <>
-                      <Tooltip title={`Call ${phone}`}>
-                        <IconButton
-                          size="small"
-                          component="a"
-                          href={`tel:${phone.replace(/\D/g, '')}`}
-                          sx={{ 
-                            p: 1,
-                            color: 'primary.main',
-                            bgcolor: 'action.hover',
-                            borderRadius: 1,
-                            '&:hover': {
-                              color: 'primary.dark',
-                              bgcolor: 'primary.light',
-                              transform: 'translateY(-1px)',
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                            },
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="Send Message">
-                        <IconButton
-                          size="small"
-                          onClick={() => {
-                            if (viewerHasSmsSender) {
-                              setSmsComposeOpen(true);
-                              return;
-                            }
-                            const digits = phone.replace(/\D/g, '');
-                            if (digits) {
-                              window.location.href = `sms:${digits}`;
-                            }
-                          }}
-                          sx={{ 
-                            p: 1,
-                            color: 'primary.main',
-                            bgcolor: 'action.hover',
-                            borderRadius: 1,
-                            '&:hover': {
-                              color: 'primary.dark',
-                              bgcolor: 'primary.light',
-                              transform: 'translateY(-1px)',
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                            },
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          <MessageIcon sx={{ fontSize: 20 }} />
-                        </IconButton>
-                      </Tooltip>
+                      <RecordHeaderActionIcon
+                        tooltip={`Call ${phone}`}
+                        component="a"
+                        href={`tel:${phone.replace(/\D/g, '')}`}
+                      >
+                        <PhoneOutlinedIcon />
+                      </RecordHeaderActionIcon>
+                      <RecordHeaderActionIcon
+                        tooltip="Send Message"
+                        onClick={() => {
+                          if (viewerHasSmsSender) {
+                            setSmsComposeOpen(true);
+                            return;
+                          }
+                          const digits = phone.replace(/\D/g, '');
+                          if (digits) {
+                            window.location.href = `sms:${digits}`;
+                          }
+                        }}
+                      >
+                        <MessageIcon />
+                      </RecordHeaderActionIcon>
                     </>
                   )}
                   {email && (
-                    <Tooltip
-                      title={
+                    <RecordHeaderActionIcon
+                      tooltip={
                         canComposeEmailViaGmail
                           ? `Email ${email} (send from your Gmail)`
                           : `Email ${email} (open mail app)`
                       }
+                      onClick={() => {
+                        if (canComposeEmailViaGmail) {
+                          setEmailComposeOpen(true);
+                        } else {
+                          window.location.href = `mailto:${email}`;
+                        }
+                      }}
                     >
-                      <IconButton
-                        size="small"
-                        onClick={() => {
-                          if (canComposeEmailViaGmail) {
-                            setEmailComposeOpen(true);
-                          } else {
-                            window.location.href = `mailto:${email}`;
-                          }
-                        }}
-                        sx={{
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                          },
-                          transition: 'all 0.2s ease',
-                        }}
-                      >
-                        <EmailOutlinedIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
+                      <EmailOutlinedIcon />
+                    </RecordHeaderActionIcon>
                   )}
                   {skillsData?.resume && skillsData.resume.fileName && (
-                    <Tooltip title={`View Resume: ${skillsData.resume.fileName}`}>
-                      <IconButton
-                        size="small"
-                        onClick={async () => {
-                          const resume = skillsData.resume;
-                          if (resume.downloadUrl) {
-                            window.open(resume.downloadUrl, '_blank');
-                          } else if (resume.storagePath) {
-                            const encodedPath = encodeURIComponent(resume.storagePath);
-                            const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
-                            window.open(publicUrl, '_blank');
-                          }
-                        }}
-                        sx={{ 
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                          },
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <DescriptionIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
+                    <RecordHeaderActionIcon
+                      tooltip={`View Resume: ${skillsData.resume.fileName}`}
+                      onClick={async () => {
+                        const resume = skillsData.resume;
+                        if (resume.downloadUrl) {
+                          window.open(resume.downloadUrl, '_blank');
+                        } else if (resume.storagePath) {
+                          const encodedPath = encodeURIComponent(resume.storagePath);
+                          const publicUrl = `https://firebasestorage.googleapis.com/v0/b/hrx1-d3beb.firebasestorage.app/o/${encodedPath}?alt=media`;
+                          window.open(publicUrl, '_blank');
+                        }
+                      }}
+                    >
+                      <DescriptionIcon />
+                    </RecordHeaderActionIcon>
                   )}
                   {toSafeHref(linkedinUrl) && (
-                    <Tooltip title="LinkedIn Profile">
-                      <IconButton
-                        size="small"
-                        component="a"
-                        href={toSafeHref(linkedinUrl)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        sx={{ 
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                          },
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <LinkedInIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
+                    <RecordHeaderActionIcon
+                      tooltip="LinkedIn Profile"
+                      component="a"
+                      href={toSafeHref(linkedinUrl)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <LinkedInIcon />
+                    </RecordHeaderActionIcon>
                   )}
                   {isAdminView && (
-                    <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
+                    <Tooltip
+                      title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}
+                      componentsProps={recordHeaderTooltipComponentsProps}
+                    >
                       <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
                         <IconButton
                           size="small"
                           onClick={() => {
                             setShowAddUserNoteDialog(true);
                           }}
-                          sx={{ 
-                            p: 1,
-                            color: 'primary.main',
-                            bgcolor: 'action.hover',
-                            borderRadius: 1,
-                            '&:hover': {
-                              color: 'primary.dark',
-                              bgcolor: 'primary.light',
-                              transform: 'translateY(-1px)',
-                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                            },
-                            transition: 'all 0.2s ease'
-                          }}
+                          sx={recordHeaderActionIconButtonSx}
                         >
-                          <NoteIcon sx={{ fontSize: 20 }} />
+                          <NoteIcon />
                         </IconButton>
                       </Badge>
                     </Tooltip>
                   )}
-                  {/* Add Task Icon Button */}
                   {isAdminView && (
-                    <Tooltip title="Add Task">
-                      <IconButton
-                        size="small"
-                        onClick={() => setShowCreateTaskDialog(true)}
-                        sx={{ 
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                          },
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <AddTaskIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
+                    <RecordHeaderActionIcon tooltip="Add Task" onClick={() => setShowCreateTaskDialog(true)}>
+                      <AddTaskIcon />
+                    </RecordHeaderActionIcon>
                   )}
-                  {/* Log Activity Icon Button */}
                   {isAdminView && (
-                    <Tooltip title="Log Activity">
-                      <IconButton
-                        size="small"
-                        onClick={() => setShowLogActivityDialog(true)}
-                        sx={{ 
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                          },
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <CheckCircleIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
+                    <RecordHeaderActionIcon tooltip="Log Activity" onClick={() => setShowLogActivityDialog(true)}>
+                      <CheckCircleIcon />
+                    </RecordHeaderActionIcon>
                   )}
+                  <RecordHeaderLanguagePreferenceBadge
+                    language={skillsData?.preferredLanguage === 'es' ? 'es' : 'en'}
+                  />
+                  <RecordHeaderTransportMethodIcon transportMethod={skillsData?.transportMethod} />
                     {addedToIndeedFlex ? (
-                      <Tooltip title="Added to Indeed Flex">
+                      <Tooltip title="Added to Indeed Flex" componentsProps={recordHeaderTooltipComponentsProps}>
                         <Box
                           component="img"
                           src="/img/flex.png"
                           alt="Indeed Flex"
                           sx={{
-                            height: 36,
+                            height: 28,
                             width: 'auto',
-                            maxWidth: 96,
+                            maxWidth: 88,
                             objectFit: 'contain',
                             display: 'block',
                             flexShrink: 0,
                             alignSelf: 'center',
+                            ml: 0.25,
                           }}
                         />
                       </Tooltip>
                     ) : null}
                     </Stack>
                     </Box>
-                    {/* Line 3: Metadata subtitle */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                      {(city || state) && (
-                        <Typography
-                          component="span"
-                          variant="body2"
-                          sx={{
-                            fontSize: '14px',
-                            fontWeight: 400,
-                            color: 'rgba(0, 0, 0, 0.55)',
-                          }}
-                        >
-                          {[city, state].filter(Boolean).join(', ')}
-                        </Typography>
-                      )}
-                      {createdAt && (() => {
-                        try {
-                          // Handle Firestore Timestamp
-                          let date: Date | null = null;
-                          if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
-                            date = createdAt.toDate();
-                          } else if (createdAt instanceof Date) {
-                            date = createdAt;
-                          } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
-                            date = new Date(createdAt);
-                          } else if (createdAt?._seconds && typeof createdAt._seconds === 'number') {
-                            date = new Date(createdAt._seconds * 1000);
-                          }
-                          
-                          if (date && !isNaN(date.getTime())) {
-                            const formattedDate = date.toLocaleDateString('en-US', { 
-                              month: 'short', 
-                              day: 'numeric', 
-                              year: 'numeric' 
-                            });
-                            return (
+                    {/* Line 3: Location · created (work auth / e-verify live in Employment tab & table elsewhere) */}
+                    <Box
+                      sx={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        columnGap: 0.5,
+                        rowGap: 0.35,
+                        flexWrap: 'wrap',
+                        mt: 0.15,
+                      }}
+                    >
+                      {(() => {
+                        const loc = [city, state].filter(Boolean).join(', ');
+                        const hasLoc = Boolean(loc);
+                        const hasCreated = Boolean(recordHeaderCreatedLabel);
+                        const metaText = { fontSize: '13px', fontWeight: 400, color: 'text.secondary', lineHeight: 1.35 } as const;
+                        const sep = (
+                          <Typography component="span" sx={{ color: 'text.disabled', fontSize: '12px', userSelect: 'none', lineHeight: 1.35 }}>
+                            ·
+                          </Typography>
+                        );
+                        return (
+                          <>
+                            {hasLoc && (
+                              <Typography component="span" variant="body2" sx={metaText}>
+                                {loc}
+                              </Typography>
+                            )}
+                            {hasCreated && (
                               <>
-                                {(city || state) && (
-                                  <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
-                                )}
-                                <Typography
-                                  component="span"
-                                  variant="body2"
-                                  sx={{
-                                    fontSize: '14px',
-                                    fontWeight: 400,
-                                    color: 'rgba(0, 0, 0, 0.55)',
-                                  }}
-                                >
-                                  Created {formattedDate}
+                                {hasLoc && sep}
+                                <Typography component="span" variant="body2" sx={metaText}>
+                                  Created {recordHeaderCreatedLabel}
                                 </Typography>
                               </>
-                            );
-                          }
-                        } catch {
-                          // Silently fail if date parsing fails
-                        }
-                        return null;
-                      })()}
-                      {(city || state || createdAt) && (
-                        <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
-                      )}
-                      <Typography
-                        component="span"
-                        variant="body2"
-                        sx={{ fontSize: '14px', fontWeight: 400, color: 'rgba(0, 0, 0, 0.55)' }}
-                      >
-                        Authorized to Work:{' '}
-                      </Typography>
-                      <WorkAuthorizedChip status={workAuthorizedStatus} size="small" />
-                      <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>•</Typography>
-                      <Typography
-                        component="span"
-                        variant="body2"
-                        sx={{ fontSize: '14px', fontWeight: 400, color: 'rgba(0, 0, 0, 0.55)' }}
-                      >
-                        E-Verify consent (Select roles):{' '}
-                      </Typography>
-                      <EVerifyComfortChip status={eVerifyComfortStatus} size="small" />
-                      {!city && !state && !createdAt && jobTitle && (
-                        <Typography
-                          component="span"
-                          variant="body2"
-                          sx={{
-                            fontSize: '14px',
-                            fontWeight: 400,
-                            color: 'rgba(0, 0, 0, 0.55)',
-                          }}
-                        >
-                          {jobTitle}
-                        </Typography>
-                      )}
-                    </Box>
-                    {/* Line 4: User groups (member of) */}
-                    {headerUserGroups.length > 0 && viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7 && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
-                        <Typography
-                          component="span"
-                          variant="body2"
-                          sx={{ fontSize: '14px', fontWeight: 500, color: 'rgba(0, 0, 0, 0.55)' }}
-                        >
-                          Member of:
-                        </Typography>
-                        {headerUserGroups.map((g, idx) => {
-                          const href = `/usergroups/${g.id}`;
-                          return (
-                            <React.Fragment key={g.id}>
-                              {idx > 0 && (
-                                <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>
-                                  ,
-                                </Typography>
-                              )}
-                              <MUILink
-                                component="button"
-                                onClick={() => navigate(href)}
-                                underline="hover"
-                                sx={{
-                                  fontSize: '14px',
-                                  fontWeight: 600,
-                                  color: '#0057B8',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                {g.title}
-                              </MUILink>
-                            </React.Fragment>
-                          );
-                        })}
-                      </Box>
-                    )}
-                    {showRecordHeaderEntityStatus &&
-                      (recordHeaderEntityChipsLoading || recordHeaderEntityChips.length > 0) && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
-                          <Typography
-                            component="span"
-                            variant="body2"
-                            sx={{ fontSize: '14px', fontWeight: 500, color: 'rgba(0, 0, 0, 0.55)' }}
-                          >
-                            Employment:
-                          </Typography>
-                          <UserEntityOnboardingStatusCell
-                            items={recordHeaderEntityChips}
-                            loading={recordHeaderEntityChipsLoading}
-                            emptyDisplay="hidden"
-                            density="compact"
-                          />
-                        </Box>
-                      )}
-                    {/* Line 5: Status (Onboarding/Hired/Dismissed/etc.) */}
-                    {!isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && (statusLine?.text || interviewLine?.text) && (
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap', mt: 0.25 }}>
-                        {interviewLine?.text && (
-                          <>
-                            <Typography
-                              component="span"
-                              variant="body2"
-                              sx={{
-                                fontSize: '14px',
-                                fontWeight: 600,
-                                color: interviewLine.color,
-                              }}
-                            >
-                              {interviewLine.text}
-                            </Typography>
-                            {statusLine?.text && (
-                              <Typography component="span" sx={{ color: 'rgba(0, 0, 0, 0.3)' }}>
-                                •
+                            )}
+                            {!hasLoc && !hasCreated && jobTitle && (
+                              <Typography component="span" variant="body2" sx={metaText}>
+                                {jobTitle}
                               </Typography>
                             )}
                           </>
-                        )}
-                        <Typography
-                          component="span"
-                          variant="body2"
+                        );
+                      })()}
+                    </Box>
+                    {/* Group / employment / interview — compact table (mirrors Users list density) */}
+                    {(() => {
+                      const labelSx = {
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        color: 'text.secondary',
+                        textTransform: 'uppercase' as const,
+                        letterSpacing: '0.06em',
+                        borderColor: 'divider',
+                        verticalAlign: 'top' as const,
+                        width: 108,
+                        py: 0.65,
+                      };
+                      const valueSx = {
+                        fontSize: '0.75rem',
+                        borderColor: 'divider',
+                        py: 0.65,
+                        verticalAlign: 'top' as const,
+                      };
+                      const showGroup =
+                        headerUserGroups.length > 0 && viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7;
+                      const showEmployment =
+                        showRecordHeaderEntityStatus &&
+                        (recordHeaderEntityChipsLoading || recordHeaderEntityChips.length > 0);
+                      const showInterviewStatus =
+                        !isOwnProfile &&
+                        viewerSecurityLevel >= 5 &&
+                        viewerSecurityLevel <= 7 &&
+                        (statusLine?.text || interviewLine?.text);
+                      const showReadinessBreakdown = recruiterReadinessBreakdownRows.length > 0;
+                      if (!showGroup && !showEmployment && !showInterviewStatus && !showReadinessBreakdown) return null;
+                      return (
+                        <Table
+                          size="small"
                           sx={{
-                            fontSize: '14px',
-                            fontWeight: 600,
-                            color: statusLine.color,
+                            mt: 0.5,
+                            border: '1px solid',
+                            borderColor: 'divider',
+                            borderRadius: 1,
+                            overflow: 'hidden',
+                            maxWidth: '100%',
+                            '& td': { borderColor: 'divider' },
                           }}
                         >
-                          {statusLine.text}
-                        </Typography>
-                      </Box>
-                    )}
+                          <TableBody>
+                            {showGroup && (
+                              <TableRow>
+                                <TableCell component="th" scope="row" sx={labelSx}>
+                                  Group
+                                </TableCell>
+                                <TableCell sx={valueSx}>
+                                  <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.25 }}>
+                                    {headerUserGroups.map((g, idx) => {
+                                      const href = `/usergroups/${g.id}`;
+                                      return (
+                                        <React.Fragment key={g.id}>
+                                          {idx > 0 && (
+                                            <Typography component="span" sx={{ color: 'text.disabled', fontSize: '12px' }}>
+                                              ·
+                                            </Typography>
+                                          )}
+                                          <MUILink
+                                            component="button"
+                                            type="button"
+                                            onClick={() => navigate(href)}
+                                            underline="hover"
+                                            sx={{
+                                              fontSize: '0.75rem',
+                                              fontWeight: 500,
+                                              color: 'text.primary',
+                                              cursor: 'pointer',
+                                              '&:hover': { color: 'primary.main' },
+                                            }}
+                                          >
+                                            {g.title}
+                                          </MUILink>
+                                        </React.Fragment>
+                                      );
+                                    })}
+                                  </Box>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            {showEmployment && (
+                              <TableRow>
+                                <TableCell component="th" scope="row" sx={labelSx}>
+                                  Employment
+                                </TableCell>
+                                <TableCell sx={valueSx}>
+                                  <UserEntityOnboardingStatusCell
+                                    items={recordHeaderEntityChips}
+                                    loading={recordHeaderEntityChipsLoading}
+                                    emptyDisplay="hidden"
+                                    density="compact"
+                                  />
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            {showReadinessBreakdown && (
+                              <TableRow>
+                                <TableCell component="th" scope="row" sx={labelSx}>
+                                  Readiness
+                                </TableCell>
+                                <TableCell sx={valueSx}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.35 }}>
+                                    {recruiterReadinessBreakdownRows.map((row) => (
+                                      <Typography
+                                        key={row.key}
+                                        variant="body2"
+                                        sx={{ fontSize: '0.75rem', fontWeight: 500, color: 'text.secondary', lineHeight: 1.35 }}
+                                      >
+                                        {row.text}
+                                      </Typography>
+                                    ))}
+                                  </Box>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                            {showInterviewStatus && (
+                              <TableRow>
+                                <TableCell component="th" scope="row" sx={labelSx}>
+                                  Interview / status
+                                </TableCell>
+                                <TableCell sx={valueSx}>
+                                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.35 }}>
+                                    {interviewLine?.text && (
+                                      <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: interviewLine.color, lineHeight: 1.35 }}>
+                                        {interviewLine.text}
+                                      </Typography>
+                                    )}
+                                    {statusLine?.text && (
+                                      <Typography variant="body2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: statusLine.color, lineHeight: 1.35 }}>
+                                        {statusLine.text}
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </TableBody>
+                        </Table>
+                      );
+                    })()}
 
-                    {/* Line 6: Quick profile detail chips (hover for tooltip) */}
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', mt: 1 }}>
+                    {/* Quick profile detail chips (hover for tooltip) — hidden
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexWrap: 'wrap', mt: 0.5 }}>
                       {renderQuickChip('Bio', quickBio)}
                       {renderQuickChip('Skills', quickSkills.join('\n'))}
                       {renderQuickChip('Certifications', quickCerts.join('\n'))}
@@ -2210,43 +2521,91 @@ const UserProfilePage = () => {
                       {renderQuickChip('Work Experience', quickWork.join('\n'))}
                       {renderQuickChip('Languages', quickLangs.join('\n'))}
                     </Box>
+                    */}
 
                     {/* Score Stack removed (now shown as a single summary score on the name line) */}
                   </Box>
                 </Box>
               </Box>
+              )
             }
             titleRightActions={
-              canViewAdminContent ? (
-                <Tooltip title="Leave a star review" arrow>
-                  <Box sx={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
-                    <Rating
-                      // Show existing review average as filled stars; allow click to open add-review flow.
-                      value={quickReviewStars ?? scoreSummary?.reviewAvg ?? 0}
-                      precision={0.1}
-                      onChange={(_, value) => {
-                        if (!value) return;
-                        setQuickReviewStars(value);
-                        setTabValue('Score');
-                        const pathname = window.location.pathname;
-                        const params = new URLSearchParams(window.location.search);
-                        params.delete('tab');
-                        params.set('openReview', '1');
-                        params.set('stars', String(value));
-                        const search = params.toString();
-                        navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
-                        setTimeout(() => setQuickReviewStars(null), 0);
-                      }}
-                      size="medium"
-                    />
-                  </Box>
-                </Tooltip>
-              ) : null
+              <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', gap: 1, flexShrink: 0 }}>
+                {/*
+                Star review control (moved off header — restore beside Back if needed)
+                {canViewAdminContent && (
+                  <Tooltip title="Leave a star review" arrow placement="left" componentsProps={recordHeaderTooltipComponentsProps}>
+                    <Box sx={{ display: 'flex', justifyContent: 'flex-end', pt: 0 }}>
+                      <Rating
+                        value={quickReviewStars ?? scoreSummary?.reviewAvg ?? 0}
+                        precision={0.1}
+                        onChange={(_, value) => {
+                          if (!value) return;
+                          setQuickReviewStars(value);
+                          setTabValue('Score');
+                          const pathname = window.location.pathname;
+                          const params = new URLSearchParams(window.location.search);
+                          params.delete('tab');
+                          params.set('openReview', '1');
+                          params.set('stars', String(value));
+                          const search = params.toString();
+                          navigate(`${pathname}${search ? `?${search}` : ''}`, { replace: true });
+                          setTimeout(() => setQuickReviewStars(null), 0);
+                        }}
+                        size="small"
+                      />
+                    </Box>
+                  </Tooltip>
+                )}
+                */}
+                <Button
+                  startIcon={<ArrowBackIcon sx={{ fontSize: '0.95rem' }} />}
+                  onClick={() => {
+                    if (isRecruiterRoute) {
+                      navigate('/users');
+                      return;
+                    }
+                    if (isWorkforceRoute) {
+                      navigate('/workforce/company-directory');
+                      return;
+                    }
+                    navigate(-1);
+                  }}
+                  variant="outlined"
+                  sx={{
+                    textTransform: 'none',
+                    borderRadius: '999px',
+                    fontSize: '13px',
+                    fontWeight: 500,
+                    px: 1.25,
+                    py: 0.5,
+                    minHeight: 30,
+                    minWidth: 'auto',
+                    lineHeight: 1.2,
+                    whiteSpace: 'nowrap',
+                    boxSizing: 'border-box',
+                    borderColor: 'divider',
+                    color: 'text.secondary',
+                    bgcolor: 'action.hover',
+                    '&:hover': {
+                      borderColor: 'divider',
+                      bgcolor: 'action.selected',
+                      color: 'text.primary',
+                    },
+                    '& .MuiButton-startIcon': {
+                      mr: 0.5,
+                      ml: -0.25,
+                    },
+                  }}
+                >
+                  Back
+                </Button>
+              </Box>
             }
             subtitle={undefined}
             filters={
               isRecruiterRoute ? (
-                <Box display="flex" gap={0.5}>
+                <Box display="flex" gap={0.35} flexWrap="wrap" alignItems="center">
                   {availableTabs.map((tab, i) => {
                     const isActive = tabValue === tab.label;
                     const hasCount = tab.count !== undefined && tab.count > 0;
@@ -2258,12 +2617,13 @@ const UserProfilePage = () => {
                         sx={{
                           textTransform: 'none',
                           borderRadius: '999px',
-                          fontSize: '14px',
-                          fontWeight: isActive ? 500 : 400,
+                          fontSize: '13px',
+                          fontWeight: isActive ? 600 : 400,
                           color: isActive ? 'white' : 'rgba(0, 0, 0, 0.7)',
                           bgcolor: isActive ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                          px: 1.5,
-                          py: 0.75,
+                          px: 1.25,
+                          py: 0.5,
+                          minHeight: 30,
                           minWidth: 'auto',
                           whiteSpace: 'nowrap',
                           '&:hover': {
@@ -2271,7 +2631,7 @@ const UserProfilePage = () => {
                           },
                         }}
                       >
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                           {tab.label}
                           {hasCount && <Badge badgeContent={tab.count} color="primary" />}
                         </Box>
@@ -2280,19 +2640,20 @@ const UserProfilePage = () => {
                   })}
                 </Box>
               ) : (
-                <Box display="flex" gap={0.5}>
+                <Box display="flex" gap={0.35} flexWrap="wrap" alignItems="center">
                   <Button
                     onClick={() => handleTabChange({} as React.SyntheticEvent, 'Overview')}
                     variant="text"
                     sx={{
                       textTransform: 'none',
                       borderRadius: '999px',
-                      fontSize: '14px',
-                      fontWeight: tabValue === 'Overview' ? 500 : 400,
+                      fontSize: '13px',
+                      fontWeight: tabValue === 'Overview' ? 600 : 400,
                       color: tabValue === 'Overview' ? 'white' : 'rgba(0, 0, 0, 0.7)',
                       bgcolor: tabValue === 'Overview' ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                      px: 1.5,
-                      py: 0.75,
+                      px: 1.25,
+                      py: 0.5,
+                      minHeight: 30,
                       minWidth: 'auto',
                       whiteSpace: 'nowrap',
                       '&:hover': {
@@ -2309,12 +2670,13 @@ const UserProfilePage = () => {
                       sx={{
                         textTransform: 'none',
                         borderRadius: '999px',
-                        fontSize: '14px',
-                        fontWeight: tabValue === 'Settings' ? 500 : 400,
+                        fontSize: '13px',
+                        fontWeight: tabValue === 'Settings' ? 600 : 400,
                         color: tabValue === 'Settings' ? 'white' : 'rgba(0, 0, 0, 0.7)',
                         bgcolor: tabValue === 'Settings' ? '#0057B8' : 'rgba(0, 0, 0, 0.04)',
-                        px: 1.5,
-                        py: 0.75,
+                        px: 1.25,
+                        py: 0.5,
+                        minHeight: 30,
                         minWidth: 'auto',
                         whiteSpace: 'nowrap',
                         '&:hover': {
@@ -2329,64 +2691,10 @@ const UserProfilePage = () => {
               )
             }
             rightActions={
-              isRecruiterRoute ? (
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Button
-                    startIcon={<ArrowBackIcon />}
-                    onClick={() => navigate('/users')}
-                    variant="outlined"
-                    sx={{
-                      textTransform: 'none',
-                      borderRadius: '999px',
-                      fontSize: '14px',
-                      fontWeight: 500,
-                      px: 1.5,
-                      py: 0.75,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Back
-                  </Button>
-
-                  {canViewAdminContent && isAdminView && onboardingInProgress ? (
-                    <Button
-                      variant="contained"
-                      disabled
-                      sx={{
-                        textTransform: 'none',
-                        borderRadius: '999px',
-                        fontSize: '14px',
-                        fontWeight: 500,
-                        px: 1.5,
-                        py: 0.75,
-                        whiteSpace: 'nowrap',
-                        '&.Mui-disabled': {
-                          backgroundImage: onboardingAccentGradient,
-                          color: '#FFFFFF',
-                          opacity: 1,
-                        },
-                        '&.Mui-disabled:hover': {
-                          backgroundImage: onboardingAccentGradientHover,
-                          color: '#FFFFFF',
-                          opacity: 1,
-                        },
-                      }}
-                    >
-                      Onboarding
-                    </Button>
-                  ) : null}
-                </Box>
-              ) : (
+              isRecruiterRoute && canViewAdminContent && isAdminView && onboardingInProgress ? (
                 <Button
-                  startIcon={<ArrowBackIcon />}
-                  onClick={() => {
-                    if (isWorkforceRoute) {
-                      navigate('/workforce/company-directory');
-                    } else {
-                      navigate(-1);
-                    }
-                  }}
-                  variant="outlined"
+                  variant="contained"
+                  disabled
                   sx={{
                     textTransform: 'none',
                     borderRadius: '999px',
@@ -2394,13 +2702,25 @@ const UserProfilePage = () => {
                     fontWeight: 500,
                     px: 1.5,
                     py: 0.75,
+                    whiteSpace: 'nowrap',
+                    '&.Mui-disabled': {
+                      backgroundImage: onboardingAccentGradient,
+                      color: '#FFFFFF',
+                      opacity: 1,
+                    },
+                    '&.Mui-disabled:hover': {
+                      backgroundImage: onboardingAccentGradientHover,
+                      color: '#FFFFFF',
+                      opacity: 1,
+                    },
                   }}
                 >
-                  Back
+                  Onboarding
                 </Button>
-              )
+              ) : null
             }
           />
+          </Box>
         ) : (
         <Paper 
           elevation={1} 
@@ -2445,21 +2765,21 @@ const UserProfilePage = () => {
         </Paper>
         )}
 
-        <Box sx={{ mt: 2, px: { xs: 2, md: 3 }, pb: 2 }} className="profile-tab-content">
+        <Box sx={{ mt: 1.5, px: { xs: 2, md: 3 }, pb: 1.5 }} className="profile-tab-content">
           {(() => {
             const label = currentLabel;
             if (!label || !availableTabLabels.includes(label)) return null;
             switch (label) {
               case 'Overview':
                 return (
-                  <Box sx={{ px: { xs: 2, md: 3 }, pt: 2 }}>
+                  <>
                     {user?.uid === uid && <MissingHomeAddressAlert compact />}
                     <ProfileOverview
                       uid={uid}
                       onTabChange={(tab: string) => handleTabChange({} as React.SyntheticEvent, tab)}
                       autoOpenHomeAddress={shouldAutoOpenHomeAddress}
                     />
-                  </Box>
+                  </>
                 );
               case 'Interview':
                 return <InterviewTab uid={uid} />;
@@ -2630,6 +2950,52 @@ const UserProfilePage = () => {
           defaultChannels={['sms']}
           defaultBody={smsComposePrefillBody}
         />
+      )}
+
+      {/* Quick profile & location (from Contact pencil on recruiter record header) */}
+      {uid && (
+        <Dialog
+          open={quickProfileDialogOpen}
+          onClose={() => setQuickProfileDialogOpen(false)}
+          fullWidth
+          maxWidth="lg"
+          scroll="paper"
+        >
+          <DialogTitle
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 1,
+              pr: 1,
+            }}
+          >
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+              <PersonIcon color="primary" sx={{ fontSize: 22, flexShrink: 0 }} aria-hidden />
+              <Typography component="span" variant="subtitle1" sx={{ fontWeight: 700 }}>
+                Quick profile &amp; location
+              </Typography>
+            </Box>
+            <IconButton
+              size="small"
+              aria-label="Close"
+              onClick={() => setQuickProfileDialogOpen(false)}
+              sx={{ color: 'text.secondary' }}
+            >
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </DialogTitle>
+          <DialogContent dividers sx={{ pt: 1.5, pb: 2 }}>
+            <ProfileOverview
+              uid={uid}
+              embeddedMode="quickProfileOnly"
+              onTabChange={(tab) => {
+                setQuickProfileDialogOpen(false);
+                handleTabChange({} as React.SyntheticEvent, tab);
+              }}
+            />
+          </DialogContent>
+        </Dialog>
       )}
 
       {/* Add Note Dialog (opens from Note icon in Record header) */}

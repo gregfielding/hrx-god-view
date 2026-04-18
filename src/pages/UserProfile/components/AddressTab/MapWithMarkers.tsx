@@ -18,11 +18,10 @@ type Props = {
   homeMarkerLabel?: string;
   /** Optional tooltip for the home marker (shown on hover). */
   homeMarkerTitle?: string;
-};
-
-const containerStyle = {
-  width: '100%',
-  height: '400px',
+  /** Map container height in pixels (default 400). */
+  mapHeightPx?: number;
+  /** Tighter top margin when embedded in compact cards (e.g. overview). */
+  dense?: boolean;
 };
 
 const MapWithMarkers: React.FC<Props> = ({
@@ -34,6 +33,8 @@ const MapWithMarkers: React.FC<Props> = ({
   currentLng,
   homeMarkerLabel = 'Home',
   homeMarkerTitle,
+  mapHeightPx = 400,
+  dense = false,
 }) => {
   // Only render GoogleMap when the Maps API is fully ready (Map constructor available).
   // Poll until ready so we show the map when LoadScript finishes loading after mount.
@@ -78,13 +79,19 @@ const MapWithMarkers: React.FC<Props> = ({
     currentLng !== undefined;
 
   if (!hasHome && !hasWork && !hasCurrent) {
-    return <Typography sx={{ width: '100%', marginTop: '24px' }}>No location data available to display on the map.</Typography>;
+    return (
+      <Typography sx={{ width: '100%', marginTop: dense ? '8px' : '24px' }}>
+        No location data available to display on the map.
+      </Typography>
+    );
   }
 
+  const topMargin = dense ? '8px' : '24px';
+
   return (
-    <Box sx={{ width: '100%', marginTop: '24px' }}>
+    <Box sx={{ width: '100%', marginTop: topMargin }}>
       {center && (
-        <GoogleMap mapContainerStyle={{ width: '100%', height: '400px' }} center={center} zoom={12}>
+        <GoogleMap mapContainerStyle={{ width: '100%', height: `${mapHeightPx}px` }} center={center} zoom={12}>
           {hasHome && (
             <Marker
               key={`home-${homeLat}-${homeLng}`}

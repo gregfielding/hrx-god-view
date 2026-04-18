@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { toChipLabel } from '../../../utils/chipLabel';
 import { Box, Avatar, IconButton, Button, Typography, Stack, Link, Chip, Breadcrumbs, Tooltip, CircularProgress, Snackbar, Alert, Badge, GlobalStyles, Dialog, DialogTitle, DialogContent, DialogContentText, DialogActions } from '@mui/material';
 import { keyframes } from '@emotion/react';
@@ -30,19 +30,16 @@ import { formatPhoneNumber } from '../../../utils/formatPhone';
 import FavoriteButton from '../../../components/FavoriteButton';
 import { useFavorites } from '../../../hooks/useFavorites';
 import { useAuth } from '../../../contexts/AuthContext';
-import DocumentIconBar from './DocumentIconBar';
 import CertificationsModal from './CertificationsModal';
-import ContactActionButtons from './ContactActionButtons';
 import MessageDrawer, { MessageRecipient } from '../../../components/MessageDrawer';
 import { FirebaseError } from 'firebase/app';
 import { functions } from '../../../firebase';
 import { httpsCallable } from 'firebase/functions';
 import MissingItemsAlert from './MissingItemsAlert';
-import QuickActionToolbar from './QuickActionToolbar';
-import ComplianceStatusChips from './ComplianceStatusChips';
 import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
-import CompactActionGrid from './CompactActionGrid';
+import RecordHeaderActionIcon from './RecordHeaderActionIcon';
+import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 import { getCanonicalStoredAiScore, type ScoreSummary, type ScoringDistribution } from '../../../utils/scoreSummary';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
@@ -244,6 +241,28 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   const { isFavorite, toggleFavorite } = useFavorites('users');
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  const headerCreatedShort = useMemo(() => {
+    if (!createdAt) return null;
+    try {
+      let date: Date | null = null;
+      if (createdAt?.toDate && typeof createdAt.toDate === 'function') {
+        date = createdAt.toDate();
+      } else if (createdAt instanceof Date) {
+        date = createdAt;
+      } else if (typeof createdAt === 'string' || typeof createdAt === 'number') {
+        date = new Date(createdAt);
+      } else if (createdAt?._seconds && typeof createdAt._seconds === 'number') {
+        date = new Date(createdAt._seconds * 1000);
+      }
+      if (date && !Number.isNaN(date.getTime())) {
+        return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      }
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }, [createdAt]);
   const [gmailConnected, setGmailConnected] = useState<boolean>(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
@@ -735,9 +754,9 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             <Avatar 
               src={avatarUrl || undefined} 
               sx={{ 
-                width: 96, 
-                height: 96, 
-                fontSize: '2rem',
+                width: 120, 
+                height: 120, 
+                fontSize: '2.5rem',
                 fontWeight: 'bold'
               }}
               onError={(e) => {
@@ -898,63 +917,10 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               })()}
             </Box>
           </Box>
-          {Boolean(jobTitle) && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: 1 }}>
-              {jobTitle}
-            </Typography>
-          )}
 
-          {/* Mobile: Location */}
-          {city && state && (
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
-              <LocationOnOutlinedIcon fontSize="small" color="primary" />
-              <Typography variant="body2" color="text.secondary">
-                {city}, {state}
-              </Typography>
-            </Stack>
-          )}
-
-          {/* Mobile: User groups */}
-          {canViewUserGroupsInHeader && headerUserGroups.length > 0 && (
-            <Box sx={{ mb: 0.5 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
-                Member of:{' '}
-                {headerUserGroups.map((g, idx) => (
-                  <React.Fragment key={g.id}>
-                    {idx > 0 ? ', ' : ''}
-                    <Link component={RouterLink} to={`/usergroups/${g.id}`} underline="hover">
-                      {g.title}
-                    </Link>
-                  </React.Fragment>
-                ))}
-              </Typography>
-            </Box>
-          )}
-
-          {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
-            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75, mb: 0.5 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                Employment:
-              </Typography>
-              <UserEntityOnboardingStatusCell
-                items={entityEmploymentChipItems}
-                loading={entityEmploymentChipsLoading}
-                emptyDisplay="hidden"
-                density="compact"
-              />
-            </Box>
-          )}
-
-          {/* Mobile: Joined Date */}
-          {createdAt && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 1 }}>
-              Joined: {formatDate(createdAt)}
-            </Typography>
-          )}
-
-          {/* Mobile: Contact Icons Row */}
+          {/* Mobile: Contact Icons Row — directly under name */}
           {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 1, mt: 1 }}>
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mb: 0.75 }}>
               {phone && (
                 <>
                   <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
@@ -1107,6 +1073,60 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 </Tooltip>
               )}
             </Stack>
+          )}
+
+          {Boolean(jobTitle) && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontWeight: 600, mb: 1 }}>
+              {jobTitle}
+            </Typography>
+          )}
+
+          {/* Mobile: Location */}
+          {city && state && (
+            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.5 }}>
+              <LocationOnOutlinedIcon fontSize="small" color="primary" />
+              <Typography variant="body2" color="text.secondary">
+                {city}, {state}
+              </Typography>
+            </Stack>
+          )}
+
+          {/* Mobile: User groups */}
+          {canViewUserGroupsInHeader && headerUserGroups.length > 0 && (
+            <Box sx={{ mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem' }}>
+                Member of:{' '}
+                {headerUserGroups.map((g, idx) => (
+                  <React.Fragment key={g.id}>
+                    {idx > 0 ? ', ' : ''}
+                    <Link component={RouterLink} to={`/usergroups/${g.id}`} underline="hover">
+                      {g.title}
+                    </Link>
+                  </React.Fragment>
+                ))}
+              </Typography>
+            </Box>
+          )}
+
+          {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75, mb: 0.5 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                Employment:
+              </Typography>
+              <UserEntityOnboardingStatusCell
+                items={entityEmploymentChipItems}
+                loading={entityEmploymentChipsLoading}
+                emptyDisplay="hidden"
+                density="compact"
+              />
+            </Box>
+          )}
+
+          {/* Mobile: Joined Date */}
+          {createdAt && (
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 1 }}>
+              Joined: {formatDate(createdAt)}
+            </Typography>
           )}
           
           {/* Onboarding Pills - Mobile - Above Skills */}
@@ -1450,12 +1470,20 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
 
         {/* Column B: Name & Primary Info (flex 1) */}
         <Box flex={1} sx={{ minWidth: 0 }}>
-          {/* Name with Favorite Button + Summary Score */}
+          {/* Name → star → score */}
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 0.25 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
               <Typography
                 variant="h5"
-                sx={{ fontWeight: 700, fontSize: '1.5rem', lineHeight: 1.2, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                sx={{
+                  fontWeight: 700,
+                  fontSize: '1.5rem',
+                  lineHeight: 1.2,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
               >
                 {`${firstName} ${lastName}`}
                 {preferredName && preferredName !== firstName && ` (${preferredName})`}
@@ -1479,48 +1507,199 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 const canonical = getCanonicalStoredAiScore(scoreSummary);
                 if (canonical === null) {
                   return (
-                    <Tooltip title="No stored AI score (scoreSummary.aiScore) — same field as All Users table.">
+                    <Tooltip
+                      title="No stored AI score (scoreSummary.aiScore) — same field as All Users table."
+                      componentsProps={recordHeaderTooltipComponentsProps}
+                    >
                       <Chip
                         icon={<InsightsIcon sx={{ fontSize: 18 }} />}
                         label="AI Score —"
                         size="small"
                         variant="outlined"
-                        sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
+                        sx={{
+                          fontWeight: 600,
+                          flexShrink: 0,
+                          opacity: 0.85,
+                        }}
                       />
                     </Tooltip>
                   );
                 }
                 const display = Math.round(canonical);
                 return (
-                  <Tooltip title={`Stored AI score: ${display} (scoreSummary.aiScore)`}>
+                  <Tooltip
+                    title={`Stored AI score: ${display} (scoreSummary.aiScore)`}
+                    componentsProps={recordHeaderTooltipComponentsProps}
+                  >
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
                       label={`AI Score ${display}`}
                       size="small"
                       variant="outlined"
-                      sx={{ fontWeight: 700, flexShrink: 0 }}
+                      sx={{
+                        fontWeight: 700,
+                        flexShrink: 0,
+                      }}
                     />
                   </Tooltip>
                 );
               })()}
             </Box>
           </Box>
-          
-          {/* City, State - One Line */}
-          {city && state && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', mb: 0.25 }}>
-              {city}, {state}
-            </Typography>
+
+          {/* Contact action icons */}
+          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
+            <Stack direction="row" spacing={0.25} alignItems="center" flexWrap="wrap" sx={{ gap: 0.25, mb: 0.75 }}>
+              {phone && (
+                <>
+                  <RecordHeaderActionIcon
+                    tooltip={`Call ${formatPhoneNumber(phone)}`}
+                    component="a"
+                    href={`tel:${phone.replace(/\D/g, '')}`}
+                  >
+                    <PhoneOutlinedIcon />
+                  </RecordHeaderActionIcon>
+                  {onMessageApplicant ? (
+                    <RecordHeaderActionIcon tooltip="Send Message" onClick={onMessageApplicant}>
+                      <MessageIcon />
+                    </RecordHeaderActionIcon>
+                  ) : (
+                    <RecordHeaderActionIcon
+                      tooltip="Send SMS"
+                      onClick={() => {
+                        if (hasTwilioNumber) {
+                          setMessageDrawerChannel('sms');
+                          setMessageDrawerOpen(true);
+                        } else {
+                          window.open(`sms:${phone.replace(/\D/g, '')}`, '_blank');
+                        }
+                      }}
+                    >
+                      <MessageIcon />
+                    </RecordHeaderActionIcon>
+                  )}
+                </>
+              )}
+              {email && (
+                <RecordHeaderActionIcon
+                  tooltip={
+                    gmailConnected
+                      ? `Email ${email} (send from your Gmail)`
+                      : `Email ${email} (open mail app)`
+                  }
+                  onClick={() => {
+                    if (gmailConnected) {
+                      setMessageDrawerChannel('email');
+                      setMessageDrawerOpen(true);
+                    } else {
+                      window.open(`mailto:${email}`, '_blank');
+                    }
+                  }}
+                >
+                  <EmailOutlinedIcon />
+                </RecordHeaderActionIcon>
+              )}
+              {resume && resume.fileName && (
+                <RecordHeaderActionIcon tooltip={`View Resume: ${resume.fileName}`} onClick={handleResumeClick}>
+                  <DescriptionIcon />
+                </RecordHeaderActionIcon>
+              )}
+              {canShowContactIconsRow && (
+                <Tooltip
+                  title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}
+                  componentsProps={recordHeaderTooltipComponentsProps}
+                >
+                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
+                    <IconButton size="small" onClick={() => setShowAddNoteDialog(true)} sx={recordHeaderActionIconButtonSx}>
+                      <NoteIcon />
+                    </IconButton>
+                  </Badge>
+                </Tooltip>
+              )}
+              {showIndeedFlexBadge && (
+                <Tooltip title="Added to Indeed Flex" componentsProps={recordHeaderTooltipComponentsProps}>
+                  <Box
+                    component="img"
+                    src="/img/flex.png"
+                    alt="Indeed Flex"
+                    sx={{
+                      height: 28,
+                      width: 'auto',
+                      maxWidth: 88,
+                      objectFit: 'contain',
+                      display: 'block',
+                      flexShrink: 0,
+                      alignSelf: 'center',
+                      ml: 0.25,
+                    }}
+                  />
+                </Tooltip>
+              )}
+            </Stack>
           )}
 
-          {/* User groups - One Line (below city/state) */}
+          {/* Line A: location · created · work auth */}
+          {(() => {
+            const loc = city && state ? `${city}, ${state}` : '';
+            const hasLoc = Boolean(loc);
+            const hasCreated = Boolean(headerCreatedShort);
+            const showWorkAuth = isAdminView && workEligibility !== undefined;
+            if (!hasLoc && !hasCreated && !showWorkAuth) return null;
+            const sep = (
+              <Typography component="span" sx={{ color: 'text.disabled', fontSize: '13px', userSelect: 'none' }}>
+                ·
+              </Typography>
+            );
+            const meta = { fontSize: '13px', fontWeight: 400, color: 'text.secondary' } as const;
+            return (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  columnGap: 0.75,
+                  rowGap: 0.25,
+                  mb: 0.25,
+                }}
+              >
+                {hasLoc && (
+                  <Typography component="span" variant="body2" sx={meta}>
+                    {loc}
+                  </Typography>
+                )}
+                {hasCreated && (
+                  <>
+                    {hasLoc && sep}
+                    <Typography component="span" variant="body2" sx={meta}>
+                      Created {headerCreatedShort}
+                    </Typography>
+                  </>
+                )}
+                {showWorkAuth && (
+                  <>
+                    {(hasLoc || hasCreated) && sep}
+                    <Typography component="span" variant="body2" sx={meta}>
+                      Authorized to Work: {workEligibility ? 'Yes' : 'No'}
+                    </Typography>
+                  </>
+                )}
+              </Box>
+            );
+          })()}
+
+          {/* Line B: groups */}
           {canViewUserGroupsInHeader && headerUserGroups.length > 0 && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', mb: 0.25 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '13px', mb: 0.25, fontWeight: 500 }}>
               Member of:{' '}
               {headerUserGroups.map((g, idx) => (
                 <React.Fragment key={g.id}>
                   {idx > 0 ? ', ' : ''}
-                  <Link component={RouterLink} to={`/usergroups/${g.id}`} underline="hover">
+                  <Link
+                    component={RouterLink}
+                    to={`/usergroups/${g.id}`}
+                    underline="hover"
+                    sx={{ fontWeight: 500, color: 'text.primary', '&:hover': { color: 'primary.main' } }}
+                  >
                     {g.title}
                   </Link>
                 </React.Fragment>
@@ -1528,9 +1707,10 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
             </Typography>
           )}
 
+          {/* Line C: employment */}
           {showEntityEmploymentStatusRow && (entityEmploymentChipsLoading || entityEmploymentChipItems.length > 0) && (
-            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75, mb: 0.25 }}>
-              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.875rem', fontWeight: 500 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.5, mb: 0.25 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '13px', fontWeight: 500 }}>
                 Employment:
               </Typography>
               <UserEntityOnboardingStatusCell
@@ -1540,199 +1720,6 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                 density="compact"
               />
             </Box>
-          )}
-
-          {/* Joined Date */}
-          {createdAt && (
-            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.75rem', mb: 0.5 }}>
-              Joined: {formatDate(createdAt)}
-            </Typography>
-          )}
-          
-          {/* Contact Icons Row - Phone, SMS, Email, Resume (Icon-only buttons) */}
-          {canShowContactIconsRow && (phone || email || resume || showIndeedFlexBadge) && (
-            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" sx={{ mt: 1, mb: 0.5 }}>
-              {phone && (
-                <>
-                  <Tooltip title={`Call ${formatPhoneNumber(phone)}`}>
-                    <IconButton
-                      size="small"
-                      component="a"
-                      href={`tel:${phone.replace(/\D/g, '')}`}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <PhoneOutlinedIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Tooltip>
-                  {onMessageApplicant ? (
-                    <Tooltip title="Send Message">
-                      <IconButton
-                        size="small"
-                        onClick={onMessageApplicant}
-                        sx={{ 
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                          },
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <MessageIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
-                  ) : phone && (
-                    <Tooltip title="Send SMS">
-                      <IconButton
-                        size="small"
-                        onClick={() => {
-                          if (hasTwilioNumber) {
-                            setMessageDrawerChannel('sms');
-                            setMessageDrawerOpen(true);
-                          } else {
-                            window.open(`sms:${phone.replace(/\D/g, '')}`, '_blank');
-                          }
-                        }}
-                        sx={{ 
-                          p: 1,
-                          color: 'primary.main',
-                          bgcolor: 'action.hover',
-                          borderRadius: 1,
-                          '&:hover': {
-                            color: 'primary.dark',
-                            bgcolor: 'primary.light',
-                            transform: 'translateY(-1px)',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                          },
-                          transition: 'all 0.2s ease'
-                        }}
-                      >
-                        <MessageIcon sx={{ fontSize: 20 }} />
-                      </IconButton>
-                    </Tooltip>
-                  )}
-                </>
-              )}
-              {email && (
-                <Tooltip
-                  title={
-                    gmailConnected
-                      ? `Email ${email} (send from your Gmail)`
-                      : `Email ${email} (open mail app)`
-                  }
-                >
-                  <IconButton
-                    size="small"
-                    onClick={() => {
-                      if (gmailConnected) {
-                        setMessageDrawerChannel('email');
-                        setMessageDrawerOpen(true);
-                      } else {
-                        window.open(`mailto:${email}`, '_blank');
-                      }
-                    }}
-                    sx={{ 
-                      p: 1,
-                      color: 'primary.main',
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: 'primary.dark',
-                        bgcolor: 'primary.light',
-                        transform: 'translateY(-1px)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <EmailOutlinedIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-              )}
-              {resume && resume.fileName && (
-                <Tooltip title={`View Resume: ${resume.fileName}`}>
-                  <IconButton
-                    size="small"
-                    onClick={handleResumeClick}
-                    sx={{ 
-                      p: 1,
-                      color: 'primary.main',
-                      bgcolor: 'action.hover',
-                      borderRadius: 1,
-                      '&:hover': {
-                        color: 'primary.dark',
-                        bgcolor: 'primary.light',
-                        transform: 'translateY(-1px)',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                      },
-                      transition: 'all 0.2s ease'
-                    }}
-                  >
-                    <DescriptionIcon sx={{ fontSize: 20 }} />
-                  </IconButton>
-                </Tooltip>
-              )}
-              {canShowContactIconsRow && (
-                <Tooltip title={notesCount > 0 ? `${notesCount} note${notesCount !== 1 ? 's' : ''}` : 'Add note'}>
-                  <Badge badgeContent={notesCount > 0 ? notesCount : undefined} color="primary">
-                    <IconButton
-                      size="small"
-                      onClick={() => setShowAddNoteDialog(true)}
-                      sx={{ 
-                        p: 1,
-                        color: 'primary.main',
-                        bgcolor: 'action.hover',
-                        borderRadius: 1,
-                        '&:hover': {
-                          color: 'primary.dark',
-                          bgcolor: 'primary.light',
-                          transform: 'translateY(-1px)',
-                          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                        },
-                        transition: 'all 0.2s ease'
-                      }}
-                    >
-                      <NoteIcon sx={{ fontSize: 20 }} />
-                    </IconButton>
-                  </Badge>
-                </Tooltip>
-              )}
-              {showIndeedFlexBadge && (
-                <Tooltip title="Added to Indeed Flex">
-                  <Box
-                    component="img"
-                    src="/img/flex.png"
-                    alt="Indeed Flex"
-                    sx={{
-                      height: 36,
-                      width: 'auto',
-                      maxWidth: 96,
-                      objectFit: 'contain',
-                      display: 'block',
-                      flexShrink: 0,
-                      alignSelf: 'center',
-                    }}
-                  />
-                </Tooltip>
-              )}
-            </Stack>
           )}
           
           {/* Onboarding Pills - Above Skills */}
@@ -1973,26 +1960,29 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
         </Box>
         
         {/* Column C: Right-aligned buttons - Same row as avatar */}
-        <Box sx={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 1, alignItems: 'flex-end', alignSelf: 'flex-start', pt: 0 }}>
+        <Box sx={{ flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 0.5, alignItems: 'flex-end', alignSelf: 'flex-start', pt: 0 }}>
           {securityLevel && getSecurityLabel(securityLevel) && (
             <Chip
               label={getSecurityLabel(securityLevel)}
-              size="medium"
+              size="small"
               sx={{
                 ...getSoftChipSx(getSecurityColor(securityLevel)),
                 fontWeight: 600,
-                height: 36,
-                fontSize: '0.875rem',
-                px: 1.5,
+                height: 26,
+                fontSize: '0.75rem',
+                px: 1,
               }}
             />
           )}
           {isAdminView && onboardingInProgress ? (
             <Button
               variant="contained"
+              size="small"
               onClick={() => setShowCancelOnboardingDialog(true)}
               sx={{
-                px: 2,
+                px: 1.5,
+                py: 0.5,
+                fontSize: '0.8125rem',
                 backgroundImage: 'linear-gradient(90deg, #FF8A00 0%, #FFB300 100%)', // Yellow-orange gradient
                 color: '#ffffff', // White text
                 fontWeight: 600,

@@ -277,3 +277,28 @@ export function getRecruiterUserTopConcernDetailed(
 
   return 'None';
 }
+
+export type RecordHeaderEntitySlot = {
+  entityKey: 'select' | 'workforce' | 'events';
+  title: string;
+  /** Short status for header chips */
+  statusLabel: string;
+  displayState: WorkReadinessDisplayState | null;
+};
+
+/**
+ * One slot per entity that has employment/onboarding data. Omits entities with no chip (no "—" placeholders).
+ */
+export function getRecordHeaderEntitySlots(entityItems: UserListEntityOnboardingItem[] | undefined): RecordHeaderEntitySlot[] {
+  const chips = getWorkReadinessEntityChipsDisplay(entityItems);
+  const out: RecordHeaderEntitySlot[] = [];
+  for (const k of ENTITY_ORDER) {
+    const chip = chips.find((c) => c.key.startsWith(`${k}-`));
+    if (!chip) continue;
+    const title = ENTITY_LABEL[k];
+    const statusLabel =
+      chip.displayState === 'active' ? 'Active' : chip.displayState === 'onboarding' ? 'Onboarding' : 'Inactive';
+    out.push({ entityKey: k, title, statusLabel, displayState: chip.displayState });
+  }
+  return out;
+}

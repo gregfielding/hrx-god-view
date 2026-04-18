@@ -67,6 +67,10 @@ export type AiHiringReasonCode =
   | 'capacity_reached'
   | 'onboarding_throttled'
   | 'passed_all_checks'
+  /** Advance on score/policy, but interview flags still recorded (not “clean pass”). */
+  | 'advance_with_caution_flags'
+  /** Interview score engine said `review` — hiring decision aligns (no Review+Advance). */
+  | 'interview_recommendation_review'
   | 'not_in_top_percent'
   | 'recommendation_decline'
   | 'gig_path_eligible'
@@ -127,6 +131,18 @@ const CRITICAL_DYNAMIC_KEYS = ['dyn_shift_punctuality', 'dyn_worksite_commute', 
 
 const GIG_DYNAMIC_KEY = 'dyn_gig_path_willing';
 
+/** Flags that are “positive” only — do not block `passed_all_checks` when present alone. */
+const POSITIVE_SIGNAL_FLAGS = new Set(['strong_candidate_signal', 'high_confidence_candidate']);
+
+function shouldUsePassedAllChecks(flags: string[]): boolean {
+  if (!flags || flags.length === 0) return true;
+  return flags.every((f) => POSITIVE_SIGNAL_FLAGS.has(normFlag(f)));
+}
+
+function advanceReasonCodes(flags: string[]): AiHiringReasonCode[] {
+  return shouldUsePassedAllChecks(flags) ? ['passed_all_checks'] : ['advance_with_caution_flags'];
+}
+
 // --- Helpers ---------------------------------------------------------------
 
 function normFlag(f: string): string {
@@ -177,6 +193,17 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
       'reject',
       hiringPolicy,
       ['recommendation_decline'],
+      interviewResult,
+      applyGig,
+    );
+  }
+
+  // STEP 1b — Interview recommendation `review` must align with hiring decision (no Review + Advance).
+  if (recommendation === 'review') {
+    return finalize(
+      'review',
+      hiringPolicy,
+      ['interview_recommendation_review'],
       interviewResult,
       applyGig,
     );
@@ -285,11 +312,12 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
     );
   }
 
-  // STEP 8 — Default advance (`finalize` applies gig-path annotation when applicable)
+  // STEP 8 — Default advance (`finalize` applies gig-path annotation when applicable).
+  // Never emit `passed_all_checks` when caution flags remain (only positive signals allowed).
   return finalize(
     'advance',
     hiringPolicy,
-    ['passed_all_checks'],
+    advanceReasonCodes(flags),
     interviewResult,
     applyGig,
   );

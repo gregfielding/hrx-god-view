@@ -237,6 +237,7 @@ const UsersLayout: React.FC = () => {
           overflowX: 'hidden',
           display: 'flex',
           flexDirection: 'column',
+          paddingTop: '8px',
           pb: 2,
           '&::-webkit-scrollbar': { width: '8px', height: '8px' },
           '&::-webkit-scrollbar-track': {

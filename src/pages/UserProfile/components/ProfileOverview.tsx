@@ -1,4 +1,19 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
+import { normalizeScoreSummary, type ScoreSummary } from '../../../utils/scoreSummary';
+import {
+  OverviewDeploymentSnapshotCard,
+  OverviewSkillsExperienceCard,
+  OverviewRecentActivityCard,
+  overviewSectionTitleTypographyProps,
+  overviewSubsectionHeadingTypographyProps,
+  overviewProfileFieldValueSx,
+  type OverviewActivityLogEntry,
+} from './OverviewDashboardSections';
+import {
+  extractSkillLabelsFromUserDoc,
+  extractWorkHeadlinesFromUserDoc,
+} from '../utils/overviewDashboardComposer';
 import { toChipLabel } from '../../../utils/chipLabel';
 import {
   Box,
@@ -56,7 +71,18 @@ import {
   ContentCopy as ContentCopyIcon,
 } from '@mui/icons-material';
 import type { SvgIconComponent } from '@mui/icons-material';
-import { doc, getDoc, onSnapshot, updateDoc, collection, getDocs, query, where } from 'firebase/firestore';
+import {
+  doc,
+  getDoc,
+  onSnapshot,
+  updateDoc,
+  collection,
+  getDocs,
+  query,
+  where,
+  orderBy,
+  limit,
+} from 'firebase/firestore';
 import { sendPasswordResetEmail } from 'firebase/auth';
 
 import { db , auth } from '../../../firebase';
@@ -73,15 +99,31 @@ type Props = {
   uid: string;
   onTabChange?: (tab: string) => void;
   autoOpenHomeAddress?: boolean;
+  /**
+   * When `quickProfileOnly`, render only the Quick profile & location card (for a modal).
+   * Loads the same user doc and edit controls as the Overview tab.
+   */
+  embeddedMode?: 'full' | 'quickProfileOnly';
 };
 
-const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddress = false }) => {
+const ProfileOverview: React.FC<Props> = ({
+  uid,
+  onTabChange,
+  autoOpenHomeAddress = false,
+  embeddedMode = 'full',
+}) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const sectionSpacing = isMobile ? 2 : 3;
-  const cardPadding = isMobile ? 1 : 3;
-  const cardContentPadding = isMobile ? 1.5 : 2;
-  const cardHeaderPadding = isMobile ? { px: 1.5, py: 1 } : undefined;
+  const sectionSpacing = isMobile ? 1.25 : 1.25;
+  const cardPadding = isMobile ? 1 : 1;
+  const cardContentPadding = isMobile ? 1.1 : 1.1;
+  const cardHeaderPadding = isMobile ? { px: 1.1, py: 0.65 } : { px: 1.25, py: 0.65 };
+  /** No elevation/hover lift on user-record overview cards (scoped to this page only). */
+  const overviewCardSx = {
+    boxShadow: 'none',
+    transition: 'none',
+    '&:hover': { boxShadow: 'none' },
+  } as const;
   const coerceToDate = (value: any): Date | null => {
     if (!value) return null;
     try {
@@ -221,14 +263,20 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
   const [systemAccess, setSystemAccess] = useState<{
     loginCount: number | null;
     lastLoginAt: Date | null;
+    lastActiveAt: Date | null;
     uid: string;
-  }>({ loginCount: null, lastLoginAt: null, uid });
+  }>({ loginCount: null, lastLoginAt: null, lastActiveAt: null, uid });
 
   // Phone verification status
   const [phoneVerified, setPhoneVerified] = useState(false);
   const [isEditingBasicIdentity, setIsEditingBasicIdentity] = useState(false);
   const [isEditingHomeAddress, setIsEditingHomeAddress] = useState(false);
   const homeAddressRef = useRef<HTMLDivElement | null>(null);
+
+  const [overviewActivityLogs, setOverviewActivityLogs] = useState<OverviewActivityLogEntry[]>([]);
+  const [overviewActivityLogsLoading, setOverviewActivityLogsLoading] = useState(false);
+  const [overviewActivityLogsError, setOverviewActivityLogsError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!autoOpenHomeAddress) return;
     setIsEditingHomeAddress(true);
@@ -236,6 +284,56 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
       homeAddressRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }, 50);
   }, [autoOpenHomeAddress]);
+
+  useEffect(() => {
+    if (embeddedMode !== 'quickProfileOnly') return;
+    setIsEditingBasicIdentity(true);
+    setIsEditingHomeAddress(true);
+  }, [embeddedMode]);
+
+  useEffect(() => {
+    if (!uid) return;
+    let cancelled = false;
+    (async () => {
+      setOverviewActivityLogsLoading(true);
+      setOverviewActivityLogsError(null);
+      try {
+        const activitiesRef = collection(db, 'users', uid, 'activityLogs');
+        const q = query(activitiesRef, orderBy('timestamp', 'desc'), limit(5));
+        const snap = await getDocs(q);
+        const rows: OverviewActivityLogEntry[] = [];
+        snap.forEach((d) => {
+          const data = d.data() as Record<string, unknown>;
+          const ts = data.timestamp as { toDate?: () => Date } | undefined;
+          rows.push({
+            id: d.id,
+            action: String(data.action ?? ''),
+            actionType: String(data.actionType ?? 'other'),
+            description: String(data.description ?? ''),
+            timestamp: ts && typeof ts.toDate === 'function' ? ts.toDate() : new Date(0),
+            severity: String(data.severity ?? 'low'),
+            source: String(data.source ?? 'web'),
+            metadata:
+              data.metadata && typeof data.metadata === 'object'
+                ? (data.metadata as Record<string, unknown>)
+                : undefined,
+          });
+        });
+        if (!cancelled) setOverviewActivityLogs(rows);
+      } catch (e) {
+        console.warn('ProfileOverview: activity logs preview failed', e);
+        if (!cancelled) {
+          setOverviewActivityLogs([]);
+          setOverviewActivityLogsError('Could not load recent activity.');
+        }
+      } finally {
+        if (!cancelled) setOverviewActivityLogsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uid]);
 
   const [workEligibilityData, setWorkEligibilityData] = useState({
     workAuthorized: false,
@@ -245,6 +343,12 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
     disabilityStatus: '',
   });
 
+  const [scoreSummaryFromUser, setScoreSummaryFromUser] = useState<ScoreSummary | undefined>(undefined);
+  const [riskProfileRaw, setRiskProfileRaw] = useState<unknown>(null);
+  const [overviewBio, setOverviewBio] = useState('');
+  const [overviewSkillLabels, setOverviewSkillLabels] = useState<string[]>([]);
+  const [overviewWorkLines, setOverviewWorkLines] = useState<string[]>([]);
+
   // Removed AI insights section
 
   // Location settings data (read-only)
@@ -253,6 +357,14 @@ const ProfileOverview: React.FC<Props> = ({ uid, onTabChange, autoOpenHomeAddres
     locationGranularity: 'disabled' as string,
     lastLocationUpdate: null as Date | null,
   });
+
+  const showRecruiterDeployment =
+    viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7 && !isOwnProfile;
+  const { items: entityEmploymentChipItems, loading: entityEmploymentChipsLoading } = useUserProfileEntityEmploymentChips(
+    activeTenantId || tenantId || undefined,
+    uid,
+    showRecruiterDeployment && Boolean((activeTenantId || tenantId || '').trim()),
+  );
 
   // Language options for autocomplete
   const languageOptions = [
@@ -379,6 +491,14 @@ const transportOptions: Array<{
             setForm(newForm);
             setOriginalForm(newForm);
 
+            setScoreSummaryFromUser(normalizeScoreSummary(data.scoreSummary));
+            setRiskProfileRaw(data.riskProfile ?? null);
+            setOverviewBio(
+              String(data.professionalBio || data.bio || data.summary || (data as any).professionalSummary || '').trim(),
+            );
+            setOverviewSkillLabels(extractSkillLabelsFromUserDoc(data.skills));
+            setOverviewWorkLines(extractWorkHeadlinesFromUserDoc(data.workExperience));
+
             // Load Work Eligibility data
             setWorkEligibilityData({
               workAuthorized: data.workEligibility !== false,
@@ -422,9 +542,12 @@ const transportOptions: Array<{
             });
 
             // Populate system access info: prefer lastActiveAt, fallback to lastLoginAt
+            const lastActiveAt = coerceToDate(data.lastActiveAt);
+            const lastLoginAt = coerceToDate(data.lastLoginAt);
             setSystemAccess({
               loginCount: typeof data.loginCount === 'number' ? data.loginCount : null,
-              lastLoginAt: coerceToDate(data.lastActiveAt) || coerceToDate(data.lastLoginAt),
+              lastLoginAt: lastActiveAt || lastLoginAt,
+              lastActiveAt,
               uid,
             });
           }
@@ -963,35 +1086,82 @@ const transportOptions: Array<{
     }
   };
 
+  const hideNonQuickSections = embeddedMode === 'quickProfileOnly';
+
   return (
     <Box sx={{ p: 0 }}>
       <Box component="form" onSubmit={handleSubmit} noValidate>
-        <Grid container spacing={sectionSpacing}>
-          {/* 🧍 Basic Identity Section */}
+        <Grid container spacing={sectionSpacing} sx={{ alignItems: 'stretch' }}>
+          {/* Section 1: Deployment snapshot */}
+          {showRecruiterDeployment && !hideNonQuickSections && (
+            <Grid item xs={12}>
+              <OverviewDeploymentSnapshotCard
+                showRecruiterOps={showRecruiterDeployment}
+                scoreSummary={scoreSummaryFromUser}
+                riskProfileRaw={riskProfileRaw}
+                workAuthorized={workEligibilityData.workAuthorized}
+                entityItems={entityEmploymentChipItems}
+                entityLoading={entityEmploymentChipsLoading}
+                onOpenEmploymentTab={onTabChange ? () => onTabChange('Employment') : undefined}
+              />
+            </Grid>
+          )}
+
+          {/* Standalone Location card removed — address + map live in the Quick profile & location card (right column). */}
+
+          {/* Quick profile & location: hidden on Overview tab; still rendered for quick-profile modal (`embeddedMode === 'quickProfileOnly'`). */}
+          {embeddedMode === 'quickProfileOnly' && (
           <Grid item xs={12}>
-            <Card id="home-address" ref={homeAddressRef} variant="outlined" sx={{ p: cardPadding }}>
+            <Card
+              variant="outlined"
+              id="home-address"
+              ref={homeAddressRef}
+              sx={{
+                px: cardPadding,
+                pt: cardPadding,
+                /** Slightly tighter bottom padding now that the map is shorter */
+                pb: cardPadding + 1,
+                borderColor: 'divider',
+                ...overviewCardSx,
+              }}
+            >
               <CardHeader 
                 title={
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <PersonIcon sx={{ mr: 1 }} color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Basic Identity</Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    <PersonIcon sx={{ fontSize: 20 }} color="primary" aria-hidden />
+                    <Typography {...overviewSectionTitleTypographyProps}>Quick profile &amp; location</Typography>
                   </Box>
                 }
                 titleTypographyProps={{ component: 'div' }}
                 action={
+                  !hideNonQuickSections &&
                   canEditProfile() && (
-                    <IconButton
-                      size="small"
-                      onClick={() => setIsEditingBasicIdentity(!isEditingBasicIdentity)}
-                      sx={{ 
-                        color: isEditingBasicIdentity ? 'primary.main' : 'text.secondary',
-                        '&:hover': {
-                          bgcolor: 'action.hover'
-                        }
-                      }}
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
+                    <Stack direction="row" spacing={0.25} alignItems="center">
+                      <Tooltip title={isEditingBasicIdentity ? 'Done editing profile' : 'Edit profile'}>
+                        <IconButton
+                          size="small"
+                          onClick={() => setIsEditingBasicIdentity(!isEditingBasicIdentity)}
+                          sx={{ 
+                            color: isEditingBasicIdentity ? 'primary.main' : 'text.secondary',
+                            '&:hover': { bgcolor: 'action.hover' },
+                          }}
+                        >
+                          <EditIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title={isEditingHomeAddress ? 'Done editing location' : 'Edit location'}>
+                        <IconButton
+                          size="small"
+                          onClick={() => setIsEditingHomeAddress(!isEditingHomeAddress)}
+                          sx={{
+                            color: isEditingHomeAddress ? 'primary.main' : 'text.secondary',
+                            '&:hover': { bgcolor: 'action.hover' },
+                          }}
+                        >
+                          <LocationOnOutlinedIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                    </Stack>
                   )
                 }
                 sx={{ pb: 0, ...cardHeaderPadding }}
@@ -1289,14 +1459,24 @@ const transportOptions: Array<{
                     </Grid>
                   </Grid>
                 ) : (
-                  // View Mode - Show as Read-Only Text with Better Visual Hierarchy
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  (() => {
+                    const showQuickProfileMiddleColumn =
+                      Boolean(form.email) ||
+                      Boolean(form.transportMethod) ||
+                      normalizeLast4SsnDigits(form.last4SSN).length === 4 ||
+                      isStaffSelfProfile;
+                    const quickColSpan = showQuickProfileMiddleColumn ? 4 : 6;
+                    const overviewMapHeightPx = 240; // ~40% shorter than default 400px map
+                    return (
+                  <Grid container spacing={1.5}>
+                    <Grid item xs={12} md={quickColSpan}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
                     {/* Personal Information Section */}
                     <Box>
-                      <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Personal Information
+                      <Typography {...overviewSubsectionHeadingTypographyProps}>
+                        Contact & identity
                       </Typography>
-                      <Grid container spacing={2}>
+                      <Grid container spacing={1.25}>
                         {(form.firstName || form.lastName) && (
                           <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -1305,7 +1485,7 @@ const transportOptions: Array<{
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                   Full Name
                                 </Typography>
-                                <Typography variant="body1" sx={{ mt: 0.25, fontWeight: 500 }}>
+                                <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
                                   {`${form.firstName || ''} ${form.lastName || ''}`.trim() || '-'}
                                 </Typography>
                               </Box>
@@ -1321,7 +1501,7 @@ const transportOptions: Array<{
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                   Preferred Name
                                 </Typography>
-                                <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
                                   {form.preferredName}
                                 </Typography>
                               </Box>
@@ -1329,58 +1509,7 @@ const transportOptions: Array<{
                           </Grid>
                         )}
                         
-                        {form.email && (
-                          <Grid item xs={12} sm={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                              <EmailIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                              <Box sx={{ flex: 1, minWidth: 0 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                  Email
-                                </Typography>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
-                                  <Typography variant="body1">
-                                    <MUILink 
-                                      href={`mailto:${form.email}`} 
-                                      color="primary" 
-                                      underline="hover"
-                                      sx={{ wordBreak: 'break-all' }}
-                                    >
-                                      {form.email}
-                                    </MUILink>
-                                  </Typography>
-                                  <Tooltip title="Copy email">
-                                    <IconButton
-                                      size="small"
-                                      onClick={async () => {
-                                        try {
-                                          await navigator.clipboard.writeText(form.email);
-                                          setMessage('Email copied to clipboard');
-                                          setShowToast(true);
-                                        } catch (err) {
-                                          console.error('Failed to copy email:', err);
-                                          setMessage('Failed to copy email');
-                                          setShowToast(true);
-                                        }
-                                      }}
-                                      sx={{ 
-                                        p: 0.5,
-                                        color: 'text.secondary',
-                                        '&:hover': {
-                                          color: 'primary.main',
-                                          bgcolor: 'action.hover'
-                                        }
-                                      }}
-                                    >
-                                      <ContentCopyIcon sx={{ fontSize: 16 }} />
-                                    </IconButton>
-                                  </Tooltip>
-                                </Box>
-                              </Box>
-                            </Box>
-                          </Grid>
-                        )}
-                        
-                        {form.phone && (
+                        {form.phone && !showRecruiterDeployment && (
                           <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                               <PhoneIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
@@ -1389,7 +1518,7 @@ const transportOptions: Array<{
                                   Phone
                                 </Typography>
                                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
-                                  <Typography variant="body1">
+                                  <Typography variant="body2" sx={overviewProfileFieldValueSx}>
                                     {formatPhoneNumber(form.phone) || form.phone}
                                   </Typography>
                                   {phoneVerified && (
@@ -1428,24 +1557,6 @@ const transportOptions: Array<{
                           </Grid>
                         )}
 
-                        {(normalizeLast4SsnDigits(form.last4SSN).length === 4 || isStaffSelfProfile) && (
-                          <Grid item xs={12} sm={6}>
-                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                              <SecurityIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                              <Box sx={{ flex: 1, minWidth: 0 }}>
-                                <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                  Last 4 of SSN or ITIN
-                                </Typography>
-                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                                  {normalizeLast4SsnDigits(form.last4SSN).length === 4
-                                    ? `••••${normalizeLast4SsnDigits(form.last4SSN)}`
-                                    : '— Use the edit control above to add your last four SSN or ITIN (optional).'}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          </Grid>
-                        )}
-                        
                         {form.dateOfBirth && (
                           <Grid item xs={12} sm={6}>
                             <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
@@ -1454,7 +1565,7 @@ const transportOptions: Array<{
                                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                   Date of Birth
                                 </Typography>
-                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                                <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
                                   {formatDateOnlyForDisplay(form.dateOfBirth)}
                                 </Typography>
                               </Box>
@@ -1467,8 +1578,8 @@ const transportOptions: Array<{
                     {/* Additional Information Section */}
                     {(form.linkedinUrl || (form.languages && form.languages.length > 0)) && (
                       <Box>
-                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Additional Information
+                        <Typography {...overviewSubsectionHeadingTypographyProps}>
+                          Additional information
                         </Typography>
                         <Grid container spacing={2}>
                           {form.linkedinUrl && (
@@ -1479,14 +1590,14 @@ const transportOptions: Array<{
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     LinkedIn
                                   </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  <Typography variant="body2" component="span" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
                                     <MUILink 
                                       href={form.linkedinUrl.startsWith('http') ? form.linkedinUrl : `https://${form.linkedinUrl}`}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                       color="primary"
                                       underline="hover"
-                                      sx={{ wordBreak: 'break-all' }}
+                                      sx={{ wordBreak: 'break-all', fontSize: 'inherit', lineHeight: 'inherit' }}
                                     >
                                       {form.linkedinUrl}
                                     </MUILink>
@@ -1531,8 +1642,8 @@ const transportOptions: Array<{
                     {/* Emergency Contact Section */}
                     {(form.emergencyContact?.name || form.emergencyContact?.phone) && (
                       <Box>
-                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Emergency Contact
+                        <Typography {...overviewSubsectionHeadingTypographyProps}>
+                          Emergency contact
                         </Typography>
                         <Grid container spacing={2}>
                           {form.emergencyContact?.name && (
@@ -1543,7 +1654,7 @@ const transportOptions: Array<{
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     Name
                                   </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
                                     {form.emergencyContact.name}
                                     {form.emergencyContact?.relationship && ` (${form.emergencyContact.relationship})`}
                                   </Typography>
@@ -1560,7 +1671,7 @@ const transportOptions: Array<{
                                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
                                     Phone
                                   </Typography>
-                                  <Typography variant="body1" sx={{ mt: 0.25 }}>
+                                  <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
                                     {formatPhoneNumber(form.emergencyContact.phone) || form.emergencyContact.phone}
                                   </Typography>
                                 </Box>
@@ -1572,13 +1683,8 @@ const transportOptions: Array<{
                     )}
 
                     {form.addedToIndeedFlex && (
-                      <Box sx={{ mb: form.transportMethod ? 2 : 0 }}>
-                        <Typography
-                          variant="subtitle2"
-                          fontWeight={600}
-                          color="text.primary"
-                          sx={{ mb: 1.5, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}
-                        >
+                      <Box sx={{ mb: 0 }}>
+                        <Typography {...overviewSubsectionHeadingTypographyProps} sx={{ ...overviewSubsectionHeadingTypographyProps.sx, mb: 1.5 }}>
                           Indeed Flex
                         </Typography>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
@@ -1588,197 +1694,200 @@ const transportOptions: Array<{
                             alt="Indeed Flex"
                             sx={{ height: 28, width: 'auto', objectFit: 'contain' }}
                           />
-                          <Typography variant="body2" color="text.secondary">
+                          <Typography variant="body2" sx={overviewProfileFieldValueSx}>
                             Added to Indeed Flex
                           </Typography>
                         </Box>
                       </Box>
                     )}
+                  </Box>
+                    </Grid>
 
-                    {/* Transportation Method */}
-                    {form.transportMethod && (() => {
-                      const transportOption = transportOptions.find(opt => opt.value === form.transportMethod);
-                      const TransportIcon = transportOption?.icon || DirectionsCar;
-                      return (
-                        <Box>
-                          <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Transportation
-                          </Typography>
+                    {showQuickProfileMiddleColumn && (
+                    <Grid item xs={12} md={4}>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                        {form.email && !showRecruiterDeployment && (
                           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                            <TransportIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                            <EmailIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
                             <Box sx={{ flex: 1, minWidth: 0 }}>
                               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                How will you get to work?
+                                Email
                               </Typography>
-                              <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                {transportOption?.label || form.transportMethod}
-                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                                <Typography variant="body2" component="span" sx={overviewProfileFieldValueSx}>
+                                  <MUILink 
+                                    href={`mailto:${form.email}`} 
+                                    color="primary" 
+                                    underline="hover"
+                                    sx={{ wordBreak: 'break-all', fontSize: 'inherit', lineHeight: 'inherit' }}
+                                  >
+                                    {form.email}
+                                  </MUILink>
+                                </Typography>
+                                <Tooltip title="Copy email">
+                                  <IconButton
+                                    size="small"
+                                    onClick={async () => {
+                                      try {
+                                        await navigator.clipboard.writeText(form.email);
+                                        setMessage('Email copied to clipboard');
+                                        setShowToast(true);
+                                      } catch (err) {
+                                        console.error('Failed to copy email:', err);
+                                        setMessage('Failed to copy email');
+                                        setShowToast(true);
+                                      }
+                                    }}
+                                    sx={{ 
+                                      p: 0.5,
+                                      color: 'text.secondary',
+                                      '&:hover': {
+                                        color: 'primary.main',
+                                        bgcolor: 'action.hover'
+                                      }
+                                    }}
+                                  >
+                                    <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              </Box>
                             </Box>
                           </Box>
-                        </Box>
-                      );
-                    })()}
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
+                        )}
 
-          {/* Work Eligibility Section */}
-          <Grid item xs={12}>
-            <Card variant="outlined" sx={{ p: cardPadding }}>
-              <CardHeader 
-                title={
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <SecurityIcon sx={{ mr: 1 }} color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Work Eligibility</Typography>
-                  </Box>
-                }
-                titleTypographyProps={{ component: 'div' }}
-                action={
-                  canEditProfile() && onTabChange && (
-                    <IconButton
-                      size="small"
-                      onClick={() => onTabChange('Work Eligibility')}
-                      sx={{ 
-                        color: 'text.secondary',
-                        '&:hover': {
-                          bgcolor: 'action.hover'
-                        }
-                      }}
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  )
-                }
-                sx={{ pb: 0, ...cardHeaderPadding }}
-              />
-              <CardContent sx={{ p: cardContentPadding, pt: cardContentPadding }}>
-                {/* Missing Work Eligibility Alert */}
-                {workEligibilityData.workAuthorized === false && (
-                  <Alert 
-                    severity="error" 
-                    sx={{ mb: 2 }}
-                    action={
-                      onTabChange && (
-                        <Button 
-                          size="small" 
-                          onClick={() => onTabChange('Work Eligibility')}
-                          color="inherit"
-                        >
-                          Add
-                        </Button>
-                      )
-                    }
-                  >
-                    Missing Work Eligibility Document
-                  </Alert>
-                )}
-                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  {/* Work Eligibility Information Section */}
-                  <Box>
-                    <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      WORK AUTHORIZATION & EEO
-                    </Typography>
-                    <Grid container spacing={2}>
-                      <Grid item xs={12} sm={6}>
-                        <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                          <CheckCircleIcon sx={{ fontSize: 18, color: workEligibilityData.workAuthorized ? 'success.main' : 'text.disabled', mt: 0.5, flexShrink: 0 }} />
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                              Work Authorization
-                            </Typography>
-                            <Typography variant="body1" sx={{ mt: 0.25 }}>
-                              {workEligibilityData.workAuthorized 
-                                ? 'Authorized to work in the United States' 
-                                : 'Not authorized to work in the United States'}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      </Grid>
-                      
-                      {workEligibilityData.requireSponsorship && (
-                        <Grid item xs={12} sm={6}>
+                        {(normalizeLast4SsnDigits(form.last4SSN).length === 4 || isStaffSelfProfile) && (
                           <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
                             <SecurityIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
                             <Box sx={{ flex: 1, minWidth: 0 }}>
                               <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                Sponsorship
+                                Last 4 of SSN or ITIN
                               </Typography>
-                              <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                Requires employer sponsorship
-                              </Typography>
-                            </Box>
-                          </Box>
-                        </Grid>
-                      )}
-                      
-                      {workEligibilityData.gender && (
-                        <Grid item xs={12} sm={6}>
-                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                            <PersonIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                Gender
-                              </Typography>
-                              <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                {workEligibilityData.gender}
+                              <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
+                                {normalizeLast4SsnDigits(form.last4SSN).length === 4
+                                  ? `••••${normalizeLast4SsnDigits(form.last4SSN)}`
+                                  : '— Use the edit control above to add your last four SSN or ITIN (optional).'}
                               </Typography>
                             </Box>
                           </Box>
-                        </Grid>
-                      )}
-                      
-                      {workEligibilityData.veteranStatus && (
-                        <Grid item xs={12} sm={6}>
-                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                            <AccountBoxIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                Veteran Status
+                        )}
+
+                        {form.transportMethod && (() => {
+                          const transportOption = transportOptions.find(opt => opt.value === form.transportMethod);
+                          const TransportIcon = transportOption?.icon || DirectionsCar;
+                          return (
+                            <Box>
+                              <Typography {...overviewSubsectionHeadingTypographyProps}>
+                                Transportation
                               </Typography>
-                              <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                {workEligibilityData.veteranStatus}
+                              <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                                <TransportIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
+                                    How will you get to work?
+                                  </Typography>
+                                  <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mt: 0.25 }}>
+                                    {transportOption?.label || form.transportMethod}
+                                  </Typography>
+                                </Box>
+                              </Box>
+                            </Box>
+                          );
+                        })()}
+                  </Box>
+                    </Grid>
+                    )}
+
+                    <Grid item xs={12} md={quickColSpan}>
+                      <Typography {...overviewSubsectionHeadingTypographyProps}>
+                        Home address
+                      </Typography>
+                      {isEditingHomeAddress ? (
+                        <Box>
+                          <AddressFormFields uid={uid} formData={addressInfo} onFormChange={handleAddressChange} />
+                          <Box sx={{ mt: 1.5 }}>
+                            <MapWithMarkers
+                              homeLat={addressInfo.homeLat}
+                              homeLng={addressInfo.homeLng}
+                              workLat={addressInfo.workLat}
+                              workLng={addressInfo.workLng}
+                              currentLat={addressInfo.currentLat}
+                              currentLng={addressInfo.currentLng}
+                              mapHeightPx={overviewMapHeightPx}
+                              dense
+                            />
+                          </Box>
+                        </Box>
+                      ) : (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                          {(addressInfo.streetAddress || addressInfo.city || addressInfo.state || addressInfo.zip) && (
+                            <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
+                              <LocationOnOutlinedIcon sx={{ fontSize: 17, color: 'text.secondary', mt: 0.35, flexShrink: 0 }} />
+                              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                                {[
+                                  [addressInfo.streetAddress, addressInfo.unitNumber].filter(Boolean).join(', '),
+                                  [addressInfo.city, addressInfo.state, addressInfo.zip].filter(Boolean).join(', ')
+                                ]
+                                  .filter(Boolean)
+                                  .join(', ') || '-'}
                               </Typography>
                             </Box>
-                          </Box>
-                        </Grid>
-                      )}
-                      
-                      {workEligibilityData.disabilityStatus && (
-                        <Grid item xs={12} sm={6}>
-                          <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                            <AccountBoxIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                            <Box sx={{ flex: 1, minWidth: 0 }}>
-                              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.75rem', fontWeight: 500 }}>
-                                Disability Status
-                              </Typography>
-                              <Typography variant="body1" sx={{ mt: 0.25 }}>
-                                {workEligibilityData.disabilityStatus}
-                              </Typography>
+                          )}
+                          {((addressInfo.homeLat !== null && addressInfo.homeLat !== undefined && addressInfo.homeLng !== null && addressInfo.homeLng !== undefined) ||
+                            (addressInfo.workLat !== null && addressInfo.workLat !== undefined && addressInfo.workLng !== null && addressInfo.workLng !== undefined) ||
+                            (addressInfo.currentLat !== null && addressInfo.currentLat !== undefined && addressInfo.currentLng !== null && addressInfo.currentLng !== undefined)) && (
+                            <Box sx={{ borderRadius: 1, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
+                              <MapWithMarkers
+                                homeLat={addressInfo.homeLat}
+                                homeLng={addressInfo.homeLng}
+                                workLat={addressInfo.workLat}
+                                workLng={addressInfo.workLng}
+                                currentLat={addressInfo.currentLat}
+                                currentLng={addressInfo.currentLng}
+                                mapHeightPx={overviewMapHeightPx}
+                                dense
+                              />
                             </Box>
-                          </Box>
-                        </Grid>
-                      )}
-                      
-                      {!workEligibilityData.workAuthorized && !workEligibilityData.requireSponsorship && !workEligibilityData.gender && !workEligibilityData.veteranStatus && !workEligibilityData.disabilityStatus && (
-                        <Grid item xs={12}>
-                          <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                            No additional EEO information provided. Click the edit icon to add optional EEO details.
-                          </Typography>
-                        </Grid>
+                          )}
+                        </Box>
                       )}
                     </Grid>
-                  </Box>
-                </Box>
+                  </Grid>
+                    );
+                  })()
+                )}
               </CardContent>
             </Card>
           </Grid>
+          )}
+
+          {/* Section 4 & 5: Skills / experience + recent activity */}
+          {!hideNonQuickSections && (
+            <>
+              <Grid item xs={12}>
+                <OverviewSkillsExperienceCard
+                  bio={overviewBio}
+                  skillLabels={overviewSkillLabels}
+                  workExperienceHeadlines={overviewWorkLines}
+                  onOpenResumeTab={onTabChange ? () => onTabChange('Resume Upload') : undefined}
+                  onOpenQualificationsTab={onTabChange ? () => onTabChange('Qualifications') : undefined}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <OverviewRecentActivityCard
+                  activities={overviewActivityLogs}
+                  activitiesLoading={overviewActivityLogsLoading}
+                  activitiesError={overviewActivityLogsError}
+                  onOpenActivityTab={onTabChange ? () => onTabChange('Activity Log') : undefined}
+                  onOpenApplicationsTab={onTabChange ? () => onTabChange('Applications') : undefined}
+                />
+              </Grid>
+            </>
+          )}
 
           {/* User Groups Section (admin 5-7 only, and only on own profile) */}
-          {canViewUserGroupsSection && (
+          {canViewUserGroupsSection && !hideNonQuickSections && (
             <Grid item xs={12}>
-              <Card variant="outlined" sx={{ p: cardPadding }}>
+              <Card variant="outlined" sx={{ p: cardPadding, borderColor: 'divider', ...overviewCardSx }}>
                 <CardHeader
                   title={
                     <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -1819,12 +1928,13 @@ const transportOptions: Array<{
 
           {/* 📍 Employment Classification Section */}
           {/* Only show Employment Details for internal employees (security levels 5-7) */}
-          {(() => {
+          {!hideNonQuickSections &&
+          (() => {
             const profileSecurityLevel = parseInt(form.securityLevel || '0');
             return profileSecurityLevel >= 5 && profileSecurityLevel <= 7;
           })() && (
             <Grid item xs={12}>
-              <Card variant="outlined" sx={{ p: cardPadding }}>
+              <Card variant="outlined" sx={{ p: cardPadding, borderColor: 'divider', ...overviewCardSx }}>
                 <CardContent sx={{ p: 0 }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
                     <WorkIcon sx={{ mr: 1 }} color="primary" />
@@ -2062,95 +2172,6 @@ const transportOptions: Array<{
             </Card>
           </Grid>
           )}
-
-
-          {/* AI Insights section removed */}
-
-          {/* Address Section */}
-          <Grid item xs={12}>
-            <Card variant="outlined" sx={{ p: cardPadding }}>
-              <CardHeader 
-                title={
-                  <Box sx={{ display: 'flex', alignItems: 'center' }}>
-                    <LocationOnOutlinedIcon sx={{ mr: 1 }} color="primary" />
-                    <Typography variant="h6" sx={{ fontWeight: 700 }}>Home Address</Typography>
-                  </Box>
-                }
-                titleTypographyProps={{ component: 'div' }}
-                action={
-                  canEditProfile() && (
-                    <IconButton
-                      size="small"
-                      onClick={() => setIsEditingHomeAddress(!isEditingHomeAddress)}
-                      sx={{ 
-                        color: isEditingHomeAddress ? 'primary.main' : 'text.secondary',
-                        '&:hover': {
-                          bgcolor: 'action.hover'
-                        }
-                      }}
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                  )
-                }
-                sx={{ pb: 0, ...cardHeaderPadding }}
-              />
-              <CardContent sx={{ p: cardContentPadding, pt: cardContentPadding }}>
-                {isEditingHomeAddress ? (
-                  // Edit Mode - Show Address Form and Map
-                  <Box>
-                    <AddressFormFields uid={uid} formData={addressInfo} onFormChange={handleAddressChange} />
-                    <Box sx={{ mt: 3 }}>
-                      <MapWithMarkers
-                        homeLat={addressInfo.homeLat}
-                        homeLng={addressInfo.homeLng}
-                        workLat={addressInfo.workLat}
-                        workLng={addressInfo.workLng}
-                        currentLat={addressInfo.currentLat}
-                        currentLng={addressInfo.currentLng}
-                      />
-                    </Box>
-                  </Box>
-                ) : (
-                  // View Mode - Show as Read-Only Text
-                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                    {(addressInfo.streetAddress || addressInfo.city || addressInfo.state || addressInfo.zip) && (
-                      <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1 }}>
-                        <LocationOnOutlinedIcon sx={{ fontSize: 18, color: 'text.secondary', mt: 0.5, flexShrink: 0 }} />
-                        <Typography variant="body1">
-                          {[
-                            [addressInfo.streetAddress, addressInfo.unitNumber].filter(Boolean).join(', '),
-                            [addressInfo.city, addressInfo.state, addressInfo.zip].filter(Boolean).join(', ')
-                          ]
-                            .filter(Boolean)
-                            .join(', ') || '-'}
-                        </Typography>
-                      </Box>
-                    )}
-                    
-                    {/* Map in View Mode - Show if coordinates exist */}
-                    {((addressInfo.homeLat !== null && addressInfo.homeLat !== undefined && addressInfo.homeLng !== null && addressInfo.homeLng !== undefined) ||
-                      (addressInfo.workLat !== null && addressInfo.workLat !== undefined && addressInfo.workLng !== null && addressInfo.workLng !== undefined) ||
-                      (addressInfo.currentLat !== null && addressInfo.currentLat !== undefined && addressInfo.currentLng !== null && addressInfo.currentLng !== undefined)) && (
-                      <Box>
-                        <Typography variant="subtitle2" fontWeight={600} color="text.primary" sx={{ mb: 2, fontSize: '0.875rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                          Location Map
-                        </Typography>
-                        <MapWithMarkers
-                          homeLat={addressInfo.homeLat}
-                          homeLng={addressInfo.homeLng}
-                          workLat={addressInfo.workLat}
-                          workLng={addressInfo.workLng}
-                          currentLat={addressInfo.currentLat}
-                          currentLng={addressInfo.currentLng}
-                        />
-                      </Box>
-                    )}
-                  </Box>
-                )}
-              </CardContent>
-            </Card>
-          </Grid>
 
           {hasChanges && canEditProfile() && (
             <Grid item xs={12}>

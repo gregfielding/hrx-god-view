@@ -101,6 +101,8 @@ export type AiHiringReasonCode =
   | 'capacity_reached'
   | 'onboarding_throttled'
   | 'passed_all_checks'
+  | 'advance_with_caution_flags'
+  | 'interview_recommendation_review'
   | 'not_in_top_percent'
   | 'recommendation_decline'
   | 'gig_path_eligible'
