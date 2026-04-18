@@ -33,9 +33,12 @@ function stepById(visible: WorkerAiPrescreenStep[]): Partial<Record<WorkerAiPres
 }
 
 /**
- * Build ordered navigation: openings → work_confidence → early dynamic → experience → [exp followup] →
- * [motivation+pressure if expanded] → reliability → late dynamic → drug/bg/supervisor/notes.
- * When not expanded, motivation & pressure are omitted from UI and padded at submit.
+ * Build ordered navigation: openings → work_confidence → reliability (attendance/transport/physical) →
+ * early dynamic → experience → [exp followup] → [motivation+pressure if expanded] → late dynamic →
+ * drug/bg/supervisor/notes.
+ * Reliability precedes early job-fit dynamics so transport/attendance answers can deterministically
+ * de-duplicate shift/commute prompts. When not expanded, motivation & pressure are omitted from UI
+ * and padded at submit.
  */
 /** Once true for this interview session, optional follow-up steps stay in the nav (reduces step-count churn). */
 export type PrescreenSessionFollowupLocks = {
@@ -47,7 +50,10 @@ export type PrescreenSessionFollowupLocks = {
 export function buildPrescreenNavEntries(params: {
   isFastPath: boolean;
   visibleCoreSteps: WorkerAiPrescreenStep[];
-  dynamicSteps: WorkerAiPrescreenDynamicStep[];
+  /** Full dynamic plan from the server (stable order). */
+  dynamicStepsPlan: WorkerAiPrescreenDynamicStep[];
+  /** Dynamic steps still shown after deterministic dedupe (subset of the plan). */
+  visibleDynamicSteps: WorkerAiPrescreenDynamicStep[];
   answers: WorkerAiPrescreenAnswers;
   experienceFollowupText: string;
   /** Sticky session locks (client-only); see {@link PrescreenSessionFollowupLocks}. */
@@ -61,15 +67,18 @@ export function buildPrescreenNavEntries(params: {
   const {
     isFastPath,
     visibleCoreSteps,
-    dynamicSteps,
+    dynamicStepsPlan,
+    visibleDynamicSteps,
     answers,
     experienceFollowupText,
     sessionFollowupLocks,
     expandedNarrativeSticky,
   } = params;
   const byId = stepById(visibleCoreSteps);
-  const early = dynamicSteps.slice(0, Math.min(2, dynamicSteps.length));
-  const late = dynamicSteps.slice(early.length);
+  const visibleIds = new Set(visibleDynamicSteps.map((s) => s.id));
+  const plan = dynamicStepsPlan;
+  const early = plan.slice(0, Math.min(2, plan.length)).filter((s) => visibleIds.has(s.id));
+  const late = plan.slice(Math.min(2, plan.length)).filter((s) => visibleIds.has(s.id));
 
   const expWc = wordCountAnswer(String(answers.experience_details ?? ''));
   const showExpFollow =
@@ -84,6 +93,18 @@ export function buildPrescreenNavEntries(params: {
   }
 
   if (byId.work_confidence) out.push({ kind: 'core', step: byId.work_confidence });
+
+  const reliabilityOrder: WorkerAiPrescreenStepId[] = [
+    'attendance_issues',
+    'attendance_explanation',
+    'transportation_plan',
+    'backup_transportation',
+    'physical_comfort',
+  ];
+  for (const id of reliabilityOrder) {
+    const s = byId[id];
+    if (s) out.push({ kind: 'core', step: s });
+  }
 
   for (const step of early) {
     out.push({ kind: 'dynamic', step, phase: 'early' });
@@ -106,18 +127,6 @@ export function buildPrescreenNavEntries(params: {
         ((pWc >= 3 && pWc < 9) || sessionFollowupLocks?.pressureFollowup === true);
       if (showPressureFollow) out.push({ kind: 'client_followup', followup: 'pressure' });
     }
-  }
-
-  const reliabilityOrder: WorkerAiPrescreenStepId[] = [
-    'attendance_issues',
-    'attendance_explanation',
-    'transportation_plan',
-    'backup_transportation',
-    'physical_comfort',
-  ];
-  for (const id of reliabilityOrder) {
-    const s = byId[id];
-    if (s) out.push({ kind: 'core', step: s });
   }
 
   for (const step of late) {

@@ -283,7 +283,8 @@
     "title": "Entrevista rápida",
     "titleOptional": "Entrevista opcional",
     "subtitleWithJob": "Complétala para seguir con este empleo.",
-    "subtitleNoJob": "Unas respuestas rápidas nos ayudan a emparejarte con el trabajo adecuado.",
+    "subtitleNoJob": "Así conocemos tus fortalezas y preferencias para emparejarte con empleos y mostrar a los reclutadores que estás listo para trabajar — incluso antes de elegir un puesto concreto.",
+    "subtitleNoJobSecondary": "Es breve, sirve para tu perfil y puedes actualizar las respuestas después.",
     "subtitleOptional": "Puedes completar esta breve entrevista para ayudar al equipo a conocerte mejor. No es obligatoria para continuar.",
     "entryBanner": {
       "sms": "Abriste esto desde un mensaje — unas respuestas rápidas te ayudan a estar listo para trabajar.",
@@ -292,6 +293,7 @@
       "groupWithJob": "Desde tu invitación de grupo — unas respuestas ayudan con este empleo y futuros emparejamientos."
     },
     "earlyEncouragement": "Bien — vas por buen camino.",
+    "earlyEncouragementNoJob": "Buen comienzo — esto fortalece el perfil que usan los reclutadores para emparejarte.",
     "optionalFollowupChip": "Complemento",
     "durationHintShort": "Unos 2–3 minutos.",
     "durationHintLong": "Unos 3–5 minutos.",
@@ -321,7 +323,8 @@
     },
     "v2": {
       "transitionAfterOpening": "Genial — ahora emparejamos tus fortalezas con los roles adecuados.",
-      "transitionJobFit": "Ahora unas preguntas rápidas sobre este puesto.",
+      "transitionAfterOpeningNoJob": "Genial — ahora conectamos lo que compartiste con los tipos de roles que te encajan y reforzamos tu perfil para futuras postulaciones.",
+      "transitionJobFit": "Siguen algunas preguntas para este puesto y horario en concreto — son precisiones, no una repetición de lo que ya respondiste.",
       "transitionAlmostDone": "Último paso — solo para asegurarnos de poder ubicarte rápido.",
       "transitionWrapUpSingleStep": "Termina esta última pregunta para que podamos ubicarte rápido.",
       "followupExperiencePrompt": "Opcional: añade un ejemplo concreto (una frase puede bastar).",
@@ -330,7 +333,17 @@
       "followupPressurePlaceholder": "Breve ejemplo de cómo manejas la presión…",
       "followupSupervisorPrompt": "Opcional: un ejemplo de trabajo con un supervisor o retroalimentación.",
       "followupSupervisorPlaceholder": "Breve ejemplo: retroalimentación, equipo o comunicación…",
-      "followupTransitionLine": "Complemento rápido — una o dos frases abajo suman a tu respuesta de arriba."
+      "followupTransitionLine": "Complemento rápido — una o dos frases abajo suman a tu respuesta de arriba.",
+      "progressiveLead": {
+        "dyn_shift_punctuality": "Una verificación rápida para este turno — distinta de tus respuestas generales de puntualidad arriba.",
+        "dyn_worksite_commute": "Ahora sobre este lugar de trabajo en concreto — confirmamos esta ubicación para este empleo, no tu desplazamiento en general.",
+        "dyn_physical_job_fit": "Para este puesto en particular — confirmamos las expectativas físicas de esta vacante.",
+        "dyn_job_compliance": "Solo para confirmar con respecto a este empleo:",
+        "dyn_cert_have": "Otro requisito ligado a esta vacante:",
+        "dyn_cert_willing": "Si esta vacante lo exige, ¿seguirías este requisito de certificación?",
+        "dyn_uniform_available": "Para el vestuario o equipo de este rol:",
+        "dyn_gig_path_willing": "Una opción que algunos equipos usan mientras abre un puesto de tiempo completo:"
+      }
     },
     "openingMultiSelectHint": "Elige todas las que apliquen.",
     "placeholderShortAnswer": "Una o dos frases bastan",
@@ -341,11 +354,11 @@
       "not_sure": "No estoy seguro"
     },
     "dynamic": {
-      "dyn_shift_punctuality": "Tu turno comienza a las {startTime}. ¿Puedes llegar puntualmente de forma confiable?",
-      "dyn_worksite_commute": "Este trabajo está en {location}. ¿Podrás llegar de forma confiable?",
-      "dyn_job_drug_screen": "Este trabajo requiere un examen de drogas antes de comenzar. ¿Puedes completarlo?",
-      "dyn_job_background_check": "Este trabajo requiere verificación de antecedentes. ¿Puedes aprobarla y completarla?",
-      "dyn_physical_job_fit": "Este trabajo implica trabajo físico como {list}. ¿Te sientes cómodo/a con eso?",
+      "dyn_shift_punctuality": "Este turno comienza a las {startTime}. ¿Puedes llegar a tiempo para esta hora de inicio?",
+      "dyn_worksite_commute": "El lugar de trabajo de esta vacante está en {location}. ¿Puedes llegar de forma confiable a esta ubicación para este empleo?",
+      "dyn_job_drug_screen": "Esta vacante requiere un examen de drogas antes de empezar. ¿Puedes completarlo?",
+      "dyn_job_background_check": "Esta vacante requiere verificación de antecedentes. ¿Puedes aprobarla y completarla?",
+      "dyn_physical_job_fit": "En este puesto, el trabajo incluye tareas físicas como {list}. ¿Te sientes cómodo/a con eso para esta vacante?",
       "dyn_cert_have": "Este trabajo requiere {cert}. ¿Tienes esta certificación?",
       "dyn_cert_willing": "Si aún no tienes {cert}, ¿estarías dispuesto/a a obtenerla antes o poco después de empezar?",
       "dyn_uniform_available": "Este rol requiere {uniformText}. ¿Los tienes disponibles?",
@@ -356,6 +369,8 @@
     "successTitle": "Entrevista enviada",
     "successBody1": "Tus respuestas se guardaron. Nuestro equipo puede revisarlas con tu solicitud.",
     "successBody2": "Qué sigue: vuelve a tu panel. Si un reclutador necesita más información, se comunicará con los datos de tu perfil.",
+    "successBodyNoJob1": "Tus respuestas se guardaron en tu perfil. Las usaremos para sugerir mejores empleos y ayudar a los equipos a verte listo para trabajar.",
+    "successBodyNoJob2": "Siguiente paso: vuelve a tu panel. Cuando postules, los empleadores pueden ver este resumen de perfil — mantén actualizado tu contacto.",
     "referenceLabel": "Referencia: {id}",
     "loadingJobQuestions": "Cargando preguntas del puesto…",
     "alertChooseTenant": "Elige tu empleador en la parte superior si no ves los datos del puesto — eso ayuda a cargar las preguntas de esta solicitud.",

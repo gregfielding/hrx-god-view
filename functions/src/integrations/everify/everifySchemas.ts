@@ -131,6 +131,8 @@ export const EverifyI9EmployeePayload = z
     document_b_type_code: optTrim(64),
     document_c_type_code: optTrim(64),
     document_sub_type_code: optTrim(64),
+    /** HRX-only: resolved to ICA document_sub_type_code via tenant everify_ica_document_mappings; stripped before POST. */
+    everify_list_b_variant: z.enum(['REAL_ID', 'NON_REAL_ID']).optional(),
     /** ICA: often List B document number; confirm naming for List C in your ICA. */
     document_bc_number: optTrim(80),
     /** HRX extension if ICA uses a separate List C number attribute (confirm against ICA). */
@@ -184,6 +186,15 @@ export const WORKER_PUBLIC_FIELD_NAMES = [
 
 /** ICA v31: i9_case_flat request payload. Do NOT log or persist. */
 export type I9CaseFlat = Record<string, unknown>;
+
+/** Which merge layers contributed fields in resolveI9PayloadForCreateCase (sanitized logging). */
+export type EverifyMergeAttribution = {
+  envFixture: boolean;
+  profileHints: boolean;
+  supportingDocs: boolean;
+  client: boolean;
+  serviceOverrides: boolean;
+};
 
 /** ICA v31: Create draft case response */
 export interface CreateCaseDraftResponse {

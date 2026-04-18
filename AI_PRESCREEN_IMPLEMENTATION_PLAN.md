@@ -221,3 +221,13 @@ All on **`tenants/{tenantId}/applications/{applicationId}`**:
 - No change to `onWorkerI9SupportingDocumentExtract` or I-9 flows.
 - No redesign of worker home layout beyond one action card.
 - No automatic rejection of applicants based on eligibility; only **invite vs profile nudge** branching.
+
+---
+
+## 8. Deferred: “strong candidate” / fast-pass (proposal only — not shipped)
+
+**Status:** Explored, not implemented. Keep existing behavior: **dynamic step dedupe** only (`prescreenDynamicDedupe.ts` / shared mirror), not a broader auto-finish path.
+
+**Do not ship without explicit sign-off:** silently skipping compliance disclosures, job-required dynamics, or any step that creates legal/process risk; any UX that would **diverge client-visible steps from server validation** (drift).
+
+**Safer directions if revisited later:** stricter narrative quality gates, optional reduction of non-required follow-ups, lighter-weight `additional_notes`—implemented with **mirrored** plan + submit rules and clear audit/logging.

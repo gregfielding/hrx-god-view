@@ -311,7 +311,7 @@ export async function createAndSubmitCase(params: {
   };
   const ext = params.caseCreator?.phoneExt;
   if (ext != null && ext !== '') overrides.case_creator_phone_number_extension = ext;
-  const payload = await resolveI9PayloadForCreateCase({
+  const { payload, mergeAttribution } = await resolveI9PayloadForCreateCase({
     tenantId: params.tenantId,
     userId: params.userId,
     employeeFromClient: params.i9Employee,
@@ -322,7 +322,12 @@ export async function createAndSubmitCase(params: {
   let submitted: SubmitCaseResponse;
 
   try {
-    const draft = await createDraftCase(payload, creds);
+    const draft = await createDraftCase(payload, creds, {
+      mergeAttribution,
+      tenantId: params.tenantId,
+      userId: params.userId,
+      userEmploymentId: params.userEmploymentId,
+    });
     draftCaseNumber = draft.case_number;
     submitted = await submitCase(draftCaseNumber, creds);
   } catch (e: unknown) {

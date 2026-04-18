@@ -517,6 +517,7 @@ export function buildEmploymentEntityOverview(ctx: BuildOverviewContext): Employ
     assignmentRequirementsViewModel,
     systems,
     workerPayrollAccount: ctx.payrollAccount,
+    everifyCaseBriefs: entityKey === 'select' ? ctx.everifyCaseBriefs ?? [] : [],
   };
 }
 

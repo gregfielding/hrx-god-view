@@ -6,6 +6,7 @@ import * as admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import {
+  prescreenLetterGrade,
   scoreWorkerAiPrescreen,
   type AiPrescreenScoreResult,
   type WorkerAiPrescreenAnswers,
@@ -106,14 +107,24 @@ export async function composePrescreenAiBundle(args: {
     mergeDynamicDrugBackgroundIntoCoreAnswers(answers, dynamicAnswers);
 
   const answerQualityEval = evaluatePrescreenAnswerQuality(answersEffective);
+  const riskProfile = computeRiskProfile(answersEffective, drugBackgroundMergeMeta);
+  const riskAdmission = shouldFlagRiskAdmission(answersEffective, drugBackgroundMergeMeta);
   const scored = scoreWorkerAiPrescreen(answersEffective, {
     answerQualityFlags: answerQualityEval.flags,
     scoreAdjustment: answerQualityEval.scoreAdjustment,
     drugBackgroundMergeMeta: drugBackgroundMergeMeta,
+    extraPenaltyFlags: riskAdmission ? ['risk_admission_detected'] : [],
   });
-  const riskProfile = computeRiskProfile(answersEffective, drugBackgroundMergeMeta);
-  const riskAdmission = shouldFlagRiskAdmission(answersEffective, drugBackgroundMergeMeta);
-  const aiFlags = [...new Set([...scored.flags, ...(riskAdmission ? ['risk_admission_detected'] : [])])];
+  if (scored.overallScore >= 80 && scored.recommendation === 'decline') {
+    logger.warn('composePrescreenAiBundle.qa_high_score_with_decline', {
+      userId: args.userId,
+      interviewId: args.interviewId,
+      applicationId: args.applicationId,
+      overallScore: scored.overallScore,
+      flags: scored.flags,
+    });
+  }
+  const aiFlags = [...new Set([...scored.flags])];
   const confidenceScore = computeConfidenceScore({
     overallScore: scored.overallScore,
     answerQuality: answerQualityEval.answerQuality,
@@ -149,12 +160,15 @@ export async function composePrescreenAiBundle(args: {
 
   const aiBlockCore: Record<string, unknown> = {
     overallScore: scored.overallScore,
+    letterGrade: prescreenLetterGrade(scored.overallScore),
     recommendation: scored.recommendation,
+    reviewKind: scored.reviewKind ?? null,
     flags: aiFlags,
     answerQuality: answerQualityEval.answerQuality,
     confidenceScore,
     riskProfile,
     subScores: scored.subScores,
+    scoreBreakdown: scored.scoreBreakdown,
     summary: scored.summary,
     assignmentReadiness,
     alternatePaths,

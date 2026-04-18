@@ -5,6 +5,7 @@
  */
 
 import { logger } from 'firebase-functions/v2';
+import type { EverifyMergeAttribution } from './everifySchemas';
 
 const REST_CITIZENSHIP = new Set([
   'US_CITIZEN',
@@ -53,6 +54,12 @@ const PRESET_LIST_A_FOR_CITIZENSHIP_CHECK = new Set([
 
 /** List B / C codes we partially validate (state / number hints). */
 const LIST_B_STATE_CODES = new Set(['DRIVERS_LICENSE', 'GOVERNMENT_ID_CARD']);
+
+/** ICA often requires `document_sub_type_code` for these List B types; disable with EVERIFY_PREFLIGHT_STRICT_LISTB_SUBTYPE=false if your ICA omits it. */
+function strictListBDocumentSubtypeRequired(): boolean {
+  const raw = String(process.env.EVERIFY_PREFLIGHT_STRICT_LISTB_SUBTYPE ?? 'true').toLowerCase();
+  return raw !== 'false' && raw !== '0' && raw !== 'off';
+}
 
 export type ExtendedListAPreflightMode = 'off' | 'warn' | 'error';
 
@@ -169,7 +176,103 @@ export function summarizeI9PayloadForPreflightLog(data: Record<string, unknown>)
       typeof data.document_a_type_code === 'string' ? data.document_a_type_code : undefined,
     hasDocumentB: Boolean(data.document_b_type_code),
     hasDocumentC: Boolean(data.document_c_type_code),
+    hasExpirationDate: nonEmpty(data.expiration_date),
+    hasNoExpirationDate: data.no_expiration_date === true,
+    hasDocumentSubTypeCode: nonEmpty(data.document_sub_type_code),
   };
+}
+
+/** Sanitized operator log line before POST /cases (no SSN, names, or document numbers). */
+export function buildEverifySanitizedDraftLogFields(
+  data: Record<string, unknown>,
+  ctx: {
+    mergeAttribution?: EverifyMergeAttribution;
+    tenantId?: string;
+    userId?: string;
+    userEmploymentId?: string | null;
+  },
+): Record<string, unknown> {
+  const hasA = nonEmpty(data.document_a_type_code);
+  const hasB = nonEmpty(data.document_b_type_code);
+  const hasC = nonEmpty(data.document_c_type_code);
+  let documentMode: 'LIST_A' | 'LIST_BC' | 'NONE';
+  if (hasA && !hasB && !hasC) documentMode = 'LIST_A';
+  else if (!hasA && hasB && hasC) documentMode = 'LIST_BC';
+  else documentMode = 'NONE';
+
+  return {
+    tenantId: ctx.tenantId,
+    userId: ctx.userId,
+    userEmploymentId: ctx.userEmploymentId ?? null,
+    mergeAttribution: ctx.mergeAttribution,
+    documentMode,
+    document_a_type_code: typeof data.document_a_type_code === 'string' ? data.document_a_type_code : undefined,
+    document_b_type_code: typeof data.document_b_type_code === 'string' ? data.document_b_type_code : undefined,
+    document_c_type_code: typeof data.document_c_type_code === 'string' ? data.document_c_type_code : undefined,
+    citizenship_status_code:
+      typeof data.citizenship_status_code === 'string' ? data.citizenship_status_code : undefined,
+    hasExpirationDate: nonEmpty(data.expiration_date),
+    hasNoExpirationDate: data.no_expiration_date === true,
+    hasDocumentSubTypeCode: nonEmpty(data.document_sub_type_code),
+  };
+}
+
+/**
+ * List A XOR (List B + List C). Rejects mixed modes that pass the looser merge-time document check.
+ */
+function validateListDocumentModeExclusive(data: Record<string, unknown>): void {
+  const hasA = nonEmpty(data.document_a_type_code);
+  const hasB = nonEmpty(data.document_b_type_code);
+  const hasC = nonEmpty(data.document_c_type_code);
+
+  if (hasA && (hasB || hasC)) {
+    throw new Error(
+      'E-Verify preflight: use List A only, or List B and List C together — do not combine List A with List B/C fields in one payload.',
+    );
+  }
+  if (!hasA && hasB !== hasC) {
+    throw new Error(
+      'E-Verify preflight: List B and List C must both be present (or use List A without B/C).',
+    );
+  }
+}
+
+/** After normalization: ICA forbids both expiration_date and no_expiration_date. */
+function validateExpirationMutualExclusionPostNorm(data: Record<string, unknown>): void {
+  const exp = normStr(data.expiration_date);
+  const noExp = data.no_expiration_date === true;
+  if (noExp && exp) {
+    throw new Error(
+      'E-Verify preflight: expiration_date must be omitted when no_expiration_date is true (internal inconsistency after normalization).',
+    );
+  }
+}
+
+function validateDocumentSubTypeWhenRequired(data: Record<string, unknown>): void {
+  const hasA = nonEmpty(data.document_a_type_code);
+  const docA = normStr(data.document_a_type_code);
+  if (hasA && (docA === 'US_PASSPORT' || docA === 'US_PASSPORT_RECEIPT')) {
+    if (!nonEmpty(data.document_sub_type_code)) {
+      throw new Error(
+        'E-Verify preflight: document_sub_type_code is required for US_PASSPORT / US_PASSPORT_RECEIPT (expected from normalization).',
+      );
+    }
+  }
+
+  const hasB = nonEmpty(data.document_b_type_code);
+  const hasC = nonEmpty(data.document_c_type_code);
+  if (!hasB || !hasC) return;
+
+  const bCode = normStr(data.document_b_type_code);
+  if (LIST_B_STATE_CODES.has(bCode) && strictListBDocumentSubtypeRequired()) {
+    if (!nonEmpty(data.document_sub_type_code)) {
+      throw new Error(
+        'E-Verify preflight: document_sub_type_code is required for List B driver license / state ID (DRIVERS_LICENSE, GOVERNMENT_ID_CARD) per ICA. ' +
+          'Set it in the E-Verify form (List B document subtype / ICA code), or EVERIFY_I9_FIXTURE_JSON. ' +
+          'If your ICA does not use this field, set env EVERIFY_PREFLIGHT_STRICT_LISTB_SUBTYPE=false.',
+      );
+    }
+  }
 }
 
 /**
@@ -201,6 +304,8 @@ export function preflightI9CreateCasePayloadAfterNormalization(data: Record<stri
   const hasA = nonEmpty(data.document_a_type_code);
   const hasB = nonEmpty(data.document_b_type_code);
   const hasC = nonEmpty(data.document_c_type_code);
+
+  validateListDocumentModeExclusive(data);
 
   const extMode = extendedListAMode();
 
@@ -243,6 +348,9 @@ export function preflightI9CreateCasePayloadAfterNormalization(data: Record<stri
     }
     validateListBcPerType(data);
   }
+
+  validateExpirationMutualExclusionPostNorm(data);
+  validateDocumentSubTypeWhenRequired(data);
 
   const empEmail = normStr(data.employee_email_address).toLowerCase();
   const creatorEmail = normStr(data.case_creator_email_address).toLowerCase();

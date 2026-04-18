@@ -56,6 +56,27 @@ function roundScore(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n)));
 }
 
+/**
+ * Pulls down scores above `softStart` so 95–100 is rare: maps [softStart, 100] → [softStart, cap].
+ * Low/mid scores unchanged (no harsher floors).
+ */
+function dampenHighEnd(
+  raw: number,
+  opts: { softStart: number; ceiling: number; stretchCeiling?: number; allowStretch?: boolean },
+): number {
+  const { softStart, ceiling, stretchCeiling = ceiling, allowStretch = false } = opts;
+  const cap = allowStretch ? stretchCeiling : ceiling;
+  if (raw <= softStart) return roundScore(raw);
+  const t = (raw - softStart) / (100 - softStart);
+  return roundScore(softStart + t * (cap - softStart));
+}
+
+/** Slight compression of 80+ band to reduce ceiling clustering; preserves ordering. */
+function lightCompressUpperTail(n: number, start = 80, factor = 0.87): number {
+  if (n <= start) return roundScore(n);
+  return roundScore(start + (n - start) * factor);
+}
+
 function scalePts(pts: number, maxPts: number): number {
   if (maxPts <= 0) return 0;
   return (pts / maxPts) * 100;
@@ -129,6 +150,55 @@ function teamFitFromNarratives(answers: WorkerAiPrescreenAnswers): { score: numb
   }
 
   return { score: Math.min(100, pts), tags };
+}
+
+const STRONG_TRANSPORT_MODES = new Set([
+  'own_vehicle',
+  'ride_from_someone_else',
+  'public_transportation',
+  'walk_bike',
+  'other',
+]);
+
+/** >90 punctuality only if clear attendance + reliable commute (aligned with transport dedupe heuristics). */
+function punctualityStretchAllowed(
+  answers: WorkerAiPrescreenAnswers,
+  scored: AiPrescreenScoreResult,
+  punctTags: string[],
+): boolean {
+  const att = normLower(answers.attendance_issues);
+  if (att !== 'no') return false;
+  const tp = normLower(answers.transportation_plan);
+  const bu = normLower(answers.backup_transportation);
+  if (tp === 'not_sure_yet' || tp === '') return false;
+  if (bu !== 'yes') return false;
+  if (!STRONG_TRANSPORT_MODES.has(tp)) return false;
+  const { flags, subScores } = scored;
+  if (flags.includes('attendance_risk') || flags.includes('transportation_risk') || flags.includes('no_backup_transport')) {
+    return false;
+  }
+  if (subScores.transportation < 16) return false;
+  if (punctTags.some((t) => t.includes('dynamic:shift_punctuality:no') || t.includes('dynamic:worksite_commute:no'))) {
+    return false;
+  }
+  return true;
+}
+
+/** >90 work ethic only with high experience sub-score, substantive narratives, no low-effort flag. */
+function workEthicStretchAllowed(scored: AiPrescreenScoreResult, workEthicEvidence: string[]): boolean {
+  if (scored.flags.includes('low_effort_response')) return false;
+  if (scored.flags.includes('limited_relevant_experience')) return false;
+  if (scored.subScores.experience < 22) return false;
+  return (
+    workEthicEvidence.includes('pressure_situation:substantive') &&
+    workEthicEvidence.includes('motivation:substantive')
+  );
+}
+
+/** >90 team fit only with strong both narratives and no vague-response flag. */
+function teamFitStretchAllowed(tfTags: string[], flags: string[]): boolean {
+  if (flags.includes('vague_response')) return false;
+  return tfTags.includes('supervisor_feedback:strong') && tfTags.includes('motivation:strong');
 }
 
 function punctualityWithDynamics(
@@ -293,12 +363,91 @@ export function computePrescreenCategoryScores(args: ComputePrescreenCategorySco
   ev.stability.push(`blend:reliability_transport_attendance`);
   if (att === 'no') ev.stability.push('attendance:stable_signal');
 
+  const punctStretch = punctualityStretchAllowed(answers, scored, punct.tags);
+  let punctualityScore = dampenHighEnd(punct.score, {
+    softStart: 72,
+    ceiling: 90,
+    stretchCeiling: 95,
+    allowStretch: punctStretch,
+  });
+  punctualityScore = lightCompressUpperTail(punctualityScore);
+  if (punctualityScore < punct.score) ev.punctuality.push('calibration:high_end_dampen');
+  if (punctStretch) ev.punctuality.push('calibration:stretch_band');
+
+  const weStretch = workEthicStretchAllowed(scored, ev.workEthic);
+  const workEthicRaw = roundScore(expN);
+  let workEthicScore = dampenHighEnd(workEthicRaw, {
+    softStart: 78,
+    ceiling: 88,
+    stretchCeiling: 92,
+    allowStretch: weStretch,
+  });
+  workEthicScore = lightCompressUpperTail(workEthicScore);
+  if (workEthicScore < workEthicRaw) ev.workEthic.push('calibration:high_end_dampen');
+  if (weStretch) ev.workEthic.push('calibration:stretch_band');
+
+  const tfStretch = teamFitStretchAllowed(tf.tags, flags);
+  let teamFitScore = dampenHighEnd(tf.score, {
+    softStart: 72,
+    ceiling: 86,
+    stretchCeiling: 91,
+    allowStretch: tfStretch,
+  });
+  teamFitScore = lightCompressUpperTail(teamFitScore);
+  if (teamFitScore < tf.score) ev.teamFit.push('calibration:high_end_dampen');
+  if (tfStretch) ev.teamFit.push('calibration:stretch_band');
+
+  if (flags.includes('vague_response')) {
+    const bw = workEthicScore;
+    const bt = teamFitScore;
+    workEthicScore = Math.min(workEthicScore, 87);
+    teamFitScore = Math.min(teamFitScore, 86);
+    if (workEthicScore < bw) ev.workEthic.push('calibration:flag_vague_response_cap');
+    if (teamFitScore < bt) ev.teamFit.push('calibration:flag_vague_response_cap');
+  }
+  if (flags.includes('low_effort_response')) {
+    const bw = workEthicScore;
+    const bt = teamFitScore;
+    workEthicScore = Math.min(workEthicScore, 85);
+    teamFitScore = Math.min(teamFitScore, 84);
+    if (workEthicScore < bw) ev.workEthic.push('calibration:flag_low_effort_response_cap');
+    if (teamFitScore < bt) ev.teamFit.push('calibration:flag_low_effort_response_cap');
+  }
+
+  if (scored.recommendation !== 'proceed') {
+    const beforeP = punctualityScore;
+    const beforeW = workEthicScore;
+    const beforeT = teamFitScore;
+    punctualityScore = Math.min(punctualityScore, 88);
+    workEthicScore = Math.min(workEthicScore, 88);
+    teamFitScore = Math.min(teamFitScore, 88);
+    if (punctualityScore < beforeP) ev.punctuality.push('calibration:coherence_non_proceed_cap');
+    if (workEthicScore < beforeW) ev.workEthic.push('calibration:coherence_non_proceed_cap');
+    if (teamFitScore < beforeT) ev.teamFit.push('calibration:coherence_non_proceed_cap');
+  }
+
+  if (flags.includes('transportation_risk') || flags.includes('no_backup_transport')) {
+    const b = punctualityScore;
+    punctualityScore = Math.min(punctualityScore, 90);
+    if (punctualityScore < b) ev.punctuality.push('calibration:coherence_transport_risk_cap');
+  }
+  if (flags.includes('attendance_risk')) {
+    const b = punctualityScore;
+    punctualityScore = Math.min(punctualityScore, 90);
+    if (punctualityScore < b) ev.punctuality.push('calibration:coherence_attendance_risk_cap');
+  }
+  if (flags.includes('limited_relevant_experience')) {
+    const b = workEthicScore;
+    workEthicScore = Math.min(workEthicScore, 88);
+    if (workEthicScore < b) ev.workEthic.push('calibration:coherence_limited_experience_cap');
+  }
+
   const categoryScores: PrescreenCategoryScoresV1 = {
     version: 1,
     reliability: roundScore(relN),
-    punctuality: punct.score,
-    workEthic: roundScore(expN),
-    teamFit: tf.score,
+    punctuality: punctualityScore,
+    workEthic: workEthicScore,
+    teamFit: teamFitScore,
     jobReadiness: jr.score,
     stability: stabilityScore,
   };

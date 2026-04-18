@@ -313,7 +313,15 @@ export const everifyDryRunCreateAndSubmit = onCall(
       }
       const creds = { username, password };
       const payload = resolveI9PayloadFromFixture();
-      const draft = await createDraftCase(payload, creds);
+      const draft = await createDraftCase(payload, creds, {
+        mergeAttribution: {
+          envFixture: true,
+          profileHints: false,
+          supportingDocs: false,
+          client: false,
+          serviceOverrides: false,
+        },
+      });
       const caseNumber = draft.case_number;
       const submitted = await submitCase(caseNumber, creds);
       const providerStatus = submitted.case_status ?? draft.case_status ?? 'UNKNOWN';

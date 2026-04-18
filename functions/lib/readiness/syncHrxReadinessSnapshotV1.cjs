@@ -538,7 +538,8 @@ function assignmentReadinessEmploymentFromPipeline(args) {
     entityEmployment: ee,
     workerOnboarding: args.workerOnboarding,
     workerType: wt,
-    workerPayrollAccount: args.workerPayrollAccount ?? null
+    workerPayrollAccount: args.workerPayrollAccount ?? null,
+    everifyCaseBriefs: []
   };
   const { i9, w4OrW9 } = buildTaxIdentityChecklistItems(overviewLike);
   const { handbook, policies } = buildHandbookPoliciesItems({

@@ -6,6 +6,7 @@
 
 import type {
   EmploymentAssignmentSummary,
+  EmploymentEverifySummary,
   EmploymentOnboardingNarrative,
   EmploymentOnboardingNarrativeActor,
   EmploymentOnboardingNarrativeEvent,
@@ -20,6 +21,7 @@ import type { WorkerPayrollAccount } from '../types/payroll';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { ExternalOnboardingStepRecord } from '../types/externalOnboardingSteps';
 import { isExternalOnboardingStepVerifiedComplete, parseExternalOnboardingSteps } from './externalOnboardingSteps';
+import { computeEverifySummaryFieldsFromLatestCaseData } from './everifyHrxStatusDisplay';
 
 const FALLBACK_ADMIN = 'Not started yet — no detailed activity recorded.';
 const FALLBACK_WORKER = 'Nothing to do here yet.';
@@ -29,7 +31,18 @@ export interface EverifyCaseNarrativeBrief {
   entityId?: string;
   createdAt?: Date | null;
   updatedAt?: Date | null;
+  /** ICA / E-Verify human-readable status (primary line for narratives and audit). */
   statusDisplay?: string;
+  /** Normalized HRX status from `public.status` / top-level `status`. */
+  hrxStatus?: string;
+  submittedAt?: Date | null;
+  lastCheckedAt?: Date | null;
+  everifyCaseNumber?: string;
+  eligibilityStatement?: string;
+  /** Whitelisted ICA `raw` fields when present on the case doc. */
+  rawSsaReferralStatus?: string;
+  rawDhsReferralStatus?: string;
+  rawDhsReferralDueDate?: string;
 }
 
 /** Subset of tenants/{tid}/onboarding_automation_dispatch for payroll narrative (MVP). */
@@ -1400,22 +1413,90 @@ export function enrichOnboardingPathWithNarrativesFromOverviewDeps(
   return enrichOnboardingPathGroupsWithNarratives(groups, narrativeContextFromBuildOverview(deps));
 }
 
+/** Same rollup as recruiter Employment tab / worker My Employment (latest Select-entity case). */
+export function buildEverifySummaryFromCaseDocs(
+  caseDocs: Array<{ id: string; data: () => Record<string, unknown> }>,
+  selectEntityId: string | null
+): EmploymentEverifySummary | null {
+  if (!selectEntityId) {
+    return { applicable: false, statusDisplay: 'No C1 Select entity', caseCount: 0 };
+  }
+  const selectCases = caseDocs.filter((d) => String(d.data().entityId || '') === selectEntityId);
+  if (selectCases.length === 0) {
+    return {
+      applicable: true,
+      statusDisplay: 'No cases',
+      caseCount: 0,
+      actionNeeded: false,
+    };
+  }
+  const sorted = [...selectCases].sort((a, b) => {
+    const ta = (a.data().updatedAt as { seconds?: number } | undefined)?.seconds ?? 0;
+    const tb = (b.data().updatedAt as { seconds?: number } | undefined)?.seconds ?? 0;
+    return tb - ta;
+  });
+  const latest = sorted[0];
+  const data = latest.data() as Record<string, unknown>;
+  const fields = computeEverifySummaryFieldsFromLatestCaseData(data);
+  return {
+    applicable: true,
+    statusDisplay: fields.statusDisplay,
+    latestHrxStatus: fields.latestHrxStatus,
+    caseCount: selectCases.length,
+    latestCaseId: latest.id,
+    actionNeeded: fields.actionNeeded,
+  };
+}
+
 export function buildEverifyCaseBriefsForSelectEntity(
   caseDocs: Array<{ id: string; data: () => Record<string, unknown> }>,
   selectEntityId: string | null
 ): EverifyCaseNarrativeBrief[] {
   if (!selectEntityId) return [];
-  return caseDocs
+  const briefs = caseDocs
     .filter((d) => String(d.data().entityId || '') === selectEntityId)
     .map((d) => {
-      const raw = d.data();
-      const pub = raw.public as { status?: string } | undefined;
+      const raw = d.data() as Record<string, unknown>;
+      const fields = computeEverifySummaryFieldsFromLatestCaseData(raw);
+      const pub = raw.public as
+        | {
+            status?: string;
+            statusDisplay?: string;
+            eligibilityStatement?: string;
+          }
+        | undefined;
+      const rawWhitelisted = raw.raw as Record<string, unknown> | undefined;
+      const hrx = String(pub?.status ?? raw.status ?? '').trim();
+
+      const ssa = rawWhitelisted?.ssa_referral_status;
+      const dhs = rawWhitelisted?.dhs_referral_status;
+      const dhsDue = rawWhitelisted?.dhs_referral_due_date;
+
       return {
         caseId: d.id,
         entityId: String(raw.entityId || ''),
         createdAt: coerceFirestoreDate(raw.createdAt),
         updatedAt: coerceFirestoreDate(raw.updatedAt),
-        statusDisplay: String(pub?.status ?? raw.status ?? ''),
+        submittedAt: coerceFirestoreDate(raw.submittedAt),
+        lastCheckedAt: coerceFirestoreDate(raw.lastCheckedAt),
+        statusDisplay: fields.statusDisplay,
+        hrxStatus: hrx || undefined,
+        everifyCaseNumber: String(raw.everifyCaseNumber ?? rawWhitelisted?.case_number ?? '').trim() || undefined,
+        eligibilityStatement:
+          typeof pub?.eligibilityStatement === 'string' && pub.eligibilityStatement.trim()
+            ? pub.eligibilityStatement.trim()
+            : typeof rawWhitelisted?.case_eligibility_statement === 'string'
+              ? String(rawWhitelisted.case_eligibility_statement).trim()
+              : undefined,
+        rawSsaReferralStatus: typeof ssa === 'string' ? ssa : undefined,
+        rawDhsReferralStatus: typeof dhs === 'string' ? dhs : undefined,
+        rawDhsReferralDueDate: typeof dhsDue === 'string' ? dhsDue : undefined,
       };
     });
+  briefs.sort((a, b) => {
+    const ta = a.updatedAt?.getTime() ?? a.submittedAt?.getTime() ?? 0;
+    const tb = b.updatedAt?.getTime() ?? b.submittedAt?.getTime() ?? 0;
+    return tb - ta;
+  });
+  return briefs;
 }

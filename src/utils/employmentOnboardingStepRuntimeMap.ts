@@ -32,6 +32,29 @@ import {
   type ExternalOnboardingWorkerTypeNorm,
 } from './externalOnboardingSteps';
 import { labelsForExternalOnboardingRecord } from './employmentOnboardingPathAudienceLabels';
+import type { EverifyHrxOutcome } from './everifyHrxStatusDisplay';
+import { everifyHrxOutcome, normalizeEverifyHrxStatus } from './everifyHrxStatusDisplay';
+
+/** Fallback when `latestHrxStatus` is missing on cached summaries (prefer normalized HRX on fresh reads). */
+function inferEverifyOutcomeFromDisplay(disp: string): EverifyHrxOutcome {
+  const lower = disp.toLowerCase();
+  if (lower.includes('final nonconfirmation') || lower.includes('final_nonconfirmation')) {
+    return 'unfavorable_terminal';
+  }
+  if (lower.includes('employment authorized') || lower.includes('employment_authorized')) {
+    return 'favorable_terminal';
+  }
+  if (lower.includes('duplicate') || lower.includes('closure duplicate') || lower.includes('closure_duplicate')) {
+    return 'neutral_terminal';
+  }
+  if (lower.includes('closed')) {
+    return 'neutral_terminal';
+  }
+  if (lower.includes('error') || lower.includes('failed')) {
+    return 'error';
+  }
+  return 'in_progress';
+}
 
 /** Whether this row’s status is row-specific or backed by a coarse/shared signal. */
 export type StepStatusFidelity = 'dedicated' | 'shared_pipeline' | 'subsystem_preferred';
@@ -455,12 +478,17 @@ function statusFromEverifySummary(
   if (!summary?.applicable || summary.caseCount <= 0) return null;
   const disp = String(summary.statusDisplay || '—');
   const lower = disp.toLowerCase();
-  if (['closed', 'authorized', 'completed', 'final_nonconfirmation', 'closure_duplicate'].some((x) => lower.includes(x))) {
-    return {
-      status: 'completed',
-      statusLabel: disp,
-      used: true,
-    };
+  const hrxNorm = normalizeEverifyHrxStatus(summary.latestHrxStatus ?? '');
+  const outcome = hrxNorm ? everifyHrxOutcome(hrxNorm) : inferEverifyOutcomeFromDisplay(disp);
+
+  if (outcome === 'favorable_terminal') {
+    return { status: 'completed', statusLabel: disp, used: true };
+  }
+  if (outcome === 'unfavorable_terminal' || outcome === 'error') {
+    return { status: 'error', statusLabel: disp, used: true };
+  }
+  if (outcome === 'neutral_terminal') {
+    return { status: 'satisfied_by_existing_record', statusLabel: disp, used: true };
   }
   if (lower.includes('error') || (lower.includes('tentative') && lower.includes('nonconfirmation'))) {
     return { status: 'error', statusLabel: disp, used: true };

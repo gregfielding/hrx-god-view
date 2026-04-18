@@ -28,7 +28,8 @@
     "run:accusource:create-test": "npx ts-node src/scripts/runAccusourceCreateTest.ts",
     "backfill:everify:entity-id": "npx ts-node src/scripts/backfillEverifyCaseEntityId.ts",
     "backfill:everify:public-mirror": "npx ts-node src/scripts/alignEverifyCasesPublicMirror.ts",
-    "backfill:worker-ai-prescreen": "npm run build && node lib/scripts/backfillWorkerAiPrescreenInterviews.js"
+    "backfill:worker-ai-prescreen": "npm run build && node lib/scripts/rescoreWorkerAiPrescreenInterviews.js",
+    "prescreen:rescore": "npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts"
   },
   "engines": {
     "node": "20"

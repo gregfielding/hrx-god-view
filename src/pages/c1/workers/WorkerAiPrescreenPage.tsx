@@ -42,6 +42,7 @@ import { db } from '../../../firebase';
 import { formatFirebaseHttpsError } from '../../../utils/firebaseHttpsErrors';
 import type { WorkerAiPrescreenAnswers } from '../../../utils/workerAiPrescreenScore';
 import { PRESCREEN_MIN_SUBSTANTIVE_WORDS } from '../../../shared/prescreenAnswerQuality';
+import { applyPrescreenDynamicDedupe } from '../../../shared/prescreenDynamicDedupe';
 import type {
   WorkerAiPrescreenDynamicAnswer,
   WorkerAiPrescreenDynamicStep,
@@ -93,6 +94,23 @@ type JobHeaderInfo = {
   /** Parsed from job order `worksiteAddress` — same document the server uses to build assignment location. */
   worksiteCommute?: WorksiteCommuteBlock;
 };
+
+/** i18n key for a short line above job-specific dynamics (clarifies layering vs general reliability answers). */
+function progressiveLeadI18nKeyForDynamicStepId(stepId: string): string | null {
+  const direct: Record<string, string> = {
+    dyn_shift_punctuality: 'workerAiPrescreen.v2.progressiveLead.dyn_shift_punctuality',
+    dyn_worksite_commute: 'workerAiPrescreen.v2.progressiveLead.dyn_worksite_commute',
+    dyn_physical_job_fit: 'workerAiPrescreen.v2.progressiveLead.dyn_physical_job_fit',
+    dyn_job_drug_screen: 'workerAiPrescreen.v2.progressiveLead.dyn_job_compliance',
+    dyn_job_background_check: 'workerAiPrescreen.v2.progressiveLead.dyn_job_compliance',
+    dyn_uniform_available: 'workerAiPrescreen.v2.progressiveLead.dyn_uniform_available',
+    dyn_gig_path_willing: 'workerAiPrescreen.v2.progressiveLead.dyn_gig_path_willing',
+  };
+  if (direct[stepId]) return direct[stepId];
+  if (stepId.startsWith('dyn_cert_willing__')) return 'workerAiPrescreen.v2.progressiveLead.dyn_cert_willing';
+  if (stepId.startsWith('dyn_cert__')) return 'workerAiPrescreen.v2.progressiveLead.dyn_cert_have';
+  return null;
+}
 
 function emptyAnswers(): WorkerAiPrescreenAnswers {
   return {
@@ -461,12 +479,26 @@ const WorkerAiPrescreenPage: React.FC = () => {
     expandedNarrativeEverWeakRef.current = true;
   }
 
+  const visibleDynamicSteps = useMemo(() => {
+    if (dynamicSteps.length === 0) return [];
+    return applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers).visibleSteps;
+  }, [
+    dynamicSteps,
+    answers,
+    answers.attendance_issues,
+    answers.transportation_plan,
+    answers.backup_transportation,
+    answers.physical_comfort,
+    dynamicAnswers,
+  ]);
+
   const navEntries = useMemo(
     () =>
       buildPrescreenNavEntries({
         isFastPath: PRESCREEN_FAST_PATH_V2,
         visibleCoreSteps,
-        dynamicSteps,
+        dynamicStepsPlan: dynamicSteps,
+        visibleDynamicSteps,
         answers,
         experienceFollowupText: experienceFollowupOptional,
         sessionFollowupLocks,
@@ -475,15 +507,20 @@ const WorkerAiPrescreenPage: React.FC = () => {
     [
       visibleCoreSteps,
       dynamicSteps,
+      visibleDynamicSteps,
       answers,
       answers.experience_details,
       answers.opening_target_work_types,
       answers.opening_schedule_preferences,
       answers.attendance_issues,
+      answers.transportation_plan,
+      answers.backup_transportation,
+      answers.physical_comfort,
       answers.pressure_situation,
       answers.supervisor_feedback,
       experienceFollowupOptional,
       sessionFollowupLocks,
+      dynamicAnswers,
     ],
   );
 
@@ -806,11 +843,20 @@ const WorkerAiPrescreenPage: React.FC = () => {
     return String(prev.step.id).startsWith('opening_');
   }, [coreStep?.id, stepIndex, navEntries]);
 
+  const firstDynamicNavIndex = useMemo(
+    () => navEntries.findIndex((e) => e.kind === 'dynamic'),
+    [navEntries],
+  );
+
   const showJobFitTransition = useMemo(() => {
-    if (!isDynamicPhase || !dynamicStep || stepIndex < 1) return false;
-    const prevNav = navEntries[stepIndex - 1];
-    return prevNav?.kind === 'core' && prevNav.step.id === 'work_confidence';
-  }, [isDynamicPhase, dynamicStep, stepIndex, navEntries]);
+    if (!isDynamicPhase || !dynamicStep || firstDynamicNavIndex < 0) return false;
+    return stepIndex === firstDynamicNavIndex;
+  }, [isDynamicPhase, dynamicStep, stepIndex, firstDynamicNavIndex]);
+
+  const progressiveDynamicLeadKey = useMemo(() => {
+    if (!isDynamicPhase || !dynamicStep) return null;
+    return progressiveLeadI18nKeyForDynamicStepId(dynamicStep.id);
+  }, [isDynamicPhase, dynamicStep]);
 
   /** Only in the last two steps so “almost done” does not appear when wrap-up still has several screens left. */
   const showWrapUpAlmostDoneTransition = useMemo(() => {
@@ -903,13 +949,6 @@ const WorkerAiPrescreenPage: React.FC = () => {
     setSubmitting(true);
     setError(null);
     try {
-      const payloadDyn: Record<string, WorkerAiPrescreenDynamicAnswer> = {};
-      for (const s of dynamicSteps) {
-        const v = String(dynamicAnswers[s.id] ?? '').trim().toLowerCase();
-        if (v === 'yes' || v === 'no' || v === 'not_sure') {
-          payloadDyn[s.id] = v;
-        }
-      }
       if (currentEntry) {
         logPrescreenStepCompleted({
           stepId: navEntryStepId(currentEntry),
@@ -927,11 +966,25 @@ const WorkerAiPrescreenPage: React.FC = () => {
         (e) => e.kind === 'core' && (e.step.id === 'motivation' || e.step.id === 'pressure_situation'),
       );
       const padded = ensureFastPathNarrativePadding(merged, expandedNarrativeShown);
+      const mergedDynamic = applyPrescreenDynamicDedupe(dynamicSteps, padded, dynamicAnswers).mergedDynamicAnswers;
       const result = await submitWorkerAiPrescreenInterview({
-        answers: buildAnswersForSubmit(padded, dynamicSteps, dynamicAnswers),
+        answers: buildAnswersForSubmit(padded, dynamicSteps, mergedDynamic),
         applicationId: applicationId || null,
         tenantId,
-        dynamicAnswers: Object.keys(payloadDyn).length > 0 ? payloadDyn : undefined,
+        entry: entryQuery?.trim() || null,
+        dynamicAnswers: (() => {
+          const payloadDyn: Record<string, WorkerAiPrescreenDynamicAnswer> = {};
+          for (const s of dynamicSteps) {
+            const v = String(mergedDynamic[s.id] ?? '')
+              .trim()
+              .toLowerCase()
+              .replace(/\s+/g, '_');
+            if (v === 'yes' || v === 'no' || v === 'not_sure') {
+              payloadDyn[s.id] = v;
+            }
+          }
+          return Object.keys(payloadDyn).length > 0 ? payloadDyn : undefined;
+        })(),
         sessionProfileEnhancements: buildPrescreenSessionProfileEnhancements(userDoc ?? undefined),
       });
       const started = interviewStartedAtMs.current ?? Date.now();
@@ -1003,9 +1056,14 @@ const WorkerAiPrescreenPage: React.FC = () => {
             : t('workerAiPrescreen.subtitleOptional')}
         </Typography>
       ) : (
-        <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.35 }}>
-          {t('workerAiPrescreen.subtitleNoJob')}
-        </Typography>
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.35 }}>
+            {t('workerAiPrescreen.subtitleNoJob')}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ lineHeight: 1.35, pt: 0.35 }}>
+            {t('workerAiPrescreen.subtitleNoJobSecondary')}
+          </Typography>
+        </>
       )}
       {applicationId && jobHeaderInfo && !opts?.loading ? (
         <Stack spacing={0.25} sx={{ pt: 0.25 }}>
@@ -1059,10 +1117,10 @@ const WorkerAiPrescreenPage: React.FC = () => {
               {t('workerAiPrescreen.successTitle')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420, lineHeight: 1.45 }}>
-              {t('workerAiPrescreen.successBody1')}
+              {applicationId ? t('workerAiPrescreen.successBody1') : t('workerAiPrescreen.successBodyNoJob1')}
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 420, lineHeight: 1.45 }}>
-              {t('workerAiPrescreen.successBody2')}
+              {applicationId ? t('workerAiPrescreen.successBody2') : t('workerAiPrescreen.successBodyNoJob2')}
             </Typography>
             {submittedInterviewId ? (
               <Typography variant="caption" color="text.secondary" display="block" sx={{ fontFamily: 'monospace' }}>
@@ -1146,7 +1204,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
           display="block"
           sx={{ mb: 1.25, fontWeight: 600, letterSpacing: 0.02 }}
         >
-          {t('workerAiPrescreen.earlyEncouragement')}
+          {t(
+            applicationId
+              ? 'workerAiPrescreen.earlyEncouragement'
+              : 'workerAiPrescreen.earlyEncouragementNoJob',
+          )}
         </Typography>
       ) : null}
 
@@ -1174,12 +1236,21 @@ const WorkerAiPrescreenPage: React.FC = () => {
         ) : null}
         {openingCompleteBanner ? (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
-            {t('workerAiPrescreen.v2.transitionAfterOpening')}
+            {t(
+              applicationId
+                ? 'workerAiPrescreen.v2.transitionAfterOpening'
+                : 'workerAiPrescreen.v2.transitionAfterOpeningNoJob',
+            )}
           </Typography>
         ) : null}
         {showJobFitTransition ? (
           <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
             {t('workerAiPrescreen.v2.transitionJobFit')}
+          </Typography>
+        ) : null}
+        {progressiveDynamicLeadKey ? (
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.25, lineHeight: 1.45 }}>
+            {t(progressiveDynamicLeadKey)}
           </Typography>
         ) : null}
         {showWrapUpAlmostDoneTransition ? (

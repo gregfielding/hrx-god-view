@@ -181,6 +181,8 @@ export interface EmploymentAssignmentSummary {
 export interface EmploymentEverifySummary {
   applicable: boolean;
   statusDisplay: string;
+  /** Normalized HRX status from latest case (`public.status` / `status`) for logic and chips. */
+  latestHrxStatus?: string | null;
   caseCount: number;
   latestCaseId?: string | null;
   actionNeeded?: boolean;
@@ -573,6 +575,12 @@ export interface EmploymentEntityOverview {
 
   /** Worker payroll account doc for this entity tab (invite timestamps, status). */
   workerPayrollAccount: (WorkerPayrollAccount & { id: string }) | null;
+
+  /**
+   * Select-entity E-Verify cases (from `everify_cases`) for audit-style detail in onboarding UI.
+   * Empty when not Select or when no cases match the resolved Select `entityId`.
+   */
+  everifyCaseBriefs: import('../../../../utils/employmentOnboardingNarrative').EverifyCaseNarrativeBrief[];
 }
 
 export type { SignatureEnvelopeStatus };

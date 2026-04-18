@@ -17,7 +17,9 @@ import { logger } from 'firebase-functions/v2';
 import { httpJson, summarizeHttpErrorBody } from './everifyHttp';
 import { getAccessToken as getIcaAccessToken, type EverifyCredentials } from './everifyAuth';
 import { applyRestDraftPayloadNormalization } from './everifyI9Provider';
+import type { EverifyMergeAttribution } from './everifySchemas';
 import {
+  buildEverifySanitizedDraftLogFields,
   preflightI9CreateCasePayloadAfterNormalization,
   summarizeI9PayloadForPreflightLog,
 } from './everifyI9Preflight';
@@ -203,27 +205,43 @@ export async function createCaseStub(req: EverifyCreateCaseRequest): Promise<Eve
 
 // ─── ICA v31: create draft + submit (no Firestore) ─────────────────────────
 
+export type EverifyCreateDraftCaseOptions = {
+  mergeAttribution?: EverifyMergeAttribution;
+  tenantId?: string;
+  userId?: string;
+  userEmploymentId?: string | null;
+};
+
 /**
  * ICA v31: Create draft case via POST /cases.
  * Uses Bearer token from everifyAuth.getAccessToken(creds).
  */
 export async function createDraftCase(
   payload: I9CaseFlat,
-  creds: EverifyCredentials
+  creds: EverifyCredentials,
+  opts?: EverifyCreateDraftCaseOptions,
 ): Promise<CreateCaseDraftResponse> {
   assertEverifyEnvUrlConsistency();
   const body = payload as Record<string, unknown>;
   applyRestDraftPayloadNormalization(body);
+  const logCtx = {
+    mergeAttribution: opts?.mergeAttribution,
+    tenantId: opts?.tenantId,
+    userId: opts?.userId,
+    userEmploymentId: opts?.userEmploymentId,
+  };
   try {
     preflightI9CreateCasePayloadAfterNormalization(body);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     logger.warn('everify.preflight_rejected', {
       ...summarizeI9PayloadForPreflightLog(body),
+      ...buildEverifySanitizedDraftLogFields(body, logCtx),
       message: msg.slice(0, 400),
     });
     throw e;
   }
+  logger.info('everify.create_draft.submitting', buildEverifySanitizedDraftLogFields(body, logCtx));
   const baseUrl = getEverifyBaseUrl().replace(/\/$/, '');
   const url = `${baseUrl}/cases`;
   const token = await getIcaAccessToken(creds);
@@ -250,7 +268,10 @@ export async function createDraftCase(
     };
   } catch (e: unknown) {
     const detail = summarizeHttpErrorBody(e);
-    logger.warn('E-Verify create draft: USCIS returned error', { detail: detail.slice(0, 800) });
+    logger.warn('E-Verify create draft: USCIS returned error', {
+      detail: detail.slice(0, 800),
+      ...buildEverifySanitizedDraftLogFields(body, logCtx),
+    });
     throw new Error(`E-Verify create draft failed: ${detail}`);
   }
 }

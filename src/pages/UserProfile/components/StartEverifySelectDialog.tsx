@@ -39,6 +39,15 @@ import {
   where,
   query,
 } from 'firebase/firestore';
+import {
+  EVERIFY_ICA_MAPPINGS_SETTINGS_ID,
+  isInternalEverifySubtypeDefaultTenant,
+  configuredVariantKeys,
+  getSingleAutoVariant,
+  rowForListBCode,
+  type EverifyIcaDocumentMappingsDoc,
+  type EverifyListBVariant,
+} from '../../../types/everifyIcaDocumentMappings';
 import { httpsCallable } from 'firebase/functions';
 import { db, functions } from '../../../firebase';
 import { p } from '../../../data/firestorePaths';
@@ -73,6 +82,9 @@ import {
   type I9CaseFlatPartialFromSupporting,
   type I9SupportingDocLike,
 } from '../../../utils/i9SupportingToEverifyPrefill';
+
+/** When true, shows raw ICA `document_sub_type_code` checkbox + field. Hidden until we need it in production. */
+const SHOW_EVERIFY_LISTB_SUBTYPE_ADVANCED_OVERRIDE = false;
 
 const userEmploymentsCol = (tenantId: string) => collection(db, 'tenants', tenantId, 'user_employments');
 
@@ -248,6 +260,14 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   const [evDocCSelection, setEvDocCSelection] = useState('');
   const [evDocCCustomCode, setEvDocCCustomCode] = useState('');
   const [evDocCNumber, setEvDocCNumber] = useState('');
+  /** Raw ICA subtype — only when advanced override is enabled. */
+  const [evDocSubTypeCode, setEvDocSubTypeCode] = useState('');
+  const [evSubtypeOverrideEnabled, setEvSubtypeOverrideEnabled] = useState(false);
+  /** REAL_ID vs NON_REAL_ID when tenant mapping defines both variants. */
+  const [evListBVariant, setEvListBVariant] = useState<EverifyListBVariant | ''>('');
+  const [icaMappingsDoc, setIcaMappingsDoc] = useState<EverifyIcaDocumentMappingsDoc | null>(null);
+  const [icaMappingsLoading, setIcaMappingsLoading] = useState(false);
+  const [icaMappingsLoaded, setIcaMappingsLoaded] = useState(false);
   /** List B issuing state (`us_state_code`); required for DRIVERS_LICENSE / GOVERNMENT_ID_CARD per E-Verify preflight. */
   const [evDocUsStateCode, setEvDocUsStateCode] = useState('');
   /** Loading tenants/…/entities to resolve C1 Select LLC for E-Verify. */
@@ -303,6 +323,70 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
   }, [evDocMode, evDocBSelection, evDocBCustomCode]);
   const showListBStateField = everifyListBRequiresUsStateCode(listBResolvedIcaCode);
 
+  useEffect(() => {
+    if (!open || !tenantId) return;
+    let cancelled = false;
+    setIcaMappingsLoading(true);
+    setIcaMappingsLoaded(false);
+    getDoc(doc(db, 'tenants', tenantId, 'settings', EVERIFY_ICA_MAPPINGS_SETTINGS_ID))
+      .then((snap) => {
+        if (cancelled) return;
+        setIcaMappingsDoc(snap.exists() ? (snap.data() as EverifyIcaDocumentMappingsDoc) : null);
+      })
+      .catch(() => {
+        if (!cancelled) setIcaMappingsDoc(null);
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIcaMappingsLoading(false);
+          setIcaMappingsLoaded(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, tenantId]);
+
+  useEffect(() => {
+    setEvListBVariant('');
+  }, [listBResolvedIcaCode]);
+
+  const tenantListBSubtypeRow = useMemo(() => {
+    if (evDocMode !== 'list_bc' || !listBResolvedIcaCode || !icaMappingsDoc) return null;
+    return rowForListBCode(listBResolvedIcaCode, icaMappingsDoc);
+  }, [evDocMode, listBResolvedIcaCode, icaMappingsDoc]);
+
+  /** Tenant Company Defaults only — internal C1 uses doc-class subtype without a variant row. */
+  const effectiveListBSubtypeRow = useMemo(() => {
+    if (evDocMode !== 'list_bc' || !listBResolvedIcaCode) return null;
+    if (tenantListBSubtypeRow && configuredVariantKeys(tenantListBSubtypeRow).length > 0) {
+      return tenantListBSubtypeRow;
+    }
+    return null;
+  }, [evDocMode, listBResolvedIcaCode, tenantListBSubtypeRow]);
+
+  /** C1 internal: subtype enum is derived from List B preset (DRIVERS_LICENSE / STATE_ID_CARD); no REAL ID UI. */
+  const listBInternalDocClassFallback = useMemo(() => {
+    if (evDocMode !== 'list_bc' || !listBResolvedIcaCode) return false;
+    if (!isInternalEverifySubtypeDefaultTenant(tenantId)) return false;
+    const tenantHas =
+      tenantListBSubtypeRow != null && configuredVariantKeys(tenantListBSubtypeRow).length > 0;
+    if (tenantHas) return false;
+    if (!everifyListBRequiresUsStateCode(listBResolvedIcaCode)) return false;
+    return (
+      listBResolvedIcaCode === 'DRIVERS_LICENSE' || listBResolvedIcaCode === 'GOVERNMENT_ID_CARD'
+    );
+  }, [evDocMode, listBResolvedIcaCode, tenantListBSubtypeRow, tenantId]);
+
+  const listBVariantOptionKeys = useMemo(
+    () => configuredVariantKeys(effectiveListBSubtypeRow),
+    [effectiveListBSubtypeRow],
+  );
+  const listBSingleAutoVariant = useMemo(
+    () => getSingleAutoVariant(effectiveListBSubtypeRow),
+    [effectiveListBSubtypeRow],
+  );
+
   const everifyDocFormValid = useMemo(() => {
     if (!evCitizenshipCode.trim()) return false;
     if (evDocMode === 'list_a') {
@@ -340,7 +424,23 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     const listBcStateOk =
       !listBNeedsState ||
       (stUpper.length === 2 && (US_STATE_CODES as readonly string[]).includes(stUpper));
-    return bOk && cOk && listBcExpOk && listBcStateOk;
+    let listBcSubtypeOk = true;
+    if (listBNeedsState) {
+      if (!icaMappingsLoaded || icaMappingsLoading) {
+        listBcSubtypeOk = false;
+      } else if (evSubtypeOverrideEnabled) {
+        listBcSubtypeOk = evDocSubTypeCode.trim().length > 0;
+      } else if (listBInternalDocClassFallback) {
+        listBcSubtypeOk = true;
+      } else if (listBVariantOptionKeys.length === 0) {
+        listBcSubtypeOk = false;
+      } else if (listBVariantOptionKeys.length === 1) {
+        listBcSubtypeOk = true;
+      } else {
+        listBcSubtypeOk = evListBVariant === 'REAL_ID' || evListBVariant === 'NON_REAL_ID';
+      }
+    }
+    return bOk && cOk && listBcExpOk && listBcStateOk && listBcSubtypeOk;
   }, [
     evCitizenshipCode,
     evDocMode,
@@ -355,6 +455,14 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     evDocExpiration,
     evDocNoExpiration,
     evDocUsStateCode,
+    evDocSubTypeCode,
+    evSubtypeOverrideEnabled,
+    evListBVariant,
+    icaMappingsLoaded,
+    icaMappingsLoading,
+    listBVariantOptionKeys,
+    listBSingleAutoVariant,
+    listBInternalDocClassFallback,
   ]);
 
   /** `i551_number` invalid while non-empty (custom List A only; Green Card preset uses Alien # only). */
@@ -579,9 +687,58 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
           msgs.push('Complete the I-9 document section (List A type, numbers, and expiration rules).');
         }
       } else {
-        msgs.push(
-          'Complete List B and List C document types, List B identity document number (document_bc_number), issuing state for driver license / state ID (us_state_code), and expiration (YYYY-MM-DD) or “no expiration” per ICA.',
-        );
+        const resolvedB =
+          evDocBSelection === EVERIFY_DOC_CUSTOM ? evDocBCustomCode.trim() : evDocBSelection;
+        const resolvedC =
+          evDocCSelection === EVERIFY_DOC_CUSTOM ? evDocCCustomCode.trim() : evDocCSelection;
+        const needsBState = everifyListBRequiresUsStateCode(resolvedB);
+        const stOk =
+          !needsBState ||
+          (() => {
+            const st = evDocUsStateCode.trim().toUpperCase();
+            return st.length === 2 && (US_STATE_CODES as readonly string[]).includes(st);
+          })();
+        const expOk =
+          evDocNoExpiration ||
+          (evDocExpiration.trim() !== '' && /^\d{4}-\d{2}-\d{2}$/.test(evDocExpiration.trim()));
+        if (!resolvedB || !resolvedC) {
+          msgs.push('Select List B and List C document types (or enter ICA codes for “Other”).');
+        } else if (!evDocBNumber.trim()) {
+          msgs.push('Enter the List B identity document number (document_bc_number).');
+        } else if (!expOk) {
+          msgs.push('Enter List B expiration as YYYY-MM-DD or check “no expiration” when allowed.');
+        } else if (needsBState && !stOk) {
+          msgs.push('Select the issuing state (us_state_code) for this List B document.');
+        } else if (needsBState && icaMappingsLoading) {
+          msgs.push('Loading tenant E-Verify subtype settings…');
+        } else if (
+          needsBState &&
+          icaMappingsLoaded &&
+          !evSubtypeOverrideEnabled &&
+          listBVariantOptionKeys.length === 0
+        ) {
+          msgs.push(
+            SHOW_EVERIFY_LISTB_SUBTYPE_ADVANCED_OVERRIDE
+              ? 'No E-Verify subtype mapping for this List B ICA type. Configure Company Defaults → E-Verify, or use Advanced override with a raw document_sub_type_code.'
+              : 'No E-Verify subtype mapping for this List B ICA type. Configure Company Defaults → E-Verify.',
+          );
+        } else if (
+          needsBState &&
+          !evSubtypeOverrideEnabled &&
+          listBVariantOptionKeys.length >= 2 &&
+          evListBVariant !== 'REAL_ID' &&
+          evListBVariant !== 'NON_REAL_ID'
+        ) {
+          msgs.push('Select REAL ID or Non-REAL ID for this List B document.');
+        } else if (evSubtypeOverrideEnabled && !evDocSubTypeCode.trim()) {
+          msgs.push(
+            'Enter the raw ICA document_sub_type_code (advanced override), or turn off override to use tenant mapping or internal defaults (C1).',
+          );
+        } else {
+          msgs.push(
+            'Complete the List B + List C document section (types, numbers, state if required, expiration).',
+          );
+        }
       }
     }
     return msgs;
@@ -598,6 +755,18 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     evDocANumberValue,
     evDocExpiration,
     evDocNoExpiration,
+    evDocBSelection,
+    evDocBCustomCode,
+    evDocCSelection,
+    evDocCCustomCode,
+    evDocBNumber,
+    evDocUsStateCode,
+    evSubtypeOverrideEnabled,
+    evDocSubTypeCode,
+    evListBVariant,
+    listBVariantOptionKeys,
+    icaMappingsLoading,
+    icaMappingsLoaded,
   ]);
 
   const handleUserEmploymentI9StatusChange = async (next: string) => {
@@ -651,6 +820,9 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
     setEvDocCSelection('');
     setEvDocCCustomCode('');
     setEvDocCNumber('');
+    setEvDocSubTypeCode('');
+    setEvSubtypeOverrideEnabled(false);
+    setEvListBVariant('');
     setCreateEmploymentError(null);
     setEverifyHiringEntityResolved(null);
     setNewEmploymentStartIso(new Date().toISOString().slice(0, 10));
@@ -834,6 +1006,15 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
           return;
         }
         docFields.us_state_code = st;
+      }
+      if (evSubtypeOverrideEnabled && evDocSubTypeCode.trim()) {
+        docFields.document_sub_type_code = evDocSubTypeCode.trim();
+      } else if (
+        !evSubtypeOverrideEnabled &&
+        !listBSingleAutoVariant &&
+        (evListBVariant === 'REAL_ID' || evListBVariant === 'NON_REAL_ID')
+      ) {
+        docFields.everify_list_b_variant = evListBVariant;
       }
       if (evDocNoExpiration) {
         docFields.no_expiration_date = true;
@@ -1377,6 +1558,92 @@ export const StartEverifySelectDialog: React.FC<StartEverifySelectDialogProps> =
                               Required for List B driver license and state-issued ID (E-Verify ICA preflight).
                             </FormHelperText>
                           </FormControl>
+                        ) : null}
+                        {showListBStateField ? (
+                          <Stack spacing={1}>
+                            {icaMappingsLoading ? (
+                              <Stack direction="row" spacing={1} alignItems="center">
+                                <CircularProgress size={20} />
+                                <Typography variant="body2" color="text.secondary">
+                                  Loading tenant E-Verify subtype mapping…
+                                </Typography>
+                              </Stack>
+                            ) : SHOW_EVERIFY_LISTB_SUBTYPE_ADVANCED_OVERRIDE && evSubtypeOverrideEnabled ? (
+                              <TextField
+                                size="small"
+                                label="Raw document_sub_type_code (advanced override)"
+                                value={evDocSubTypeCode}
+                                onChange={(e) => setEvDocSubTypeCode(e.target.value)}
+                                fullWidth
+                                required
+                                autoComplete="off"
+                                helperText="ICA enum from your agreement. Use only when tenant mapping in Company Defaults cannot be applied."
+                              />
+                            ) : listBInternalDocClassFallback ? (
+                              <Typography variant="body2" color="text.secondary">
+                                Using internal default E-Verify subtype mapping for this document type:{' '}
+                                <strong>document_sub_type_code</strong> matches your List B choice (driver license →
+                                DRIVERS_LICENSE, state-issued ID → STATE_ID_CARD). No extra subtype selection needed.
+                                {SHOW_EVERIFY_LISTB_SUBTYPE_ADVANCED_OVERRIDE
+                                  ? ' Advanced override is still available if needed.'
+                                  : ''}
+                              </Typography>
+                            ) : listBVariantOptionKeys.length === 0 ? (
+                              <Alert severity="warning">
+                                No subtype mapping for this List B ICA type. Add values under{' '}
+                                <strong>Company Defaults → E-Verify</strong>
+                                {SHOW_EVERIFY_LISTB_SUBTYPE_ADVANCED_OVERRIDE
+                                  ? ', or enable advanced override below.'
+                                  : '.'}
+                              </Alert>
+                            ) : listBVariantOptionKeys.length === 1 && listBSingleAutoVariant ? (
+                              <Typography variant="body2" color="text.secondary">
+                                Document subtype ({listBSingleAutoVariant === 'REAL_ID' ? 'REAL ID' : 'Non-REAL ID'}) is
+                                filled automatically from tenant settings — no ICA code entry needed.
+                              </Typography>
+                            ) : (
+                              <FormControl fullWidth size="small" required>
+                                <InputLabel id="ev-list-b-variant-label">List B document subtype</InputLabel>
+                                <Select
+                                  labelId="ev-list-b-variant-label"
+                                  label="List B document subtype"
+                                  value={evListBVariant}
+                                  displayEmpty
+                                  onChange={(e) =>
+                                    setEvListBVariant(e.target.value as EverifyListBVariant | '')
+                                  }
+                                >
+                                  <MenuItem value="">
+                                    <em>Select…</em>
+                                  </MenuItem>
+                                  {listBVariantOptionKeys.includes('REAL_ID') ? (
+                                    <MenuItem value="REAL_ID">REAL ID</MenuItem>
+                                  ) : null}
+                                  {listBVariantOptionKeys.includes('NON_REAL_ID') ? (
+                                    <MenuItem value="NON_REAL_ID">Non-REAL ID</MenuItem>
+                                  ) : null}
+                                </Select>
+                                <FormHelperText>
+                                  Tenant-specific ICA value is applied at submit (document_sub_type_code).
+                                </FormHelperText>
+                              </FormControl>
+                            )}
+                            {SHOW_EVERIFY_LISTB_SUBTYPE_ADVANCED_OVERRIDE ? (
+                              <FormControlLabel
+                                control={
+                                  <Checkbox
+                                    checked={evSubtypeOverrideEnabled}
+                                    onChange={(_, v) => {
+                                      setEvSubtypeOverrideEnabled(v);
+                                      if (v) setEvListBVariant('');
+                                      else setEvDocSubTypeCode('');
+                                    }}
+                                  />
+                                }
+                                label="Advanced: enter raw ICA document_sub_type_code (overrides tenant mapping and internal defaults)"
+                              />
+                            ) : null}
+                          </Stack>
                         ) : null}
                         <TextField
                           size="small"

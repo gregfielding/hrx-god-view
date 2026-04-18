@@ -89,6 +89,7 @@ function main(): void {
     document_b_type_code: 'DRIVERS_LICENSE',
     document_c_type_code: 'BIRTH_CERTIFICATE',
     document_bc_number: 'D123',
+    document_sub_type_code: 'REAL_ID_COMPLIANT',
     expiration_date: '2030-01-01',
     us_state_code: 'CA',
   };
@@ -106,6 +107,16 @@ function main(): void {
       ...base(),
       document_a_type_code: 'FORM_I766',
       i766_number: 'x',
+    },
+    false,
+  );
+
+  run(
+    'Failure: List A + List B fields together',
+    {
+      ...usPass,
+      document_b_type_code: 'DRIVERS_LICENSE',
+      document_c_type_code: 'SOCIAL_SECURITY_CARD',
     },
     false,
   );

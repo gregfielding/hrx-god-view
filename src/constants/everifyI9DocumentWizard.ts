@@ -57,12 +57,12 @@ export interface EverifyListBCPresetRow {
 
 export const EVERIFY_LIST_B_PRESETS: EverifyListBCPresetRow[] = [
   {
-    label: "Driver's license or state-issued ID (List B)",
+    label: "Driver's license (List B)",
     code: 'DRIVERS_LICENSE',
     forCitizenship: '*',
   },
   {
-    label: 'Government-issued ID card (List B)',
+    label: 'State-issued ID card (List B)',
     code: 'GOVERNMENT_ID_CARD',
     forCitizenship: '*',
   },

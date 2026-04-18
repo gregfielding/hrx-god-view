@@ -1,5 +1,9 @@
 /**
- * Optional fields on users/{uid}/interviews/* when interviewKind === 'worker_ai_prescreen'.
+ * Optional fields on users/{uid}/interviews/* when interviewKind === 'worker_ai_prescreen`.
+ *
+ * Top-level interview document may also include:
+ * - `entry` (optional string): prescreen URL `entry` query param at submit time for attribution
+ *   (aligned with `buildWorkerAiPrescreenInviteUrl` / worker dashboard links). Omitted when absent or invalid.
  */
 
 import type { PrescreenCategoryEvidenceV1, PrescreenCategoryScoresV1 } from './prescreenCategoryScores';

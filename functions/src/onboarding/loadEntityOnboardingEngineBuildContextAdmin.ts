@@ -6,6 +6,7 @@
  * (see comment in `useEntityEmploymentOverview`).
  */
 import type * as FirebaseFirestore from 'firebase-admin/firestore';
+import { computeEverifySummaryFieldsFromLatestCaseData } from './everifyHrxStatusDisplay';
 
 type EmploymentEntityKey = 'select' | 'workforce' | 'events';
 
@@ -87,18 +88,15 @@ function buildEverifySummary(
     return tb - ta;
   });
   const latest = sorted[0];
-  const data = latest.data();
-  const pub = data.public as { status?: string } | undefined;
-  const statusDisplay = String(pub?.status ?? data.status ?? '—');
-  const closed = ['closed', 'closure_duplicate', 'completed', 'authorized', 'final_nonconfirmation'].some((x) =>
-    statusDisplay.toLowerCase().includes(x)
-  );
+  const data = latest.data() as Record<string, unknown>;
+  const fields = computeEverifySummaryFieldsFromLatestCaseData(data);
   return {
     applicable: true,
-    statusDisplay,
+    statusDisplay: fields.statusDisplay,
+    latestHrxStatus: fields.latestHrxStatus,
     caseCount: selectCases.length,
     latestCaseId: latest.id,
-    actionNeeded: !closed && !statusDisplay.includes('—'),
+    actionNeeded: fields.actionNeeded,
   };
 }
 

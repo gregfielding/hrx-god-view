@@ -33,6 +33,7 @@
  *   npm run qa:prescreen-review -- --max-score=40 --limit=10
  *   npm run qa:prescreen-review -- --after=2026-04-10T00:00:00.000Z
  *   npm run qa:prescreen-review -- --cursor-read --cursor-write=incremental
+ *   npm run qa:prescreen-review -- --limit=15 --batch-label="morning review"
  */
 
 import * as admin from 'firebase-admin';
@@ -90,6 +91,8 @@ type CliConfig = {
   cursorRead: boolean;
   cursorWrite: 'incremental' | 'pagination' | 'both' | '';
   dryRunCursor: boolean;
+  /** Optional label shown in markdown header (batch identification when pasting). */
+  batchLabel: string;
 };
 
 function printHelp(): void {
@@ -116,6 +119,7 @@ Options:
   --cursor-read          Merge cursor bounds with CLI times
   --cursor-write=incremental|pagination|both
   --dry-run-cursor
+  --batch-label=TEXT    Optional label for markdown header (e.g. "morning review")
   --help
 `);
 }
@@ -129,6 +133,7 @@ function parseArgs(argv: string[]): CliConfig {
     cursorRead: false,
     cursorWrite: '',
     dryRunCursor: false,
+    batchLabel: '',
   };
 
   for (const a of argv) {
@@ -177,6 +182,8 @@ function parseArgs(argv: string[]): CliConfig {
       out.entry = a.slice('--entry='.length).trim();
     } else if (a.startsWith('--cursor-file=')) {
       out.cursorFile = path.resolve(a.slice('--cursor-file='.length).trim());
+    } else if (a.startsWith('--batch-label=')) {
+      out.batchLabel = a.slice('--batch-label='.length).trim();
     }
   }
   return out;
@@ -431,17 +438,138 @@ async function fetchBatch(
   return { docs: collected.slice(0, cfg.limit), scansUsed: scansUsed.n };
 }
 
-function formatMarkdown(docs: admin.firestore.QueryDocumentSnapshot[], cfg: CliConfig): string {
+type PrescreenBatchSummary = {
+  interviewsReturned: number;
+  scansUsed: number;
+  dateRangeCovered: { minIso: string | null; maxIso: string | null };
+  /** decision string → count; key "(none)" when missing */
+  decisionBreakdown: Record<string, number>;
+  withApplicationCount: number;
+  withoutApplicationCount: number;
+  /** Sorted by count desc, capped */
+  flagsTop: Array<{ flag: string; count: number }>;
+  scoreStats: {
+    min: number | null;
+    max: number | null;
+    avg: number | null;
+    /** Docs with a numeric overallScore */
+    withScoreCount: number;
+  };
+};
+
+function buildBatchSummary(
+  docs: admin.firestore.QueryDocumentSnapshot[],
+  scansUsed: number,
+): PrescreenBatchSummary {
+  const decisionBreakdown: Record<string, number> = {};
+  let withApplicationCount = 0;
+  let withoutApplicationCount = 0;
+  const flagAgg = new Map<string, number>();
+  const scores: number[] = [];
+  const times: number[] = [];
+
+  for (const d of docs) {
+    const data = d.data() as Record<string, unknown>;
+    const ai = (data.ai || {}) as Record<string, unknown>;
+    const hd = (ai.hiringDecision || {}) as Record<string, unknown>;
+    const decRaw = hd.decision != null ? String(hd.decision).trim() : '';
+    const decKey = decRaw || '(none)';
+    decisionBreakdown[decKey] = (decisionBreakdown[decKey] || 0) + 1;
+
+    const appId = data.applicationId;
+    const hasApp = appId != null && String(appId).trim() !== '';
+    if (hasApp) withApplicationCount += 1;
+    else withoutApplicationCount += 1;
+
+    const flags = Array.isArray(ai.flags) ? (ai.flags as unknown[]).map(String) : [];
+    for (const f of flags) {
+      const k = f.trim() || '(empty)';
+      flagAgg.set(k, (flagAgg.get(k) || 0) + 1);
+    }
+
+    const overall = typeof ai.overallScore === 'number' ? ai.overallScore : null;
+    if (overall != null && Number.isFinite(overall)) scores.push(overall);
+
+    const created = tsToDate(data.createdAt) || tsToDate(data.timestamp);
+    if (created) times.push(created.getTime());
+  }
+
+  const minT = times.length ? Math.min(...times) : null;
+  const maxT = times.length ? Math.max(...times) : null;
+  const avg =
+    scores.length > 0 ? Math.round((scores.reduce((a, b) => a + b, 0) / scores.length) * 10) / 10 : null;
+
+  const flagsTop = [...flagAgg.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, 12)
+    .map(([flag, count]) => ({ flag, count }));
+
+  return {
+    interviewsReturned: docs.length,
+    scansUsed,
+    dateRangeCovered: {
+      minIso: minT != null ? new Date(minT).toISOString() : null,
+      maxIso: maxT != null ? new Date(maxT).toISOString() : null,
+    },
+    decisionBreakdown,
+    withApplicationCount,
+    withoutApplicationCount,
+    flagsTop,
+    scoreStats: {
+      min: scores.length ? Math.min(...scores) : null,
+      max: scores.length ? Math.max(...scores) : null,
+      avg,
+      withScoreCount: scores.length,
+    },
+  };
+}
+
+function formatMarkdown(docs: admin.firestore.QueryDocumentSnapshot[], cfg: CliConfig, scansUsed: number): string {
+  const summary = buildBatchSummary(docs, scansUsed);
   const lines: string[] = [];
   lines.push(`# Worker AI prescreen — QA batch`);
   lines.push('');
+  if (cfg.batchLabel) {
+    lines.push(`- **Batch:** ${cfg.batchLabel}`);
+    lines.push('');
+  }
   lines.push(`- Generated: ${new Date().toISOString()}`);
-  lines.push(`- Filters: ${JSON.stringify({ ...cfg, cursor: undefined })}`);
+  const { batchLabel: _batchLabelOmitted, ...cfgRest } = cfg;
+  lines.push(`- Filters: ${JSON.stringify({ ...cfgRest, cursor: undefined })}`);
   lines.push('');
 
-  let i = 0;
+  lines.push(`## Summary`);
+  lines.push('');
+  lines.push(`- **Interviews returned:** ${summary.interviewsReturned}`);
+  lines.push(`- **Scans used:** ${summary.scansUsed}`);
+  const drMin = summary.dateRangeCovered.minIso;
+  const drMax = summary.dateRangeCovered.maxIso;
+  lines.push(
+    `- **Date range (createdAt):** ${drMin && drMax ? `\`${drMin}\` → \`${drMax}\`` : '— (no rows)'}`,
+  );
+  const decParts = Object.entries(summary.decisionBreakdown)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([k, v]) => `${k}: ${v}`);
+  lines.push(`- **Decisions:** ${decParts.length ? decParts.join(' · ') : '—'}`);
+  lines.push(
+    `- **Application link:** with \`applicationId\`: ${summary.withApplicationCount} · without: ${summary.withoutApplicationCount}`,
+  );
+  const flagLine =
+    summary.flagsTop.length > 0
+      ? summary.flagsTop.map(({ flag, count }) => `\`${flag}\` (${count})`).join(', ')
+      : '—';
+  lines.push(`- **Common flags (batch):** ${flagLine}`);
+  const { min, max, avg, withScoreCount } = summary.scoreStats;
+  if (withScoreCount > 0 && min != null && max != null && avg != null) {
+    lines.push(`- **Score (overall):** min ${min} · max ${max} · avg ${avg} (_n=${withScoreCount} with score_)`);
+  } else {
+    lines.push(`- **Score (overall):** — (_no numeric scores in batch_)`);
+  }
+  lines.push('');
+
+  let n = 0;
   for (const d of docs) {
-    i += 1;
+    n += 1;
     const data = d.data() as Record<string, unknown>;
     const parts = d.ref.path.split('/');
     const userId = parts.length >= 2 ? parts[1] : '';
@@ -457,7 +585,7 @@ function formatMarkdown(docs: admin.firestore.QueryDocumentSnapshot[], cfg: CliC
     const cat = ai.categoryScores as Record<string, unknown> | undefined;
     const catConf = ai.categoryConfidence as Record<string, unknown> | undefined;
 
-    lines.push(`## ${i}. ${d.id}`);
+    lines.push(`## ${n}. ${d.id}`);
     lines.push('');
     lines.push('### Context');
     lines.push('');
@@ -555,9 +683,23 @@ async function main(): Promise<void> {
         data: { ...data, ai },
       };
     });
-    console.log(JSON.stringify({ generatedAt: new Date().toISOString(), scansUsed, count: payload.length, interviews: payload }, null, 2));
+    const summary = buildBatchSummary(docs, scansUsed);
+    console.log(
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          batchLabel: cfg.batchLabel || undefined,
+          summary,
+          scansUsed,
+          count: payload.length,
+          interviews: payload,
+        },
+        null,
+        2,
+      ),
+    );
   } else {
-    console.log(formatMarkdown(docs, cfg));
+    console.log(formatMarkdown(docs, cfg, scansUsed));
     console.log('');
     console.log(`---`);
     console.log(`_Scans (read documents): ${scansUsed}_`);

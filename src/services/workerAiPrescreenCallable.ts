@@ -16,6 +16,11 @@ export type SubmitWorkerAiPrescreenInput = {
    * so scoring and hiring automation use end-of-interview profile state.
    */
   sessionProfileEnhancements?: PrescreenSessionProfileEnhancements;
+  /**
+   * Prescreen URL `entry` query param (e.g. `dashboard_cta`, `sms_auto_new_user`, `recent_user_backfill`).
+   * Stored on the interview document when present; omit if unknown.
+   */
+  entry?: string | null;
 };
 
 export type SubmitWorkerAiPrescreenResult = {
@@ -42,6 +47,7 @@ export async function submitWorkerAiPrescreenInterview(
     tenantId: input.tenantId ?? null,
     dynamicAnswers: input.dynamicAnswers ?? null,
     sessionProfileEnhancements: input.sessionProfileEnhancements ?? null,
+    entry: input.entry ?? null,
   });
   return res.data as SubmitWorkerAiPrescreenResult;
 }

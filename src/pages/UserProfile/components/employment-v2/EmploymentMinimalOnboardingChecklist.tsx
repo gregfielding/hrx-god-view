@@ -36,6 +36,7 @@ import type { ExternalOnboardingStepKey } from '../../../../types/externalOnboar
 import EmploymentI9SupportingDocumentsSubsection from '../../../../components/i9SupportingDocuments/EmploymentI9SupportingDocumentsSubsection';
 import ProfileTabPointerAlert from '../../../../components/profile/ProfileTabPointerAlert';
 import { workerWorkAuthorizationProfileAbsoluteUrl } from '../../../../utils/workerEmploymentWorkerSurface';
+import { everifyHrxDisplayLabelForAudit } from '../../../../utils/everifyHrxStatusDisplay';
 
 const resendPayrollInvite = httpsCallable<
   {
@@ -62,7 +63,8 @@ const EV_STATUS_CHIP: Record<string, { label: string; color: 'default' | 'warnin
   not_started: { label: 'Not started', color: 'default' },
   in_progress: { label: 'Pending', color: 'info' },
   completed: { label: 'Completed', color: 'success' },
-  satisfied_by_existing_record: { label: 'Completed', color: 'success' },
+  /** Neutral / closed-without-auth outcomes — label comes from `row.statusDisplay` / case line. */
+  satisfied_by_existing_record: { label: 'Closed', color: 'info' },
   not_required: { label: 'N/A', color: 'default' },
   error: { label: 'Error', color: 'error' },
 };
@@ -261,7 +263,17 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
     overview.entityEmployment?.everifyRequired !== false;
 
   const everifyRow = showEverify ? findEverifyRow(overview.onboardingChecklistGroups) : null;
-  const evChip = everifyRow ? EV_STATUS_CHIP[everifyRow.status] || { label: everifyRow.statusLabel || '—', color: 'default' as const } : null;
+  const evChipBase = everifyRow
+    ? EV_STATUS_CHIP[everifyRow.status] || { label: everifyRow.statusLabel || '—', color: 'default' as const }
+    : null;
+  /** Prefer the human E-Verify case line over generic row-status words like “Completed”. */
+  const evChip =
+    everifyRow && evChipBase
+      ? {
+          label: (everifyRow.statusLabel && everifyRow.statusLabel.trim()) || evChipBase.label,
+          color: evChipBase.color,
+        }
+      : null;
 
   const eVerifyPipelineStep = (overview.workerOnboarding?.steps || []).find(
     (s) => String(s.id || '') === 'e_verify',
@@ -544,6 +556,74 @@ const EmploymentMinimalOnboardingChecklist: React.FC<EmploymentMinimalOnboarding
               </Box>
             ) : null}
           </Box>
+          {showEverify && overview.everifyCaseBriefs.length > 0 ? (
+            <Box
+              sx={{
+                mt: 1.25,
+                pt: 1.25,
+                borderTop: 1,
+                borderColor: 'divider',
+                width: '100%',
+              }}
+            >
+              <Typography variant="caption" color="text.secondary" fontWeight={600} sx={{ display: 'block', mb: 0.75 }}>
+                E-Verify case audit
+              </Typography>
+              <Stack spacing={1.5}>
+                {overview.everifyCaseBriefs.map((b, idx) => (
+                  <Box key={b.caseId}>
+                    {idx > 0 ? <Divider sx={{ mb: 1.5 }} /> : null}
+                    <Stack spacing={0.35}>
+                      <Typography variant="body2" sx={{ fontWeight: 600, lineHeight: 1.4 }}>
+                        {b.everifyCaseNumber ? `E-Verify case ${b.everifyCaseNumber}` : `Case record ${b.caseId}`}
+                      </Typography>
+                      {b.hrxStatus ? (
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          HRX status: {everifyHrxDisplayLabelForAudit(b.hrxStatus)}
+                        </Typography>
+                      ) : null}
+                      {b.statusDisplay ? (
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          ICA response: {b.statusDisplay}
+                        </Typography>
+                      ) : null}
+                      {b.submittedAt ? (
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          Submitted {formatChecklistTimestamp(b.submittedAt)}
+                        </Typography>
+                      ) : null}
+                      {b.lastCheckedAt ? (
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          Last checked {formatChecklistTimestamp(b.lastCheckedAt)}
+                        </Typography>
+                      ) : null}
+                      {!b.lastCheckedAt && b.updatedAt ? (
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          Record updated {formatChecklistTimestamp(b.updatedAt)}
+                        </Typography>
+                      ) : null}
+                      {b.eligibilityStatement ? (
+                        <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.25 }}>
+                          Eligibility: {b.eligibilityStatement}
+                        </Typography>
+                      ) : null}
+                      {b.rawSsaReferralStatus || b.rawDhsReferralStatus || b.rawDhsReferralDueDate ? (
+                        <Typography variant="caption" color="text.secondary" component="div">
+                          {[
+                            b.rawSsaReferralStatus ? `SSA referral: ${b.rawSsaReferralStatus}` : null,
+                            b.rawDhsReferralStatus ? `DHS referral: ${b.rawDhsReferralStatus}` : null,
+                            b.rawDhsReferralDueDate ? `DHS due: ${b.rawDhsReferralDueDate}` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </Typography>
+                      ) : null}
+                    </Stack>
+                  </Box>
+                ))}
+              </Stack>
+            </Box>
+          ) : null}
           {showEverifyManualComplete ? (
             <Box sx={{ mt: 1.25, pt: 1.25, borderTop: 1, borderColor: 'divider' }}>
               <Stack direction="row" alignItems="center" gap={0.5} sx={{ mb: 0.5 }}>

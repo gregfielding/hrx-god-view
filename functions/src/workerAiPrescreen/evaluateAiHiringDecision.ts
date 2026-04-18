@@ -110,13 +110,8 @@ export type WorkerAiHiringDecisionLogPayload = {
 
 // --- Constants -------------------------------------------------------------
 
-const DEFAULT_MIN_SCORE = 75;
-
-const HARD_REJECT_FLAGS: Record<string, AiHiringReasonCode> = {
-  drug_risk: 'critical_flag_drug',
-  background_risk: 'critical_flag_background',
-  physical_mismatch: 'critical_flag_physical',
-};
+/** Align with recruiter grade bands: proceed/advance expected when score ≥ 80 (B+). */
+const DEFAULT_MIN_SCORE = 80;
 
 const MODERATE_FLAGS = new Set([
   'attendance_risk',
@@ -136,16 +131,6 @@ const GIG_DYNAMIC_KEY = 'dyn_gig_path_willing';
 
 function normFlag(f: string): string {
   return String(f ?? '').trim();
-}
-
-function collectHardRejectReasonCodes(flags: string[]): AiHiringReasonCode[] {
-  const out: AiHiringReasonCode[] = [];
-  for (const f of flags) {
-    const key = normFlag(f);
-    const code = HARD_REJECT_FLAGS[key];
-    if (code) out.push(code);
-  }
-  return out;
 }
 
 function hasModerateFlag(flags: string[]): boolean {
@@ -186,7 +171,7 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
       ? hiringPolicy.minimumScoreToAdvance
       : DEFAULT_MIN_SCORE;
 
-  // STEP 1 — Hard reject
+  // STEP 1 — Recommendation-driven reject (numeric score already reflects compliance/risk penalties).
   if (recommendation === 'decline') {
     return finalize(
       'reject',
@@ -195,11 +180,6 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
       interviewResult,
       applyGig,
     );
-  }
-
-  const hardCodes = collectHardRejectReasonCodes(flags);
-  if (hardCodes.length > 0) {
-    return finalize('reject', hiringPolicy, hardCodes, interviewResult, applyGig);
   }
 
   // STEP 2 — Job fit gate (optional; v1 skips when fit score missing)
@@ -229,8 +209,8 @@ export function evaluateAiHiringDecision(params: EvaluateAiHiringDecisionParams)
     );
   }
 
-  // STEP 4 — Moderate risk flags
-  if (hasModerateFlag(flags)) {
+  // STEP 4 — Moderate risk flags (only when score is not already in the “confident proceed” band)
+  if (hasModerateFlag(flags) && overallScore < 80) {
     return finalize(
       'review',
       hiringPolicy,
@@ -375,7 +355,6 @@ export function logWorkerAiHiringDecision(payload: WorkerAiHiringDecisionLogPayl
 
 /** @internal — exported for tests */
 export const __testing = {
-  collectHardRejectReasonCodes,
   hasModerateFlag,
   hasCriticalDynamicFailure,
   isInTopPercentBucket,

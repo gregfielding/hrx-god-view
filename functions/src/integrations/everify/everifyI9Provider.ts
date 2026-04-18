@@ -5,7 +5,7 @@
  */
 
 import * as admin from 'firebase-admin';
-import type { I9CaseFlat } from './everifySchemas';
+import type { EverifyMergeAttribution, I9CaseFlat } from './everifySchemas';
 import { assertEverifyEnvUrlConsistency } from './everifyConfig';
 import { normalizeAlienNumberForApi } from './everifyAlienNumber';
 import {
@@ -17,6 +17,10 @@ import {
   type I9SupportingDocLike,
 } from '../../utils/i9SupportingToEverifyMerge';
 import { sanitizeCaseCreatorNameForIca, sanitizeEverifyDocumentNumber } from './everifyIcaSanitize';
+import {
+  applyTenantListBDocumentSubtype,
+  loadEverifyIcaDocumentMappings,
+} from './everifyIcaTenantMappings';
 
 const REQUIRED_FIELDS = [
   'first_name',
@@ -269,6 +273,22 @@ function ensureDocumentSubTypeCodeForPassportListA(data: Record<string, unknown>
     docA === 'US_PASSPORT_RECEIPT' ? 'US_PASSPORT_RECEIPT' : US_PASSPORT_SUBTYPE_DEFAULT;
 }
 
+/**
+ * ICA rejects both expiration_date and no_expiration_date together. Merge layers can set
+ * expiration_date (e.g. supporting docs) while the client sends no_expiration_date=true.
+ */
+function applyExpirationNoExpirationMutualExclusion(data: Record<string, unknown>): void {
+  if (data.no_expiration_date === true) {
+    delete data.expiration_date;
+    return;
+  }
+  const exp =
+    typeof data.expiration_date === 'string' ? data.expiration_date.trim() : '';
+  if (exp) {
+    delete data.no_expiration_date;
+  }
+}
+
 export function applyRestDraftPayloadNormalization(data: Record<string, unknown>): void {
   normalizeSsnInI9Payload(data);
   normalizeCitizenshipStatusCodeInI9Payload(data);
@@ -280,6 +300,7 @@ export function applyRestDraftPayloadNormalization(data: Record<string, unknown>
   normalizeCaseCreatorPhoneForEverifyRest(data);
   omitEmptyDocumentSubTypeCode(data);
   ensureDocumentSubTypeCodeForPassportListA(data);
+  applyExpirationNoExpirationMutualExclusion(data);
 }
 
 function parseEnvI9FixtureJson(): Record<string, unknown> | null {
@@ -371,6 +392,42 @@ async function loadApprovedI9SupportingPartial(tenantId: string, userId: string)
   return i9SupportingApprovedToI9CaseFlatPartial(rows);
 }
 
+export type { EverifyMergeAttribution } from './everifySchemas';
+
+function clientPayloadHasValues(client: Record<string, unknown>): boolean {
+  return Object.entries(client).some(([, v]) => {
+    if (v === undefined || v === null) return false;
+    if (typeof v === 'string') return v.trim() !== '';
+    if (typeof v === 'boolean') return true;
+    return true;
+  });
+}
+
+function envStrictListBSubtype(): boolean {
+  const raw = String(process.env.EVERIFY_PREFLIGHT_STRICT_LISTB_SUBTYPE ?? 'true').toLowerCase();
+  return raw !== 'false' && raw !== '0' && raw !== 'off';
+}
+
+/**
+ * After tenant mapping: fail fast with ops-facing copy when List B still has no subtype (strict mode).
+ */
+function assertListBSubtypeResolvedWhenRequired(merged: Record<string, unknown>): void {
+  if (!envStrictListBSubtype()) return;
+  const b = typeof merged.document_b_type_code === 'string' ? merged.document_b_type_code.trim() : '';
+  const c = typeof merged.document_c_type_code === 'string' ? merged.document_c_type_code.trim() : '';
+  if (!b || !c) return;
+  if (b !== 'DRIVERS_LICENSE' && b !== 'GOVERNMENT_ID_CARD') return;
+  const sub = typeof merged.document_sub_type_code === 'string' ? merged.document_sub_type_code.trim() : '';
+  if (sub) return;
+  throw new Error(
+    'E-Verify: document_sub_type_code is still missing for List B driver license / state ID. ' +
+      'Choose REAL ID vs Non-REAL ID in the Start E-Verify flow, set tenant mapping (Company Defaults → E-Verify), ' +
+      'or send a raw document_sub_type_code (advanced override). ' +
+      'Internal C1 defaults apply only for allowlisted tenants; others must configure tenant mapping. ' +
+      'If your ICA omits subtypes entirely, set env EVERIFY_PREFLIGHT_STRICT_LISTB_SUBTYPE=false.',
+  );
+}
+
 /**
  * Canonical path for everifyCreateCase: optional env defaults → Firestore user profile hints →
  * explicit employee fields from the client (admin UI) → hire date + case creator overrides.
@@ -381,32 +438,54 @@ export async function resolveI9PayloadForCreateCase(params: {
   userId: string;
   employeeFromClient?: Partial<I9CaseFlat> | null;
   serviceOverrides: Partial<I9CaseFlat>;
-}): Promise<I9CaseFlat> {
+}): Promise<{ payload: I9CaseFlat; mergeAttribution: EverifyMergeAttribution }> {
   assertEverifyEnvUrlConsistency();
 
   const merged: Record<string, unknown> = {};
 
+  const mergeAttribution: EverifyMergeAttribution = {
+    envFixture: false,
+    profileHints: false,
+    supportingDocs: false,
+    client: false,
+    serviceOverrides: false,
+  };
+
   const fromEnv = parseEnvI9FixtureJson();
-  if (fromEnv) assignDefined(merged, fromEnv);
+  if (fromEnv) {
+    assignDefined(merged, fromEnv);
+    mergeAttribution.envFixture = Object.keys(fromEnv).length > 0;
+  }
 
   const hints = await loadUserI9HintsFromFirestore(params.userId);
-  assignDefined(merged, hints);
+  if (Object.keys(hints).length > 0) {
+    assignDefined(merged, hints);
+    mergeAttribution.profileHints = true;
+  }
 
   const fromSupporting = await loadApprovedI9SupportingPartial(params.tenantId, params.userId);
   applyApprovedI9SupportingToMerged(merged, fromSupporting);
+  mergeAttribution.supportingDocs = Object.keys(fromSupporting).length > 0;
 
   if (params.employeeFromClient && typeof params.employeeFromClient === 'object') {
-    assignDefined(merged, params.employeeFromClient as Record<string, unknown>);
+    const c = params.employeeFromClient as Record<string, unknown>;
+    assignDefined(merged, c);
+    mergeAttribution.client = clientPayloadHasValues(c);
   }
 
   assignDefined(merged, params.serviceOverrides as Record<string, unknown>);
+  mergeAttribution.serviceOverrides = Object.keys(params.serviceOverrides).length > 0;
+
+  const icaMappings = await loadEverifyIcaDocumentMappings(params.tenantId);
+  applyTenantListBDocumentSubtype(merged, icaMappings, params.tenantId);
+  assertListBSubtypeResolvedWhenRequired(merged);
 
   sanitizeIcaFormatFieldsInPayload(merged);
   normalizeSsnInI9Payload(merged);
   normalizeCitizenshipStatusCodeInI9Payload(merged);
   validateI9ListDocumentsForEverifyRest(merged);
   validateI9Required(merged);
-  return merged as I9CaseFlat;
+  return { payload: merged as I9CaseFlat, mergeAttribution };
 }
 
 /**

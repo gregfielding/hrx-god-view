@@ -47,6 +47,8 @@ export type WorkerAiPrescreenEntrySource =
   | 'followup_invite'
   | 'chase_1'
   | 'chase_2'
+  /** Worker dashboard “complete interview” CTA (`workerAiPrescreenDashboardActions`). */
+  | 'dashboard_cta'
   | 'direct'
   | string;
 

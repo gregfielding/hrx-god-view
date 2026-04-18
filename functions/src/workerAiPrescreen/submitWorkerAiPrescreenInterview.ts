@@ -12,6 +12,7 @@ import { WORKER_AI_PRESCREEN_PROMPTS } from './prescreenQuestionLabels';
 import type { AiInterviewContext } from './aiInterviewContextTypes';
 import { buildAiInterviewContext } from './buildAiInterviewContext';
 import { buildDynamicPrescreenSteps } from './buildDynamicPrescreenQuestions';
+import { applyPrescreenDynamicDedupe } from './prescreenDynamicDedupe';
 import type { DynamicAnswerValue } from './evaluateAiHiringDecision';
 import { maybeWritePhase6AutomationQueue } from './phase6AiAutomationQueue';
 import { composePrescreenAiBundle } from './composePrescreenAiBundle';
@@ -69,6 +70,19 @@ const DYNAMIC_ANSWER_VALUES = new Set(['yes', 'no', 'not_sure']);
 
 function normLower(s: unknown): string {
   return String(s ?? '').trim().toLowerCase();
+}
+
+/**
+ * Optional `entry` query param from the prescreen URL (`buildWorkerAiPrescreenInviteUrl` / dashboard links).
+ * Sanitized for Firestore; invalid values are dropped (submit still succeeds).
+ */
+function parseOptionalInterviewEntrySource(raw: unknown): string | undefined {
+  if (raw == null) return undefined;
+  const s = String(raw).trim();
+  if (!s) return undefined;
+  if (s.length > 120) return undefined;
+  if (!/^[a-zA-Z0-9_-]+$/.test(s)) return undefined;
+  return s;
 }
 
 function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
@@ -270,6 +284,8 @@ export const submitWorkerAiPrescreenInterview = onCall(
       dynamicAnswers?: unknown;
       /** Client snapshot of profile fields at submit time (merged with fresh server read for scoring). */
       sessionProfileEnhancements?: unknown;
+      /** Prescreen URL `entry` query param (analytics / attribution). */
+      entry?: unknown;
     };
     const answers = parseAnswers(data.answers);
     const sessionProfileEnhancements = parseSessionProfileEnhancements(data.sessionProfileEnhancements);
@@ -282,6 +298,8 @@ export const submitWorkerAiPrescreenInterview = onCall(
       data.tenantId == null || data.tenantId === ''
         ? null
         : String(data.tenantId).trim().slice(0, 120) || null;
+
+    const entrySource = parseOptionalInterviewEntrySource(data.entry);
 
     const db = admin.firestore();
     const userRef = db.collection('users').doc(auth.uid);
@@ -324,6 +342,15 @@ export const submitWorkerAiPrescreenInterview = onCall(
       dynamicSteps = buildDynamicPrescreenSteps(interviewContext);
       dynamicStepIds = new Set(dynamicSteps.map((s) => s.id));
       dynamicAnswers = parseDynamicAnswers(data.dynamicAnswers, dynamicStepIds);
+      const deduped = applyPrescreenDynamicDedupe(dynamicSteps, answers, dynamicAnswers);
+      dynamicAnswers = deduped.mergedDynamicAnswers;
+      if (deduped.skipped.length > 0) {
+        logger.info('submitWorkerAiPrescreenInterview.dynamic_dedupe', {
+          userId: auth.uid,
+          applicationId,
+          skipped: deduped.skipped,
+        });
+      }
     }
 
     validateComplianceDisclosureFollowUps(answers, dynamicStepIds);
@@ -365,6 +392,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
       userId: auth.uid,
       interviewKind: 'worker_ai_prescreen',
       applicationId,
+      entry: entrySource ?? null,
       overallScore: scored.overallScore,
       recommendation: scored.recommendation,
       flags: aiFlags,
@@ -459,6 +487,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
       createdByName,
       jobId: jobIdFromContext,
       ...(jobOrderIdFromContext ? { jobOrderId: jobOrderIdFromContext } : {}),
+      ...(entrySource ? { entry: entrySource } : {}),
       assignmentId: null,
       companyId: null,
       questions,

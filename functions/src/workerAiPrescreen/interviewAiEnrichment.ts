@@ -119,8 +119,9 @@ export function computeConfidenceScore(args: {
 }
 
 /**
- * Explicit “admission” for automation: attendance issues, or drug/bg **concern** / **uncertain**
- * under the correct disclosure vs ability framing.
+ * Explicit “admission” for automation: attendance issues, or drug/bg **concern** (confirmed issue /
+ * inability) under the correct disclosure vs ability framing.
+ * `not_sure` / uncertain does **not** set this flag — uncertainty is not a confession.
  */
 export function shouldFlagRiskAdmission(
   answers: WorkerAiPrescreenAnswers,
@@ -132,12 +133,12 @@ export function shouldFlagRiskAdmission(
   if (drugSrc !== 'none') {
     const framing: ComplianceQuestionFraming = drugSrc === 'dynamic' ? 'ability' : 'disclosure';
     const level = complianceConcernLevel(answers.drug_screen, framing);
-    if (level === 'concern' || level === 'uncertain') return true;
+    if (level === 'concern') return true;
   }
   if (bgSrc !== 'none') {
     const framing: ComplianceQuestionFraming = bgSrc === 'dynamic' ? 'ability' : 'disclosure';
     const level = complianceConcernLevel(answers.background_check, framing);
-    if (level === 'concern' || level === 'uncertain') return true;
+    if (level === 'concern') return true;
   }
   return false;
 }

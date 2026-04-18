@@ -44,10 +44,16 @@ export type DrugBackgroundScoringMeta = {
 };
 
 /** Exact shape from AI_PRESCREEN_SCORING_AND_ELIGIBILITY.md § "Scoring Output Shape". */
+/** Internal only: why `review` — weaker band/answers vs screening-risk downgrade (UI may expose later). */
+export type PrescreenReviewKind = 'review_quality' | 'review_risk';
+
 export type AiPrescreenScoreResult = {
   overallScore: number;
   recommendation: 'proceed' | 'review' | 'decline';
+  /** Present when `recommendation === 'review'` (distinguishes C/D weakness vs strong score + screening flags). */
+  reviewKind?: PrescreenReviewKind;
   flags: string[];
+  /** One-line recruiter-facing explanation (band + top flags). */
   summary: string;
   subScores: {
     experience: number;
@@ -56,21 +62,65 @@ export type AiPrescreenScoreResult = {
     risk: number;
     physical: number;
   };
+  /** Rules-based audit: base category sum + quality adj − calibrated flag penalties → final score. */
+  scoreBreakdown?: PrescreenScoreBreakdown;
 };
 
-const MAJOR_COMPLIANCE_FLAGS = new Set(['drug_risk', 'background_risk']);
-/** Blocks `proceed` (spec §5 + §6 major flags). */
-const MAJOR_HARD_FLAGS_FOR_PROCEED = new Set(['drug_risk', 'background_risk', 'physical_mismatch']);
-const MODERATE_FLAGS = new Set([
-  'attendance_risk',
-  'transportation_risk',
-  'no_backup_transport',
-  'limited_relevant_experience',
-  'drug_unknown',
-  'background_unknown',
-  'low_effort_response',
-  'vague_response',
-]);
+/** Structured penalty audit (QA / recruiters). */
+export type PrescreenScoreBreakdown = {
+  subScoreSum: number;
+  qualityAdjustment: number;
+  baseScoreBeforePenalties: number;
+  flagPenalties: Array<{ flag: string; points: number }>;
+  flagPenaltyTotalRaw: number;
+  flagPenaltyTotalApplied: number;
+  finalScore: number;
+};
+
+/** Recruiter-style letter grade from 0–100 score. */
+export function prescreenLetterGrade(score: number): 'A' | 'B' | 'C' | 'D' | 'F' {
+  if (score >= 90) return 'A';
+  if (score >= 80) return 'B';
+  if (score >= 70) return 'C';
+  if (score >= 60) return 'D';
+  return 'F';
+}
+
+export function prescreenScoreBandLabel(score: number): string {
+  const g = prescreenLetterGrade(score);
+  const labels: Record<string, string> = {
+    A: 'Strong (90–100)',
+    B: 'Good (80–89)',
+    C: 'Mixed / acceptable (70–79)',
+    D: 'Weak (60–69)',
+    F: 'Low (0–59)',
+  };
+  return labels[g] ?? 'Unknown';
+}
+
+/**
+ * Calibrated penalties applied after base category scores + answer-quality adjustment.
+ * Caps prevent stacking every flag into automatic F while still pulling risky candidates out of A/B bands.
+ */
+const FLAG_SCORE_PENALTIES: Record<string, number> = {
+  /** Critical compliance — calibrated with post-cap so strong profiles rarely stay above ~65 with these flags. */
+  drug_risk: 41,
+  background_risk: 41,
+  drug_unknown: 15,
+  background_unknown: 15,
+  attendance_risk: 12,
+  transportation_risk: 10,
+  no_backup_transport: 10,
+  limited_relevant_experience: 12,
+  physical_mismatch: 20,
+  risk_admission_detected: 10,
+  /** Narrative quality (also emitted by `evaluatePrescreenAnswerQuality`; penalties stack for multiple issues). */
+  vague_response: 10,
+  low_effort_response: 14,
+};
+
+/** Max total points subtracted from flag penalties (sum of per-flag penalties can exceed this). */
+const MAX_FLAG_PENALTY_TOTAL = 48;
 
 function norm(s: unknown): string {
   return String(s ?? '').trim();
@@ -229,70 +279,117 @@ function scorePhysical(answers: WorkerAiPrescreenAnswers): { pts: number; flags:
   return { pts, flags };
 }
 
-function hasModerateFlag(flags: string[]): boolean {
-  return flags.some((f) => MODERATE_FLAGS.has(f));
+function applyFlagPenalties(baseScore: number, flags: string[]): Omit<PrescreenScoreBreakdown, 'subScoreSum' | 'qualityAdjustment'> {
+  const seen = new Set<string>();
+  const flagPenalties: Array<{ flag: string; points: number }> = [];
+  for (const f of flags) {
+    if (seen.has(f)) continue;
+    seen.add(f);
+    const pts = FLAG_SCORE_PENALTIES[f];
+    if (typeof pts === 'number' && pts > 0) {
+      flagPenalties.push({ flag: f, points: pts });
+    }
+  }
+  const flagPenaltyTotalRaw = flagPenalties.reduce((a, b) => a + b.points, 0);
+  const flagPenaltyTotalApplied = Math.min(flagPenaltyTotalRaw, MAX_FLAG_PENALTY_TOTAL);
+  const finalScore = Math.max(0, Math.min(100, Math.round(baseScore - flagPenaltyTotalApplied)));
+  return {
+    baseScoreBeforePenalties: baseScore,
+    flagPenalties,
+    flagPenaltyTotalRaw,
+    flagPenaltyTotalApplied,
+    finalScore,
+  };
 }
 
-function hasMajorComplianceFlag(flags: string[]): boolean {
-  return flags.some((f) => MAJOR_COMPLIANCE_FLAGS.has(f));
+/**
+ * Trust caps after calibrated penalties (do not change category sub-score math).
+ * - Critical drug/background risk: keep numeric score aligned with F/D expectations for compliance.
+ * - Screening unknown: block A/B unless everything else is exceptional (cap in high C band).
+ */
+function applyRecruiterTrustScoreCaps(score: number, flags: string[]): number {
+  let s = score;
+  const majorRisk = flags.includes('drug_risk') || flags.includes('background_risk');
+  const screeningUnknown = flags.includes('drug_unknown') || flags.includes('background_unknown');
+  if (majorRisk) {
+    s = Math.min(s, 65);
+  } else if (screeningUnknown) {
+    s = Math.min(s, 79);
+  }
+  return Math.max(0, Math.min(100, Math.round(s)));
 }
 
-function blocksProceed(flags: string[]): boolean {
-  return flags.some((f) => MAJOR_HARD_FLAGS_FOR_PROCEED.has(f)) || hasModerateFlag(flags);
+/**
+ * Recommendation follows recruiter grade bands (score already includes penalties + trust caps).
+ * - 80+: proceed unless drug/bg flags force review (never decline solely from high score).
+ * - 60–79: review (weak / borderline)
+ * - &lt;60: decline
+ */
+function recommendationFromScoreAndFlags(
+  overallScore: number,
+  flags: string[],
+): { recommendation: AiPrescreenScoreResult['recommendation']; reviewKind: PrescreenReviewKind | undefined } {
+  const screeningUncertain = flags.includes('drug_unknown') || flags.includes('background_unknown');
+  const majorRisk = flags.includes('drug_risk') || flags.includes('background_risk');
+
+  if (overallScore < 60) {
+    return { recommendation: 'decline', reviewKind: undefined };
+  }
+
+  if (overallScore >= 80) {
+    if (majorRisk || screeningUncertain) {
+      return { recommendation: 'review', reviewKind: 'review_risk' };
+    }
+    return { recommendation: 'proceed', reviewKind: undefined };
+  }
+
+  const reviewKind: PrescreenReviewKind =
+    majorRisk || screeningUncertain ? 'review_risk' : 'review_quality';
+  return { recommendation: 'review', reviewKind };
 }
 
-function recommendationFromScoreAndFlags(overallScore: number, flags: string[]): AiPrescreenScoreResult['recommendation'] {
-  if (hasMajorComplianceFlag(flags) || overallScore < 50) return 'decline';
-  if (overallScore >= 75 && !blocksProceed(flags)) return 'proceed';
-  return 'review';
-}
-
-function buildSummary(
+function buildRecruiterSummaryLine(
+  overallScore: number,
   recommendation: AiPrescreenScoreResult['recommendation'],
   flags: string[],
+  reviewKind: PrescreenReviewKind | undefined,
 ): string {
-  const hasDrug = flags.includes('drug_risk') || flags.includes('drug_unknown');
-  const hasBg = flags.includes('background_risk') || flags.includes('background_unknown');
-  const hasAtt = flags.includes('attendance_risk');
-  const hasTrans = flags.includes('transportation_risk') || flags.includes('no_backup_transport');
-  const hasLimited = flags.includes('limited_relevant_experience');
-  const hasPhysical = flags.includes('physical_mismatch');
+  const majorRisk = flags.includes('drug_risk') || flags.includes('background_risk');
+  const unknown = flags.includes('drug_unknown') || flags.includes('background_unknown');
+  const vagueQ = flags.includes('vague_response') || flags.includes('low_effort_response');
+  const limited = flags.includes('limited_relevant_experience');
+  const att = flags.includes('attendance_risk');
+  const trans = flags.includes('transportation_risk') || flags.includes('no_backup_transport');
+  const physical = flags.includes('physical_mismatch');
 
   if (recommendation === 'proceed') {
-    return (
-      'Candidate reports relevant experience, no attendance issues, and a reliable transportation plan. ' +
-      'No major compliance risks were identified.'
-    );
+    return 'Strong pre-screen; cleared for next-step consideration.';
   }
   if (recommendation === 'decline') {
-    if (hasDrug || hasBg) {
-      return (
-        'Compliance screening answers indicate uncertainty or an issue that may affect placement. ' +
-        'Review before moving forward.'
-      );
-    }
-    return (
-      'Overall pre-screen score is below the threshold for proceeding without recruiter review. ' +
-      'Assess fit carefully before moving forward.'
-    );
+    if (majorRisk) return 'Drug or background risk disclosure keeps the score in a no-go range.';
+    if (unknown) return 'Screening unknowns pull the score below a confident proceed.';
+    if (vagueQ) return 'Thin or vague answers hold the score below the proceed bar.';
+    return 'Overall score is below the proceed threshold.';
   }
-  // review
-  if (hasAtt || hasTrans || hasLimited) {
-    return (
-      'Candidate appears generally placeable, but there are moderate concerns around transportation or prior attendance. ' +
-      'Recruiter review is recommended.'
-    );
+
+  if (reviewKind === 'review_risk') {
+    if (majorRisk) return 'Strong overall, but drug or background answers need recruiter review.';
+    if (unknown) return 'Solid score; confirm drug or background screening before proceeding.';
+    return 'Screening flags warrant review despite a workable score.';
   }
-  if (hasPhysical) {
-    return (
-      'Candidate may have a physical-fit consideration for some roles. Recruiter review is recommended ' +
-      'to confirm job match.'
-    );
+
+  const parts: string[] = [];
+  if (overallScore < 70) parts.push('Weaker pre-screen band');
+  else parts.push('Borderline pre-screen');
+  const detail: string[] = [];
+  if (vagueQ) detail.push('vague or low-effort responses');
+  if (limited) detail.push('limited relevant experience');
+  if (att || trans) detail.push('attendance or transportation concerns');
+  if (physical) detail.push('possible physical-fit limits');
+  if (detail.length > 0) {
+    return `${parts[0]} — ${detail.join('; ')}.`;
   }
-  if (hasDrug || hasBg) {
-    return 'Drug/background answers are uncertain or indicate a possible issue. Recruiter review is recommended.';
-  }
-  return 'Pre-screen results are borderline; recruiter review is recommended before the next step.';
+  return `${parts[0]} — worth a quick recruiter pass on fit and details.`;
 }
 
 /**
@@ -305,6 +402,8 @@ export function scoreWorkerAiPrescreen(
     answerQualityFlags?: string[];
     scoreAdjustment?: number;
     drugBackgroundMergeMeta?: DrugBackgroundScoringMeta;
+    /** Extra signals that participate in flag penalties (e.g. risk_admission_detected). */
+    extraPenaltyFlags?: string[];
   },
 ): AiPrescreenScoreResult {
   const exp = scoreExperience(answers);
@@ -320,19 +419,33 @@ export function scoreWorkerAiPrescreen(
     ...risk.flags,
     ...phys.flags,
     ...(opts?.answerQualityFlags ?? []),
+    ...(opts?.extraPenaltyFlags ?? []),
   ];
   const flags = [...new Set(flagSet)];
 
-  let overallScore =
-    exp.pts + rel.pts + trans.pts + risk.pts + phys.pts + (opts?.scoreAdjustment ?? 0);
-  overallScore = Math.max(0, Math.min(100, Math.round(overallScore)));
+  const subScoreSum = exp.pts + rel.pts + trans.pts + risk.pts + phys.pts;
+  const qualityAdjustment = opts?.scoreAdjustment ?? 0;
+  const baseScoreBeforePenalties = Math.max(0, Math.min(100, Math.round(subScoreSum + qualityAdjustment)));
+  const penaltyBlock = applyFlagPenalties(baseScoreBeforePenalties, flags);
+  const overallScore = applyRecruiterTrustScoreCaps(penaltyBlock.finalScore, flags);
 
-  const recommendation = recommendationFromScoreAndFlags(overallScore, flags);
-  const summary = buildSummary(recommendation, flags);
+  const { recommendation, reviewKind } = recommendationFromScoreAndFlags(overallScore, flags);
+  const summary = buildRecruiterSummaryLine(overallScore, recommendation, flags, reviewKind);
+
+  const scoreBreakdown: PrescreenScoreBreakdown = {
+    subScoreSum,
+    qualityAdjustment,
+    baseScoreBeforePenalties: penaltyBlock.baseScoreBeforePenalties,
+    flagPenalties: penaltyBlock.flagPenalties,
+    flagPenaltyTotalRaw: penaltyBlock.flagPenaltyTotalRaw,
+    flagPenaltyTotalApplied: penaltyBlock.flagPenaltyTotalApplied,
+    finalScore: overallScore,
+  };
 
   return {
     overallScore,
     recommendation,
+    reviewKind,
     flags,
     summary,
     subScores: {
@@ -342,6 +455,7 @@ export function scoreWorkerAiPrescreen(
       risk: risk.pts,
       physical: phys.pts,
     },
+    scoreBreakdown,
   };
 }
 

@@ -17,6 +17,7 @@ import type {
   PipelineStepRow,
 } from '../pages/UserProfile/components/employment-v2/employmentV2Types';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
+import { everifyHrxOutcome, normalizeEverifyHrxStatus } from './everifyHrxStatusDisplay';
 
 /** Gaps that block fully automated, policy-correct reuse (for product/docs). */
 export const COMPLIANCE_ARTIFACT_DATA_GAPS: readonly string[] = [
@@ -111,9 +112,14 @@ export interface SelectEverifyArtifact {
   policyNote: string;
 }
 
-function everifyDisplayIsTerminalSuccess(display: string): boolean {
-  const lower = display.toLowerCase();
-  return ['closed', 'authorized', 'completed', 'closure_duplicate'].some((x) => lower.includes(x));
+/** Reuse heuristic: only clearly favorable terminal HRX (`employment_authorized`), not every closed/duplicate string. */
+function everifySummaryIsFavorableTerminalForReuse(summary: EmploymentEverifySummary): boolean {
+  const hrx = normalizeEverifyHrxStatus(summary.latestHrxStatus ?? '');
+  if (hrx) {
+    return everifyHrxOutcome(hrx) === 'favorable_terminal';
+  }
+  const lower = String(summary.statusDisplay || '').toLowerCase();
+  return lower.includes('employment authorized') || lower.includes('employment_authorized');
 }
 
 /**
@@ -133,8 +139,7 @@ export function evaluateSelectEverifyReuse(args: {
 }): { artifact: SelectEverifyArtifact; pipelineIncomplete: boolean } | null {
   if (args.entityKey !== 'select') return null;
   if (!args.everifySummary?.applicable || args.everifySummary.caseCount <= 0) return null;
-  const disp = String(args.everifySummary.statusDisplay || '');
-  if (!everifyDisplayIsTerminalSuccess(disp)) return null;
+  if (!everifySummaryIsFavorableTerminalForReuse(args.everifySummary)) return null;
 
   const pipe = String(args.pipelineEverifyStep?.status || '').toLowerCase();
   const pipelineIncomplete = pipe !== 'complete' && pipe !== 'completed';
@@ -144,7 +149,7 @@ export function evaluateSelectEverifyReuse(args: {
     completedAt: null,
     scope: 'entity_scoped',
     policyNote:
-      'Select E-Verify case shows a terminal outcome for this entity. Reuse across later Select assignments is allowed by this heuristic when tenant policy does not require a fresh case.',
+      'Select E-Verify case shows Employment Authorized (favorable terminal) for this entity. Reuse across later Select assignments is allowed by this heuristic when tenant policy does not require a fresh case.',
   };
 
   if (args.stepKey === 'everify_sent' || args.stepKey === 'everify_completed') {

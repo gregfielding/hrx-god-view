@@ -17,7 +17,6 @@ import { p } from '../data/firestorePaths';
 import type {
   EmploymentAssignmentSummary,
   EmploymentEntityKey,
-  EmploymentEverifySummary,
   EntityTabSettingsSnapshot,
   OnboardingInstanceSnapshot,
   WorkerOnboardingPipeline,
@@ -27,47 +26,7 @@ import { getWorkerPayrollAccount } from './workerPayrollAccount';
 import type { BackgroundCheckRecord } from '../types/backgroundCheck';
 import type { SignatureEnvelopeStatus } from '../types/phase1cOnboarding';
 import type { BuildOnboardingPathArgs } from './employmentOnboardingPath';
-import { buildEverifyCaseBriefsForSelectEntity } from './employmentOnboardingNarrative';
-
-function buildEverifySummary(
-  caseDocs: Array<{ id: string; data: () => Record<string, unknown> }>,
-  selectEntityId: string | null
-): EmploymentEverifySummary | null {
-  if (!selectEntityId) {
-    return { applicable: false, statusDisplay: 'No C1 Select entity', caseCount: 0 };
-  }
-  const selectCases = caseDocs.filter((d) => {
-    const raw = d.data();
-    return String(raw.entityId || '') === selectEntityId;
-  });
-  if (selectCases.length === 0) {
-    return {
-      applicable: true,
-      statusDisplay: 'No cases',
-      caseCount: 0,
-      actionNeeded: false,
-    };
-  }
-  const sorted = [...selectCases].sort((a, b) => {
-    const ta = (a.data().updatedAt as { seconds?: number } | undefined)?.seconds ?? 0;
-    const tb = (b.data().updatedAt as { seconds?: number } | undefined)?.seconds ?? 0;
-    return tb - ta;
-  });
-  const latest = sorted[0];
-  const data = latest.data();
-  const pub = data.public as { status?: string } | undefined;
-  const statusDisplay = String(pub?.status ?? data.status ?? '—');
-  const closed = ['closed', 'closure_duplicate', 'completed', 'authorized', 'final_nonconfirmation'].some((x) =>
-    statusDisplay.toLowerCase().includes(x)
-  );
-  return {
-    applicable: true,
-    statusDisplay,
-    caseCount: selectCases.length,
-    latestCaseId: latest.id,
-    actionNeeded: !closed && !statusDisplay.includes('—'),
-  };
-}
+import { buildEverifyCaseBriefsForSelectEntity, buildEverifySummaryFromCaseDocs } from './employmentOnboardingNarrative';
 
 export interface LoadWorkerOnboardingPathParams {
   tenantId: string;
@@ -250,7 +209,7 @@ export async function loadBuildOnboardingPathArgsForWorkerEmployment(
     );
 
     const everifySummary =
-      entityKey === 'select' ? buildEverifySummary(everifyCaseDocs, selectEntityId) : null;
+      entityKey === 'select' ? buildEverifySummaryFromCaseDocs(everifyCaseDocs, selectEntityId) : null;
 
     const payrollAccount = await getWorkerPayrollAccount(tenantId, userId, entityKey);
 

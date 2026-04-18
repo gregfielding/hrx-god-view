@@ -113,7 +113,7 @@ function tierFromComposite(s: number): AnswerQualityTier {
   return 'high';
 }
 
-const MAX_QUALITY_PENALTY = 12;
+const MAX_QUALITY_PENALTY = 18;
 const MAX_QUALITY_BOOST = 10;
 
 export function evaluatePrescreenAnswerQuality(answers: PrescreenAnswersForQuality): PrescreenAnswerQualityResult {
@@ -131,27 +131,18 @@ export function evaluatePrescreenAnswerQuality(answers: PrescreenAnswersForQuali
   const flagSet = new Set<string>();
 
   const short = (s: string) => wordCount(s) < PRESCREEN_MIN_SUBSTANTIVE_WORDS;
-  if (short(motivation) || short(experience) || short(pressure) || short(supervisor)) {
+  /** Core narrative fields only — require ≥2 short before global low_effort (reduces single-field false positives). */
+  const coreNarratives = [motivation, experience, pressure, supervisor];
+  const coreShortCount = coreNarratives.filter((s) => short(s)).length;
+  if (coreShortCount >= 2) {
     flagSet.add('low_effort_response');
   }
 
   const vagueOk = (s: string) =>
     wordCount(s) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS && !prescreenTextHasConcreteDetail(s);
-  if (vagueOk(motivation) || vagueOk(experience) || vagueOk(pressure) || vagueOk(supervisor)) {
+  const coreVagueCount = coreNarratives.filter((s) => vagueOk(s)).length;
+  if (coreVagueCount >= 2) {
     flagSet.add('vague_response');
-  }
-
-  const attYes = String(answers.attendance_issues ?? '').trim().toLowerCase() === 'yes';
-  if (attYes) {
-    const ex = String(answers.attendance_explanation ?? '').trim();
-    if (ex && !/^(n\/a|na|none\.?)$/i.test(ex) && wordCount(ex) < PRESCREEN_MIN_SUBSTANTIVE_WORDS) {
-      flagSet.add('low_effort_response');
-    }
-  }
-
-  const notes = String(answers.additional_notes ?? '').trim();
-  if (notes.length > 0 && wordCount(notes) < PRESCREEN_MIN_SUBSTANTIVE_WORDS) {
-    flagSet.add('low_effort_response');
   }
 
   const hasLowEffort = flagSet.has('low_effort_response');
@@ -179,8 +170,7 @@ export function evaluatePrescreenAnswerQuality(answers: PrescreenAnswersForQuali
   const flags = [...flagSet];
 
   let scoreAdjustment = 0;
-  if (flags.includes('low_effort_response')) scoreAdjustment -= 6;
-  if (flags.includes('vague_response')) scoreAdjustment -= 4;
+  /** `vague_response` / `low_effort_response` use flag penalties in `scoreWorkerAiPrescreen` (avoid double-counting). */
   if (flags.includes('strong_candidate_signal')) scoreAdjustment += 5;
   if (flags.includes('high_confidence_candidate')) scoreAdjustment += 4;
   scoreAdjustment = Math.max(-MAX_QUALITY_PENALTY, Math.min(MAX_QUALITY_BOOST, scoreAdjustment));

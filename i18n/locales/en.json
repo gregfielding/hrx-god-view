@@ -283,7 +283,8 @@
     "title": "Quick interview",
     "titleOptional": "Optional interview",
     "subtitleWithJob": "Complete this to move forward with this job.",
-    "subtitleNoJob": "A few quick answers help us match you with the right work.",
+    "subtitleNoJob": "This helps us learn your strengths and preferences so we can match you with jobs and show employers you’re job-ready — even before you pick a specific role.",
+    "subtitleNoJobSecondary": "It’s short, useful for your profile, and you can update answers later.",
     "subtitleOptional": "You can complete this short interview to help the team learn more about you. It is not required to move forward.",
     "entryBanner": {
       "sms": "You opened this from a text we sent — a few quick answers help us get you job-ready.",
@@ -292,6 +293,7 @@
       "groupWithJob": "From your group invite — a few quick answers help for this job and future matches."
     },
     "earlyEncouragement": "Nice — you're off to a good start.",
+    "earlyEncouragementNoJob": "Nice start — this builds the profile recruiters use to match you.",
     "optionalFollowupChip": "Add-on",
     "durationHintShort": "About 2–3 minutes.",
     "durationHintLong": "About 3–5 minutes.",
@@ -321,7 +323,8 @@
     },
     "v2": {
       "transitionAfterOpening": "Great — next we’ll match your strengths to the right roles.",
-      "transitionJobFit": "Now a few quick questions about this job.",
+      "transitionAfterOpeningNoJob": "Great — next we’ll connect what you shared to the kinds of roles that fit you and strengthen your profile for future applications.",
+      "transitionJobFit": "Next are a few questions for this specific job and schedule — refinements, not repeats of what you already shared.",
       "transitionAlmostDone": "Last step — just making sure we can get you placed quickly.",
       "transitionWrapUpSingleStep": "Finish this last question so we can get you placed quickly.",
       "followupExperiencePrompt": "Optional: add one concrete example (one sentence is enough).",
@@ -330,7 +333,17 @@
       "followupPressurePlaceholder": "Brief example of how you handled pressure…",
       "followupSupervisorPrompt": "Optional: one example of working with a supervisor or feedback.",
       "followupSupervisorPlaceholder": "Brief example — feedback, teamwork, or communication…",
-      "followupTransitionLine": "Quick add-on — one or two sentences below builds on your answer above."
+      "followupTransitionLine": "Quick add-on — one or two sentences below builds on your answer above.",
+      "progressiveLead": {
+        "dyn_shift_punctuality": "A quick check for this shift — different from your general reliability answers above.",
+        "dyn_worksite_commute": "Now about this specific worksite — we’re confirming this location for this job, not your commute in general.",
+        "dyn_physical_job_fit": "For this role in particular — confirming the physical expectations listed for this posting.",
+        "dyn_job_compliance": "Just to confirm for this job:",
+        "dyn_cert_have": "Another requirement tied to this posting:",
+        "dyn_cert_willing": "If this posting requires it, would you pursue this credential?",
+        "dyn_uniform_available": "For this role’s dress or gear requirements:",
+        "dyn_gig_path_willing": "Optional path some teams use while a full-time slot opens:"
+      }
     },
     "openingMultiSelectHint": "Pick all that apply.",
     "placeholderShortAnswer": "A sentence or two is fine",
@@ -341,11 +354,11 @@
       "not_sure": "Not sure"
     },
     "dynamic": {
-      "dyn_shift_punctuality": "Your shift starts at {startTime}. Can you reliably be there on time?",
-      "dyn_worksite_commute": "This job is located in {location}. Will you be able to reliably get there?",
-      "dyn_job_drug_screen": "This job requires a drug screen before starting. Are you able to complete that?",
-      "dyn_job_background_check": "This job requires a background check. Are you able to pass and complete it?",
-      "dyn_physical_job_fit": "This job involves physical work such as {list}. Are you comfortable with that?",
+      "dyn_shift_punctuality": "This shift starts at {startTime}. Can you be on time for this start time?",
+      "dyn_worksite_commute": "This job’s worksite is in {location}. Can you get to this location reliably for this job?",
+      "dyn_job_drug_screen": "This posting requires a drug screen before you start. Are you able to complete it?",
+      "dyn_job_background_check": "This posting requires a background check. Are you able to pass and complete it?",
+      "dyn_physical_job_fit": "For this role, the work includes physical tasks like {list}. Are you comfortable with that for this posting?",
       "dyn_cert_have": "This job requires {cert}. Do you have this certification?",
       "dyn_cert_willing": "If you don't already have {cert}, are you willing to obtain it before or shortly after starting?",
       "dyn_uniform_available": "This role requires {uniformText}. Do you have these available?",
@@ -356,6 +369,8 @@
     "successTitle": "Interview submitted",
     "successBody1": "Your answers were saved. Our team can review them with your application.",
     "successBody2": "What happens next: go back to your dashboard. If a recruiter needs more information, they will reach out using the contact info on your profile.",
+    "successBodyNoJob1": "Your answers were saved to your profile. We’ll use them to suggest better job matches and help teams see you as ready to work.",
+    "successBodyNoJob2": "Next: go back to your dashboard. When you apply to a job, employers may see this profile snapshot — keep your contact info up to date.",
     "referenceLabel": "Reference: {id}",
     "loadingJobQuestions": "Loading job-specific questions…",
     "alertChooseTenant": "Choose your employer in the header if job details do not appear — that helps load questions for this application.",

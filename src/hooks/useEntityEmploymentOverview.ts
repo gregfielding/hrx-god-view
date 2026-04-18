@@ -23,6 +23,7 @@ import { EMPLOYMENT_ENTITY_KEYS, resolveEntityFirestoreIdForTab } from '../utils
 import { buildEmploymentEntityOverview } from '../utils/employmentReadiness';
 import {
   buildEverifyCaseBriefsForSelectEntity,
+  buildEverifySummaryFromCaseDocs,
   filterAutomationDispatchBriefsForEntityTab,
   onboardingAutomationDispatchBriefFromRaw,
   type EverifyCaseNarrativeBrief,
@@ -55,46 +56,6 @@ function employmentRecordEntityKey(rec: EntityEmploymentRecord, userId: string):
     if (tail === 'select' || tail === 'workforce' || tail === 'events') return tail as EmploymentEntityKey;
   }
   return null;
-}
-
-function buildEverifySummary(
-  caseDocs: Array<{ id: string; data: () => Record<string, unknown> }>,
-  selectEntityId: string | null
-): EmploymentEverifySummary | null {
-  if (!selectEntityId) {
-    return { applicable: false, statusDisplay: 'No C1 Select entity', caseCount: 0 };
-  }
-  const selectCases = caseDocs.filter((d) => {
-    const raw = d.data();
-    return String(raw.entityId || '') === selectEntityId;
-  });
-  if (selectCases.length === 0) {
-    return {
-      applicable: true,
-      statusDisplay: 'No cases',
-      caseCount: 0,
-      actionNeeded: false,
-    };
-  }
-  const sorted = [...selectCases].sort((a, b) => {
-    const ta = (a.data().updatedAt as { seconds?: number } | undefined)?.seconds ?? 0;
-    const tb = (b.data().updatedAt as { seconds?: number } | undefined)?.seconds ?? 0;
-    return tb - ta;
-  });
-  const latest = sorted[0];
-  const data = latest.data();
-  const pub = data.public as { status?: string } | undefined;
-  const statusDisplay = String(pub?.status ?? data.status ?? '—');
-  const closed = ['closed', 'closure_duplicate', 'completed', 'authorized', 'final_nonconfirmation'].some((x) =>
-    statusDisplay.toLowerCase().includes(x)
-  );
-  return {
-    applicable: true,
-    statusDisplay,
-    caseCount: selectCases.length,
-    latestCaseId: latest.id,
-    actionNeeded: !closed && !statusDisplay.includes('—'),
-  };
 }
 
 export interface UseEntityEmploymentOverviewArgs {
@@ -388,7 +349,7 @@ export function useEntityEmploymentOverview({
           id: d.id,
           data: () => d.data() as Record<string, unknown>,
         }));
-        const everifySummary = buildEverifySummary(everifyCaseDocRefs, selectEntityId);
+        const everifySummary = buildEverifySummaryFromCaseDocs(everifyCaseDocRefs, selectEntityId);
         const everifyCaseBriefs = buildEverifyCaseBriefsForSelectEntity(everifyCaseDocRefs, selectEntityId);
 
         const payrollByKey: Record<EmploymentEntityKey, Awaited<ReturnType<typeof getWorkerPayrollAccount>>> = {
