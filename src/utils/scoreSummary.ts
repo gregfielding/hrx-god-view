@@ -233,7 +233,7 @@ export function getCanonicalStoredAiScoreFromUserDoc(userDoc: any): number | nul
  * Returns the Firestore update payload for scoreSummary using Hiring Score v1.1.
  * Use after explicit profile mutations (not on profile page load).
  */
-export { getScoreSummaryUpdateFromHiringScoreV1 } from '../../shared/hiringScoreFirestoreUpdate';
+export { getScoreSummaryUpdateFromHiringScoreV1 } from './hiringScoreFirestoreUpdate';
 
 /**
  * Single adapter for "Hiring Score" / "AI Score" from a user document.

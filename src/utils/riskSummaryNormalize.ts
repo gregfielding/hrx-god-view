@@ -24,15 +24,15 @@ function titleCaseWords(s: string): string {
 }
 
 export function normalizeOperationalRiskSummary(raw: string): string {
-  let t = String(raw ?? '')
+  const trimmed = String(raw ?? '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!t) return t;
-  const lower = t.toLowerCase();
+  if (!trimmed) return trimmed;
+  const lower = trimmed.toLowerCase();
   if (SNAKE_PHRASES[lower]) return SNAKE_PHRASES[lower];
-  if (/^[a-z0-9_]+$/.test(t) && t.includes('_')) {
-    return titleCaseWords(t.replace(/_/g, ' '));
+  if (/^[a-z0-9_]+$/.test(trimmed) && trimmed.includes('_')) {
+    return titleCaseWords(trimmed.replace(/_/g, ' '));
   }
-  if (t.length > 160) return `${t.slice(0, 157)}…`;
-  return t;
+  if (trimmed.length > 160) return `${trimmed.slice(0, 157)}…`;
+  return trimmed;
 }
