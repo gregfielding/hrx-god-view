@@ -135,6 +135,8 @@ function emptyAnswers(): WorkerAiPrescreenAnswers {
     drug_screen_detail: '',
     background_check: '',
     background_check_detail: '',
+    background_offense_class: '',
+    background_offense_when: '',
     supervisor_feedback: '',
     additional_notes: '',
   };
@@ -191,6 +193,10 @@ function isCoreStepIncluded(
     if (dynIds.has(DYNAMIC_JOB_BACKGROUND_CHECK_ID)) return false;
     return String(a.background_check ?? '').trim().toLowerCase() === 'yes';
   }
+  if (step.id === 'background_offense_class' || step.id === 'background_offense_when') {
+    if (dynIds.has(DYNAMIC_JOB_BACKGROUND_CHECK_ID)) return false;
+    return String(a.background_check ?? '').trim().toLowerCase() === 'yes';
+  }
   const rule = CONDITIONAL_CORE_STEP_IDS[step.id];
   return rule ? rule(a) : true;
 }
@@ -216,6 +222,9 @@ function buildAnswersForSubmit(
   return {
     ...answers,
     ...(!attendanceYes ? { attendance_explanation: '' } : {}),
+    ...(String(answers.background_check ?? '').trim().toLowerCase() !== 'yes'
+      ? { background_offense_class: '', background_offense_when: '' }
+      : {}),
     ...(dynIds.has(DYNAMIC_JOB_DRUG_SCREEN_ID)
       ? { drug_screen: mapDynamicAnswerToCoreDrugBg(dynamicAnswers[DYNAMIC_JOB_DRUG_SCREEN_ID] ?? '') }
       : {}),
@@ -239,6 +248,9 @@ function stepValid(step: WorkerAiPrescreenStep, a: WorkerAiPrescreenAnswers): bo
         const attYes = String(a.attendance_issues ?? '').trim().toLowerCase() === 'yes';
         if (!attYes) return true;
         return wordCountAnswer(v) >= PRESCREEN_MIN_SUBSTANTIVE_WORDS || /^(n\/a|na)$/i.test(v.trim());
+      }
+      if (step.id === 'background_offense_class' || step.id === 'background_offense_when') {
+        return true;
       }
       return v.length >= 2;
     }
@@ -769,7 +781,16 @@ const WorkerAiPrescreenPage: React.FC = () => {
   }, [applicationId, tenantId, user?.uid]);
 
   useEffect(() => {
-    if (!applicationId || !user?.uid) {
+    if (!user?.uid) {
+      setDynamicSteps([]);
+      setDynamicAnswers({});
+      setPlanError(null);
+      setPlanLoading(false);
+      setWorkerAiPrescreenRequired(true);
+      return;
+    }
+    const canFetchPlan = Boolean(applicationId) || Boolean(tenantId);
+    if (!canFetchPlan) {
       setDynamicSteps([]);
       setDynamicAnswers({});
       setPlanError(null);
@@ -783,7 +804,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
     void (async () => {
       try {
         const plan = await getWorkerAiPrescreenInterviewPlan({
-          applicationId,
+          applicationId: applicationId || null,
           tenantId,
         });
         if (cancelled) return;
@@ -1031,6 +1052,9 @@ const WorkerAiPrescreenPage: React.FC = () => {
     ) {
       return applicationId ? t('workerAiPrescreen.entryBanner.groupWithJob') : t('workerAiPrescreen.entryBanner.group');
     }
+    if (e === 'sms_profile_first_interview' || e === 'profile_first_chase_1' || e === 'profile_first_chase_2') {
+      return t('workerAiPrescreen.entryBanner.profileFirstSms');
+    }
     if (e.startsWith('sms_')) {
       return applicationId ? t('workerAiPrescreen.entryBanner.smsWithJob') : t('workerAiPrescreen.entryBanner.sms');
     }
@@ -1132,17 +1156,22 @@ const WorkerAiPrescreenPage: React.FC = () => {
               variant="contained"
               color="success"
               sx={{ mt: 0.5, py: 1.25, fontWeight: 600 }}
-              onClick={() => navigate('/c1/workers/dashboard')}
+              onClick={() => navigate(applicationId ? '/c1/workers/dashboard' : '/c1/jobs-board')}
             >
-              {t('workerAiPrescreen.backToDashboard')}
+              {applicationId ? t('workerAiPrescreen.backToDashboard') : t('workerAiPrescreen.browseJobsBoard')}
             </Button>
+            {!applicationId ? (
+              <Button fullWidth variant="outlined" sx={{ py: 1.1, fontWeight: 600 }} onClick={() => navigate('/c1/workers/dashboard')}>
+                {t('workerAiPrescreen.backToDashboard')}
+              </Button>
+            ) : null}
           </Stack>
         </Paper>
       </Box>
     );
   }
 
-  if (applicationId && planLoading) {
+  if (planLoading && (applicationId || tenantId)) {
     return (
       <Box sx={{ p: { xs: 1.5, sm: 2 }, maxWidth: 560, mx: 'auto' }}>
         {renderFramingHeader({ loading: true })}
@@ -1150,7 +1179,7 @@ const WorkerAiPrescreenPage: React.FC = () => {
         <Stack alignItems="center" spacing={1.5} sx={{ mt: 2 }}>
           <CircularProgress size={36} />
           <Typography variant="body2" color="text.secondary" textAlign="center">
-            {t('workerAiPrescreen.loadingJobQuestions')}
+            {applicationId ? t('workerAiPrescreen.loadingJobQuestions') : t('workerAiPrescreen.loadingProfileQuestions')}
           </Typography>
         </Stack>
       </Box>
@@ -1184,6 +1213,11 @@ const WorkerAiPrescreenPage: React.FC = () => {
       {applicationId && !tenantId ? (
         <Alert severity="info" sx={{ mb: 1.5, py: 0.75 }}>
           {t('workerAiPrescreen.alertChooseTenant')}
+        </Alert>
+      ) : null}
+      {!applicationId && !tenantId ? (
+        <Alert severity="info" sx={{ mb: 1.5, py: 0.75 }}>
+          {t('workerAiPrescreen.alertChooseTenantProfileFirst')}
         </Alert>
       ) : null}
 

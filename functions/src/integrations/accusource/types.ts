@@ -44,6 +44,11 @@ export interface BackgroundCheckDocument {
   providerClientId?: string | null;
   providerOrderIds?: string[] | null;
   orderMode: 'partial_profile' | 'full_profile';
+  requestedPackageId?: string | number | null;
+  requestedPackageName?: string | null;
+  requestedServices?: string[];
+  /** Catalog snapshot at order time (matches client / Firestore catalog `services[]`). */
+  requestedServicesCatalog?: Array<{ id: string; name: string; type?: string }>;
   hrxStatus: HrxBackgroundCheckStatus;
   /** Applicant self-service URL (create response or `partial_profile_link` webhook). */
   applicantPortalLink?: string | null;

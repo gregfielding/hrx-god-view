@@ -11907,6 +11907,9 @@ export {
   type Percentiles,
 } from './scoringDistribution';
 
+// Hiring Score v1.1 — stale score repair (batch / daily scheduler; no users onWrite trigger)
+export { scheduledRefreshStaleHiringScores } from './hiringScore/scheduledRefreshHiringScores';
+
 // Email Migration
 export { migrateEmailLogsToThreads } from './messaging/migrateEmailLogsToThreads';
 

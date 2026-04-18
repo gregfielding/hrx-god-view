@@ -1,8 +1,17 @@
 /**
  * Mirror of recruiter InterviewTab scoreSummary update (admin SDK).
+ * Co-locates `riskProfile` with score summary when inputs change (signature-guarded).
  */
 import * as admin from 'firebase-admin';
 import type { Firestore } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions/v2';
+import type { ComposedPrescreenAiBundle } from './composePrescreenAiBundle';
+import type { WorkerAiPrescreenAnswers } from './scoreWorkerAiPrescreen';
+import {
+  buildWorkerRiskProfileFromBundleWithAnswers,
+  buildWorkerRiskProfileFromLatestInterview,
+  mergeRiskProfileIntoUserUpdateIfChanged,
+} from './workerRiskProfile';
 
 function computeAiScoreFromComponents(
   completeness: number,
@@ -18,7 +27,24 @@ function computeAiScoreFromComponents(
   return Math.round(Math.max(0, Math.min(100, raw)));
 }
 
-export async function recomputeUserInterviewScoreSummary(db: Firestore, uid: string): Promise<void> {
+export type RecomputeUserInterviewScoreSummaryOpts = {
+  /** Fresh prescreen bundle from interview submit — avoids stale read before writes land. */
+  prescreenBundle?: ComposedPrescreenAiBundle;
+  prescreenAnswers?: WorkerAiPrescreenAnswers;
+  prescreenDynamicAnswers?: Record<string, string>;
+  submitInterviewId?: string;
+  /**
+   * Firestore `createdAt` (or `timestamp`) of the prescreen interview just written — feeds `riskProfile.staleness`
+   * the same way as `buildWorkerRiskProfileFromLatestInterview` reading the stored interview doc.
+   */
+  interviewCreatedAt?: admin.firestore.Timestamp | null;
+};
+
+export async function recomputeUserInterviewScoreSummary(
+  db: Firestore,
+  uid: string,
+  opts?: RecomputeUserInterviewScoreSummaryOpts,
+): Promise<void> {
   const interviewsRef = db.collection('users').doc(uid).collection('interviews');
   let snap;
   try {
@@ -56,7 +82,8 @@ export async function recomputeUserInterviewScoreSummary(db: Firestore, uid: str
       : null;
 
   const userSnap = await db.collection('users').doc(uid).get();
-  const scoreSummary = (userSnap.data() as { scoreSummary?: Record<string, unknown> } | undefined)?.scoreSummary || {};
+  const userData = (userSnap.data() || {}) as Record<string, unknown>;
+  const scoreSummary = (userData.scoreSummary as Record<string, unknown> | undefined) || {};
   const reviewAvg = typeof scoreSummary.reviewAvg === 'number' ? scoreSummary.reviewAvg : null;
 
   const hasInterview = typeof interviewAvg === 'number' && Number.isFinite(interviewAvg);
@@ -87,6 +114,38 @@ export async function recomputeUserInterviewScoreSummary(db: Firestore, uid: str
   if (newAiScore !== null) {
     update['scoreSummary.aiScore'] = newAiScore;
     update['scoreSummary.aiScoreUpdatedAt'] = admin.firestore.FieldValue.serverTimestamp();
+  }
+
+  try {
+    let riskDraft = null as ReturnType<typeof buildWorkerRiskProfileFromBundleWithAnswers> | null;
+    if (
+      opts?.prescreenBundle &&
+      opts.prescreenAnswers &&
+      opts.submitInterviewId &&
+      opts.prescreenBundle.scored &&
+      opts.prescreenBundle.aiFlags
+    ) {
+      riskDraft = buildWorkerRiskProfileFromBundleWithAnswers(
+        opts.prescreenBundle,
+        opts.prescreenAnswers,
+        opts.prescreenDynamicAnswers ?? {},
+        userData,
+        opts.submitInterviewId,
+        'interview_submit',
+        opts.interviewCreatedAt ?? null,
+      );
+    } else {
+      riskDraft = await buildWorkerRiskProfileFromLatestInterview(db, uid, userData, 'score_review');
+    }
+    const riskMerge = mergeRiskProfileIntoUserUpdateIfChanged(userData, riskDraft);
+    if (riskMerge) {
+      Object.assign(update, riskMerge);
+    }
+  } catch (e) {
+    logger.warn('recomputeUserInterviewScoreSummary.riskProfile_failed', {
+      uid,
+      message: e instanceof Error ? e.message : String(e),
+    });
   }
 
   await db.collection('users').doc(uid).update(update);

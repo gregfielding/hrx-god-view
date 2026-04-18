@@ -5,6 +5,7 @@
 
 import { Timestamp } from 'firebase/firestore';
 import type { BackgroundCheckRecord } from '../../../types/backgroundCheck';
+import { accusourceScreeningLineItems } from '../../../utils/accusourceScreeningLineItems';
 import { resolveApplicantPortalUrl } from '../../../utils/backgroundCheckApplicantPortal';
 import type { TenantRole } from '../../../contexts/AuthContext';
 import type { Role, SecurityLevel } from '../../../utils/AccessRoles';
@@ -100,6 +101,8 @@ export interface NormalizedComplianceRow {
   everify?: { id: string; data: Record<string, unknown> };
   /** Screening row payload when channel === 'screening' */
   screening?: BackgroundCheckRecord;
+  /** Per AccuSource screen (from catalog + webhooks) — AccuSource screening rows only. */
+  screeningServiceLines?: Array<{ id: string; name: string; type?: string; status: string }>;
 }
 
 function everifyPublicStatus(data: Record<string, unknown>): string {
@@ -167,6 +170,7 @@ export function normalizeScreeningRow(r: BackgroundCheckRecord): NormalizedCompl
       : r.hrxStatus === 'awaiting_applicant' && !portalUrl
         ? 'Awaiting applicant setup link'
         : '';
+  const screeningServiceLines = accusourceScreeningLineItems(r);
   return {
     key: `bg-${r.id}`,
     channel: 'screening',
@@ -180,6 +184,7 @@ export function normalizeScreeningRow(r: BackgroundCheckRecord): NormalizedCompl
     drugReportReady: !!r.drugReportReady,
     finalReportReady: !!r.finalReportReady,
     screening: r,
+    screeningServiceLines: screeningServiceLines.length > 0 ? screeningServiceLines : undefined,
   };
 }
 

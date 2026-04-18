@@ -1,6 +1,7 @@
 /**
  * Mirrors `userMatchesSearchTerm` in `src/pages/RecruiterUsers.tsx` for server-side full-collection search.
  */
+import { normalizeUsStateCode } from './usStateNormalize';
 
 function normalizeSkills(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -97,3 +98,50 @@ export function firestoreUserDocMatchesRecruiterSearch(
 
   return false;
 }
+
+function extractStateRawFromUserDoc(data: Record<string, unknown>): string {
+  const ai =
+    data.addressInfo && typeof data.addressInfo === 'object'
+      ? (data.addressInfo as Record<string, unknown>)
+      : null;
+  const ad =
+    data.address && typeof data.address === 'object' ? (data.address as Record<string, unknown>) : null;
+  const raw = data.state || ad?.state || ai?.state || '';
+  return typeof raw === 'string' ? raw.trim() : '';
+}
+
+/** True if user belongs to the tenant user group `groupId` (Firestore user doc shape). */
+export function firestoreUserDocMatchesRecruiterGroup(
+  data: Record<string, unknown> | undefined,
+  tenantId: string,
+  groupId: string,
+): boolean {
+  if (!groupId || groupId === 'all') return true;
+  if (!data) return false;
+  const tenantData = (data.tenantIds as Record<string, unknown> | undefined)?.[tenantId] as
+    | Record<string, unknown>
+    | undefined;
+  const ids = new Set<string>();
+  const collect = (raw: unknown) => {
+    if (!Array.isArray(raw)) return;
+    raw.forEach((x) => {
+      if (typeof x === 'string' && x.trim()) ids.add(x.trim());
+    });
+  };
+  collect(tenantData?.userGroupIds);
+  collect(data.userGroupIds);
+  return ids.has(groupId);
+}
+
+/** True if user's state resolves to the same USPS code as `selectedStateRaw` (2-letter or full name from client). */
+export function firestoreUserDocMatchesRecruiterState(
+  data: Record<string, unknown> | undefined,
+  selectedStateRaw: string,
+): boolean {
+  const selected = normalizeUsStateCode(selectedStateRaw);
+  if (!selected) return false;
+  if (!data) return false;
+  const userCode = normalizeUsStateCode(extractStateRawFromUserDoc(data));
+  return userCode === selected;
+}
+

@@ -34,7 +34,7 @@ const UserTableResumeIcon: React.FC<Props> = ({ user }) => {
           },
         }}
       >
-        <DescriptionIcon sx={{ fontSize: 14 }} />
+        <DescriptionIcon sx={{ fontSize: 12, opacity: 0.85 }} />
       </IconButton>
     </Tooltip>
   );

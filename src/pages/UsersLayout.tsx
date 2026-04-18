@@ -9,12 +9,11 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { Box, Button, Tooltip } from '@mui/material';
+import { Box, Button } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import PageHeader from '../components/PageHeader';
-import { useAuth } from '../contexts/AuthContext';
-import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
+// import { OnCallI9SupportingReminderDialog } from '../components/staffOnboarding/OnCallI9SupportingReminderDialog';
 import InboxSearchBar from '../components/InboxSearchBar';
 import FavoritesFilter from '../components/FavoritesFilter';
 import {
@@ -25,6 +24,7 @@ import {
   persistUsersLayout,
   type UsersTab,
 } from '../utils/usersLayoutPersistence';
+import { useAuth } from '../contexts/AuthContext';
 
 export type { UsersTab };
 
@@ -44,7 +44,7 @@ const UsersLayout: React.FC = () => {
   const pathname = location.pathname;
   const activeTab = getActiveUsersTab(pathname);
   const { activeTenant } = useAuth();
-  const [i9MasterReminderOpen, setI9MasterReminderOpen] = useState(false);
+  // const [i9MasterReminderOpen, setI9MasterReminderOpen] = useState(false);
 
   /* Temporary prescreen backfill (triggerRecentUserInterviewBackfill) — restore if needed:
   const [backfillLoading, setBackfillLoading] = useState(false);
@@ -99,6 +99,7 @@ const UsersLayout: React.FC = () => {
   const rightActions =
     isUsersTab ? (
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+        {/* I-9 reminders (all onboarding) — hidden per product request; restore with OnCallI9SupportingReminderDialog + state above
         <Tooltip title="Temporary: SMS workers in W-2 onboarding who still need I-9 supporting uploads (not on-call only). Preview first.">
           <Button
             variant="outlined"
@@ -110,6 +111,7 @@ const UsersLayout: React.FC = () => {
             I-9 reminders (all onboarding)
           </Button>
         </Tooltip>
+        */}
         <InboxSearchBar
           value={usersSearch}
           onChange={setUsersSearch}
@@ -185,12 +187,12 @@ const UsersLayout: React.FC = () => {
 
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}>
-      <OnCallI9SupportingReminderDialog
+      {/* <OnCallI9SupportingReminderDialog
         open={i9MasterReminderOpen}
         onClose={() => setI9MasterReminderOpen(false)}
         tenantId={activeTenant?.id}
         audience="all_w2_onboarding"
-      />
+      /> */}
       <PageHeader
         title="Users"
         subtitle="All users, groups, and smart groups"

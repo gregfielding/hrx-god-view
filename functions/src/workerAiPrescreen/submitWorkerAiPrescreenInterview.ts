@@ -10,7 +10,7 @@ import { evaluateAiPrescreenEligibility } from './evaluateAiPrescreenEligibility
 import { recomputeUserInterviewScoreSummary } from './recomputeInterviewScoreSummary';
 import { WORKER_AI_PRESCREEN_PROMPTS } from './prescreenQuestionLabels';
 import type { AiInterviewContext } from './aiInterviewContextTypes';
-import { buildAiInterviewContext } from './buildAiInterviewContext';
+import { buildAiInterviewContext, buildProfileFirstAiInterviewContext } from './buildAiInterviewContext';
 import { buildDynamicPrescreenSteps } from './buildDynamicPrescreenQuestions';
 import { applyPrescreenDynamicDedupe } from './prescreenDynamicDedupe';
 import type { DynamicAnswerValue } from './evaluateAiHiringDecision';
@@ -50,7 +50,12 @@ const REQUIRED_KEYS = [
 ] as const;
 
 /** Optional core rows persisted when present / applicable. */
-const OPTIONAL_CORE_STORED_KEYS = ['drug_screen_detail', 'background_check_detail'] as const;
+const OPTIONAL_CORE_STORED_KEYS = [
+  'drug_screen_detail',
+  'background_check_detail',
+  'background_offense_class',
+  'background_offense_when',
+] as const;
 
 const MULTI_SELECT_ANSWER_KEYS = new Set<string>(['work_confidence', ...PRESCREEN_OPENING_MULTI_SELECT_KEYS]);
 
@@ -138,6 +143,19 @@ function parseAnswers(raw: unknown): WorkerAiPrescreenAnswers {
   };
   detail('drug_screen_detail');
   detail('background_check_detail');
+
+  for (const k of ['background_offense_class', 'background_offense_when'] as const) {
+    const v = o[k];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string') {
+      throw new HttpsError('invalid-argument', `${k} must be a string`);
+    }
+    const s = String(v).trim();
+    if (s.length > 500) {
+      throw new HttpsError('invalid-argument', `${k} is too long`);
+    }
+    if (s) (out as Record<string, string>)[k] = s;
+  }
 
   return out;
 }
@@ -266,6 +284,18 @@ function shouldOmitCoreQuestionFromStoredInterview(
   if (key === 'drug_screen_detail' && dynamicStepIds.has('dyn_job_drug_screen')) return true;
   if (key === 'background_check_detail' && normLower(answers.background_check) !== 'yes') return true;
   if (key === 'background_check_detail' && dynamicStepIds.has('dyn_job_background_check')) return true;
+  if (
+    (key === 'background_offense_class' || key === 'background_offense_when') &&
+    normLower(answers.background_check) !== 'yes'
+  ) {
+    return true;
+  }
+  if (
+    (key === 'background_offense_class' || key === 'background_offense_when') &&
+    dynamicStepIds.has('dyn_job_background_check')
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -314,6 +344,12 @@ export const submitWorkerAiPrescreenInterview = onCall(
       interviewContext = await buildAiInterviewContext(db, {
         userId: auth.uid,
         applicationId,
+        tenantId: tenantIdHint,
+        userDoc: enrichedUd,
+      });
+    } else if (tenantIdHint) {
+      interviewContext = await buildProfileFirstAiInterviewContext(db, {
+        userId: auth.uid,
         tenantId: tenantIdHint,
         userDoc: enrichedUd,
       });
@@ -391,6 +427,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
     logger.info('worker_ai_prescreen.scored', {
       userId: auth.uid,
       interviewKind: 'worker_ai_prescreen',
+      prescreenInterviewMode: applicationId ? 'application' : 'profile_first',
       applicationId,
       entry: entrySource ?? null,
       overallScore: scored.overallScore,
@@ -477,6 +514,7 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     const interviewPayload: Record<string, unknown> = {
       interviewKind: 'worker_ai_prescreen',
+      prescreenInterviewMode: applicationId ? 'application' : 'profile_first',
       applicationId,
       submittedBy: createdByName,
       submittedById: auth.uid,
@@ -499,10 +537,35 @@ export const submitWorkerAiPrescreenInterview = onCall(
 
     await interviewRef.set(interviewPayload);
 
+    /** Resolved `createdAt` / `timestamp` from the stored interview — same inputs as latest-interview risk rebuild. */
+    let prescreenInterviewCreatedAtForRisk: admin.firestore.Timestamp = admin.firestore.Timestamp.now();
+    try {
+      const createdSnap = await interviewRef.get();
+      const d = createdSnap.data() as Record<string, unknown> | undefined;
+      const ca = d?.createdAt ?? d?.timestamp;
+      if (ca && typeof (ca as admin.firestore.Timestamp).toMillis === 'function') {
+        prescreenInterviewCreatedAtForRisk = ca as admin.firestore.Timestamp;
+      }
+    } catch (e) {
+      logger.warn('submitWorkerAiPrescreenInterview.interview_createdAt_read_failed', {
+        userId: auth.uid,
+        interviewId,
+        message: e instanceof Error ? e.message : String(e),
+      });
+    }
+
     try {
       await userRef.set(
         {
           hasWorkerAiPrescreenInterview: true,
+          ...(!applicationId
+            ? {
+                workerAiPrescreenProfileFirstChase1Pending: false,
+                workerAiPrescreenProfileFirstChase2Pending: false,
+                workerAiPrescreenProfileFirstChase1DueAt: admin.firestore.FieldValue.delete(),
+                workerAiPrescreenProfileFirstChase2DueAt: admin.firestore.FieldValue.delete(),
+              }
+            : {}),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },
@@ -650,7 +713,13 @@ export const submitWorkerAiPrescreenInterview = onCall(
     }
 
     try {
-      await recomputeUserInterviewScoreSummary(db, auth.uid);
+      await recomputeUserInterviewScoreSummary(db, auth.uid, {
+        prescreenBundle: bundle,
+        prescreenAnswers: answers,
+        prescreenDynamicAnswers: dynamicAnswers,
+        submitInterviewId: interviewId,
+        interviewCreatedAt: prescreenInterviewCreatedAtForRisk,
+      });
     } catch (e) {
       logger.warn('submitWorkerAiPrescreenInterview.scoreSummary_failed', {
         uid: auth.uid,

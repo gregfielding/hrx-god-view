@@ -12,3 +12,24 @@ export function toSafeHref(value: string | null | undefined): string {
   if (trimmed.length <= 20 && !trimmed.includes('.') && /\d{3}/.test(trimmed)) return '';
   return `https://${trimmed}`;
 }
+
+/**
+ * Optional clock-in / external URL from shift settings. Only allows http(s).
+ * Returns normalized href string or null if empty/invalid.
+ */
+export function normalizeClockInUrl(raw: string | null | undefined): string | null {
+  if (raw == null || typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!t) return null;
+  let candidate = t;
+  if (!/^https?:\/\//i.test(candidate)) {
+    candidate = `https://${candidate}`;
+  }
+  try {
+    const u = new URL(candidate);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return u.href;
+  } catch {
+    return null;
+  }
+}

@@ -1,5 +1,3 @@
-import { computeHiringScoreV1 } from './hiringScoreV1';
-
 /** v1.1 Hiring Score components (C, D, R). */
 export interface ScoreSummaryComponentsV1 {
   completeness: number;
@@ -37,6 +35,8 @@ export type ScoreSummary = {
   explainability?: ScoreSummaryExplainabilityV1;
   hiringScoreVersion?: 'v1.1';
   hiringScoreComputedAt?: any;
+  /** Fingerprint of inputs used for Hiring Score v1.1 — skip writes when unchanged */
+  hiringScoreInputSignature?: string;
 };
 
 const toNumberOrUndefined = (v: any): number | undefined => {
@@ -92,6 +92,8 @@ export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
       : undefined,
     hiringScoreVersion: raw.hiringScoreVersion === 'v1.1' ? 'v1.1' : undefined,
     hiringScoreComputedAt: raw.hiringScoreComputedAt,
+    hiringScoreInputSignature:
+      typeof raw.hiringScoreInputSignature === 'string' ? raw.hiringScoreInputSignature : undefined,
   };
 }
 
@@ -205,41 +207,33 @@ export function getRelativeAiScore(
   return Math.round(Math.min(100, 90 + t * 10));
 }
 
-// ─── One Score System (source of truth) ─────────────────────────────────────
-// Where AI score is computed: getScoreSummaryUpdateFromCompleteness() in this file;
-//   completeness comes from calculateCompletenessScore() in applicantScoring.ts.
-// Where it's stored: users/{uid}.scoreSummary.aiScore (and scoreSummary.completenessScore,
-//   scoreSummary.aiScoreUpdatedAt). Optional legacy: top-level users.{uid}.score or .profileScore.
-// What triggers compute: (1) UserProfile on load can backfill when missing; (2) persistScoreSummaryFromProfile()
-//   is called after profile updates (e.g. skills, overview) so stored score stays in sync.
-// TODO: Admin screen may show "stale" if score is only recomputed on profile save/backfill;
-//   consider: trigger persistScoreSummaryFromProfile on blur/navigation from profile, or
-//   expose "Refresh score" in admin until we have a single recompute path (e.g. Cloud Function on user update).
+// ─── Canonical stored AI / Hiring score ───────────────────────────────────
+// **Display (users table, profile header):** use only `users/{uid}.scoreSummary.aiScore` via
+// `getCanonicalStoredAiScore` / `getCanonicalStoredAiScoreFromUserDoc`. Do not substitute
+// `qualityScore` or `profileScore` for those surfaces — they are not the same snapshot.
+// **Writes:** Hiring Score v1.1 recomputes via `getScoreSummaryUpdateFromHiringScoreV1` + optional
+// `persistScoreSummaryFromProfile` after real profile edits (signature-guarded). Interview submit
+// and Cloud Functions update `scoreSummary` on the server. Profile **page load** does not write scores.
+
+/**
+ * Canonical stored AI score for list/header (0–100), or null if never computed / missing.
+ */
+export function getCanonicalStoredAiScore(summary: ScoreSummary | undefined | null): number | null {
+  const n = summary?.aiScore;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+}
+
+export function getCanonicalStoredAiScoreFromUserDoc(userDoc: any): number | null {
+  const raw = userDoc?.scoreSummary;
+  if (!raw || typeof raw !== 'object') return null;
+  return getCanonicalStoredAiScore(normalizeScoreSummary(raw));
+}
 
 /**
  * Returns the Firestore update payload for scoreSummary using Hiring Score v1.1.
- * Use when persisting after profile load or profile update.
+ * Use after explicit profile mutations (not on profile page load).
  */
-export function getScoreSummaryUpdateFromHiringScoreV1(userDoc: any): {
-  'scoreSummary.aiScore': number;
-  'scoreSummary.completenessScore': number;
-  'scoreSummary.components': ScoreSummaryComponentsV1;
-  'scoreSummary.explainability': ScoreSummaryExplainabilityV1;
-  'scoreSummary.hiringScoreVersion': 'v1.1';
-  'scoreSummary.hiringScoreComputedAt': any;
-  'scoreSummary.aiScoreUpdatedAt': any;
-} {
-  const result = computeHiringScoreV1(userDoc);
-  return {
-    'scoreSummary.aiScore': result.score,
-    'scoreSummary.completenessScore': result.components.completeness,
-    'scoreSummary.components': result.components,
-    'scoreSummary.explainability': result.explainability,
-    'scoreSummary.hiringScoreVersion': 'v1.1',
-    'scoreSummary.hiringScoreComputedAt': result.computedAt,
-    'scoreSummary.aiScoreUpdatedAt': result.computedAt,
-  };
-}
+export { getScoreSummaryUpdateFromHiringScoreV1 } from '../../shared/hiringScoreFirestoreUpdate';
 
 /**
  * Single adapter for "Hiring Score" / "AI Score" from a user document.

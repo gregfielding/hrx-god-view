@@ -207,11 +207,6 @@ function C1UserProfileOrRedirect() {
   return <UserProfile />;
 }
 
-function RecruiterUserGroupsRedirect() {
-  const { groupId } = useParams();
-  return <Navigate to={`/usergroups/${groupId}`} replace />;
-}
-
 function UsersHubIndexRedirect() {
   return <Navigate to={getUsersIndexRedirectPath()} replace />;
 }
@@ -1256,9 +1251,8 @@ function App() {
           <Route path="companies/*" element={<RecruiterCompaniesRedirect />} />
           {/* Redirect all recruiter/contacts/... to canonical /contacts/... */}
           <Route path="contacts/*" element={<RecruiterContactsRedirect />} />
-          {/* User Groups moved to main menu; keep recruiter routes as redirects */}
-          <Route path="user-groups" element={<Navigate to="/usergroups" replace />} />
-          <Route path="user-groups/:groupId" element={<RecruiterUserGroupsRedirect />} />
+          <Route path="user-groups" element={<RecruiterUserGroups />} />
+          <Route path="user-groups/:groupId" element={<RecruiterUserGroupDetails />} />
           <Route path="jobs-board/*" element={<JobsRedirect />} />
           <Route path="reports" element={<Navigate to="/jobs/reports" replace />} />
         </Route>

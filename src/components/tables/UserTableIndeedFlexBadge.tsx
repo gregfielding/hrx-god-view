@@ -3,12 +3,14 @@ import { Box, Tooltip } from '@mui/material';
 
 type Props = {
   user: Record<string, unknown> | null | undefined;
+  /** When true, no top margin — use inline with other row icons. */
+  compact?: boolean;
 };
 
-const UserTableIndeedFlexBadge: React.FC<Props> = ({ user }) => {
+const UserTableIndeedFlexBadge: React.FC<Props> = ({ user, compact }) => {
   if (!user || user.addedToIndeedFlex !== true) return null;
   return (
-    <Box sx={{ mt: 0.25, lineHeight: 0 }}>
+    <Box sx={{ mt: compact ? 0 : 0.25, lineHeight: 0 }}>
       <Tooltip title="Added to Indeed Flex">
         <Box
           component="img"

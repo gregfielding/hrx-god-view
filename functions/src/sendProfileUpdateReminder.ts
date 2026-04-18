@@ -1,5 +1,6 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
+import { CALLABLE_BROWSER_CORS } from './integrations/callableBrowserCors';
 import {
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -27,7 +28,9 @@ function getMaxSecurityLevel(userData: any): number {
 
 export const sendProfileUpdateReminder = onCall(
   {
-    cors: true,
+    /** Same explicit origins as other web callables — `cors: true` can omit custom domains like hrxone.com. */
+    enforceAppCheck: false,
+    cors: CALLABLE_BROWSER_CORS,
     secrets: [TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_MESSAGING_PHONE_NUMBER, TWILIO_A2P_CAMPAIGN],
   },
   async (request) => {

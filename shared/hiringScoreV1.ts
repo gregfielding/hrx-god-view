@@ -2,6 +2,8 @@
  * Hiring Score v1.1 — Global person-level score.
  * Spec: HRX-Scoring-Architecture-v1.1
  * Formula: HiringScore = 0.60*C + 0.25*D + 0.15*R (Completeness, Depth, Reliability)
+ *
+ * Shared by web app (`src/utils/scoreSummary`) and Cloud Functions (repair / scheduled refresh).
  */
 
 export interface HiringScoreV1Components {
@@ -217,4 +219,13 @@ export function computeHiringScoreV1(userDoc: any): HiringScoreV1Result {
     explainability,
     computedAt: now,
   };
+}
+
+/**
+ * Deterministic fingerprint of profile inputs that drive Hiring Score v1.1 (same C/D/R → same signature).
+ * Used to skip redundant Firestore writes when profile-derived score would be unchanged.
+ */
+export function computeHiringScoreInputSignature(userDoc: any): string {
+  const r = computeHiringScoreV1(userDoc);
+  return `v1.1:${r.components.completeness}:${r.components.depth}:${r.components.reliability}:${r.score}`;
 }

@@ -69,12 +69,19 @@ const FLAG_LABELS: Record<string, string> = {
   attendance_risk: 'Attendance risk',
   transportation_risk: 'Transportation risk',
   no_backup_transport: 'No backup transportation',
-  drug_risk: 'Drug risk',
-  background_risk: 'Background risk',
+  drug_risk: 'Drug risk (legacy)',
+  background_risk: 'Background risk (legacy)',
+  drug_risk_low: 'Drug signal — low severity',
+  drug_risk_moderate: 'Drug signal — moderate severity',
+  drug_risk_high: 'Drug signal — high severity',
+  background_risk_low: 'Background signal — low severity',
+  background_risk_moderate: 'Background signal — moderate severity',
+  background_risk_high: 'Background signal — high severity',
   physical_mismatch: 'Physical mismatch',
   limited_relevant_experience: 'Limited relevant experience',
   drug_unknown: 'Drug screening unknown',
   background_unknown: 'Background unknown',
+  risk_admission_detected: 'Admission flagged (attendance or screening)',
 };
 
 export function labelForInterviewFlag(flag: string): string {

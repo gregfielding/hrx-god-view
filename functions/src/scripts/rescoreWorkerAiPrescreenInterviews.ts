@@ -6,7 +6,7 @@
  * do not depend on interview indexes.
  *
  * Updates: `users/{uid}/interviews/{id}` (`score`, `score10`, `ai.*`), linked `applications.aiAutomation` when guards pass,
- * and `recomputeUserInterviewScoreSummary` for the user.
+ * and `recomputeUserInterviewScoreSummary` for the user (includes `riskProfile` when interview AI data / compliance inputs change; signature-guarded).
  *
  * Usage (from `functions/`):
  *   npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts --dry-run --limit=10

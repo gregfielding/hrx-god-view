@@ -6,7 +6,6 @@ import {
   Box,
   Button,
   Checkbox,
-  Chip,
   CircularProgress,
   FormControl,
   InputLabel,
@@ -24,22 +23,18 @@ import {
   TextField,
   Tooltip,
   Typography,
+  Chip,
 } from '@mui/material';
+import BuildOutlinedIcon from '@mui/icons-material/BuildOutlined';
+import StickyNote2OutlinedIcon from '@mui/icons-material/StickyNote2Outlined';
 import EmailIcon from '@mui/icons-material/Email';
-import PhoneIcon from '@mui/icons-material/Phone';
-import LocationOnIcon from '@mui/icons-material/LocationOn';
 import SmsIcon from '@mui/icons-material/Sms';
 import MessageDrawer, { type MessageRecipient } from '../components/MessageDrawer';
-import { toChipLabel } from '../utils/chipLabel';
-import InsightsIcon from '@mui/icons-material/Insights';
 import ClearIcon from '@mui/icons-material/Clear';
 import IconButton from '@mui/material/IconButton';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import { collection, getDocs, getDoc, doc, query, where, limit, startAfter, orderBy, QueryDocumentSnapshot, DocumentData, documentId } from 'firebase/firestore';
-import { SelectChangeEvent } from '@mui/material/Select';
-
 import FavoriteButton from '../components/FavoriteButton';
-import InterviewCell from '../components/InterviewCell';
 import { usePageCache } from '../hooks/usePageCache';
 import StandardTablePagination from '../components/StandardTablePagination';
 import PageHeader from '../components/PageHeader';
@@ -58,7 +53,12 @@ import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
 import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
 import { pickResumeFromUserDoc } from '../utils/userResumeOpen';
 import type { RecruiterOutletContext } from './RecruiterDashboard';
-import { normalizeScoreSummary, formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
+import {
+  normalizeScoreSummary,
+  formatOneDecimal,
+  getRelativeAiScore,
+  getCanonicalStoredAiScore,
+} from '../utils/scoreSummary';
 import type { ScoreSummary } from '../utils/scoreSummary';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import { getWorkAuthorizedStatus, compareWorkAuthorized } from '../utils/workAuthorizedDisplay';
@@ -66,24 +66,42 @@ import {
   getEVerifyComfortStatusFromUserData,
   compareEVerifyComfort,
 } from '../utils/eVerifyComfortDisplay';
-import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
-import EVerifyComfortChip from '../components/EVerifyComfortChip';
-import UserEntityOnboardingStatusCell from '../components/tables/UserEntityOnboardingStatusCell';
 import { useRecruiterUsersEntityEmploymentChips } from '../hooks/useRecruiterUsersEntityEmploymentChips';
-import { useActiveAssignmentUserIds } from '../hooks/useActiveAssignmentUserIds';
-import { getWorkStatusColumnDisplay } from '../utils/workStatusColumnDisplay';
 import { TENANT_LISTABLE_SECURITY_LEVELS } from '../constants/tenantWorkerSecurityLevels';
+import {
+  getBackgroundBreakdownRows,
+  getReadinessBreakdownRows,
+  recruiterTableLetterGrade,
+} from '../utils/recruiterUsersReadinessDisplay';
+import type { UserListEntityOnboardingItem } from '../utils/userListEntityEmploymentStatus';
+import {
+  compareWorkReadinessForEntity,
+  getWorkReadinessEntityChipsDisplay,
+  getRecruiterUserTopConcernDetailed,
+} from '../utils/recruiterUsersEntityWorkReadiness';
+import {
+  normalizeRiskProfileFromUserDoc,
+  workerRiskPrimaryLine,
+  workerRiskTooltipContent,
+} from '../utils/workerRiskProfileDisplay';
+import { formatCategoryScoresCompactPreview } from '../utils/parseRecruiterCategoryScores';
+import { useCategoryScoresCurrentMap } from '../hooks/useCategoryScoresCurrentMap';
+import { useRecruiterUsersRowExtras } from '../hooks/useRecruiterUsersRowExtras';
+import { useRecruiterUsersLatestBackgroundChecks } from '../hooks/useRecruiterUsersLatestBackgroundChecks';
 
-type SecurityLevel =
-  | '0'
-  | '1'
-  | '2'
-  | '3'
-  | '4'
-  | 'active_employee'
-  | 'active_contractor'
-  | 'onboarding'
-  | 'all';
+/** C1 tenant entities — keys match `entity_employments.entityKey` and the recruiter callable. */
+type RecruiterUsersEntityFilterKey = 'all' | 'select' | 'workforce' | 'events';
+
+type RecruiterUsersSortKey =
+  | 'recentlyUpdated'
+  | 'lastLogin'
+  | 'name'
+  | 'aiScore'
+  | 'interview'
+  | 'accountCreated'
+  | 'auth'
+  | 'documented'
+  | 'workReadiness';
 
 interface RecruiterUser {
   id: string;
@@ -109,13 +127,29 @@ interface RecruiterUser {
   userGroupIds: string[];
   skills: string[];
   workEligibility?: boolean;
-  workEligibilityAttestation?: { authorizedToWorkUS?: boolean };
+  workEligibilityAttestation?: { authorizedToWorkUS?: boolean; attestedAt?: unknown };
   /** Apply flow / profile — used by Documented (E-Verify) column */
   comfortableEVerify?: string;
   workerAttestations?: { eVerifyWillingness?: string };
   /** Firestore `resume` map — used for inline resume link in Person column */
   resume?: Record<string, unknown> | null;
   addedToIndeedFlex?: boolean;
+  /** Screening / payroll — readiness breakdown (same shape as profile credentials) */
+  eVerifyOrders?: Array<{
+    status?: string;
+    result?: string;
+    dateSubmitted?: string;
+    completionDate?: string;
+    dateOrdered?: string;
+  }>;
+  backgroundCheckOrders?: Array<{
+    status?: string;
+    result?: string;
+    dateOrdered?: string;
+    completionDate?: string;
+  }>;
+  /** Structured AI + compliance risk layer */
+  riskProfile?: unknown;
 }
 
 interface TenantUserGroup {
@@ -212,6 +246,9 @@ function mapUserDocToRecruiterUser(userDoc: { id: string; data: () => any }, ten
     workerAttestations: userData.workerAttestations,
     resume: userData.resume ?? null,
     addedToIndeedFlex: userData.addedToIndeedFlex === true,
+    eVerifyOrders: Array.isArray(userData.eVerifyOrders) ? userData.eVerifyOrders : undefined,
+    backgroundCheckOrders: Array.isArray(userData.backgroundCheckOrders) ? userData.backgroundCheckOrders : undefined,
+    riskProfile: userData.riskProfile ?? undefined,
   };
 }
 
@@ -286,9 +323,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     pageKey: 'users',
     defaultState: {
       usersScope: 'all',
-      securityLevelFilter: 'all',
+      entityFilter: 'all',
       groupFilter: 'all',
-      skillFilter: 'all',
       stateFilter: 'all',
       sortBy: 'accountCreated',
       sortDirection: 'desc',
@@ -336,14 +372,14 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [hasMore, setHasMore] = useState(true);
   const PAGE_SIZE = 500; // Load up to 500 users at a time so search can filter locally without reloads
 
-  // State - initialize from cache
-  const [securityLevelFilter, setSecurityLevelFilter] = useState<SecurityLevel>(cacheState.securityLevelFilter || 'all');
+  const [entityFilter, setEntityFilter] = useState<RecruiterUsersEntityFilterKey>(() => {
+    const raw = (cacheState as { entityFilter?: string }).entityFilter;
+    if (raw === 'select' || raw === 'workforce' || raw === 'events') return raw;
+    return 'all';
+  });
   const [groupFilter, setGroupFilter] = useState<string>(cacheState.groupFilter || 'all');
-  const [skillFilter, setSkillFilter] = useState<string>(cacheState.skillFilter || 'all');
   const [stateFilter, setStateFilter] = useState<string>(cacheState.stateFilter || 'all');
-  const [sortBy, setSortBy] = useState<
-    'recentlyUpdated' | 'lastLogin' | 'name' | 'aiScore' | 'interview' | 'accountCreated' | 'auth' | 'documented'
-  >((cacheState.sortBy as any) || 'accountCreated');
+  const [sortBy, setSortBy] = useState<RecruiterUsersSortKey>((cacheState.sortBy as RecruiterUsersSortKey) || 'accountCreated');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(cacheState.sortDirection || 'desc');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(20);
@@ -353,6 +389,17 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   const [bulkDrawerChannel, setBulkDrawerChannel] = useState<'email' | 'sms'>('email');
 
   const { favorites, isFavorite, toggleFavorite } = useFavorites('users');
+
+  /** All-users scope: full Firestore scan via `searchRecruiterTableUsers` (search and/or group/state/entity), not paginated `loadUsers`. */
+  const fullCollectionQueryActive = useMemo(
+    () =>
+      effectiveScope === 'all' &&
+      (searchTerm.trim() !== '' ||
+        groupFilter !== 'all' ||
+        stateFilter !== 'all' ||
+        entityFilter !== 'all'),
+    [effectiveScope, searchTerm, groupFilter, stateFilter, entityFilter],
+  );
 
   const groupLookup = useMemo(() => {
     const map = new Map<string, TenantUserGroup>();
@@ -365,8 +412,8 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (!activeTenant?.id) return;
 
     loadGroups(activeTenant.id);
-    // All Users + active search: list is filled by `searchRecruiterTableUsers` + hydrate (not paginated `loadUsers`).
-    if (effectiveScope === 'all' && searchTerm.trim()) {
+    // All Users + search and/or group/state/entity: list is filled by `searchRecruiterTableUsers` + hydrate (not paginated `loadUsers`).
+    if (fullCollectionQueryActive) {
       setUsers([]);
       setLastVisibleDoc(null);
       setHasMore(false);
@@ -381,20 +428,23 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   }, [
     activeTenant?.id,
     effectiveScope,
-    securityLevelFilter,
+    entityFilter,
     groupFilter,
-    skillFilter,
     stateFilter,
     sortBy,
     searchTerm,
+    fullCollectionQueryActive,
   ]);
 
-  /** Debounced server-side search across all tenant listable users (not just the first page by createdAt). */
+  /** Debounced full-collection query (search and/or group/state/entity) across all tenant listable users. */
   useEffect(() => {
     if (!activeTenant?.id || !tenantId) return;
     if (effectiveScope !== 'all') return;
     const q = searchTerm.trim();
-    if (!q) {
+    const hasGroup = groupFilter !== 'all';
+    const hasState = stateFilter !== 'all';
+    const hasEntity = entityFilter !== 'all';
+    if (!q && !hasGroup && !hasState && !hasEntity) {
       setSearchFirestoreLoading(false);
       return;
     }
@@ -407,6 +457,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
         const { data } = await callSearchRecruiterTableUsers(functions, {
           tenantId,
           searchQuery: q,
+          ...(hasGroup ? { groupId: groupFilter } : {}),
+          ...(hasState ? { stateCode: stateFilter } : {}),
+          ...(hasEntity ? { entityKey: entityFilter } : {}),
         });
         if (cancelled) return;
         const ids = data.userIds;
@@ -448,25 +501,32 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [searchTerm, effectiveScope, tenantId, activeTenant?.id]);
+  }, [searchTerm, groupFilter, stateFilter, entityFilter, effectiveScope, tenantId, activeTenant?.id]);
 
   // Update cache when filters change
   useEffect(() => {
     updateCache({
       usersScope: effectiveScope,
-      securityLevelFilter,
+      entityFilter,
       groupFilter,
-      skillFilter,
       stateFilter,
       sortBy,
       sortDirection,
     });
-  }, [effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, sortDirection, updateCache]);
+  }, [effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, sortDirection, updateCache]);
 
   // Reset client pagination when filters/search change
   useEffect(() => {
     setPage(0);
-  }, [searchTerm, effectiveScope, securityLevelFilter, groupFilter, skillFilter, stateFilter, sortBy, showFavoritesOnly]);
+  }, [searchTerm, effectiveScope, entityFilter, groupFilter, stateFilter, sortBy, showFavoritesOnly]);
+
+  /** Work readiness sort only applies when a single entity is selected; reset if user clears entity. */
+  useEffect(() => {
+    if (entityFilter === 'all' && sortBy === 'workReadiness') {
+      setSortBy('accountCreated');
+      updateCache({ sortBy: 'accountCreated' });
+    }
+  }, [entityFilter, sortBy, updateCache]);
 
   // When "show favorites only" is on, ensure favorited user ids are loaded so they appear in the table
   // (e.g. users starred as applicants on a job order are stored as user favorites and must show here)
@@ -510,7 +570,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     };
   }, [showFavoritesOnly, favorites, tenantId, users]);
 
-  const handleSort = (key: 'name' | 'aiScore' | 'interview' | 'lastLogin' | 'auth' | 'documented') => {
+  const handleSort = (
+    key: 'name' | 'aiScore' | 'interview' | 'lastLogin' | 'auth' | 'documented' | 'workReadiness',
+  ) => {
     if (sortBy === key) {
       const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
       setSortDirection(newDirection);
@@ -678,15 +740,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
       // Add ordering for pagination (required for startAfter)
       q = query(q, orderBy('createdAt', 'desc'));
       
-      // When non-search filters are active, load more aggressively (up to 500 users).
-      // Text search uses `searchRecruiterTableUsers` (full scan) instead of local filtering.
-      const hasActiveFilters =
-        securityLevelFilter !== 'all' ||
-        groupFilter !== 'all' ||
-        skillFilter !== 'all' ||
-        stateFilter !== 'all';
-      
-      const effectivePageSize = hasActiveFilters ? 500 : PAGE_SIZE;
+      const effectivePageSize = PAGE_SIZE;
       
       // Add limit
       q = query(q, limit(effectivePageSize));
@@ -741,7 +795,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
 
   useEffect(() => {
     if (effectiveScope === 'my') return;
-    if (effectiveScope === 'all' && searchTerm.trim()) return;
+    if (fullCollectionQueryActive) return;
     if (!activeTenant?.id) return;
     const q = searchTerm.trim();
     if (!q) return;
@@ -751,48 +805,16 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
     if (searchAutoLoadAttemptsRef.current >= 25) return;
     searchAutoLoadAttemptsRef.current += 1;
     loadUsers(activeTenant.id, false);
-  }, [searchTerm, users, hasMore, loading, loadingMore, effectiveScope, activeTenant?.id]);
-
-  const getSecurityLevelLabel = (level: string): string => {
-    switch (level) {
-      case '0':
-        return 'Suspended';
-      case '1':
-        return 'Dismissed';
-      case '2':
-        return 'Applicant';
-      case '3':
-        return 'Candidate';
-      case '4':
-        return 'Staff';
-      default:
-        return level;
-    }
-  };
-
-  const getSecurityLevelColor = (level: string):
-    | 'default'
-    | 'primary'
-    | 'secondary'
-    | 'success'
-    | 'error'
-    | 'warning'
-    | 'info' => {
-    switch (level) {
-      case '0':
-        return 'error';
-      case '1':
-        return 'default';
-      case '2':
-        return 'info';
-      case '3':
-        return 'primary';
-      case '4':
-        return 'success';
-      default:
-        return 'default';
-    }
-  };
+  }, [
+    searchTerm,
+    users,
+    hasMore,
+    loading,
+    loadingMore,
+    effectiveScope,
+    activeTenant?.id,
+    fullCollectionQueryActive,
+  ]);
 
   const formatDate = (timestamp: any) => {
     if (timestamp == null) return 'N/A';
@@ -819,21 +841,46 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   };
 
   const renderAiScore = (user: RecruiterUser) => {
-    const rawScore =
-      user.scoreSummary?.aiScore ??
-      user.aiJobFitScore ??
-      user.aiProfileScore;
-    if (rawScore === undefined || rawScore === null || Number.isNaN(rawScore)) {
-      return <Typography variant="body2" color="text.secondary">N/A</Typography>;
+    /** Canonical field only — matches profile header (no local substitute from aiProfileScore). */
+    const rawScore = getCanonicalStoredAiScore(user.scoreSummary);
+    const categoryPreview = formatCategoryScoresCompactPreview(categoryScoresByUserId[user.id] ?? null);
+    const categoryLine1 = categoryPreview.slice(0, 3).join(' · ');
+    const categoryLine2 = categoryPreview.slice(3).join(' · ');
+    if (rawScore === null || Number.isNaN(rawScore)) {
+      return (
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.25 }}>
+          <Typography variant="body2" color="text.secondary">
+            N/A
+          </Typography>
+          {categoryLine1.length > 0 && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
+            >
+              {categoryLine1}
+            </Typography>
+          )}
+          {categoryLine2.length > 0 && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
+            >
+              {categoryLine2}
+            </Typography>
+          )}
+        </Box>
+      );
     }
     const relativeScore = getRelativeAiScore(rawScore, scoringDistribution);
     const displayScore = relativeScore != null ? relativeScore : Math.round(rawScore);
     const showRelative = relativeScore != null;
+    const grade = recruiterTableLetterGrade(displayScore);
 
-    let color: 'default' | 'success' | 'warning' | 'error' = 'default';
-    if (displayScore >= 80) color = 'success';
-    else if (displayScore >= 60) color = 'warning';
-    else color = 'default';
+    let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
+    if (displayScore >= 80) scoreColor = 'success.main';
+    else if (displayScore >= 60) scoreColor = 'warning.main';
 
     return (
       <Tooltip
@@ -842,6 +889,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           <Box sx={{ p: 0.5 }}>
             <Typography variant="subtitle2" sx={{ fontWeight: 700, mb: 0.5 }}>
               Score Summary
+            </Typography>
+            <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
+              Stored field: scoreSummary.aiScore
             </Typography>
             <Stack spacing={0.25}>
               <Typography variant="body2">
@@ -860,147 +910,119 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
           </Box>
         }
       >
-        <Chip
-          icon={<InsightsIcon sx={{ fontSize: 16 }} />}
-          label={`${displayScore}`}
-          color={color}
-          size="small"
-          variant={color === 'default' ? 'outlined' : 'filled'}
-          sx={{ minWidth: 96, justifyContent: 'flex-start' }}
-        />
+        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 0.25 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                fontWeight: 700,
+                color: scoreColor,
+                fontSize: '0.8125rem',
+                minWidth: 14,
+              }}
+            >
+              {grade}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums' }}>
+              {displayScore}
+            </Typography>
+          </Box>
+          {categoryLine1.length > 0 && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
+            >
+              {categoryLine1}
+            </Typography>
+          )}
+          {categoryLine2.length > 0 && (
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ fontSize: '0.65rem', lineHeight: 1.25, display: 'block', opacity: 0.88 }}
+            >
+              {categoryLine2}
+            </Typography>
+          )}
+        </Box>
       </Tooltip>
     );
   };
 
-  const uniqueSkills = useMemo(() => {
-    const set = new Set<string>();
-    users.forEach((user) => {
-      user.skills?.forEach((skill) => set.add(skill));
+  const filteredUsersUnsorted = useMemo(() => {
+    return users.filter((user) => {
+      if (showFavoritesOnly && !favorites.includes(user.id)) {
+        return false;
+      }
+
+      if (
+        !fullCollectionQueryActive &&
+        groupFilter !== 'all' &&
+        !user.userGroupIds.includes(groupFilter)
+      ) {
+        return false;
+      }
+
+      if (!fullCollectionQueryActive && stateFilter !== 'all') {
+        const selectedCode = normalizeUsStateCode(stateFilter);
+        const userCode = normalizeUsStateCode(user.state);
+        if (!selectedCode || userCode !== selectedCode) {
+          return false;
+        }
+      }
+
+      return userMatchesSearchTerm(user, searchTerm);
     });
-    return Array.from(set).sort();
-  }, [users]);
-
-  const filteredUsers = useMemo(() => {
-    return users
-      .filter((user) => {
-        if (showFavoritesOnly && !favorites.includes(user.id)) {
-          return false;
-        }
-
-        if (securityLevelFilter !== 'all') {
-          const onboardingType = String(user.onboardingType || '').toLowerCase();
-          const employeeStatus = String(user.employeeOnboardStatus || '').toLowerCase();
-          const contractorStatus = String(user.contractorOnboardStatus || '').toLowerCase();
-
-          const isEmployee =
-            onboardingType === 'employee' ||
-            employeeStatus === 'in progress' ||
-            employeeStatus === 'completed';
-          const isContractor =
-            onboardingType === 'contractor' ||
-            contractorStatus === 'in progress' ||
-            contractorStatus === 'completed';
-
-          const isActiveEmployee = user.securityLevel === '4' && isEmployee;
-          const isActiveContractor = user.securityLevel === '4' && isContractor;
-          const isOnboarding = employeeStatus === 'in progress' || contractorStatus === 'in progress';
-
-          if (securityLevelFilter === 'active_employee') {
-            if (!isActiveEmployee) return false;
-          } else if (securityLevelFilter === 'active_contractor') {
-            if (!isActiveContractor) return false;
-          } else if (securityLevelFilter === 'onboarding') {
-            if (!isOnboarding) return false;
-          } else if (user.securityLevel !== securityLevelFilter) {
-            // Back-compat: allow older cached values like "4"
-            return false;
-          }
-        }
-
-        if (groupFilter !== 'all' && !user.userGroupIds.includes(groupFilter)) {
-          return false;
-        }
-
-        if (skillFilter !== 'all' && !user.skills?.includes(skillFilter)) {
-          return false;
-        }
-
-        if (stateFilter !== 'all') {
-          const selectedCode = normalizeUsStateCode(stateFilter);
-          const userCode = normalizeUsStateCode(user.state);
-          if (!selectedCode || userCode !== selectedCode) {
-            return false;
-          }
-        }
-
-        return userMatchesSearchTerm(user, searchTerm);
-      })
-      .sort((a, b) => {
-        switch (sortBy) {
-          case 'recentlyUpdated': {
-            // For desc (newest first): (b - a) gives positive when b is newer, which puts b before a ✓
-            // For asc (oldest first): (a - b) gives negative when b is newer, which puts a before b ✓
-            const diff = getUpdatedMillis(b) - getUpdatedMillis(a);
-            return sortDirection === 'desc' ? diff : -diff;
-          }
-          case 'lastLogin': {
-            const diff = getLoginMillis(b) - getLoginMillis(a);
-            return sortDirection === 'desc' ? diff : -diff;
-          }
-          case 'accountCreated': {
-            // For desc (newest first): (b - a) gives positive when b is newer, which puts b before a ✓
-            // For asc (oldest first): (a - b) gives negative when b is newer, which puts a before b ✓
-            const diff = getCreatedMillis(b) - getCreatedMillis(a);
-            return sortDirection === 'desc' ? diff : -diff;
-          }
-          case 'name': {
-            const nameCompare = `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
-            return sortDirection === 'asc' ? nameCompare : -nameCompare;
-          }
-          case 'aiScore': {
-            const aScore = a.scoreSummary?.aiScore ?? a.aiJobFitScore ?? a.aiProfileScore ?? -1;
-            const bScore = b.scoreSummary?.aiScore ?? b.aiJobFitScore ?? b.aiProfileScore ?? -1;
-            const diff = (bScore ?? -1) - (aScore ?? -1);
-            return sortDirection === 'desc' ? diff : -diff;
-          }
-          case 'interview': {
-            const diff = getInterviewMillis(b) - getInterviewMillis(a);
-            return sortDirection === 'desc' ? diff : -diff;
-          }
-          case 'auth': {
-            const aStatus = getWorkAuthorizedStatus(a);
-            const bStatus = getWorkAuthorizedStatus(b);
-            const cmp = compareWorkAuthorized(aStatus, bStatus);
-            return sortDirection === 'asc' ? cmp : -cmp;
-          }
-          case 'documented': {
-            const aEv = getEVerifyComfortStatusFromUserData(a);
-            const bEv = getEVerifyComfortStatusFromUserData(b);
-            const cmp = compareEVerifyComfort(aEv, bEv);
-            return sortDirection === 'asc' ? cmp : -cmp;
-          }
-          default:
-            return 0;
-        }
-      });
   }, [
     favorites,
+    fullCollectionQueryActive,
     groupFilter,
     searchTerm,
-    securityLevelFilter,
     showFavoritesOnly,
-    skillFilter,
     stateFilter,
-    sortBy,
-    sortDirection,
     users,
   ]);
 
-  const filteredUserIdsForAssignments = useMemo(() => filteredUsers.map((u) => u.id), [filteredUsers]);
-  const activeAssignmentUserIds = useActiveAssignmentUserIds(tenantId, filteredUserIdsForAssignments);
+  /** When no entity is selected, chip fetch is paginated only; sort never uses workReadiness here. */
+  const sortedUsersForChipPagination = useMemo(
+    () =>
+      sortRecruiterUserRows(
+        filteredUsersUnsorted,
+        sortBy,
+        sortDirection,
+        new Map<string, UserListEntityOnboardingItem[]>(),
+        'all',
+        { skipWorkReadiness: true },
+      ),
+    [filteredUsersUnsorted, sortBy, sortDirection],
+  );
 
-  const getWorkStatusDisplay = (u: RecruiterUser) =>
-    getWorkStatusColumnDisplay(u, { hasActiveAssignment: activeAssignmentUserIds.has(u.id) });
+  const entityEmploymentChipUserIds = useMemo(() => {
+    if (entityFilter !== 'all') {
+      return filteredUsersUnsorted.map((u) => u.id);
+    }
+    const start = page * rowsPerPage;
+    const end = start + rowsPerPage;
+    return sortedUsersForChipPagination.slice(start, end).map((u) => u.id);
+  }, [entityFilter, filteredUsersUnsorted, sortedUsersForChipPagination, page, rowsPerPage]);
+
+  const { itemsByUserId: entityEmploymentChipsByUser, employmentBreakdownByUserId } =
+    useRecruiterUsersEntityEmploymentChips(activeTenant?.id, entityEmploymentChipUserIds);
+
+  const filteredUsers = useMemo(
+    () =>
+      sortRecruiterUserRows(
+        filteredUsersUnsorted,
+        sortBy,
+        sortDirection,
+        entityEmploymentChipsByUser,
+        entityFilter,
+        { skipWorkReadiness: false },
+      ),
+    [filteredUsersUnsorted, sortBy, sortDirection, entityEmploymentChipsByUser, entityFilter],
+  );
 
   const paginatedUsers = useMemo(() => {
     const start = page * rowsPerPage;
@@ -1009,8 +1031,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   }, [filteredUsers, page, rowsPerPage]);
 
   const paginatedUserIds = useMemo(() => paginatedUsers.map((u) => u.id), [paginatedUsers]);
-  const { itemsByUserId: entityEmploymentChipsByUser, loading: entityEmploymentChipsLoading } =
-    useRecruiterUsersEntityEmploymentChips(activeTenant?.id, paginatedUserIds);
+  const { scoresByUserId: categoryScoresByUserId } = useCategoryScoresCurrentMap(paginatedUserIds);
+  const { latestNoteByUserId, latestInterviewByUserId } = useRecruiterUsersRowExtras(paginatedUserIds);
+  const { latestByUserId: latestBackgroundByUserId } = useRecruiterUsersLatestBackgroundChecks(
+    activeTenant?.id,
+    paginatedUserIds,
+  );
 
   const selectedCount = selectAllResults ? filteredUsers.length : selectedIds.size;
   const allOnPageSelected =
@@ -1078,14 +1104,24 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
   // If user paginates beyond what's loaded, auto-fetch more in the background
   useEffect(() => {
     if (!activeTenant?.id) return;
-    if (effectiveScope === 'all' && searchTerm.trim()) return;
+    if (fullCollectionQueryActive) return;
     if (!hasMore || loadingMore) return;
     const needed = (page + 1) * rowsPerPage;
     if (needed > users.length) {
       loadMoreUsers();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, rowsPerPage, users.length, hasMore, loadingMore, activeTenant?.id, effectiveScope, searchTerm]);
+  }, [
+    page,
+    rowsPerPage,
+    users.length,
+    hasMore,
+    loadingMore,
+    activeTenant?.id,
+    effectiveScope,
+    searchTerm,
+    fullCollectionQueryActive,
+  ]);
 
   const tableLoading = loading || searchFirestoreLoading;
 
@@ -1184,7 +1220,12 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       key={t.value}
                       onClick={() => {
                         setUsersScope(t.value);
-                        updateCache({ usersScope: t.value });
+                        if (t.value === 'my') {
+                          setEntityFilter('all');
+                          updateCache({ usersScope: t.value, entityFilter: 'all' });
+                        } else {
+                          updateCache({ usersScope: t.value });
+                        }
                       }}
                       variant="text"
                       sx={{
@@ -1208,33 +1249,31 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 })}
               </Box>
             )}
-            <FormControl size="small" sx={{ minWidth: 160, height: 36 }}>
-              <InputLabel sx={{ fontSize: '0.875rem' }}>Status</InputLabel>
-              <Select
-                label="Status"
-                value={securityLevelFilter}
-                onChange={(event: SelectChangeEvent<SecurityLevel>) => {
-                  const newFilter = event.target.value as SecurityLevel;
-                  setSecurityLevelFilter(newFilter);
-                  updateCache({ securityLevelFilter: newFilter });
-                }}
-                sx={{
-                  height: 36,
-                  borderRadius: '6px',
-                  backgroundColor: 'white',
-                  fontSize: '0.875rem',
-                }}
-              >
-                <MenuItem value="all">All Statuses</MenuItem>
-                <MenuItem value="active_contractor">Active Contractors</MenuItem>
-                <MenuItem value="active_employee">Active Employees</MenuItem>
-                <MenuItem value="onboarding">Onboarding</MenuItem>
-                <MenuItem value="3">Candidates</MenuItem>
-                <MenuItem value="2">Applicants</MenuItem>
-                <MenuItem value="1">Dismissed</MenuItem>
-                <MenuItem value="0">Suspended</MenuItem>
-              </Select>
-            </FormControl>
+            {effectiveScope === 'all' && (
+              <FormControl size="small" sx={{ minWidth: 180, height: 36 }}>
+                <InputLabel sx={{ fontSize: '0.875rem' }}>Entity</InputLabel>
+                <Select
+                  label="Entity"
+                  value={entityFilter}
+                  onChange={(e) => {
+                    const newFilter = e.target.value as RecruiterUsersEntityFilterKey;
+                    setEntityFilter(newFilter);
+                    updateCache({ entityFilter: newFilter });
+                  }}
+                  sx={{
+                    height: 36,
+                    borderRadius: '6px',
+                    backgroundColor: 'white',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  <MenuItem value="all">All entities</MenuItem>
+                  <MenuItem value="select">C1 Select</MenuItem>
+                  <MenuItem value="workforce">C1 Workforce</MenuItem>
+                  <MenuItem value="events">C1 Events</MenuItem>
+                </Select>
+              </FormControl>
+            )}
 
             <Autocomplete
               size="small"
@@ -1251,25 +1290,6 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                   {...params}
                   label="User Group"
                   placeholder="Search groups..."
-                  sx={{ minWidth: 160 }}
-                />
-              )}
-            />
-
-            <Autocomplete
-              size="small"
-              options={uniqueSkills}
-              value={skillFilter === 'all' ? null : skillFilter}
-              onChange={(_, newValue) => {
-                const newFilter = newValue || 'all';
-                setSkillFilter(newFilter);
-                updateCache({ skillFilter: newFilter });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="Primary Skill"
-                  placeholder="Search skills..."
                   sx={{ minWidth: 160 }}
                 />
               )}
@@ -1320,7 +1340,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 label="Sort By"
                 value={sortBy}
                 onChange={(event) => {
-                  const newSortBy = event.target.value as typeof sortBy;
+                  const newSortBy = event.target.value as RecruiterUsersSortKey;
                   setSortBy(newSortBy);
                   updateCache({ sortBy: newSortBy });
                 }}
@@ -1338,6 +1358,9 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 <MenuItem value="documented">Documented</MenuItem>
                 <MenuItem value="aiScore">AI Score</MenuItem>
                 <MenuItem value="name">Name (A-Z)</MenuItem>
+                {entityFilter !== 'all' && (
+                  <MenuItem value="workReadiness">Work readiness (selected entity)</MenuItem>
+                )}
               </Select>
             </FormControl>
           </Box>
@@ -1499,7 +1522,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
             }}
           >
             <TableRow sx={{ backgroundColor: 'background.paper', borderRadius: 0 }}>
-                <TableCell padding="checkbox" sx={{ width: 48, bgcolor: '#FFFFFF', borderRadius: 0 }}>
+                <TableCell padding="checkbox" sx={{ width: 48, bgcolor: '#FFFFFF', borderRadius: 0, py: 1 }}>
                   <Checkbox
                     size="small"
                     checked={allOnPageSelected}
@@ -1508,8 +1531,7 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                     aria-label="Select all on page"
                   />
                 </TableCell>
-                <TableCell sx={{ width: 60, bgcolor: '#FFFFFF', borderRadius: 0 }} />
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 200 }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 260, py: 1 }}>
                   <TableSortLabel
                     active={sortBy === 'name'}
                     direction={sortBy === 'name' ? sortDirection : 'asc'}
@@ -1518,31 +1540,26 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                     Person
                   </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  Contact
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 128, py: 1 }}>
+                  {entityFilter !== 'all' ? (
+                    <TableSortLabel
+                      active={sortBy === 'workReadiness'}
+                      direction={sortBy === 'workReadiness' ? sortDirection : 'desc'}
+                      onClick={() => handleSort('workReadiness')}
+                    >
+                      Work readiness
+                    </TableSortLabel>
+                  ) : (
+                    'Work readiness'
+                  )}
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  Work Status
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
+                  Readiness breakdown
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  <TableSortLabel
-                    active={sortBy === 'auth'}
-                    direction={sortBy === 'auth' ? sortDirection : 'desc'}
-                    onClick={() => handleSort('auth')}
-                  >
-                    Auth
-                  </TableSortLabel>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 120, py: 1 }}>
+                  Backgrounds
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  <TableSortLabel
-                    active={sortBy === 'documented'}
-                    direction={sortBy === 'documented' ? sortDirection : 'desc'}
-                    onClick={() => handleSort('documented')}
-                  >
-                    Documented
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 72, py: 1 }}>
                   <TableSortLabel
                     active={sortBy === 'aiScore'}
                     direction={sortBy === 'aiScore' ? sortDirection : 'desc'}
@@ -1551,31 +1568,16 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                     Score
                   </TableSortLabel>
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  <TableSortLabel
-                    active={sortBy === 'interview'}
-                    direction={sortBy === 'interview' ? sortDirection : 'desc'}
-                    onClick={() => handleSort('interview')}
-                  >
-                    Interview
-                  </TableSortLabel>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 100, py: 1 }}>
+                  Risk / concern
                 </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0, minWidth: 200 }}>
-                  Status
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  Groups
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', borderRadius: 0 }}>
-                  Skills
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 200, borderRadius: 0 }}>
+                <TableCell sx={{ fontWeight: 700, bgcolor: '#FFFFFF', textTransform: 'uppercase', fontSize: '0.75rem', minWidth: 120, borderRadius: 0, py: 1 }}>
                   <TableSortLabel
                     active={sortBy === 'lastLogin'}
                     direction={sortBy === 'lastLogin' ? sortDirection : 'desc'}
                     onClick={() => handleSort('lastLogin')}
                   >
-                    Last Login
+                    Last activity
                   </TableSortLabel>
                 </TableCell>
             </TableRow>
@@ -1594,7 +1596,11 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                 }}
                 onClick={() => navigate(`/users/${user.id}`)}
               >
-                  <TableCell padding="checkbox" onClick={(e) => e.stopPropagation()} sx={{ width: 48 }}>
+                  <TableCell
+                    padding="checkbox"
+                    onClick={(e) => e.stopPropagation()}
+                    sx={{ width: 48, py: 0.75, px: 1 }}
+                  >
                     <Checkbox
                       size="small"
                       checked={selectAllResults || selectedIds.has(user.id)}
@@ -1603,179 +1609,401 @@ const RecruiterUsers: React.FC<RecruiterUsersProps> = ({ hideHeader = false, sco
                       aria-label={`Select ${user.firstName} ${user.lastName}`}
                     />
                   </TableCell>
-                  <TableCell onClick={(event) => event.stopPropagation()}>
-                    <FavoriteButton
-                      itemId={user.id}
-                      favoriteType="users"
-                      isFavorite={isFavorite}
-                      toggleFavorite={toggleFavorite}
-                      size="small"
-                      tooltipText={{
-                        favorited: 'Remove from favorites',
-                        notFavorited: 'Add to favorites',
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ minWidth: 200 }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+                  <TableCell sx={{ minWidth: 260, maxWidth: 380, verticalAlign: 'top', py: 0.75, px: 1 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.75, minWidth: 0 }}>
                       <Avatar
                         src={user.avatar}
                         alt={`${user.firstName} ${user.lastName}`}
-                        sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE, flexShrink: 0 }}
+                        sx={{ width: TABLE_AVATAR_SIZE, height: TABLE_AVATAR_SIZE, flexShrink: 0, mt: 0.125 }}
                       >
                         {user.firstName?.[0]}
                       </Avatar>
-                      <Box sx={{ minWidth: 0, overflow: 'hidden' }}>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }} noWrap>
-                          {user.firstName} {user.lastName}
-                        </Typography>
-                        {(user.createdAt ||
-                          pickResumeFromUserDoc(user as unknown as Record<string, unknown>)) && (
+                      <Box sx={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 0.25,
+                            minWidth: 0,
+                          }}
+                        >
+                          <Typography
+                            variant="body2"
+                            sx={{ fontWeight: 600, flex: 1, minWidth: 0, fontSize: '0.8125rem', lineHeight: 1.3 }}
+                            noWrap
+                          >
+                            {user.firstName} {user.lastName}
+                          </Typography>
                           <Box
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
                             sx={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              flexWrap: 'nowrap',
-                              gap: '6px',
-                              mt: 0.25,
+                              flexShrink: 0,
+                              position: 'relative',
+                              zIndex: 2,
+                              pointerEvents: 'auto',
+                              ml: 0.25,
                             }}
                           >
-                            {user.createdAt && (
-                              <Typography
-                                variant="caption"
-                                color="text.secondary"
-                                component="span"
-                                sx={{ lineHeight: 1.2 }}
-                              >
-                                {formatDate(user.createdAt)}
-                              </Typography>
-                            )}
-                            <UserTableResumeIcon user={user as unknown as Record<string, unknown>} />
+                            <FavoriteButton
+                              itemId={user.id}
+                              favoriteType="users"
+                              isFavorite={isFavorite}
+                              toggleFavorite={toggleFavorite}
+                              size="small"
+                              tooltipText={{
+                                favorited: 'Remove from favorites',
+                                notFavorited: 'Add to favorites',
+                              }}
+                              sx={{
+                                p: 0.125,
+                                '& .MuiSvgIcon-root': { fontSize: 17 },
+                              }}
+                            />
                           </Box>
-                        )}
-                        <UserTableIndeedFlexBadge user={user as unknown as Record<string, unknown>} />
-                      </Box>
-                    </Box>
-                  </TableCell>
-                  <TableCell>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                        <EmailIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                        <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
+                        </Box>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          noWrap
+                          display="block"
+                          sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}
+                        >
                           {user.email}
                         </Typography>
-                      </Box>
-                      {user.phone && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <PhoneIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                          <Typography variant="body2" sx={{ fontSize: '0.85rem' }}>
-                            {formatPhoneNumber(user.phone)}
-                          </Typography>
-                        </Box>
-                      )}
-                      {(user.city || user.state) && (
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                          <LocationOnIcon sx={{ fontSize: 14, color: 'text.secondary' }} />
-                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.85rem' }}>
+                        {(user.city || user.state) && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            display="block"
+                            sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}
+                          >
                             {[user.city, user.state].filter(Boolean).join(', ')}
                           </Typography>
-                        </Box>
-                      )}
+                        )}
+                        {user.phone && (
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            display="block"
+                            sx={{ lineHeight: 1.35, fontSize: '0.7rem' }}
+                          >
+                            {formatPhoneNumber(user.phone)}
+                          </Typography>
+                        )}
+                        {(() => {
+                          const latestNote = latestNoteByUserId.get(user.id);
+                          const hasResume = Boolean(pickResumeFromUserDoc(user as unknown as Record<string, unknown>));
+                          const hasSkills = Boolean(user.skills && user.skills.length > 0);
+                          const hasNote = Boolean(latestNote?.content);
+                          if (!user.createdAt && !hasResume && !hasSkills && !hasNote) {
+                            return (
+                              <Box
+                                component="span"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                sx={{ display: 'inline-flex', mt: 0.125, alignItems: 'center' }}
+                              >
+                                <UserTableIndeedFlexBadge user={user as unknown as Record<string, unknown>} compact />
+                              </Box>
+                            );
+                          }
+                          const noteMeta = [latestNote?.timestamp?.toLocaleString(), latestNote?.authorName]
+                            .filter(Boolean)
+                            .join(' · ');
+                          return (
+                            <Box
+                              sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                flexWrap: 'wrap',
+                                gap: 0.5,
+                                mt: 0.125,
+                              }}
+                            >
+                              {user.createdAt && (
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  component="span"
+                                  sx={{ lineHeight: 1.2, fontSize: '0.7rem' }}
+                                >
+                                  Joined {formatDate(user.createdAt)}
+                                </Typography>
+                              )}
+                              <Box
+                                component="span"
+                                onClick={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => e.stopPropagation()}
+                                sx={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 0.25,
+                                  flexWrap: 'wrap',
+                                }}
+                              >
+                                {hasResume && (
+                                  <UserTableResumeIcon user={user as unknown as Record<string, unknown>} />
+                                )}
+                                {hasSkills && (
+                                  <Tooltip
+                                    title={
+                                      <Box sx={{ py: 0.25, maxWidth: 320 }}>
+                                        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+                                          Skills
+                                        </Typography>
+                                        {(user.skills ?? []).map((s) => (
+                                          <Typography key={s} variant="body2" sx={{ display: 'block' }}>
+                                            {s}
+                                          </Typography>
+                                        ))}
+                                      </Box>
+                                    }
+                                    placement="top"
+                                    enterDelay={400}
+                                  >
+                                    <Box
+                                      component="span"
+                                      sx={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        color: 'text.secondary',
+                                        cursor: 'default',
+                                        verticalAlign: 'middle',
+                                      }}
+                                    >
+                                      <BuildOutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
+                                    </Box>
+                                  </Tooltip>
+                                )}
+                                {hasNote && latestNote && (
+                                  <Tooltip
+                                    title={
+                                      <Box sx={{ py: 0.25, maxWidth: 320 }}>
+                                        {noteMeta ? (
+                                          <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5 }}>
+                                            {noteMeta}
+                                          </Typography>
+                                        ) : null}
+                                        <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>
+                                          {latestNote.content}
+                                        </Typography>
+                                      </Box>
+                                    }
+                                    placement="top"
+                                    enterDelay={400}
+                                  >
+                                    <Box
+                                      component="span"
+                                      sx={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        color: 'text.secondary',
+                                        cursor: 'default',
+                                        verticalAlign: 'middle',
+                                      }}
+                                    >
+                                      <StickyNote2OutlinedIcon sx={{ fontSize: 12, opacity: 0.72 }} />
+                                    </Box>
+                                  </Tooltip>
+                                )}
+                                <UserTableIndeedFlexBadge user={user as unknown as Record<string, unknown>} compact />
+                              </Box>
+                            </Box>
+                          );
+                        })()}
+                        {user.userGroupIds.length > 0 && (
+                          <Tooltip
+                            title={
+                              user.userGroupIds.length <= 1 ? (
+                                groupLookup.get(user.userGroupIds[0])?.title || user.userGroupIds[0]
+                              ) : (
+                                <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
+                                  {user.userGroupIds.map((id) => (
+                                    <Typography key={id} component="span" variant="body2" sx={{ display: 'block' }}>
+                                      {groupLookup.get(id)?.title || id}
+                                    </Typography>
+                                  ))}
+                                </Box>
+                              )
+                            }
+                            placement="top"
+                            enterDelay={300}
+                            disableInteractive={false}
+                          >
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                              noWrap
+                              onClick={(e) => e.stopPropagation()}
+                              sx={{
+                                display: 'block',
+                                mt: 0.25,
+                                fontSize: '0.7rem',
+                                cursor: 'default',
+                              }}
+                            >
+                              {groupLookup.get(user.userGroupIds[0])?.title || user.userGroupIds[0]}
+                              {user.userGroupIds.length > 1 ? ` +${user.userGroupIds.length - 1}` : ''}
+                            </Typography>
+                          </Tooltip>
+                        )}
+                      </Box>
                     </Box>
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 140 }}>
                     {(() => {
-                      const ws = getWorkStatusDisplay(user);
+                      const entityItems = entityEmploymentChipsByUser.get(user.id);
+                      const chips = getWorkReadinessEntityChipsDisplay(entityItems);
+                      if (chips.length === 0) {
+                        return null;
+                      }
                       return (
-                        <Chip
-                          size="small"
-                          label={ws.label}
-                          color={ws.color}
-                          sx={ws.sx}
-                        />
+                        <Stack spacing={0.35} alignItems="flex-start">
+                          {chips.map((c) => {
+                            const chipColor =
+                              c.displayState === 'active'
+                                ? 'success'
+                                : c.displayState === 'onboarding'
+                                  ? 'warning'
+                                  : 'error';
+                            const filled = c.displayState === 'active';
+                            return (
+                              <Chip
+                                key={c.key}
+                                label={c.label}
+                                size="small"
+                                color={chipColor}
+                                variant={filled ? 'filled' : 'outlined'}
+                                sx={{
+                                  height: 22,
+                                  maxWidth: '100%',
+                                  '& .MuiChip-label': {
+                                    px: 0.75,
+                                    fontSize: '0.65rem',
+                                    fontWeight: 600,
+                                    lineHeight: 1.2,
+                                  },
+                                }}
+                              />
+                            );
+                          })}
+                        </Stack>
                       );
                     })()}
                   </TableCell>
-                  <TableCell>
-                    <WorkAuthorizedChip status={getWorkAuthorizedStatus(user)} />
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 280 }}>
+                    <Stack spacing={0.15}>
+                      {getReadinessBreakdownRows(
+                        user,
+                        entityEmploymentChipsByUser.get(user.id),
+                        {
+                          lastInterviewSubmitterName:
+                            latestInterviewByUserId.get(user.id)?.createdByName ?? null,
+                          latestAccusourceBackground: latestBackgroundByUserId.get(user.id) ?? null,
+                          ...(employmentBreakdownByUserId.has(user.id) &&
+                          employmentBreakdownByUserId.get(user.id)
+                            ? { employmentBreakdown: employmentBreakdownByUserId.get(user.id)! }
+                            : {}),
+                        },
+                      ).map((row) => (
+                        <Box key={row.key} component="span" sx={{ display: 'block' }}>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ lineHeight: 1.3, fontSize: '0.65rem', fontFamily: 'inherit', display: 'block' }}
+                          >
+                            {row.text}
+                          </Typography>
+                          {row.sublines?.map((line, i) => (
+                            <Typography
+                              key={i}
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{
+                                display: 'block',
+                                pl: 0.5,
+                                fontSize: '0.6rem',
+                                lineHeight: 1.25,
+                                opacity: 0.95,
+                              }}
+                            >
+                              {line}
+                            </Typography>
+                          ))}
+                        </Box>
+                      ))}
+                    </Stack>
                   </TableCell>
-                  <TableCell>
-                    <EVerifyComfortChip status={getEVerifyComfortStatusFromUserData(user)} />
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1, maxWidth: 260 }}>
+                    <Stack spacing={0.15}>
+                      {getBackgroundBreakdownRows(user, entityEmploymentChipsByUser.get(user.id), {
+                        latestAccusourceBackground: latestBackgroundByUserId.get(user.id) ?? null,
+                      }).map((row) => (
+                        <Box key={row.key} component="span" sx={{ display: 'block' }}>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ lineHeight: 1.3, fontSize: '0.65rem', fontFamily: 'inherit', display: 'block' }}
+                          >
+                            {row.text}
+                          </Typography>
+                          {row.sublines?.map((line, i) => (
+                            <Typography
+                              key={i}
+                              variant="caption"
+                              color="text.secondary"
+                              sx={{
+                                display: 'block',
+                                pl: 0.5,
+                                fontSize: '0.6rem',
+                                lineHeight: 1.25,
+                                opacity: 0.95,
+                              }}
+                            >
+                              {line}
+                            </Typography>
+                          ))}
+                        </Box>
+                      ))}
+                    </Stack>
                   </TableCell>
-                  <TableCell>{renderAiScore(user)}</TableCell>
-                  <TableCell>
-                    <InterviewCell
-                      userId={user.id}
-                      scoreSummary={user.scoreSummary}
-                      formatDate={formatDate}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ verticalAlign: 'middle', py: 0.75 }}>
-                    <UserEntityOnboardingStatusCell
-                      items={entityEmploymentChipsByUser.get(user.id) ?? []}
-                      loading={entityEmploymentChipsLoading}
-                    />
-                  </TableCell>
-                  <TableCell>
-                    {user.userGroupIds.length === 0 ? (
-                      <Typography variant="body2" color="text.secondary">—</Typography>
-                    ) : (
-                      <Tooltip
-                        title={
-                          user.userGroupIds.length <= 1
-                            ? (groupLookup.get(user.userGroupIds[0])?.title || user.userGroupIds[0])
-                            : (
-                              <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                                {user.userGroupIds.map((id) => (
-                                  <Typography key={id} component="span" variant="body2" sx={{ display: 'block' }}>
-                                    {groupLookup.get(id)?.title || id}
-                                  </Typography>
-                                ))}
-                              </Box>
-                            )
-                        }
-                        placement="top"
-                        enterDelay={300}
-                        disableInteractive={false}
-                      >
-                        <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
-                          {groupLookup.get(user.userGroupIds[0])?.title || user.userGroupIds[0]}
-                          {user.userGroupIds.length > 1 ? '…' : ''}
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1 }}>{renderAiScore(user)}</TableCell>
+                  <TableCell sx={{ verticalAlign: 'top', py: 0.75, px: 1 }}>
+                    {(() => {
+                      const entityItems = entityEmploymentChipsByUser.get(user.id);
+                      const rp = normalizeRiskProfileFromUserDoc(user.riskProfile);
+                      const fromRisk = workerRiskPrimaryLine(rp);
+                      const concern =
+                        fromRisk ??
+                        getRecruiterUserTopConcernDetailed(user, entityItems, {
+                          latestAccusourceBackground: latestBackgroundByUserId.get(user.id) ?? null,
+                          categoryScores: categoryScoresByUserId[user.id] ?? null,
+                        });
+                      const muted = concern === 'None';
+                      const tip = rp?.topRisks?.length ? workerRiskTooltipContent(rp) : '';
+                      const body = (
+                        <Typography
+                          variant="body2"
+                          color={muted ? 'text.secondary' : 'text.primary'}
+                          sx={{ fontWeight: 400, fontSize: '0.8125rem', lineHeight: 1.3 }}
+                        >
+                          {concern}
                         </Typography>
-                      </Tooltip>
-                    )}
+                      );
+                      return tip ? (
+                        <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{tip}</span>} placement="top" enterDelay={350}>
+                          {body}
+                        </Tooltip>
+                      ) : (
+                        body
+                      );
+                    })()}
                   </TableCell>
-                  <TableCell>
-                    {!user.skills?.length ? (
-                      <Typography variant="body2" color="text.secondary">—</Typography>
-                    ) : (
-                      <Tooltip
-                        title={
-                          user.skills.length <= 1
-                            ? toChipLabel(user.skills[0])
-                            : (
-                              <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                                {user.skills.map((skill, i) => (
-                                  <Typography key={`${toChipLabel(skill)}-${i}`} component="span" variant="body2" sx={{ display: 'block' }}>
-                                    {toChipLabel(skill)}
-                                  </Typography>
-                                ))}
-                              </Box>
-                            )
-                        }
-                        placement="top"
-                        enterDelay={300}
-                        disableInteractive={false}
-                      >
-                        <Typography variant="body2" noWrap component="span" sx={{ display: 'block' }}>
-                          {toChipLabel(user.skills[0])}
-                          {user.skills.length > 1 ? '…' : ''}
-                        </Typography>
-                      </Tooltip>
-                    )}
-                  </TableCell>
-                  <TableCell sx={{ minWidth: 200 }}>
-                    <Typography variant="body2">{formatDate(user.lastLoginAt)}</Typography>
+                  <TableCell sx={{ minWidth: 120, verticalAlign: 'top', py: 0.75, px: 1 }}>
+                    <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8125rem', lineHeight: 1.3 }}>
+                      {formatDate(user.lastLoginAt)}
+                    </Typography>
                   </TableCell>
               </TableRow>
             ))}
@@ -1838,6 +2066,77 @@ const getUpdatedMillis = (user: RecruiterUser) => toMillis(user.updatedAt) || to
 const getLoginMillis = (user: RecruiterUser) => toMillis(user.lastLoginAt) || toMillis(user.createdAt);
 const getCreatedMillis = (user: RecruiterUser) => toMillis(user.createdAt);
 const getInterviewMillis = (user: RecruiterUser) => toMillis(user.scoreSummary?.interviewLastAt);
+
+function sortRecruiterUserRows(
+  rows: RecruiterUser[],
+  sortBy: RecruiterUsersSortKey,
+  sortDirection: 'asc' | 'desc',
+  chipsByUserId: Map<string, UserListEntityOnboardingItem[]>,
+  entityFilter: RecruiterUsersEntityFilterKey,
+  options: { skipWorkReadiness?: boolean },
+): RecruiterUser[] {
+  const skipWR = options.skipWorkReadiness === true;
+  const copy = [...rows];
+  copy.sort((a, b) => {
+    switch (sortBy) {
+      case 'workReadiness': {
+        if (skipWR || entityFilter === 'all') {
+          const diff = getCreatedMillis(b) - getCreatedMillis(a);
+          return sortDirection === 'desc' ? diff : -diff;
+        }
+        return compareWorkReadinessForEntity(
+          chipsByUserId.get(a.id),
+          chipsByUserId.get(b.id),
+          entityFilter,
+          sortDirection,
+        );
+      }
+      case 'recentlyUpdated': {
+        const diff = getUpdatedMillis(b) - getUpdatedMillis(a);
+        return sortDirection === 'desc' ? diff : -diff;
+      }
+      case 'lastLogin': {
+        const diff = getLoginMillis(b) - getLoginMillis(a);
+        return sortDirection === 'desc' ? diff : -diff;
+      }
+      case 'accountCreated': {
+        const diff = getCreatedMillis(b) - getCreatedMillis(a);
+        return sortDirection === 'desc' ? diff : -diff;
+      }
+      case 'name': {
+        const nameCompare = `${a.lastName} ${a.firstName}`.localeCompare(`${b.lastName} ${b.firstName}`);
+        return sortDirection === 'asc' ? nameCompare : -nameCompare;
+      }
+      case 'aiScore': {
+        const aScore = getCanonicalStoredAiScore(a.scoreSummary);
+        const bScore = getCanonicalStoredAiScore(b.scoreSummary);
+        const av = aScore ?? -1;
+        const bv = bScore ?? -1;
+        const diff = bv - av;
+        return sortDirection === 'desc' ? diff : -diff;
+      }
+      case 'interview': {
+        const diff = getInterviewMillis(b) - getInterviewMillis(a);
+        return sortDirection === 'desc' ? diff : -diff;
+      }
+      case 'auth': {
+        const aStatus = getWorkAuthorizedStatus(a);
+        const bStatus = getWorkAuthorizedStatus(b);
+        const cmp = compareWorkAuthorized(aStatus, bStatus);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      case 'documented': {
+        const aEv = getEVerifyComfortStatusFromUserData(a);
+        const bEv = getEVerifyComfortStatusFromUserData(b);
+        const cmp = compareEVerifyComfort(aEv, bEv);
+        return sortDirection === 'asc' ? cmp : -cmp;
+      }
+      default:
+        return 0;
+    }
+  });
+  return copy;
+}
 
 export default RecruiterUsers;
 

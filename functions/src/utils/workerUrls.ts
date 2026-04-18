@@ -34,6 +34,10 @@ export function buildWorkerAiPrescreenUrl(applicationId: string): string {
 export type WorkerAiPrescreenEntrySource =
   | 'sms_apply_wizard_invite'
   | 'sms_auto_new_user'
+  /** Auto new-user SMS when the worker has no application — profile-first interview link. */
+  | 'sms_profile_first_interview'
+  | 'profile_first_chase_1'
+  | 'profile_first_chase_2'
   | 'user_group_backfill'
   /** @deprecated Prefer user_group_ready_interview_invite — kept for older SMS links */
   | 'user_group_invite'

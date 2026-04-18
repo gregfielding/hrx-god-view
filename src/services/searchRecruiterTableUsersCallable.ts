@@ -5,7 +5,14 @@ import { httpsCallable, type Functions } from 'firebase/functions';
 
 export type SearchRecruiterTableUsersInput = {
   tenantId: string;
+  /** Empty = no text filter; use with `groupId` / `stateCode` for filter-only scans. */
   searchQuery: string;
+  /** Tenant user group id; omit when "all". */
+  groupId?: string;
+  /** USPS code (or name); omit when "all". */
+  stateCode?: string;
+  /** C1 entity: `select` | `workforce` | `events` */
+  entityKey?: string;
 };
 
 export type SearchRecruiterTableUsersResult = {

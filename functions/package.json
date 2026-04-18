@@ -29,7 +29,10 @@
     "backfill:everify:entity-id": "npx ts-node src/scripts/backfillEverifyCaseEntityId.ts",
     "backfill:everify:public-mirror": "npx ts-node src/scripts/alignEverifyCasesPublicMirror.ts",
     "backfill:worker-ai-prescreen": "npm run build && node lib/scripts/rescoreWorkerAiPrescreenInterviews.js",
-    "prescreen:rescore": "npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts"
+    "prescreen:rescore": "npx ts-node src/scripts/rescoreWorkerAiPrescreenInterviews.ts",
+    "risk:refresh": "npx ts-node src/scripts/refreshWorkerRiskProfiles.ts",
+    "risk:qa": "npx ts-node src/scripts/qaRiskProfileReport.ts",
+    "score:refresh": "npx ts-node --project tsconfig.scripts.json src/scripts/refreshHiringScores.ts"
   },
   "engines": {
     "node": "20"

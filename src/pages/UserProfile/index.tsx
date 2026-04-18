@@ -14,7 +14,7 @@ import { useParams, useNavigate, useSearchParams, useLocation } from 'react-rout
 import PageHeader from '../../components/PageHeader';
 import ContactActionButtons from './components/ContactActionButtons';
 import { httpsCallable } from 'firebase/functions';
-import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, getDocs, getCountFromServer, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot, updateDoc, collection, query, where, orderBy, getDocs, getCountFromServer } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 import { FirebaseError } from 'firebase/app';
@@ -25,7 +25,6 @@ import onetSkills from '../../data/onetSkills.json';
 import onetJobTitles from '../../data/onetJobTitles.json';
 import { useAuth } from '../../contexts/AuthContext';
 import { calculateProfileScore, calculateCompletenessScore } from '../../utils/applicantScoring';
-import { getScoreSummaryUpdateFromHiringScoreV1 } from '../../utils/scoreSummary';
 import { userProfileBatcher, flushProfileUpdates } from '../../utils/userProfileBatching';
 import { toSafeHref } from '../../utils/urlUtils';
 import { getActiveOnboardingType, isOnboardingInProgress } from './utils/onboardingHelpers';
@@ -64,7 +63,12 @@ import AddUserNoteDialog from './components/AddUserNoteDialog';
 import CreateTaskDialog from '../../components/CreateTaskDialog';
 import LogActivityDialog from '../../components/LogActivityDialog';
 import { logUserActivity } from '../../utils/activityLogger';
-import { normalizeScoreSummary, type ScoreSummary, formatOneDecimal } from '../../utils/scoreSummary';
+import {
+  normalizeScoreSummary,
+  type ScoreSummary,
+  formatOneDecimal,
+  getCanonicalStoredAiScore,
+} from '../../utils/scoreSummary';
 import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData, type EVerifyComfortStatus } from '../../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../../components/WorkAuthorizedChip';
@@ -575,22 +579,8 @@ const UserProfilePage = () => {
           const normalizedSummary = normalizeScoreSummary((data as any).scoreSummary);
           setScoreSummary(normalizedSummary);
 
-          // Backfill: persist Hiring Score v1.1 when missing or when stored is 0 but profile has content
-          const hasProfileContent = (d: any) =>
-            (d?.skills?.length > 0 || d?.workHistory?.length > 0 || d?.certifications?.length > 0);
-          const shouldBackfill =
-            uid &&
-            (normalizedSummary?.hiringScoreVersion !== 'v1.1' ||
-              typeof normalizedSummary?.completenessScore !== 'number' ||
-              (normalizedSummary?.completenessScore === 0 && hasProfileContent(data)));
-          if (shouldBackfill) {
-            const payload = getScoreSummaryUpdateFromHiringScoreV1(data);
-            updateDoc(doc(db, 'users', uid), {
-              ...payload,
-              'scoreSummary.aiScoreUpdatedAt': serverTimestamp(),
-              'scoreSummary.hiringScoreComputedAt': serverTimestamp(),
-            }).catch((err) => console.warn('UserProfile: backfill scoreSummary failed', err));
-          }
+          // Do not write scoreSummary on profile load — canonical score comes from Firestore only;
+          // updates happen via interview flows, server recomputes, or persistScoreSummaryFromProfile after edits.
 
           // Set createdAt
           setCreatedAt(data.createdAt || null);
@@ -1749,18 +1739,32 @@ const UserProfilePage = () => {
                             )}
 
                         {canViewAdminContent && (() => {
-                          // Same order as header and Score tab: stored aiScore first so all show the same number
-                          const summary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
-                          if (typeof summary !== 'number' || Number.isNaN(summary)) return null;
+                          const canonical = getCanonicalStoredAiScore(scoreSummary);
+                          if (canonical === null) {
+                            return (
+                              <Tooltip title="No stored AI score yet (same field as Users table — interview submit or profile save after edit).">
+                                <Chip
+                                  icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                                  label="Score —"
+                                  color="default"
+                                  size="small"
+                                  variant="outlined"
+                                  sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
+                                />
+                              </Tooltip>
+                            );
+                          }
                           return (
-                            <Chip
-                              icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                              label={`Score ${Math.round(summary)}`}
-                              color="primary"
-                              size="small"
-                              variant="outlined"
-                              sx={{ fontWeight: 700, flexShrink: 0 }}
-                            />
+                            <Tooltip title={`Stored AI score: ${Math.round(canonical)} (scoreSummary.aiScore)`}>
+                              <Chip
+                                icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                                label={`Score ${Math.round(canonical)}`}
+                                color="primary"
+                                size="small"
+                                variant="outlined"
+                                sx={{ fontWeight: 700, flexShrink: 0 }}
+                              />
+                            </Tooltip>
                           );
                         })()}
                       </Stack>

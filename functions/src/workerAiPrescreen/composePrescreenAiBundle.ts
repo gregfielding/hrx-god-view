@@ -21,7 +21,6 @@ import {
   buildPrescreenComplianceDebug,
   computeConfidenceScore,
   computeRiskProfile,
-  shouldFlagRiskAdmission,
 } from './interviewAiEnrichment';
 import { computeApplicationNoShowRisk } from '../readiness/noShowRiskShared';
 import { stripUndefinedDeep } from '../utils/stripUndefinedDeep';
@@ -108,12 +107,15 @@ export async function composePrescreenAiBundle(args: {
 
   const answerQualityEval = evaluatePrescreenAnswerQuality(answersEffective);
   const riskProfile = computeRiskProfile(answersEffective, drugBackgroundMergeMeta);
-  const riskAdmission = shouldFlagRiskAdmission(answersEffective, drugBackgroundMergeMeta);
+  /** Only attendance admissions carry the extra `risk_admission_detected` penalty — drug/bg use severity tiers. */
+  const attendanceAdmission = String(answersEffective.attendance_issues ?? '')
+    .trim()
+    .toLowerCase() === 'yes';
   const scored = scoreWorkerAiPrescreen(answersEffective, {
     answerQualityFlags: answerQualityEval.flags,
     scoreAdjustment: answerQualityEval.scoreAdjustment,
     drugBackgroundMergeMeta: drugBackgroundMergeMeta,
-    extraPenaltyFlags: riskAdmission ? ['risk_admission_detected'] : [],
+    extraPenaltyFlags: attendanceAdmission ? ['risk_admission_detected'] : [],
   });
   if (scored.overallScore >= 80 && scored.recommendation === 'decline') {
     logger.warn('composePrescreenAiBundle.qa_high_score_with_decline', {
@@ -163,12 +165,18 @@ export async function composePrescreenAiBundle(args: {
     letterGrade: prescreenLetterGrade(scored.overallScore),
     recommendation: scored.recommendation,
     reviewKind: scored.reviewKind ?? null,
+    reviewTriage: scored.reviewTriage ?? null,
+    reviewLane: scored.reviewTriage?.lane ?? null,
+    reviewSubtype: scored.reviewTriage?.subtype ?? null,
+    reviewReasons: scored.reviewTriage?.reasons ?? [],
+    reviewSummaryShort: scored.reviewTriage?.summaryShort ?? null,
     flags: aiFlags,
     answerQuality: answerQualityEval.answerQuality,
     confidenceScore,
     riskProfile,
     subScores: scored.subScores,
     scoreBreakdown: scored.scoreBreakdown,
+    riskSummary: scored.riskSummary ?? null,
     summary: scored.summary,
     assignmentReadiness,
     alternatePaths,

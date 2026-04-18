@@ -5,6 +5,7 @@ import { getAccusourceConfig, isAccusourceProductionValidationHrxOnly } from './
 import { accusourceLog } from './accusourceLogger';
 import {
   buildPartialProfilePayload,
+  normalizeRequestedServicesCatalog,
   parseProviderCreateResponse,
   type CreateBackgroundCheckInput,
 } from './mapper';
@@ -35,6 +36,7 @@ function buildDraftDocument(
   providerEnvironment: 'sandbox' | 'production',
 ): BackgroundCheckDocument & Record<string, unknown> {
   const clientId = `HRX-BGC-${backgroundCheckId}`;
+  const catalog = normalizeRequestedServicesCatalog(input.requestedServicesCatalog);
   return {
     provider: 'accusource',
     providerEnvironment,
@@ -59,6 +61,7 @@ function buildDraftDocument(
     requestedPackageId: input.requestedPackageId || null,
     requestedPackageName: input.requestedPackageName || null,
     requestedServices: Array.isArray(input.requestedServices) ? input.requestedServices : [],
+    ...(catalog ? { requestedServicesCatalog: catalog } : {}),
     syncError: null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     updatedAt: admin.firestore.FieldValue.serverTimestamp(),

@@ -40,6 +40,7 @@ import { useWorkerPreferredLanguage } from '../hooks/useWorkerPreferredLanguage'
 import { useT } from '../i18n';
 import SmsWarningBanner from '../components/worker/SmsWarningBanner';
 import { getShiftDisplayText } from '../utils/shiftI18n';
+import { normalizeClockInUrl } from '../utils/urlUtils';
 import { formatHourlyPayRateForDisplay } from '../utils/hourlyPayDisplay';
 import { parseCalendarDateLocal } from '../utils/dateUtils';
 import { getDateScheduleEntriesWithHours } from '../utils/dateSchedule';
@@ -230,6 +231,7 @@ const AssignmentDetails: React.FC = () => {
     defaultEndTime?: string;
     shiftDescription?: string;
     emailIntro?: string;
+    clockInUrl?: string;
     shiftDescription_i18n?: { en?: string; es?: string };
     emailIntro_i18n?: { en?: string; es?: string };
     staffInstructions?: StaffInstructionMap;
@@ -296,6 +298,7 @@ const AssignmentDetails: React.FC = () => {
             defaultEndTime: typeof d.defaultEndTime === 'string' ? d.defaultEndTime : undefined,
             shiftDescription: typeof d.shiftDescription === 'string' ? d.shiftDescription : undefined,
             emailIntro: typeof d.emailIntro === 'string' ? d.emailIntro : undefined,
+            clockInUrl: typeof d.clockInUrl === 'string' ? d.clockInUrl : undefined,
             shiftDescription_i18n: d.shiftDescription_i18n as { en?: string; es?: string } | undefined,
             emailIntro_i18n: d.emailIntro_i18n as { en?: string; es?: string } | undefined,
             staffInstructions: normalizeStaffInstructionMap(d.staffInstructions),
@@ -1138,6 +1141,11 @@ const AssignmentDetails: React.FC = () => {
     [scheduleShift, preferredLanguage],
   );
 
+  const clockInHref = useMemo(
+    () => normalizeClockInUrl(scheduleShift?.clockInUrl),
+    [scheduleShift?.clockInUrl],
+  );
+
   const criticalRequirementLabels = [
     assignment?.showBackgroundChecks ? 'Background check' : null,
     assignment?.showDrugScreening ? 'Drug screening' : null,
@@ -1466,6 +1474,17 @@ const AssignmentDetails: React.FC = () => {
                   )}
                 </>
               )}
+
+              {clockInHref ? (
+                <Box>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                    {t('assignment.clockInUrl')}
+                  </Typography>
+                  <Link href={clockInHref} target="_blank" rel="noopener noreferrer" sx={{ fontWeight: 600 }}>
+                    {clockInHref}
+                  </Link>
+                </Box>
+              ) : null}
 
               {/* Shift-Specific Details / Job Description from tenants/.../job_orders/.../shifts/{shiftId} (ShiftSetupTab) */}
               {shiftSpecificDetailsText ? (

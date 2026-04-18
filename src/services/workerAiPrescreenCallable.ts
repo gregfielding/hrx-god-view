@@ -54,17 +54,19 @@ export async function submitWorkerAiPrescreenInterview(
 
 export type WorkerAiPrescreenInterviewPlanResult = {
   interviewType: 'worker_ai_prescreen';
+  /** Server: `application` when `applicationId` was sent; `profile_first` when only tenant-based plan. */
+  interviewMode?: 'application' | 'profile_first';
   workerAiPrescreenRequired: boolean;
   dynamicSteps: WorkerAiPrescreenDynamicStep[];
 };
 
 export async function getWorkerAiPrescreenInterviewPlan(input: {
-  applicationId: string;
+  applicationId?: string | null;
   tenantId?: string | null;
 }): Promise<WorkerAiPrescreenInterviewPlanResult> {
   const fn = httpsCallable(functions, 'getWorkerAiPrescreenInterviewPlan');
   const res = await fn({
-    applicationId: input.applicationId,
+    applicationId: input.applicationId ?? null,
     tenantId: input.tenantId ?? null,
   });
   return res.data as WorkerAiPrescreenInterviewPlanResult;

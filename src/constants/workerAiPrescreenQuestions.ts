@@ -28,6 +28,8 @@ export type WorkerAiPrescreenStepId =
   | 'drug_screen_detail'
   | 'background_check'
   | 'background_check_detail'
+  | 'background_offense_class'
+  | 'background_offense_when'
   | 'supervisor_feedback'
   | 'additional_notes';
 
@@ -158,6 +160,19 @@ export const WORKER_AI_PRESCREEN_STEPS: WorkerAiPrescreenStep[] = [
     prompt:
       'You indicated something may appear on a background check. Briefly explain what we should know. ' +
       'If you tapped Yes by mistake, go Back to change your answer.',
+  },
+  {
+    id: 'background_offense_class',
+    type: 'text',
+    prompt:
+      'Optional: if you shared a criminal record, was it generally a misdemeanor or a felony? ' +
+      '(You can skip this if you prefer.)',
+  },
+  {
+    id: 'background_offense_when',
+    type: 'text',
+    prompt:
+      'Optional: roughly when did that happen (year or timeframe)? We focus on roughly the last 7–10 years for staffing.',
   },
   {
     id: 'supervisor_feedback',

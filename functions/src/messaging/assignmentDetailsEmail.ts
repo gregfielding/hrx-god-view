@@ -69,6 +69,21 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
+/** http(s) only — shift clock-in URL from recruiter. */
+function safeClockInHref(raw: unknown): string | null {
+  const t = String(raw ?? '').trim();
+  if (!t) return null;
+  let u = t;
+  if (!/^https?:\/\//i.test(u)) u = `https://${u}`;
+  try {
+    const parsed = new URL(u);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 function nl2br(s: string): string {
   return escapeHtml(s).replace(/\n/g, '<br>\n');
 }
@@ -406,6 +421,7 @@ export async function buildAssignmentDetailsEmail(
       endDate?: string;
       shiftDescription?: string;
       emailIntro?: string;
+      clockInUrl?: string;
     } | null = null;
     let shiftDocData: Record<string, unknown> | null = null;
     if (a.jobOrderId && a.shiftId) {
@@ -423,6 +439,7 @@ export async function buildAssignmentDetailsEmail(
           endDate: d.endDate,
           shiftDescription: d.shiftDescription,
           emailIntro: d.emailIntro,
+          clockInUrl: d.clockInUrl,
         };
       }
     }
@@ -557,6 +574,10 @@ export async function buildAssignmentDetailsEmail(
       if (!startDate && !startT && !endT && !scheduleShift?.defaultStartTime) {
         scheduleHtml += `<p style="margin:0 0 12px 0; color:#666;">No schedule details available.</p>`;
       }
+    }
+    const clockInHref = safeClockInHref(scheduleShift?.clockInUrl);
+    if (clockInHref) {
+      scheduleHtml += `<p style="margin:12px 0 4px 0; color:#666; font-size:12px;">Clock-in</p><p style="margin:0 0 12px 0;"><a href="${escapeHtml(clockInHref)}" style="color:#1976d2;">${escapeHtml(clockInHref)}</a></p>`;
     }
     if (scheduleShift?.shiftDescription?.trim()) {
       scheduleHtml += `<p style="margin:12px 0 4px 0; color:#666; font-size:12px;">Shift-Specific Details or Job Description</p><p style="margin:0 0 12px 0; white-space:pre-wrap;">${nl2br(scheduleShift.shiftDescription)}</p>`;

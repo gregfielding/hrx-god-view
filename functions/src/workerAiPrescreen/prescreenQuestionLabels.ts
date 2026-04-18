@@ -36,6 +36,10 @@ export const WORKER_AI_PRESCREEN_PROMPTS: Record<string, string> = {
   background_check: 'If a role requires a background check, is there anything that might appear?',
   background_check_detail:
     'You indicated something may appear on a background check. Briefly explain what we should know.',
+  background_offense_class:
+    'If you shared a criminal record: was it generally a misdemeanor or a felony? (Optional — helps routing.)',
+  background_offense_when:
+    'Roughly when did that happen (year or timeframe)? We focus on roughly the last 7–10 years for staffing routing.',
   supervisor_feedback:
     'What would your last supervisor say about your work? Include:\n' +
     '- one strength they might mention\n' +

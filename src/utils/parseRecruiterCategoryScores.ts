@@ -140,3 +140,31 @@ export function categoryScoreBand(score: number): 'high' | 'medium' | 'low' {
   if (score >= 45) return 'medium';
   return 'low';
 }
+
+/** Abbreviated labels for compact recruiter table preview (e.g. Rel 88). */
+const CATEGORY_PREVIEW_ABBREV: Record<
+  'reliability' | 'punctuality' | 'workEthic' | 'teamFit' | 'jobReadiness' | 'stability',
+  string
+> = {
+  reliability: 'Rel',
+  punctuality: 'Punc',
+  workEthic: 'Eth',
+  teamFit: 'Team',
+  jobReadiness: 'Job',
+  stability: 'Stab',
+};
+
+const CATEGORY_PREVIEW_KEYS = [
+  'reliability',
+  'punctuality',
+  'workEthic',
+  'teamFit',
+  'jobReadiness',
+  'stability',
+] as const;
+
+/** Short segments like "Rel 88" for table rows; omit if scores are null. */
+export function formatCategoryScoresCompactPreview(scores: PrescreenCategoryScoresV1 | null): string[] {
+  if (!scores) return [];
+  return CATEGORY_PREVIEW_KEYS.map((k) => `${CATEGORY_PREVIEW_ABBREV[k]} ${scores[k]}`);
+}

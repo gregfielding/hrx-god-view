@@ -88,6 +88,10 @@ export interface BackgroundCheckRecord {
   automationOrderedAt?: Timestamp | null;
   /** True when `ENABLE_SCREENING_ORDER` was false — no provider API call. */
   screeningOrderSimulated?: boolean;
+  /** Service id strings sent on the order (matches catalog `services[].id`). */
+  requestedServices?: string[];
+  /** Snapshot of catalog rows at order time (id / name / type) for UI + readiness without re-querying catalog. */
+  requestedServicesCatalog?: Array<{ id: string; name: string; type?: string }>;
   /** Latest per-service line item from `service_status_change` webhooks. */
   lastServiceComponent?: LastServiceComponent | null;
   /** Keyed by SourceDirect service id (string). */

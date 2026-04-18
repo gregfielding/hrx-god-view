@@ -4,10 +4,19 @@
  */
 import * as admin from 'firebase-admin';
 import type { QueryDocumentSnapshot } from 'firebase-admin/firestore';
+import { FieldPath } from 'firebase-admin/firestore';
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
-import { firestoreUserDocMatchesRecruiterSearch } from './recruiterUsersSearchMatch';
+import {
+  entityEmploymentDocHasQualifyingStatus,
+  normalizeRecruiterEntityKey,
+} from './entityEmploymentRecruiterFilter';
+import {
+  firestoreUserDocMatchesRecruiterGroup,
+  firestoreUserDocMatchesRecruiterSearch,
+  firestoreUserDocMatchesRecruiterState,
+} from './recruiterUsersSearchMatch';
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -52,7 +61,14 @@ async function assertCallerCanSearchTenant(callerUid: string, tenantId: string):
 
 export type SearchRecruiterTableUsersRequest = {
   tenantId: string;
+  /** Empty string = no text filter (use with groupId and/or stateCode). */
   searchQuery: string;
+  /** Tenant user group document id; omit or "all" for no filter. */
+  groupId?: string;
+  /** USPS state code or name; omit or "all" for no filter. */
+  stateCode?: string;
+  /** C1 entity key: select | workforce | events */
+  entityKey?: string;
 };
 
 export type SearchRecruiterTableUsersResponse = {
@@ -61,6 +77,46 @@ export type SearchRecruiterTableUsersResponse = {
   batches: number;
   capped: boolean;
 };
+
+/**
+ * Scans `entity_employments` for the tenant + entity key; returns user ids with at least one
+ * qualifying employment row (meaningful status), deduped.
+ */
+async function loadEntityUserIdSet(
+  tenantId: string,
+  entityKey: string,
+): Promise<{ entityUserIds: Set<string>; scannedDocuments: number; batches: number }> {
+  const entityUserIds = new Set<string>();
+  let lastDoc: QueryDocumentSnapshot | null = null;
+  let batches = 0;
+  let scanned = 0;
+  const coll = db.collection(`tenants/${tenantId}/entity_employments`);
+
+  while (batches < MAX_BATCHES) {
+    const base = coll.where('entityKey', '==', entityKey).orderBy(FieldPath.documentId()).limit(BATCH_SIZE);
+    const snap = await (lastDoc ? base.startAfter(lastDoc) : base).get();
+    if (snap.empty) {
+      break;
+    }
+    batches += 1;
+    scanned += snap.docs.length;
+
+    for (const doc of snap.docs) {
+      const d = doc.data() as Record<string, unknown>;
+      if (!entityEmploymentDocHasQualifyingStatus(d)) continue;
+      const uid = String(d.userId || '').trim();
+      if (uid) entityUserIds.add(uid);
+    }
+
+    lastDoc = snap.docs[snap.docs.length - 1] ?? null;
+
+    if (snap.docs.length < BATCH_SIZE) {
+      break;
+    }
+  }
+
+  return { entityUserIds, scannedDocuments: scanned, batches };
+}
 
 export const searchRecruiterTableUsers = onCall(
   {
@@ -76,17 +132,62 @@ export const searchRecruiterTableUsers = onCall(
     const raw = (request.data || {}) as SearchRecruiterTableUsersRequest;
     const tenantId = typeof raw.tenantId === 'string' ? raw.tenantId.trim() : '';
     const searchQuery = typeof raw.searchQuery === 'string' ? raw.searchQuery.trim() : '';
+    const groupIdRaw = typeof raw.groupId === 'string' ? raw.groupId.trim() : '';
+    const stateCodeRaw = typeof raw.stateCode === 'string' ? raw.stateCode.trim() : '';
+    const entityKeyNorm = normalizeRecruiterEntityKey(typeof raw.entityKey === 'string' ? raw.entityKey : '');
+
+    const hasGroup = groupIdRaw.length > 0 && groupIdRaw !== 'all';
+    const hasState = stateCodeRaw.length > 0 && stateCodeRaw !== 'all';
+    const hasSearch = searchQuery.length > 0;
+    const hasEntity = entityKeyNorm != null;
+
     if (!tenantId) {
       throw new HttpsError('invalid-argument', 'tenantId is required');
     }
-    if (!searchQuery) {
-      throw new HttpsError('invalid-argument', 'searchQuery is required');
+    if (!hasSearch && !hasGroup && !hasState && !hasEntity) {
+      throw new HttpsError(
+        'invalid-argument',
+        'Provide searchQuery and/or groupId and/or stateCode and/or entityKey (at least one filter)',
+      );
     }
     if (searchQuery.length > 200) {
       throw new HttpsError('invalid-argument', 'searchQuery is too long');
     }
 
     await assertCallerCanSearchTenant(request.auth.uid, tenantId);
+
+    let entityUserIds: Set<string> | null = null;
+    let entityScanned = 0;
+    let entityBatches = 0;
+
+    if (hasEntity && entityKeyNorm) {
+      const loaded = await loadEntityUserIdSet(tenantId, entityKeyNorm);
+      entityUserIds = loaded.entityUserIds;
+      entityScanned = loaded.scannedDocuments;
+      entityBatches = loaded.batches;
+      if (entityUserIds.size === 0) {
+        logger.info('searchRecruiterTableUsers.done', {
+          tenantId,
+          callerUid: request.auth.uid,
+          hasSearch,
+          hasGroup,
+          hasState,
+          hasEntity,
+          entityKey: entityKeyNorm,
+          matchCount: 0,
+          scannedDocuments: entityScanned,
+          batches: entityBatches,
+          capped: false,
+          entityEmploymentScan: true,
+        });
+        return {
+          userIds: [],
+          scannedDocuments: entityScanned,
+          batches: entityBatches,
+          capped: false,
+        };
+      }
+    }
 
     const userIds: string[] = [];
     let lastDoc: QueryDocumentSnapshot | null = null;
@@ -110,12 +211,14 @@ export const searchRecruiterTableUsers = onCall(
 
       for (const doc of snap.docs) {
         const data = doc.data() as Record<string, unknown>;
-        if (firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) {
-          userIds.push(doc.id);
-          if (userIds.length >= MAX_MATCH_IDS) {
-            capped = true;
-            break;
-          }
+        if (hasEntity && entityUserIds && !entityUserIds.has(doc.id)) continue;
+        if (!firestoreUserDocMatchesRecruiterSearch(data, tenantId, searchQuery)) continue;
+        if (hasGroup && !firestoreUserDocMatchesRecruiterGroup(data, tenantId, groupIdRaw)) continue;
+        if (hasState && !firestoreUserDocMatchesRecruiterState(data, stateCodeRaw)) continue;
+        userIds.push(doc.id);
+        if (userIds.length >= MAX_MATCH_IDS) {
+          capped = true;
+          break;
         }
       }
 
@@ -132,16 +235,22 @@ export const searchRecruiterTableUsers = onCall(
     logger.info('searchRecruiterTableUsers.done', {
       tenantId,
       callerUid: request.auth.uid,
+      hasSearch,
+      hasGroup,
+      hasState,
+      hasEntity,
+      entityKey: entityKeyNorm,
       matchCount: userIds.length,
-      scannedDocuments: scanned,
-      batches,
+      scannedDocuments: scanned + entityScanned,
+      batches: batches + entityBatches,
       capped,
+      entityEmploymentScan: hasEntity,
     });
 
     return {
       userIds,
-      scannedDocuments: scanned,
-      batches,
+      scannedDocuments: scanned + entityScanned,
+      batches: batches + entityBatches,
       capped,
     };
   },

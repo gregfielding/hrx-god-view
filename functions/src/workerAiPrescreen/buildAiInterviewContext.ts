@@ -269,3 +269,71 @@ export async function buildAiInterviewContext(
     },
   };
 }
+
+/**
+ * Interview context when there is **no application** — profile-first path (tenant rules + optional gig dynamic only).
+ * Same core questionnaire; no job-specific dynamics unless tenant policy adds gig path, etc.
+ */
+export async function buildProfileFirstAiInterviewContext(
+  db: admin.firestore.Firestore,
+  args: { userId: string; tenantId: string; userDoc?: Record<string, unknown> | null },
+): Promise<AiInterviewContext | null> {
+  const tenantId = norm(args.tenantId);
+  if (!tenantId) return null;
+
+  let userDoc: Record<string, unknown>;
+  if (args.userDoc && typeof args.userDoc === 'object') {
+    userDoc = args.userDoc;
+  } else {
+    const userSnap = await db.doc(`users/${args.userId}`).get();
+    userDoc = (userSnap.data() || {}) as Record<string, unknown>;
+  }
+
+  const tenantSnap = await db.doc(`tenants/${tenantId}`).get();
+  if (!tenantSnap.exists) return null;
+  const tenantData = (tenantSnap.data() || {}) as Record<string, unknown>;
+
+  const prescreenMerged = resolveMergedAiPrescreenPolicy(tenantData, null);
+  const eligibility = evaluateAiPrescreenEligibility(userDoc, {
+    requireResumeOrSkill: prescreenMerged.eligibility.requireResumeOrSkill,
+    requirePhone: prescreenMerged.eligibility.requirePhone,
+    requireLocation: prescreenMerged.eligibility.requireLocation,
+    requireWorkAuthorization: prescreenMerged.eligibility.requireWorkAuthorization,
+  });
+
+  const addr = (userDoc.addressInfo as Record<string, unknown>) || {};
+  const worker: AiInterviewContext['worker'] = {
+    userId: args.userId,
+    hasResume: userDocHasStoredResume(userDoc),
+    workHistoryCount: workHistoryCount(userDoc),
+    phone: userDocHasUsablePhone(userDoc),
+    location: {},
+  };
+  if (userDocHasBasicLocation(userDoc)) {
+    worker.location.city = norm(addr.city ?? userDoc.city) || undefined;
+    worker.location.state = norm(addr.state ?? userDoc.state) || undefined;
+    worker.location.zip = zipFromUser(userDoc);
+  }
+
+  return {
+    worker,
+    entity: {
+      entityId: 'profile_first',
+      entityName: 'Profile',
+      workerType: 'W2',
+      requiresDrugScreen: false,
+      requiresBackgroundCheck: false,
+      requiresEVerify: false,
+    },
+    readiness: {
+      missingRequirements: [...eligibility.missingFields],
+      hasOpenScreening: false,
+    },
+    businessRules: {
+      allowGigPath: resolveAllowGigPath({ tenant: tenantData, posting: {} }),
+      tenant: tenantId,
+      aiPrescreen: prescreenMerged,
+    },
+    sources: {},
+  };
+}

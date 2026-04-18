@@ -17,6 +17,8 @@ export interface UserListEntityOnboardingItem {
   tone: UserListEntityOnboardingTone;
   /** Raw employment status for tooltips / debugging */
   rawStatus?: string;
+  /** Lowercase `entityKey` from `entity_employments` (e.g. select, workforce, events). */
+  entityKey?: string;
 }
 
 const STATUS_PRIORITY: Record<UserListEntityOnboardingTone, number> = {
@@ -101,8 +103,10 @@ export function entityEmploymentRowToChipItem(
 }
 
 export function mergeEntityEmploymentItems(existing: UserListEntityOnboardingItem, incoming: UserListEntityOnboardingItem): UserListEntityOnboardingItem {
-  if (STATUS_PRIORITY[incoming.tone] < STATUS_PRIORITY[existing.tone]) return incoming;
-  return existing;
+  if (STATUS_PRIORITY[incoming.tone] < STATUS_PRIORITY[existing.tone]) {
+    return { ...incoming, entityKey: incoming.entityKey || existing.entityKey };
+  }
+  return { ...existing, entityKey: existing.entityKey || incoming.entityKey };
 }
 
 export function sortEntityOnboardingItemsForDisplay(items: UserListEntityOnboardingItem[]): UserListEntityOnboardingItem[] {
@@ -142,19 +146,30 @@ export function mergeEntityEmploymentDocIntoChipMap(
     entityEmploymentStatus: legacyStatus || employmentState,
     employmentEntryMode: d.employmentEntryMode as string,
   });
-  const item = entityEmploymentRowToChipItem(displayLabel, {
+  let item = entityEmploymentRowToChipItem(displayLabel, {
     employmentState: employmentState || undefined,
     legacyStatus: legacyStatus || undefined,
     hasOpenOnboardingDemand,
     onboardingComplete: d.onboardingComplete === true || d.active === true,
   });
   if (!item) return;
+  /** Terminal / DNR-style rows → inactive chip (red in Work Readiness column). */
+  const terminatedAt = (d as { terminatedAt?: unknown }).terminatedAt;
+  if (terminatedAt != null && terminatedAt !== '') {
+    item = { ...item, tone: 'inactive', statusLabel: 'Terminated', rawStatus: 'terminated' };
+  } else if ((d as { doNotReturn?: unknown }).doNotReturn === true) {
+    item = { ...item, tone: 'inactive', statusLabel: 'Do not return', rawStatus: 'dnr' };
+  }
+  const withKey: UserListEntityOnboardingItem = {
+    ...item,
+    entityKey: entityKeyRaw.toLowerCase() || undefined,
+  };
   const entityId = String(d.entityId || '').trim();
   const idPrefix = `${uid}__`;
   const fromDocId = docSnap.id.startsWith(idPrefix) ? docSnap.id.slice(idPrefix.length) : docSnap.id;
   const dedupeKey = entityKeyRaw.toLowerCase() || entityId || fromDocId;
   const existing = target.get(dedupeKey);
-  target.set(dedupeKey, existing ? mergeEntityEmploymentItems(existing, item) : item);
+  target.set(dedupeKey, existing ? mergeEntityEmploymentItems(existing, withKey) : withKey);
 }
 
 export function chipItemsFromDedupeMap(map: Map<string, UserListEntityOnboardingItem>): UserListEntityOnboardingItem[] {

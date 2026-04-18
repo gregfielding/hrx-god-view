@@ -483,6 +483,9 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         return;
       }
       const services = selectedServiceIds;
+      const selectedPkg = accusourceCatalog?.packages?.find((p) => String(p.id) === String(pkgId).trim());
+      const requestedServicesCatalog =
+        selectedPkg?.services?.filter((s) => services.includes(String(s.id))) ?? [];
       await createAccusourceBackgroundCheck({
         tenantId,
         candidateId: uid,
@@ -494,6 +497,14 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
         requestedPackageId: pkgId || undefined,
         requestedPackageName: pkgName || undefined,
         requestedServices: services,
+        requestedServicesCatalog:
+          requestedServicesCatalog.length > 0
+            ? requestedServicesCatalog.map((s) => ({
+                id: String(s.id),
+                name: String(s.name || s.id),
+                type: s.type != null ? String(s.type) : undefined,
+              }))
+            : undefined,
         candidate: {
           firstName: String(profileUser.firstName || ''),
           lastName: String(profileUser.lastName || ''),
@@ -880,6 +891,34 @@ const BackgroundsComplianceTab: React.FC<BackgroundsComplianceTabProps> = ({
                         ) : null}
                       </TableCell>
                     </TableRow>
+                    {row.screeningServiceLines?.map((svc) => (
+                      <TableRow key={`${row.key}-screen-${svc.id}`}>
+                        <TableCell sx={{ pl: 3, borderLeft: '3px solid', borderColor: 'divider' }}>
+                          <Typography variant="caption" color="text.secondary">
+                            Screen
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">{svc.name}</Typography>
+                          {svc.type ? (
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              {svc.type}
+                            </Typography>
+                          ) : null}
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            ID {svc.id}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">{svc.status}</Typography>
+                        </TableCell>
+                        <TableCell>{formatTime(row.submittedAt)}</TableCell>
+                        <TableCell>AccuSource</TableCell>
+                        <TableCell>—</TableCell>
+                        <TableCell>—</TableCell>
+                        <TableCell align="right">—</TableCell>
+                      </TableRow>
+                    ))}
                     <TableRow>
                       <TableCell
                         colSpan={8}

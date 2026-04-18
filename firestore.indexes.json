@@ -1159,11 +1159,35 @@
       ]
     },
     {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workerAiPrescreenProfileFirstChase1Pending", "order": "ASCENDING" },
+        { "fieldPath": "workerAiPrescreenProfileFirstChase1DueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "users",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workerAiPrescreenProfileFirstChase2Pending", "order": "ASCENDING" },
+        { "fieldPath": "workerAiPrescreenProfileFirstChase2DueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "entity_employments",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "onboardingPipelineId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "entity_employments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "entityKey", "order": "ASCENDING" },
+        { "fieldPath": "__name__", "order": "ASCENDING" }
       ]
     },
     {

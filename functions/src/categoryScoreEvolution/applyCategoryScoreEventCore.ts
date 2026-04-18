@@ -1,6 +1,10 @@
 /**
  * Transactional processor: idempotent append to category_score_events + update users.categoryScoresCurrent (v2).
  * Supports multi-category deltas in one event. Does not modify interview or application snapshots.
+ *
+ * Risk profile: category changes bump `categoryScoresCurrentUpdatedAt`. Staleness vs `riskProfile.staleness.lastCategoryScoresAt`
+ * is resolved by running `npm run risk:refresh` or `refreshWorkerRiskProfileForUidCanonical` — no inline risk recompute here
+ * (avoids write loops / trigger cascades).
  */
 
 import { createHash } from 'crypto';
@@ -359,6 +363,8 @@ export async function applyCategoryScoreEventInternal(
 
     tx.update(userRef, {
       categoryScoresCurrent: working,
+      /** Staleness: compare millis to `riskProfile.staleness.lastCategoryScoresAt` after canonical risk refresh. */
+      categoryScoresCurrentUpdatedAt: now,
       [CATEGORY_SCORE_EVENT_TALLIES_FIELD]: tallies,
       ...(source === 'interview'
         ? { [CATEGORY_SCORE_INTERVIEW_APPLY_COUNT_FIELD]: admin.firestore.FieldValue.increment(1) }

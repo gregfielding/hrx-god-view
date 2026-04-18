@@ -97,6 +97,8 @@ export interface Shift {
   defaultEndTime: string; // HH:mm format
   shiftDescription?: string;
   emailIntro?: string;
+  /** Optional URL for workers to clock in (shown on assignment + messages). */
+  clockInUrl?: string;
   sendNotification: boolean;
   files?: Array<{
     title: string;
@@ -170,6 +172,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     defaultEndTime: string;
     shiftDescription: string;
     emailIntro: string;
+    clockInUrl: string;
     sendNotification: boolean;
   }>({
     shiftTitle: '',
@@ -188,6 +191,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
     defaultEndTime: '',
     shiftDescription: '',
     emailIntro: '',
+    clockInUrl: '',
     sendNotification: true,
   });
   const [error, setError] = useState('');
@@ -321,6 +325,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         defaultEndTime: shift.defaultEndTime,
         shiftDescription: shift.shiftDescription || '',
         emailIntro: shift.emailIntro || '',
+        clockInUrl: shift.clockInUrl || '',
         sendNotification: shift.sendNotification,
       });
     } else {
@@ -348,6 +353,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         defaultEndTime: '',
         shiftDescription: '',
         emailIntro: '',
+        clockInUrl: '',
         sendNotification: true,
       });
     }
@@ -416,7 +422,15 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
               )
             : '';
           const instructionsSection = pending.diff.instructionsChanged
-            ? [formData.shiftDescription?.trim(), formData.emailIntro?.trim()].filter(Boolean).join('\n\n')
+            ? [
+                formData.shiftDescription?.trim(),
+                formData.emailIntro?.trim(),
+                formData.clockInUrl?.trim()
+                  ? `Clock-in link: ${formData.clockInUrl.trim()}`
+                  : '',
+              ]
+                .filter(Boolean)
+                .join('\n\n')
             : '';
           const notifyFn = httpsCallable(functions, 'notifyShiftWorkersUpdated');
           await notifyFn({
@@ -526,6 +540,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         defaultEndTime: formData.defaultEndTime,
         shiftDescription: formData.shiftDescription,
         emailIntro: formData.emailIntro,
+        clockInUrl: formData.clockInUrl?.trim() || '',
         sendNotification: formData.sendNotification,
         tenantId,
         jobOrderId,
@@ -595,6 +610,7 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
         defaultEndTime: formData.defaultEndTime,
         shiftDescription: formData.shiftDescription,
         emailIntro: formData.emailIntro,
+        clockInUrl: formData.clockInUrl?.trim() || '',
       };
       if (isSchedule) {
         if (isGigJob) {
@@ -1475,6 +1491,15 @@ const ShiftSetupTab: React.FC<ShiftSetupTabProps> = ({ tenantId, jobOrderId, job
                 </Grid>
               </Box>
             )}
+
+            <TextField
+              fullWidth
+              label="Clock-In URL (optional)"
+              placeholder="https://…"
+              value={formData.clockInUrl}
+              onChange={(e) => setFormData({ ...formData, clockInUrl: e.target.value })}
+              helperText="Workers see this on their assignment below shift hours. Use a full URL (https://…)."
+            />
 
             {/* Shift Description */}
             <TextField

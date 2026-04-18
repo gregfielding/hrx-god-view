@@ -171,6 +171,8 @@ export interface JobBoardShift {
   showStaffNeeded?: boolean; // Whether to display staff count on jobs board
   poNumber?: string; // Optional PO number for this shift
   shiftDescription?: string; // Optional shift-specific details
+  /** Optional clock-in URL for workers (assignment + messages). */
+  clockInUrl?: string;
   defaultJobTitle?: string; // Job title for this shift
   payRate?: number; // Pay rate for this shift's job title (from gigPositions)
   /** When present, UI should use shiftTitle_i18n[lang] ?? shiftTitle for display */
@@ -512,6 +514,7 @@ export class JobsBoardService {
           showStaffNeeded: data.showStaffNeeded || false,
           poNumber: data.poNumber,
           shiftDescription: data.shiftDescription,
+          clockInUrl: typeof data.clockInUrl === 'string' ? data.clockInUrl : undefined,
           defaultJobTitle: defaultJobTitle,
           payRate: payRate,
           shiftTitle_i18n: data.shiftTitle_i18n,
@@ -613,6 +616,7 @@ export class JobsBoardService {
           showStaffNeeded: data.showStaffNeeded || false,
           poNumber: data.poNumber,
           shiftDescription: data.shiftDescription,
+          clockInUrl: typeof data.clockInUrl === 'string' ? data.clockInUrl : undefined,
           defaultJobTitle: defaultJobTitle,
           payRate: payRate,
           shiftTitle_i18n: data.shiftTitle_i18n,

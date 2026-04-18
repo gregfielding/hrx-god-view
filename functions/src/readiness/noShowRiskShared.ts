@@ -71,15 +71,20 @@ export function computeApplicationNoShowRisk(args: {
   let score = 100 * (0.45 * C + 0.35 * A + 0.2 * T);
   const reasons: string[] = [];
 
-  const hasDrug = flags.includes('drug_risk');
-  const hasBg = flags.includes('background_risk');
-  if (hasDrug || hasBg) {
+  const elevatedDrug = (f: string) =>
+    ['drug_risk_moderate', 'drug_risk_high', 'drug_unknown', 'drug_risk'].includes(f);
+  const elevatedBg = (f: string) =>
+    ['background_risk_moderate', 'background_risk_high', 'background_unknown', 'background_risk'].includes(f);
+  const hasDrugElev = flags.some(elevatedDrug);
+  const hasBgElev = flags.some(elevatedBg);
+  /** Low-severity-only disclosures do not raise the no-show floor (legacy `drug_risk`/`background_risk` treated as elevated). */
+  if (hasDrugElev || hasBgElev) {
     score = Math.max(score, 78);
-    reasons.push('floor:drug_or_background_flag');
+    reasons.push('floor:drug_or_background_elevated');
   }
-  if (hasDrug && hasBg) {
+  if (hasDrugElev && hasBgElev) {
     score = Math.max(score, 88);
-    reasons.push('floor:drug_and_background_flags');
+    reasons.push('floor:drug_and_background_elevated');
   }
   if (C >= 0.75) {
     score = Math.max(score, 72);

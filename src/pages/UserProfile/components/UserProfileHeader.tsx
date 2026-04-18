@@ -43,7 +43,7 @@ import ComplianceStatusChips from './ComplianceStatusChips';
 import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
 import CompactActionGrid from './CompactActionGrid';
-import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import { getCanonicalStoredAiScore, type ScoreSummary, type ScoringDistribution } from '../../../utils/scoreSummary';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
@@ -869,12 +869,23 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                // Stored AI score only — same value as Score tab and users table (no relative scaling)
-                const rawSummary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
-                if (typeof rawSummary !== 'number' || Number.isNaN(rawSummary)) return null;
-                const display = Math.round(rawSummary);
+                const canonical = getCanonicalStoredAiScore(scoreSummary);
+                if (canonical === null) {
+                  return (
+                    <Tooltip title="No stored AI score (scoreSummary.aiScore) — same field as All Users table.">
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label="AI Score —"
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
+                      />
+                    </Tooltip>
+                  );
+                }
+                const display = Math.round(canonical);
                 return (
-                  <Tooltip title={`AI Score (stored): ${display}`}>
+                  <Tooltip title={`Stored AI score: ${display} (scoreSummary.aiScore)`}>
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
                       label={`AI Score ${display}`}
@@ -1465,12 +1476,23 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                // Stored AI score only — same value as Score tab and users table (no relative scaling)
-                const rawSummary = scoreSummary?.aiScore ?? scoreSummary?.qualityScore ?? profileScore;
-                if (typeof rawSummary !== 'number' || Number.isNaN(rawSummary)) return null;
-                const display = Math.round(rawSummary);
+                const canonical = getCanonicalStoredAiScore(scoreSummary);
+                if (canonical === null) {
+                  return (
+                    <Tooltip title="No stored AI score (scoreSummary.aiScore) — same field as All Users table.">
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label="AI Score —"
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontWeight: 600, flexShrink: 0, opacity: 0.85 }}
+                      />
+                    </Tooltip>
+                  );
+                }
+                const display = Math.round(canonical);
                 return (
-                  <Tooltip title={`AI Score (stored): ${display}`}>
+                  <Tooltip title={`Stored AI score: ${display} (scoreSummary.aiScore)`}>
                     <Chip
                       icon={<InsightsIcon sx={{ fontSize: 18 }} />}
                       label={`AI Score ${display}`}

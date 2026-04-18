@@ -52,6 +52,17 @@ function scheduleInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record
   };
 }
 
+/** Follow-ups for profile-first interview (no application doc) — stored on `users/{uid}`. */
+function scheduleProfileFirstInterviewChaseFields(sentAt: admin.firestore.Timestamp): Record<string, unknown> {
+  const t = sentAt.toMillis();
+  return {
+    workerAiPrescreenProfileFirstChase1Pending: true,
+    workerAiPrescreenProfileFirstChase1DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_1_MS),
+    workerAiPrescreenProfileFirstChase2Pending: true,
+    workerAiPrescreenProfileFirstChase2DueAt: admin.firestore.Timestamp.fromMillis(t + CHASE_2_MS),
+  };
+}
+
 function phoneE164FromUser(data: Record<string, unknown>): string {
   const e = String(data.phoneE164 || '').trim();
   if (/^\+[1-9]\d{7,14}$/.test(e)) {
@@ -344,7 +355,7 @@ export const processScheduledInterviewInvites = onSchedule(
       const applicationId = await resolveApplicationIdForAutoInvite(uid, data);
       const url = buildWorkerAiPrescreenInviteUrl({
         applicationId,
-        entry: 'sms_auto_new_user',
+        entry: applicationId ? 'sms_auto_new_user' : 'sms_profile_first_interview',
       });
 
       const firstName =
@@ -366,7 +377,7 @@ export const processScheduledInterviewInvites = onSchedule(
         tenantId,
         userId: uid,
         source: 'system',
-        messageTypeId: 'auto_new_user_interview_invite',
+        messageTypeId: applicationId ? 'auto_new_user_interview_invite' : 'profile_first_interview_invite',
         systemContext: true,
       });
 
@@ -401,6 +412,7 @@ export const processScheduledInterviewInvites = onSchedule(
           interviewSource: 'auto_new_user',
           interviewInviteLastError: admin.firestore.FieldValue.delete(),
           interviewInviteLastOutcome: 'sent',
+          ...(!applicationId ? scheduleProfileFirstInterviewChaseFields(sentAt) : {}),
           updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true },

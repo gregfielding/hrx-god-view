@@ -4,7 +4,7 @@
 import { onCall, HttpsError } from 'firebase-functions/v2/https';
 import * as admin from 'firebase-admin';
 import { CALLABLE_BROWSER_CORS } from '../integrations/callableBrowserCors';
-import { buildAiInterviewContext } from './buildAiInterviewContext';
+import { buildAiInterviewContext, buildProfileFirstAiInterviewContext } from './buildAiInterviewContext';
 import { buildDynamicPrescreenSteps } from './buildDynamicPrescreenQuestions';
 
 if (!admin.apps.length) {
@@ -22,32 +22,70 @@ export const getWorkerAiPrescreenInterviewPlan = onCall(
 
     const data = request.data as { applicationId?: unknown; tenantId?: unknown };
     const applicationId = String(data.applicationId ?? '').trim().slice(0, 200);
-    if (!applicationId) {
-      throw new HttpsError('invalid-argument', 'applicationId is required');
-    }
     const tenantId =
       data.tenantId == null || data.tenantId === ''
         ? null
         : String(data.tenantId).trim().slice(0, 120) || null;
 
-    const ctx = await buildAiInterviewContext(db, {
+    if (applicationId) {
+      const ctx = await buildAiInterviewContext(db, {
+        userId: auth.uid,
+        applicationId,
+        tenantId,
+      });
+      if (!ctx) {
+        return {
+          interviewType: 'worker_ai_prescreen' as const,
+          interviewMode: 'application' as const,
+          workerAiPrescreenRequired: true,
+          dynamicSteps: [],
+        };
+      }
+
+      const steps = buildDynamicPrescreenSteps(ctx);
+      const ri = ctx.hiringPolicy?.resolvedInterview;
+      return {
+        interviewType: ri?.interviewType ?? 'worker_ai_prescreen',
+        interviewMode: 'application' as const,
+        workerAiPrescreenRequired: ri?.workerAiPrescreenRequired ?? true,
+        dynamicSteps: steps.map((s) => ({
+          id: s.id,
+          type: s.type,
+          prompt: s.prompt,
+          promptKey: s.promptKey,
+          promptParams: s.promptParams,
+          options: s.options,
+          module: s.module,
+        })),
+      };
+    }
+
+    /** Profile-first path: same page + core flow; dynamics from tenant policy only (e.g. gig path). */
+    if (!tenantId) {
+      throw new HttpsError(
+        'invalid-argument',
+        'tenantId is required when applicationId is omitted (profile-first interview plan)',
+      );
+    }
+
+    const profileCtx = await buildProfileFirstAiInterviewContext(db, {
       userId: auth.uid,
-      applicationId,
       tenantId,
     });
-    if (!ctx) {
+    if (!profileCtx) {
       return {
         interviewType: 'worker_ai_prescreen' as const,
+        interviewMode: 'profile_first' as const,
         workerAiPrescreenRequired: true,
         dynamicSteps: [],
       };
     }
 
-    const steps = buildDynamicPrescreenSteps(ctx);
-    const ri = ctx.hiringPolicy?.resolvedInterview;
+    const steps = buildDynamicPrescreenSteps(profileCtx);
     return {
-      interviewType: ri?.interviewType ?? 'worker_ai_prescreen',
-      workerAiPrescreenRequired: ri?.workerAiPrescreenRequired ?? true,
+      interviewType: 'worker_ai_prescreen',
+      interviewMode: 'profile_first' as const,
+      workerAiPrescreenRequired: true,
       dynamicSteps: steps.map((s) => ({
         id: s.id,
         type: s.type,

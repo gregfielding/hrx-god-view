@@ -11,6 +11,7 @@ export type ShiftNotifyCompare = {
   weeklySchedule?: Record<string, unknown>;
   shiftDescription?: string;
   emailIntro?: string;
+  clockInUrl?: string;
 };
 
 /** Stable JSON for Firestore map fields */
@@ -59,7 +60,8 @@ export function computeShiftNotifyDiff(
 
   const instructionsChanged =
     String(p.shiftDescription || '').trim() !== String(n.shiftDescription || '').trim() ||
-    String(p.emailIntro || '').trim() !== String(n.emailIntro || '').trim();
+    String(p.emailIntro || '').trim() !== String(n.emailIntro || '').trim() ||
+    String(p.clockInUrl || '').trim() !== String(n.clockInUrl || '').trim();
 
   return { scheduleChanged, instructionsChanged };
 }

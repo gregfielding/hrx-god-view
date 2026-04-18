@@ -8,6 +8,22 @@ import {
   complianceConcernLevel,
   type ComplianceQuestionFraming,
 } from './prescreenComplianceSemantics';
+import {
+  classifyBackgroundRiskSeverity,
+  classifyDrugRiskSeverity,
+  drugSeverityPenaltyFlag,
+  backgroundSeverityPenaltyFlag,
+  hasAnyDrugBgScreeningFlag,
+  hasDrugBgComplianceReview,
+  type PrescreenRiskSummary,
+  type PrescreenRiskSummaryEntry,
+} from './prescreenRiskSeverity';
+import {
+  computePrescreenReviewTriage,
+  flagsOnlyLowDrugBackgroundSeverity,
+  hasHighScoreReviewDrivers,
+  type PrescreenReviewTriage,
+} from './prescreenReviewTriage';
 
 export type WorkerAiPrescreenAnswers = {
   opening_target_work_types?: string[];
@@ -33,6 +49,10 @@ export type WorkerAiPrescreenAnswers = {
   background_check?: string;
   /** Core path only: required when background_check=yes (disclosure). */
   background_check_detail?: string;
+  /** Optional follow-up: misdemeanor vs felony (improves severity routing when present). */
+  background_offense_class?: string;
+  /** Optional follow-up: year or free-text time reference. */
+  background_offense_when?: string;
   supervisor_feedback?: string;
   additional_notes?: string;
 };
@@ -64,6 +84,10 @@ export type AiPrescreenScoreResult = {
   };
   /** Rules-based audit: base category sum + quality adj − calibrated flag penalties → final score. */
   scoreBreakdown?: PrescreenScoreBreakdown;
+  /** Drug/background severity + plain-language reasons (recruiter explainability). */
+  riskSummary?: PrescreenRiskSummary;
+  /** Present when `recommendation === 'review'` — structured triage (lane, subtype, reasons). */
+  reviewTriage?: PrescreenReviewTriage;
 };
 
 /** Structured penalty audit (QA / recruiters). */
@@ -75,6 +99,7 @@ export type PrescreenScoreBreakdown = {
   flagPenaltyTotalRaw: number;
   flagPenaltyTotalApplied: number;
   finalScore: number;
+  riskSummary?: PrescreenRiskSummary;
 };
 
 /** Recruiter-style letter grade from 0–100 score. */
@@ -100,20 +125,24 @@ export function prescreenScoreBandLabel(score: number): string {
 
 /**
  * Calibrated penalties applied after base category scores + answer-quality adjustment.
- * Caps prevent stacking every flag into automatic F while still pulling risky candidates out of A/B bands.
+ * Drug/background use severity tiers (not flat “risk = max penalty”).
  */
 const FLAG_SCORE_PENALTIES: Record<string, number> = {
-  /** Critical compliance — calibrated with post-cap so strong profiles rarely stay above ~65 with these flags. */
-  drug_risk: 41,
-  background_risk: 41,
-  drug_unknown: 15,
-  background_unknown: 15,
+  drug_risk_low: 3,
+  drug_risk_moderate: 15,
+  drug_risk_high: 32,
+  background_risk_low: 3,
+  background_risk_moderate: 15,
+  background_risk_high: 32,
+  drug_unknown: 8,
+  background_unknown: 8,
   attendance_risk: 12,
   transportation_risk: 10,
   no_backup_transport: 10,
   limited_relevant_experience: 12,
   physical_mismatch: 20,
-  risk_admission_detected: 10,
+  /** Only used for attendance admissions — no stack with drug/bg severity (see compose bundle). */
+  risk_admission_detected: 8,
   /** Narrative quality (also emitted by `evaluatePrescreenAnswerQuality`; penalties stack for multiple issues). */
   vague_response: 10,
   low_effort_response: 14,
@@ -229,42 +258,114 @@ function scoreTransportation(answers: WorkerAiPrescreenAnswers): { pts: number; 
 }
 
 /**
- * Risk sub-score + compliance flags.
+ * Risk sub-score + severity-based compliance flags.
  * Uses disclosure vs ability framing via {@link DrugBackgroundScoringMeta}.
  */
 function scoreRiskHalf(
   raw: unknown,
+  detailText: string,
   source: 'core' | 'dynamic' | 'none',
-  riskFlag: 'drug_risk' | 'background_risk',
-  unknownFlag: 'drug_unknown' | 'background_unknown',
-): { pts: number; flags: string[] } {
+  kind: 'drug' | 'background',
+  answers: WorkerAiPrescreenAnswers,
+): { pts: number; flags: string[]; summary: PrescreenRiskSummaryEntry } {
+  const unknownFlag = kind === 'drug' ? 'drug_unknown' : 'background_unknown';
   if (source === 'none') {
-    return { pts: 5, flags: [unknownFlag] };
+    return {
+      pts: 5,
+      flags: [unknownFlag],
+      summary: {
+        level: 'unknown',
+        reason: 'Question not shown for this path; screening classification unknown.',
+      },
+    };
   }
   const framing: ComplianceQuestionFraming = source === 'dynamic' ? 'ability' : 'disclosure';
-  const level = complianceConcernLevel(raw, framing);
-  if (level === 'clean') {
-    return { pts: 10, flags: [] };
+  const concernLevel = complianceConcernLevel(raw, framing);
+  if (concernLevel === 'clean') {
+    return {
+      pts: 10,
+      flags: [],
+      summary:
+        kind === 'drug'
+          ? { level: 'low', reason: 'Screening answer indicates no drug-related disclosure concern.' }
+          : { level: 'low', reason: 'Screening answer indicates no background disclosure concern.' },
+    };
   }
-  if (level === 'concern') {
-    return { pts: 0, flags: [riskFlag] };
+  if (concernLevel === 'uncertain' || concernLevel === 'empty') {
+    return {
+      pts: 5,
+      flags: [unknownFlag],
+      summary:
+        kind === 'drug'
+          ? classifyDrugRiskSeverity({ concernLevel, detailText })
+          : classifyBackgroundRiskSeverity({ concernLevel, detailText }),
+    };
   }
-  return { pts: 5, flags: [unknownFlag] };
+
+  const classified =
+    kind === 'drug'
+      ? classifyDrugRiskSeverity({ concernLevel, detailText })
+      : classifyBackgroundRiskSeverity({
+          concernLevel,
+          detailText,
+          offenseClass: answers.background_offense_class,
+          offenseYear: answers.background_offense_when,
+        });
+  const penaltyFlag =
+    kind === 'drug' ? drugSeverityPenaltyFlag(classified.level) : backgroundSeverityPenaltyFlag(classified.level);
+  const flags: string[] = [];
+  if (penaltyFlag) flags.push(penaltyFlag);
+
+  let pts = 0;
+  switch (classified.level) {
+    case 'low':
+      pts = 6;
+      break;
+    case 'moderate':
+      pts = 3;
+      break;
+    case 'high':
+      pts = 0;
+      break;
+    case 'unknown':
+    default:
+      pts = 5;
+      break;
+  }
+
+  return { pts, flags, summary: classified };
 }
 
 function scoreRisk(
   answers: WorkerAiPrescreenAnswers,
   meta?: DrugBackgroundScoringMeta,
-): { pts: number; flags: string[] } {
+): {
+  pts: number;
+  flags: string[];
+  riskSummary: PrescreenRiskSummary;
+} {
   const drugSrc = meta?.drugSource ?? 'core';
   const bgSrc = meta?.backgroundSource ?? 'core';
 
-  const drugHalf = scoreRiskHalf(answers.drug_screen, drugSrc, 'drug_risk', 'drug_unknown');
-  const bgHalf = scoreRiskHalf(answers.background_check, bgSrc, 'background_risk', 'background_unknown');
+  const drugHalf = scoreRiskHalf(
+    answers.drug_screen,
+    norm(answers.drug_screen_detail),
+    drugSrc,
+    'drug',
+    answers,
+  );
+  const bgHalf = scoreRiskHalf(
+    answers.background_check,
+    norm(answers.background_check_detail),
+    bgSrc,
+    'background',
+    answers,
+  );
 
   const pts = Math.min(20, drugHalf.pts + bgHalf.pts);
   const flags = [...drugHalf.flags, ...bgHalf.flags];
-  return { pts, flags };
+  const riskSummary: PrescreenRiskSummary = { drug: drugHalf.summary, background: bgHalf.summary };
+  return { pts, flags, riskSummary };
 }
 
 function scorePhysical(answers: WorkerAiPrescreenAnswers): { pts: number; flags: string[] } {
@@ -304,47 +405,57 @@ function applyFlagPenalties(baseScore: number, flags: string[]): Omit<PrescreenS
 
 /**
  * Trust caps after calibrated penalties (do not change category sub-score math).
- * - Critical drug/background risk: keep numeric score aligned with F/D expectations for compliance.
- * - Screening unknown: block A/B unless everything else is exceptional (cap in high C band).
+ * Only **high** drug/background severity gets a hard ceiling; low/moderate/unknown use lighter caps.
  */
 function applyRecruiterTrustScoreCaps(score: number, flags: string[]): number {
   let s = score;
-  const majorRisk = flags.includes('drug_risk') || flags.includes('background_risk');
+  const highRisk = flags.includes('drug_risk_high') || flags.includes('background_risk_high');
+  const moderateRisk = flags.includes('drug_risk_moderate') || flags.includes('background_risk_moderate');
   const screeningUnknown = flags.includes('drug_unknown') || flags.includes('background_unknown');
-  if (majorRisk) {
+  if (highRisk) {
     s = Math.min(s, 65);
+  } else if (moderateRisk) {
+    s = Math.min(s, 88);
   } else if (screeningUnknown) {
-    s = Math.min(s, 79);
+    s = Math.min(s, 84);
   }
   return Math.max(0, Math.min(100, Math.round(s)));
 }
 
 /**
  * Recommendation follows recruiter grade bands (score already includes penalties + trust caps).
- * - 80+: proceed unless drug/bg flags force review (never decline solely from high score).
- * - 60–79: review (weak / borderline)
- * - &lt;60: decline
+ * Drug/bg never force decline by themselves — only numeric band + review routing.
+ *
+ * **80+ with only low-severity drug/bg disclosures** (no unknown, elevated, attendance, physical, quality, transport)
+ * → **proceed** — minor disclosures alone are not a high-review catch-all.
  */
 function recommendationFromScoreAndFlags(
   overallScore: number,
   flags: string[],
 ): { recommendation: AiPrescreenScoreResult['recommendation']; reviewKind: PrescreenReviewKind | undefined } {
   const screeningUncertain = flags.includes('drug_unknown') || flags.includes('background_unknown');
-  const majorRisk = flags.includes('drug_risk') || flags.includes('background_risk');
+  const anyDrugBg = hasAnyDrugBgScreeningFlag(flags);
+  const complianceHeavy = hasDrugBgComplianceReview(flags);
 
   if (overallScore < 60) {
     return { recommendation: 'decline', reviewKind: undefined };
   }
 
   if (overallScore >= 80) {
-    if (majorRisk || screeningUncertain) {
+    /** Solely low-severity drug/bg disclosures, with no attendance/physical/quality/transport/unknown drivers. */
+    const proceedLowComplianceOnly =
+      flagsOnlyLowDrugBackgroundSeverity(flags) && !hasHighScoreReviewDrivers(flags);
+    if (proceedLowComplianceOnly) {
+      return { recommendation: 'proceed', reviewKind: undefined };
+    }
+    if (hasHighScoreReviewDrivers(flags) || anyDrugBg || screeningUncertain) {
       return { recommendation: 'review', reviewKind: 'review_risk' };
     }
     return { recommendation: 'proceed', reviewKind: undefined };
   }
 
   const reviewKind: PrescreenReviewKind =
-    majorRisk || screeningUncertain ? 'review_risk' : 'review_quality';
+    complianceHeavy || screeningUncertain || anyDrugBg ? 'review_risk' : 'review_quality';
   return { recommendation: 'review', reviewKind };
 }
 
@@ -354,7 +465,9 @@ function buildRecruiterSummaryLine(
   flags: string[],
   reviewKind: PrescreenReviewKind | undefined,
 ): string {
-  const majorRisk = flags.includes('drug_risk') || flags.includes('background_risk');
+  const highRx = flags.includes('drug_risk_high') || flags.includes('background_risk_high');
+  const modRx = flags.includes('drug_risk_moderate') || flags.includes('background_risk_moderate');
+  const lowRx = flags.includes('drug_risk_low') || flags.includes('background_risk_low');
   const unknown = flags.includes('drug_unknown') || flags.includes('background_unknown');
   const vagueQ = flags.includes('vague_response') || flags.includes('low_effort_response');
   const limited = flags.includes('limited_relevant_experience');
@@ -366,14 +479,17 @@ function buildRecruiterSummaryLine(
     return 'Strong pre-screen; cleared for next-step consideration.';
   }
   if (recommendation === 'decline') {
-    if (majorRisk) return 'Drug or background risk disclosure keeps the score in a no-go range.';
+    if (highRx || modRx) return 'Score band is below threshold with elevated drug/background signals.';
+    if (lowRx) return 'Overall score is below the proceed threshold (minor screening signals may still be present).';
     if (unknown) return 'Screening unknowns pull the score below a confident proceed.';
     if (vagueQ) return 'Thin or vague answers hold the score below the proceed bar.';
     return 'Overall score is below the proceed threshold.';
   }
 
   if (reviewKind === 'review_risk') {
-    if (majorRisk) return 'Strong overall, but drug or background answers need recruiter review.';
+    if (highRx) return 'Elevated drug or background signals — recruiter review recommended.';
+    if (modRx) return 'Moderate drug or background signals — confirm fit before proceeding.';
+    if (lowRx) return 'Minor screening disclosures present — quick recruiter confirmation recommended.';
     if (unknown) return 'Solid score; confirm drug or background screening before proceeding.';
     return 'Screening flags warrant review despite a workable score.';
   }
@@ -430,7 +546,19 @@ export function scoreWorkerAiPrescreen(
   const overallScore = applyRecruiterTrustScoreCaps(penaltyBlock.finalScore, flags);
 
   const { recommendation, reviewKind } = recommendationFromScoreAndFlags(overallScore, flags);
-  const summary = buildRecruiterSummaryLine(overallScore, recommendation, flags, reviewKind);
+  const reviewTriage =
+    recommendation === 'review'
+      ? computePrescreenReviewTriage({
+          overallScore,
+          flags,
+          reviewKind,
+          riskSummary: risk.riskSummary,
+        })
+      : undefined;
+  const summary =
+    recommendation === 'review' && reviewTriage
+      ? reviewTriage.summaryShort
+      : buildRecruiterSummaryLine(overallScore, recommendation, flags, reviewKind);
 
   const scoreBreakdown: PrescreenScoreBreakdown = {
     subScoreSum,
@@ -440,6 +568,7 @@ export function scoreWorkerAiPrescreen(
     flagPenaltyTotalRaw: penaltyBlock.flagPenaltyTotalRaw,
     flagPenaltyTotalApplied: penaltyBlock.flagPenaltyTotalApplied,
     finalScore: overallScore,
+    riskSummary: risk.riskSummary,
   };
 
   return {
@@ -448,6 +577,8 @@ export function scoreWorkerAiPrescreen(
     reviewKind,
     flags,
     summary,
+    riskSummary: risk.riskSummary,
+    reviewTriage,
     subScores: {
       experience: exp.pts,
       reliability: rel.pts,

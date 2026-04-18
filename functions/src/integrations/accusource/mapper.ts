@@ -81,6 +81,24 @@ export function normalizeCandidateDobForAccusource(raw: unknown): string | undef
   return undefined;
 }
 
+export function normalizeRequestedServicesCatalog(
+  raw: unknown,
+): Array<{ id: string; name: string; type?: string }> | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const out: Array<{ id: string; name: string; type?: string }> = [];
+  for (const row of raw) {
+    if (row == null || typeof row !== 'object') continue;
+    const o = row as Record<string, unknown>;
+    const id = String(o.id ?? '').trim();
+    if (!id) continue;
+    const name = String(o.name ?? '').trim() || id;
+    const typeRaw = o.type;
+    const type = typeRaw != null && String(typeRaw).trim() !== '' ? String(typeRaw).trim() : undefined;
+    out.push(type ? { id, name, type } : { id, name });
+  }
+  return out.length ? out : undefined;
+}
+
 export interface CreateBackgroundCheckInput {
   tenantId?: string;
   accountId?: string;
@@ -93,6 +111,8 @@ export interface CreateBackgroundCheckInput {
   requestedPackageId?: string;
   requestedPackageName?: string;
   requestedServices?: string[];
+  /** Optional: catalog rows for each ordered screen (id / name / type) — stored for UI + readiness. */
+  requestedServicesCatalog?: Array<{ id: string; name: string; type?: string }>;
   candidate?: {
     firstName?: string;
     lastName?: string;

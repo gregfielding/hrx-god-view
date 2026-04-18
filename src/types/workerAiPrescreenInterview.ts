@@ -4,6 +4,7 @@
  * Top-level interview document may also include:
  * - `entry` (optional string): prescreen URL `entry` query param at submit time for attribution
  *   (aligned with `buildWorkerAiPrescreenInviteUrl` / worker dashboard links). Omitted when absent or invalid.
+ * - `prescreenInterviewMode` (optional): `application` | `profile_first` — set by submit callable for analytics.
  */
 
 import type { PrescreenCategoryEvidenceV1, PrescreenCategoryScoresV1 } from './prescreenCategoryScores';
@@ -60,4 +61,20 @@ export interface WorkerInterviewAiBlock {
   categoryScores?: PrescreenCategoryScoresV1;
   /** Short audit tags per category (optional). */
   categoryEvidence?: PrescreenCategoryEvidenceV1;
+  /** Drug/background severity + reasons (rules-based prescreen v2+). */
+  riskSummary?: {
+    drug: { level: 'low' | 'moderate' | 'high' | 'unknown'; reason: string };
+    background: { level: 'low' | 'moderate' | 'high' | 'unknown'; reason: string };
+  };
+  /** Structured review triage when `recommendation === 'review'` (v3+). */
+  reviewTriage?: {
+    lane: 'strong_check_one' | 'borderline_maybe_usable';
+    subtype: string;
+    reasons: string[];
+    summaryShort: string;
+  };
+  reviewLane?: string | null;
+  reviewSubtype?: string | null;
+  reviewReasons?: string[];
+  reviewSummaryShort?: string | null;
 }
