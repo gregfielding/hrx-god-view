@@ -10,6 +10,7 @@ import {
   type OverviewActivityLogEntry,
 } from './OverviewDashboardSections';
 import OverviewActionItemsCard from './OverviewActionItemsCard';
+import UserScoreRefreshButton from './UserScoreRefreshButton';
 import { deriveActionItemsV1 } from '../../../utils/userActionItems/deriveActionItemsV1';
 import { buildOverviewQualificationsFromUserDoc } from '../utils/overviewQualificationsSnapshot';
 import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
@@ -92,6 +93,7 @@ import { persistScoreSummaryFromProfile } from '../../../utils/persistScoreSumma
 import { useAuth } from '../../../contexts/AuthContext';
 import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
 import type { ActionItem } from '../../../types/actionItems';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 
 import AddressFormFields, { type AddressFormFieldsHandle } from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
@@ -120,6 +122,10 @@ type Props = {
   }>;
   /** Raw certification entries from the user doc (e.g. `skillsData.certifications`). */
   actionItemsCertifications?: unknown[];
+  /** Latest prescreen `ai` from parent (aligns action item copy with Score tab / decision summary). */
+  actionItemsPrescreenAi?: WorkerInterviewAiBlock | null;
+  /** After manual recruiter rescore (callable), bump parent refresh for interview-derived signals. */
+  onAfterRecruiterRescore?: () => void;
 };
 
 const ProfileOverview: React.FC<Props> = ({
@@ -131,6 +137,8 @@ const ProfileOverview: React.FC<Props> = ({
   actionItemsHasInterview,
   actionItemsBackgroundCheckOrders,
   actionItemsCertifications,
+  actionItemsPrescreenAi,
+  onAfterRecruiterRescore,
 }) => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -224,6 +232,8 @@ const ProfileOverview: React.FC<Props> = ({
   const isStaffSelfProfile = isOwnProfile && viewerSecurityLevel >= 0 && viewerSecurityLevel <= 4;
   // Only show User Groups on a user's *own* profile, and only for admin security levels 5-7.
   const canViewUserGroupsSection = isOwnProfile && viewerSecurityLevel >= 5 && viewerSecurityLevel <= 7;
+  /** Align with recruiter/admin profile views (security ≥ 5); Overview scoring is only shown in full mode. */
+  const showReviewRescore = embeddedMode === 'full' && viewerSecurityLevel >= 5;
   const [form, setForm] = useState<UserProfileForm>({
     firstName: '',
     lastName: '',
@@ -427,6 +437,7 @@ const ProfileOverview: React.FC<Props> = ({
         backgroundCheckOrders: Array.isArray(actionItemsBackgroundCheckOrders) ? actionItemsBackgroundCheckOrders : [],
         certifications: Array.isArray(actionItemsCertifications) ? actionItemsCertifications : [],
         actionSignalsReady: userDocHydratedForActionItems,
+        prescreenInterviewAi: actionItemsPrescreenAi ?? null,
       }),
     [
       uid,
@@ -442,6 +453,7 @@ const ProfileOverview: React.FC<Props> = ({
       actionItemsBackgroundCheckOrders,
       actionItemsCertifications,
       userDocHydratedForActionItems,
+      actionItemsPrescreenAi,
     ],
   );
 
@@ -1967,6 +1979,15 @@ const transportOptions: Array<{
                   scoreSummary={scoreSummaryFromUser}
                   riskProfileRaw={riskProfileRaw}
                   onOpenScoreTab={onOpenScoreTab}
+                  headerActionsRight={
+                    showReviewRescore ? (
+                      <UserScoreRefreshButton
+                        targetUserId={uid}
+                        tenantId={activeTenant?.id || activeTenantId || null}
+                        onAfterSuccess={onAfterRecruiterRescore}
+                      />
+                    ) : null
+                  }
                 />
               </Grid>
               <Grid item xs={12}>

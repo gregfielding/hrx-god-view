@@ -41,12 +41,25 @@ import {
 import { collection, query, where, orderBy, limit, getDocs, startAfter, QueryDocumentSnapshot } from 'firebase/firestore';
 
 import { db } from '../../../firebase';
+import { getActivityLogMessageBodyDisplay } from '../../../utils/activityLogDisplay';
 
 interface ActivityLog {
   id: string;
   userId: string;
   action: string;
-  actionType: 'login' | 'logout' | 'profile_update' | 'job_application' | 'assignment_update' | 'document_upload' | 'security_change' | 'notification' | 'other';
+  actionType:
+    | 'login'
+    | 'logout'
+    | 'profile_update'
+    | 'job_application'
+    | 'assignment_update'
+    | 'document_upload'
+    | 'security_change'
+    | 'notification'
+    | 'sms_sent'
+    | 'email_sent'
+    | 'note_added'
+    | 'other';
   description: string;
   timestamp: Date;
   metadata?: {
@@ -57,6 +70,10 @@ interface ActivityLog {
     changes?: any;
     targetId?: string;
     targetType?: string;
+    messageBody?: string;
+    messagePreview?: string;
+    contentSent?: string;
+    [key: string]: unknown;
   };
   severity: 'low' | 'medium' | 'high';
   source: 'web' | 'mobile' | 'api' | 'system';
@@ -196,6 +213,12 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user, refreshTrigg
         return <SecurityIcon fontSize="small" color="error" />;
       case 'notification':
         return <NotificationsIcon fontSize="small" color="info" />;
+      case 'sms_sent':
+        return <NotificationsIcon fontSize="small" color="info" />;
+      case 'email_sent':
+        return <DescriptionIcon fontSize="small" color="info" />;
+      case 'note_added':
+        return <EditIcon fontSize="small" color="primary" />;
       default:
         return <InfoIcon fontSize="small" color="action" />;
     }
@@ -240,10 +263,19 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user, refreshTrigg
     }).format(timestamp);
   };
 
-  const filteredActivities = activities.filter(activity =>
-    activity.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    activity.action.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredActivities = activities.filter((activity) => {
+    const q = searchTerm.toLowerCase();
+    const displayDesc = getActivityLogMessageBodyDisplay({
+      actionType: activity.actionType,
+      description: activity.description,
+      metadata: activity.metadata,
+    });
+    return (
+      displayDesc.toLowerCase().includes(q) ||
+      activity.description.toLowerCase().includes(q) ||
+      activity.action.toLowerCase().includes(q)
+    );
+  });
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -405,8 +437,12 @@ const ActivityLogTab: React.FC<ActivityLogTabProps> = ({ uid, user, refreshTrigg
                           </Box>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">
-                            {activity.description}
+                          <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                            {getActivityLogMessageBodyDisplay({
+                              actionType: activity.actionType,
+                              description: activity.description,
+                              metadata: activity.metadata,
+                            })}
                           </Typography>
                         </TableCell>
                         <TableCell>

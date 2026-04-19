@@ -704,7 +704,10 @@ export async function sendWorkerMessageInternal(
           metadata: {
             messageId: messageResult.sid,
             phoneNumber: to,
-            messagePreview: messageContent.substring(0, 100), // Truncate for privacy
+            /** Full outbound copy for recruiter activity log (same as sent to device). */
+            messageBody: messageContent,
+            messagePreview:
+              messageContent.length > 200 ? `${messageContent.substring(0, 200)}…` : messageContent,
             source: context?.source || 'system',
             sourceId: context?.sourceId || null,
             targetType: 'sms',

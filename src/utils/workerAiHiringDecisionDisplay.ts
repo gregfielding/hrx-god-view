@@ -10,6 +10,8 @@ export const WORKER_AI_INTERVIEW_REC_VS_HIRING_DECISION_HELP =
 export type HiringDecisionUi = 'advance' | 'review' | 'hold' | 'reject';
 
 const REASON_LABELS: Record<string, string> = {
+  operational_soft_block: 'Compliance review still required',
+  operational_hard_block: 'Hard screening gate blocks auto-advance',
   passed_all_checks: 'Passed all checks',
   failed_score_threshold: 'Score below threshold',
   below_score_threshold: 'Score below threshold',

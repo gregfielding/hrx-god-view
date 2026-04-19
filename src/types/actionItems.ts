@@ -55,7 +55,8 @@ export type ActionItemType =
   | 'assignment_action_required'
   | 'assignment_readiness_blocked'
   | 'risk_watchout'
-  | 'score_review_recommended';
+  | 'score_review_recommended'
+  | 'score_auto_advance_blocked';
 
 export interface ActionItem {
   id: string;

@@ -29,6 +29,8 @@ export type ScoreSummary = {
   interviewLastAt?: any;
   /** Most recent interview score (0..10). Used for list/table rendering. */
   interviewLastScore10?: number;
+  /** Same document order as interviewLastScore10 — gates whether last10×10 proxy applies (prescreen only). */
+  interviewLastInterviewKind?: string;
   reviewAvg?: number;
   reviewCount?: number;
   reviewLastAt?: any;
@@ -47,6 +49,13 @@ export type ScoreSummary = {
   hiringScoreComputedAt?: any;
   /** Fingerprint of inputs used for Hiring Score v1.1 — skip writes when unchanged */
   hiringScoreInputSignature?: string;
+  /** Denormalized: which layer feeds recruiter primary score (server / recompute) */
+  primaryRecruiterScoreSource?: string;
+  primaryRecruiterScoreUpdatedAt?: any;
+  /** True when operational/prescreen layer differs from legacy composite by a wide margin */
+  scoreConflictDetected?: boolean;
+  /** Bump when recruiter score precedence rules change */
+  recruiterScoreSourceVersion?: string;
 };
 
 const toNumberOrUndefined = (v: any): number | undefined => {
@@ -79,6 +88,8 @@ export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
     interviewCount: toNumberOrUndefined(raw.interviewCount),
     interviewLastAt: raw.interviewLastAt,
     interviewLastScore10: toNumberOrUndefined(raw.interviewLastScore10),
+    interviewLastInterviewKind:
+      typeof raw.interviewLastInterviewKind === 'string' ? raw.interviewLastInterviewKind : undefined,
 
     reviewAvg: toNumberOrUndefined(raw.reviewAvg),
     reviewCount: toNumberOrUndefined(raw.reviewCount),
@@ -113,6 +124,12 @@ export function normalizeScoreSummary(raw: any): ScoreSummary | undefined {
     hiringScoreComputedAt: raw.hiringScoreComputedAt,
     hiringScoreInputSignature:
       typeof raw.hiringScoreInputSignature === 'string' ? raw.hiringScoreInputSignature : undefined,
+    primaryRecruiterScoreSource:
+      typeof raw.primaryRecruiterScoreSource === 'string' ? raw.primaryRecruiterScoreSource : undefined,
+    primaryRecruiterScoreUpdatedAt: raw.primaryRecruiterScoreUpdatedAt,
+    scoreConflictDetected: typeof raw.scoreConflictDetected === 'boolean' ? raw.scoreConflictDetected : undefined,
+    recruiterScoreSourceVersion:
+      typeof raw.recruiterScoreSourceVersion === 'string' ? raw.recruiterScoreSourceVersion : undefined,
   };
 }
 

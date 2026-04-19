@@ -445,6 +445,27 @@ async function run(): Promise<void> {
       });
 
       try {
+        await ref.collection('rescore_audit').add({
+          interviewId: ref.id,
+          userId,
+          previousBaseScore: oldBase,
+          previousAdjustedScore: oldAdj,
+          previousRecommendation: oldRec,
+          previousHiringDecision: oldDec,
+          newBaseScore: newBase,
+          newAdjustedScore: newAdj,
+          newRecommendation: newRec,
+          newHiringDecision: newDec,
+          changedAt: admin.firestore.FieldValue.serverTimestamp(),
+          changedBy: 'system_rescore',
+          rulesVersionBefore: String(oldAi.overrideRulesVersion ?? oldAi.model ?? ''),
+          rulesVersionAfter: String(bundle.operationalOverride.rulesVersion ?? 'rules_v1'),
+        });
+      } catch (e) {
+        console.warn('rescore_audit write failed', ref.path, e instanceof Error ? e.message : e);
+      }
+
+      try {
         await recomputeUserInterviewScoreSummary(db, userId);
       } catch (e) {
         console.warn('recomputeUserInterviewScoreSummary failed', userId, e instanceof Error ? e.message : e);

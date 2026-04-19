@@ -37,6 +37,7 @@ import {
   applyRecruiterOperationalOverrides,
   mergeOperationalBlocksIntoHiringResult,
 } from './applyRecruiterOperationalOverrides';
+import { buildPrescreenAdjustmentCopy } from './recruiterAdjustmentCopy';
 import type { OperationalOverrideResult } from './operationalOverrideTypes';
 import { computePrescreenReviewTriage } from './prescreenReviewTriage';
 import {
@@ -266,6 +267,12 @@ export async function composePrescreenAiBundle(args: {
     operationalOverride.hardBlocks,
   );
 
+  const adjustmentCopy = buildPrescreenAdjustmentCopy({
+    scored,
+    operationalOverride,
+    hiringResult,
+  });
+
   const aiBlockCore: Record<string, unknown> = {
     overallScore: scored.overallScore,
     baseInterviewScore: scored.overallScore,
@@ -300,6 +307,8 @@ export async function composePrescreenAiBundle(args: {
     categoryScores,
     categoryEvidence,
     categoryConfidence,
+    scoreAdjustmentReasons: adjustmentCopy.scoreAdjustmentReasons,
+    decisionAdjustmentReasons: adjustmentCopy.decisionAdjustmentReasons,
     prescreenOpeningPreferences: {
       targetWorkTypes: answers.opening_target_work_types ?? [],
       schedulePreferences: answers.opening_schedule_preferences ?? [],

@@ -31,6 +31,18 @@ export type ScoreIntelligence = {
     overrideSuggested?: boolean;
     /** When override is suggested, the panel recommends this next step. */
     suggestedDecision?: 'advance' | 'review' | 'reject';
+
+    /** Shared with interview modal / provenance strip */
+    adjustmentSummaryLines: string[];
+    autoAdvanceBlockedReasons: string[];
+    decisionSourceKey: 'rules_v1' | 'corrected_rules' | 'operational_override';
+    decisionSourceLabel: string;
+    compositeHiringScoreLabel: string | null;
+    /** Same as composite label, numeric for provenance strip */
+    compositeHiringScore100: number | null;
+    lastUpdatedLabel: string;
+    /** Provenance strip — true when base interview score differs from operational score */
+    correctionAppliedDisplay: boolean;
   };
 
   strengths: string[];

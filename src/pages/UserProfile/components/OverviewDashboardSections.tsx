@@ -30,7 +30,10 @@ import {
   Security as SecurityIcon,
   Notifications as NotificationsIcon,
   Info as InfoIcon,
+  Sms as SmsIcon,
+  Email as EmailIcon,
 } from '@mui/icons-material';
+import { getActivityLogMessageBodyDisplay } from '../../../utils/activityLogDisplay';
 import { formatOneDecimal, type ScoreSummary } from '../../../utils/scoreSummary';
 import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
@@ -448,10 +451,17 @@ export type OverviewScoringCardProps = {
   scoreSummary: ScoreSummary | undefined;
   riskProfileRaw: unknown;
   onOpenScoreTab?: () => void;
+  /** e.g. recruiter-only “Review & rescore” — top-right next to Score. */
+  headerActionsRight?: React.ReactNode;
 };
 
 /** Hiring score snapshot (grade, interviews, reviews, risk, recommendations) — opens Score tab for detail. */
-export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreTab }: OverviewScoringCardProps) {
+export function OverviewScoringCard({
+  scoreSummary,
+  riskProfileRaw,
+  onOpenScoreTab,
+  headerActionsRight,
+}: OverviewScoringCardProps) {
   const cardSx = { borderRadius: 1, borderColor: 'divider', ...overviewCardFlatSx } as const;
 
   const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
@@ -503,10 +513,15 @@ export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreT
       <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
           <Typography {...overviewSectionTitleTypographyProps}>Scoring</Typography>
-          {onOpenScoreTab && (
-            <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenScoreTab}>
-              Score
-            </Button>
+          {(headerActionsRight != null || onOpenScoreTab) && (
+            <Stack direction="row" alignItems="center" spacing={0.5} flexWrap="wrap" useFlexGap>
+              {headerActionsRight}
+              {onOpenScoreTab && (
+                <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenScoreTab}>
+                  Score
+                </Button>
+              )}
+            </Stack>
           )}
         </Stack>
 
@@ -661,6 +676,10 @@ function overviewActivityActionIcon(actionType: string) {
       return <SecurityIcon sx={{ fontSize: 16 }} color="error" />;
     case 'notification':
       return <NotificationsIcon sx={{ fontSize: 16 }} color="info" />;
+    case 'sms_sent':
+      return <SmsIcon sx={{ fontSize: 16 }} color="info" />;
+    case 'email_sent':
+      return <EmailIcon sx={{ fontSize: 16 }} color="info" />;
     default:
       return <InfoIcon sx={{ fontSize: 16 }} color="action" />;
   }
@@ -786,7 +805,13 @@ export function OverviewRecentActivityCard({
                 </TableRow>
               </TableHead>
               <TableBody>
-                {activities.map((activity) => (
+                {activities.map((activity) => {
+                  const descriptionDisplay = getActivityLogMessageBodyDisplay({
+                    actionType: activity.actionType,
+                    description: activity.description,
+                    metadata: activity.metadata,
+                  });
+                  return (
                   <TableRow
                     key={activity.id}
                     sx={{
@@ -804,7 +829,7 @@ export function OverviewRecentActivityCard({
                       </Box>
                     </TableCell>
                     <TableCell sx={{ maxWidth: 320 }}>
-                      <Tooltip title={activity.description} placement="top-start" enterDelay={400}>
+                      <Tooltip title={descriptionDisplay} placement="top-start" enterDelay={400}>
                         <Typography
                           sx={{
                             fontSize: '0.72rem',
@@ -814,7 +839,7 @@ export function OverviewRecentActivityCard({
                             display: 'block',
                           }}
                         >
-                          {activity.description}
+                          {descriptionDisplay}
                         </Typography>
                       </Tooltip>
                     </TableCell>
@@ -848,7 +873,8 @@ export function OverviewRecentActivityCard({
                       ) : null}
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+                })}
               </TableBody>
             </Table>
           </TableContainer>

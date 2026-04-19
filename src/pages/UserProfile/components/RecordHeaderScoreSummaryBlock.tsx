@@ -7,7 +7,8 @@ import {
   type ScoreSummary,
   type ScoringDistribution,
 } from '../../../utils/scoreSummary';
-import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
+import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import type { PrescreenCategoryScoresV1 } from '../../../types/prescreenCategoryScores';
 import type { WorkerRiskProfileV1 } from '../../../types/workerRiskProfile';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
@@ -25,6 +26,7 @@ export type RecordHeaderScoreSummaryBlockProps = {
   riskProfile: WorkerRiskProfileV1 | null;
   /** e.g. "Interviewed Apr 17, 2026 · 7/10" — shown under Recommendations when admin Risk column is visible */
   interviewSummaryLine?: string | null;
+  latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
 };
 
 /**
@@ -36,8 +38,13 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
   categoryScores,
   riskProfile,
   interviewSummaryLine,
+  latestPrescreenInterviewAi,
 }) => {
-  const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
+  const displayPack = resolveRecruiterPrimaryDisplay({
+    scoreSummary,
+    latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+  });
+  const rawScore = displayPack.primaryScore100;
   const compositeScore = getCanonicalStoredAiScore(scoreSummary);
   const hasScore = rawScore !== null && !Number.isNaN(rawScore);
   const relativeScore = hasScore ? getRelativeAiScore(rawScore!, scoringDistribution) : null;
@@ -71,9 +78,9 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
         Score summary
       </Typography>
       <Stack spacing={0.25}>
-            {hasScore ? (
+        {hasScore ? (
           <Typography variant="body2">
-            Operational / primary: <strong>{Math.round(rawScore!)}</strong>
+            Operational (primary): <strong>{Math.round(rawScore!)}</strong>
             {relativeScore != null && displayScore != null ? ` (relative ${displayScore})` : ''}
           </Typography>
         ) : (
@@ -81,7 +88,7 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
         )}
         {compositeScore != null && hasScore && compositeScore !== rawScore ? (
           <Typography variant="caption" color="inherit" sx={{ opacity: 0.9 }}>
-            Composite Hiring Score: <strong>{Math.round(compositeScore)}</strong>
+            Legacy profile/composite (secondary): <strong>{Math.round(compositeScore)}</strong>
           </Typography>
         ) : null}
         <Typography variant="body2">
@@ -131,7 +138,7 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
     >
       <Box sx={{ width: '100%', minWidth: 0 }}>
         <Stack spacing={0.5} alignItems="flex-start">
-          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+          <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, flexWrap: 'wrap' }}>
             <Typography
               component="span"
               sx={{
@@ -156,7 +163,17 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
             >
               {displayScore ?? '—'}
             </Typography>
+            {displayPack.hasConflict ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', maxWidth: 200 }}>
+                Using operational interview score
+              </Typography>
+            ) : null}
           </Box>
+          {compositeScore != null && hasScore && Math.round(compositeScore) !== Math.round(rawScore!) ? (
+            <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem' }}>
+              Profile {Math.round(compositeScore)} (secondary)
+            </Typography>
+          ) : null}
           {strengthsLine && (
             <Typography
               variant="caption"

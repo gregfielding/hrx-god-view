@@ -62,7 +62,8 @@ import { formatPhoneNumber } from '../utils/formatPhone';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
 import UserTableResumeIcon from '../components/tables/UserTableResumeIcon';
 import UserTableIndeedFlexBadge from '../components/tables/UserTableIndeedFlexBadge';
-import { formatOneDecimal } from '../utils/scoreSummary';
+import { formatOneDecimal, normalizeScoreSummary } from '../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
 import { getWorkAuthorizedStatus } from '../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData } from '../utils/eVerifyComfortDisplay';
 import WorkAuthorizedChip from '../components/WorkAuthorizedChip';
@@ -677,7 +678,8 @@ const SavedSmartGroupDetailPage: React.FC<SavedSmartGroupDetailPageProps> = ({ h
     getWorkStatusColumnDisplay(m, { hasActiveAssignment: activeAssignmentUserIds.has(m.id) });
 
   const renderAiScore = (m: (typeof membersData)[0]) => {
-    const score = m.scoreSummary?.aiScore;
+    const sum = normalizeScoreSummary(m.scoreSummary);
+    const score = getRecruiterPrimaryScore100FromSummary(sum);
     if (score === undefined || score === null || Number.isNaN(score)) {
       return <Typography variant="body2" color="text.secondary">N/A</Typography>;
     }

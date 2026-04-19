@@ -559,6 +559,7 @@ async function runSend(
             groupId,
             applicationId: applicationId ?? null,
             preferredLanguage: lang,
+            messageBody: body,
           },
           timestamp: sentAt,
           createdAt: sentAt,

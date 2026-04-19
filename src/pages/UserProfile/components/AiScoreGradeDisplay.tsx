@@ -2,26 +2,35 @@ import React from 'react';
 import { Box, Stack, Tooltip, Typography } from '@mui/material';
 import {
   formatOneDecimal,
-  getCanonicalStoredAiScore,
   getRelativeAiScore,
   type ScoreSummary,
   type ScoringDistribution,
 } from '../../../utils/scoreSummary';
-import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
+import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
 import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 
 export type AiScoreGradeDisplayProps = {
   scoreSummary: ScoreSummary | undefined;
   scoringDistribution: ScoringDistribution | null;
+  /** When set (profile page), matches header / interview operational layer */
+  latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
 };
 
 /**
- * Letter grade + numeric score — same visual logic as {@link RecruiterUsers} `renderAiScore` (Score column).
+ * Letter grade + numeric score — same precedence as Users table, with optional latest interview `ai` for alignment.
  */
-const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({ scoreSummary, scoringDistribution }) => {
-  const rawScore = getRecruiterPrimaryScore100FromSummary(scoreSummary);
-  const compositeScore = getCanonicalStoredAiScore(scoreSummary);
+const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({
+  scoreSummary,
+  scoringDistribution,
+  latestPrescreenInterviewAi,
+}) => {
+  const displayPack = resolveRecruiterPrimaryDisplay({
+    scoreSummary,
+    latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+  });
+  const rawScore = displayPack.primaryScore100;
   if (rawScore === null || Number.isNaN(rawScore)) {
     return (
       <Tooltip
@@ -44,6 +53,8 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({ scoreSummary,
   if (displayScore >= 80) scoreColor = 'success.main';
   else if (displayScore >= 60) scoreColor = 'warning.main';
 
+  const secondary = displayPack.secondaryProfileComposite100;
+
   return (
     <Tooltip
       arrow
@@ -62,16 +73,16 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({ scoreSummary,
             Score Summary
           </Typography>
           <Typography variant="caption" color="inherit" sx={{ display: 'block', mb: 0.5, opacity: 0.9 }}>
-            Primary: operational score (prescreen trust when present), else composite Hiring Score.
+            Primary: operational prescreen score when present — not the legacy profile composite alone.
           </Typography>
           <Stack spacing={0.25}>
             <Typography variant="body2">
-              Operational / primary: <strong>{Math.round(rawScore)}</strong>
+              Operational (primary): <strong>{Math.round(rawScore)}</strong>
               {showRelative ? ` (relative: ${displayScore})` : ''}
             </Typography>
-            {compositeScore != null && compositeScore !== rawScore ? (
+            {secondary != null && secondary !== rawScore ? (
               <Typography variant="caption" color="inherit" sx={{ opacity: 0.85 }}>
-                Composite Hiring Score (scoreSummary.aiScore): <strong>{Math.round(compositeScore)}</strong>
+                Legacy profile/composite (secondary): <strong>{Math.round(secondary)}</strong>
               </Typography>
             ) : null}
             <Typography variant="body2">
@@ -86,22 +97,29 @@ const AiScoreGradeDisplay: React.FC<AiScoreGradeDisplayProps> = ({ scoreSummary,
         </Box>
       }
     >
-      <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75, flexShrink: 0 }}>
-        <Typography
-          component="span"
-          variant="body2"
-          sx={{
-            fontWeight: 700,
-            color: scoreColor,
-            fontSize: '0.8125rem',
-            minWidth: 14,
-          }}
-        >
-          {grade}
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.8125rem' }}>
-          {displayScore}
-        </Typography>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.25, flexShrink: 0 }}>
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 0.75 }}>
+          <Typography
+            component="span"
+            variant="body2"
+            sx={{
+              fontWeight: 700,
+              color: scoreColor,
+              fontSize: '0.8125rem',
+              minWidth: 14,
+            }}
+          >
+            {grade}
+          </Typography>
+          <Typography variant="body2" color="text.primary" sx={{ fontVariantNumeric: 'tabular-nums', fontSize: '0.8125rem' }}>
+            {displayScore}
+          </Typography>
+        </Box>
+        {secondary != null && Math.round(secondary) !== Math.round(rawScore) ? (
+          <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.65rem', lineHeight: 1.2 }}>
+            Profile {Math.round(secondary)}
+          </Typography>
+        ) : null}
       </Box>
     </Tooltip>
   );

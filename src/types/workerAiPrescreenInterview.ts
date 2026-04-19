@@ -89,4 +89,8 @@ export interface WorkerInterviewAiBlock {
   reviewSubtype?: string | null;
   reviewReasons?: string[];
   reviewSummaryShort?: string | null;
+  /** Short recruiter-facing lines explaining base → operational score (stored by scoring pipeline). */
+  scoreAdjustmentReasons?: string[];
+  /** Short recruiter-facing lines for hiring / gate narrative (stored by scoring pipeline). */
+  decisionAdjustmentReasons?: string[];
 }

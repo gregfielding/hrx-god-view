@@ -305,7 +305,10 @@ export const logSMSActivity = async (
       ...metadata,
       senderId,
       senderName,
-      messagePreview: messagePreview.substring(0, 100), // Truncate for privacy
+      /** Full SMS copy for recruiter review on the worker profile. */
+      messageBody: messagePreview,
+      messagePreview:
+        messagePreview.length > 200 ? `${messagePreview.substring(0, 200)}…` : messagePreview,
       targetType: 'sms',
     },
   });

@@ -450,6 +450,7 @@ export const processScheduledInterviewInvites = onSchedule(
             applicationId: applicationId || null,
             tenantId,
             preferredLanguage,
+            messageBody: body,
           },
           timestamp: sentAt,
           createdAt: sentAt,

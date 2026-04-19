@@ -49,6 +49,7 @@ function displayTier(t: ActionItemType): number {
       return 3;
     case 'risk_watchout':
     case 'score_review_recommended':
+    case 'score_auto_advance_blocked':
       return 4;
     case 'phone_verification_required':
       return 5;

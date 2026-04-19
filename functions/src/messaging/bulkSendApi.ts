@@ -276,7 +276,7 @@ export const bulkSendEmailApi = onRequest(
                 actionType: 'email_sent',
                 description: renderedTextBody.slice(0, 50) + (renderedTextBody.length > 50 ? '…' : ''),
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                metadata: { messageLogId, channel: 'email', subject },
+                metadata: { messageLogId, channel: 'email', subject, messageBody: renderedTextBody },
                 severity: 'low',
                 source: 'system',
               });
@@ -473,7 +473,7 @@ export const bulkSendSmsApi = onRequest(
                 actionType: 'sms_sent',
                 description: renderedBody.trim().slice(0, 50) + (renderedBody.length > 50 ? '…' : ''),
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                metadata: { messageLogId, channel: 'sms' },
+                metadata: { messageLogId, channel: 'sms', messageBody: renderedBody.trim() },
                 severity: 'low',
                 source: 'system',
               });

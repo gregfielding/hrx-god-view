@@ -107,6 +107,7 @@ export const sendProfileUpdateReminder = onCall(
         tenantId,
         preferredLanguage,
         phoneE164,
+        messageBody,
       },
       timestamp: sentAt,
       createdAt: sentAt,

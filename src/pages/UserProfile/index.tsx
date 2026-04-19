@@ -111,6 +111,8 @@ import {
   type ScoreSummary,
   formatOneDecimal,
 } from '../../utils/scoreSummary';
+import type { WorkerInterviewAiBlock } from '../../types/workerAiPrescreenInterview';
+import { parseWorkerInterviewAiBlock } from '../../utils/scoring/parseWorkerInterviewAiBlock';
 import { getWorkAuthorizedStatus } from '../../utils/workAuthorizedDisplay';
 import { getEVerifyComfortStatusFromUserData, type EVerifyComfortStatus } from '../../utils/eVerifyComfortDisplay';
 import { persistScoreSummaryFromProfile } from '../../utils/persistScoreSummaryFromProfile';
@@ -192,6 +194,15 @@ const UserProfilePage = () => {
   const [profileScore, setProfileScore] = useState<number | undefined>(undefined);
   const [profileCompletenessScore, setProfileCompletenessScore] = useState<number | undefined>(undefined);
   const [scoreSummary, setScoreSummary] = useState<ScoreSummary | undefined>(undefined);
+  /** Timestamps for score freshness (Score / Interview tabs) — from latest `users/{uid}` fetch */
+  const [scoreFreshnessMeta, setScoreFreshnessMeta] = useState<{
+    userUpdatedAt?: unknown;
+    categoryScoresCurrentUpdatedAt?: unknown;
+    riskProfileLastUpdatedAt?: unknown;
+    complianceTouchAt?: unknown;
+  } | undefined>(undefined);
+  /** Latest worker AI prescreen `ai` block for Action Items copy alignment */
+  const [latestWorkerPrescreenAi, setLatestWorkerPrescreenAi] = useState<WorkerInterviewAiBlock | null>(null);
   const [reviewsCount, setReviewsCount] = useState<number>(0);
   const [createdAt, setCreatedAt] = useState<any>(null);
   const [workAuthorizedStatus, setWorkAuthorizedStatus] = useState<'yes' | 'no' | 'skipped'>('skipped');
@@ -244,6 +255,8 @@ const UserProfilePage = () => {
   const [profileUpdateReminderSendError, setProfileUpdateReminderSendError] = useState<string | null>(null);
   const [sendingProfileUpdateReminder, setSendingProfileUpdateReminder] = useState(false);
   const [messageHistoryRefreshKey, setMessageHistoryRefreshKey] = useState(0);
+  /** Bumps tab counts / interview-derived signals after manual recruiter rescore (callable). */
+  const [recruiterRescoreNonce, setRecruiterRescoreNonce] = useState(0);
   const [recordHeaderAvatarSaveError, setRecordHeaderAvatarSaveError] = useState<string | null>(null);
   const [workerQuickNotify, setWorkerQuickNotify] = useState<{
     message: string;
@@ -251,6 +264,9 @@ const UserProfilePage = () => {
   } | null>(null);
 
   const canEditRecordAvatar = !!uid && (user?.uid === uid || (typeof securityLevel === 'string' && parseInt(securityLevel, 10) >= 4));
+  const bumpAfterRecruiterRescore = useCallback(() => {
+    setRecruiterRescoreNonce((n) => n + 1);
+  }, []);
   const handleRecordHeaderAvatarClick = useCallback(() => {
     recordHeaderFileInputRef.current?.click();
   }, []);
@@ -739,6 +755,13 @@ const UserProfilePage = () => {
           // Denormalized score summary (interviews/reviews/AI)
           const normalizedSummary = normalizeScoreSummary((data as any).scoreSummary);
           setScoreSummary(normalizedSummary);
+          const rp0 = (data as any).riskProfile as { lastUpdatedAt?: unknown } | undefined;
+          setScoreFreshnessMeta({
+            userUpdatedAt: (data as any).updatedAt,
+            categoryScoresCurrentUpdatedAt: (data as any).categoryScoresCurrentUpdatedAt,
+            riskProfileLastUpdatedAt: rp0?.lastUpdatedAt,
+            complianceTouchAt: (data as any).complianceReviewedAt ?? (data as any).lastComplianceAt,
+          });
 
           // Do not write scoreSummary on profile load — canonical score comes from Firestore only;
           // updates happen via interview flows, server recomputes, or persistScoreSummaryFromProfile after edits.
@@ -778,6 +801,13 @@ const UserProfilePage = () => {
 
         const data = docSnap.data() as any;
         setScoreSummary(normalizeScoreSummary(data.scoreSummary));
+        const rp = data.riskProfile as { lastUpdatedAt?: unknown } | undefined;
+        setScoreFreshnessMeta({
+          userUpdatedAt: data.updatedAt,
+          categoryScoresCurrentUpdatedAt: data.categoryScoresCurrentUpdatedAt,
+          riskProfileLastUpdatedAt: rp?.lastUpdatedAt,
+          complianceTouchAt: data.complianceReviewedAt ?? data.lastComplianceAt,
+        });
         setEVerifyComfortStatus(getEVerifyComfortStatusFromUserData(data));
 
         // Fetch E-Verify orders
@@ -1006,6 +1036,17 @@ const UserProfilePage = () => {
             const toTime = (x: typeof docs[0]) => (x?.createdAt?.toDate?.() ?? x?.timestamp?.toDate?.() ?? new Date(0)).getTime();
             docs.sort((a, b) => toTime(b) - toTime(a));
             const latest = docs[0];
+            let prescreenAi: WorkerInterviewAiBlock | null = null;
+            for (const row of docs) {
+              if ((row as { interviewKind?: string }).interviewKind === 'worker_ai_prescreen' && (row as { ai?: unknown }).ai) {
+                const p = parseWorkerInterviewAiBlock((row as { ai: unknown }).ai);
+                if (p) {
+                  prescreenAi = p;
+                  break;
+                }
+              }
+            }
+            setLatestWorkerPrescreenAi(prescreenAi);
             if (latest) {
               const lastAt = latest.createdAt?.toDate?.() ?? latest.timestamp?.toDate?.() ?? null;
               const lastScore10 = typeof latest.score10 === 'number' ? latest.score10 : typeof latest.score === 'number' ? latest.score : null;
@@ -1028,10 +1069,12 @@ const UserProfilePage = () => {
             }
             setInterviewsCount(0);
             setLatestInterviewFromSubcollection(null);
+            setLatestWorkerPrescreenAi(null);
           }
         } else {
           setInterviewsCount(0);
           setLatestInterviewFromSubcollection(null);
+          setLatestWorkerPrescreenAi(null);
         }
       } catch (error) {
         console.error('Error fetching counts:', error);
@@ -1039,7 +1082,7 @@ const UserProfilePage = () => {
     };
 
     fetchCounts();
-  }, [uid, securityLevel, tabValue]);
+  }, [uid, securityLevel, tabValue, recruiterRescoreNonce]);
 
   // Tab list — memoized so child updates do not recreate arrays every render and retrigger tab sync effects.
   const availableTabs = useMemo(() => {
@@ -1850,6 +1893,7 @@ const UserProfilePage = () => {
           isStaffViewingOwnRecord={isStaffViewingOwnRecord}
           profileScore={profileScore}
           scoreSummary={scoreSummary}
+          latestPrescreenInterviewAi={latestWorkerPrescreenAi}
           scoringDistribution={scoringDistribution}
           resume={skillsData?.resume || null}
           certifications={skillsData?.certifications || []}
@@ -2033,6 +2077,7 @@ const UserProfilePage = () => {
                   isFavorite={isFavorite}
                   toggleFavorite={toggleFavorite}
                   scoreSummary={scoreSummary}
+                  latestPrescreenInterviewAi={latestWorkerPrescreenAi}
                   scoringDistribution={scoringDistribution}
                   categoryScores={categoryScoresCurrent}
                   riskProfile={recordHeaderRiskProfile}
@@ -2285,7 +2330,11 @@ const UserProfilePage = () => {
                             )}
 
                         {canViewAdminContent && (
-                          <AiScoreGradeDisplay scoreSummary={scoreSummary} scoringDistribution={scoringDistribution} />
+                          <AiScoreGradeDisplay
+                            scoreSummary={scoreSummary}
+                            scoringDistribution={scoringDistribution}
+                            latestPrescreenInterviewAi={latestWorkerPrescreenAi}
+                          />
                         )}
                       </Stack>
                     </Box>
@@ -2885,16 +2934,22 @@ const UserProfilePage = () => {
                         typeLabel: o.typeLabel,
                       }))}
                       actionItemsCertifications={skillsData?.certifications || []}
+                      actionItemsPrescreenAi={latestWorkerPrescreenAi}
+                      onAfterRecruiterRescore={bumpAfterRecruiterRescore}
                     />
                   </>
                 );
               case 'Interview':
-                return <InterviewTab uid={uid} />;
+                return (
+                  <InterviewTab uid={uid} scoreSummary={scoreSummary} scoreFreshnessMeta={scoreFreshnessMeta} />
+                );
               case 'Score':
                 return (
                   <ScoreTab
                     uid={uid}
                     scoreSummary={scoreSummary}
+                    scoreFreshnessMeta={scoreFreshnessMeta}
+                    latestPrescreenInterviewAi={latestWorkerPrescreenAi}
                     fallbackAiScore={profileScore}
                     fallbackCompleteness={profileCompletenessScore}
                     scoringDistribution={scoringDistribution}
@@ -3115,6 +3170,7 @@ const UserProfilePage = () => {
                 typeLabel: o.typeLabel,
               }))}
               actionItemsCertifications={skillsData?.certifications || []}
+              actionItemsPrescreenAi={latestWorkerPrescreenAi}
             />
           </DialogContent>
         </Dialog>

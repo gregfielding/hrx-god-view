@@ -222,6 +222,7 @@ export { cleanupTenantStandaloneMetros };
 export { getUserReviews, createUserReview, deleteUserReview } from './userReviews';
 export { deleteUserCompletely } from './deleteUserCompletely';
 export { sendProfileUpdateReminder } from './sendProfileUpdateReminder';
+export { reviewAndRescoreUser } from './reviewAndRescoreUser';
 export {
   onUserCreatedScheduleApplyWizardReminder,
   processApplyWizardReminders,

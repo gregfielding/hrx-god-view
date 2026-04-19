@@ -40,8 +40,9 @@ import ProfileQualityMeter from './ProfileQualityMeter';
 import CompactProfileQualityBar from './CompactProfileQualityBar';
 import RecordHeaderActionIcon from './RecordHeaderActionIcon';
 import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
-import { getCanonicalStoredAiScore, type ScoreSummary, type ScoringDistribution } from '../../../utils/scoreSummary';
-import { getRecruiterPrimaryScore100FromSummary } from '../../../utils/scoring/recruiterOperationalScore';
+import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import { resolveRecruiterPrimaryDisplay } from '../../../utils/scoring/recruiterPrimaryDisplay';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import { detectMissingItems } from '../utils/detectMissingItems';
 import AddUserNoteDialog from './AddUserNoteDialog';
@@ -84,6 +85,8 @@ interface UserProfileHeaderProps {
   isStaffViewingOwnRecord?: boolean;
   profileScore?: number; // Profile completeness score (0-100)
   scoreSummary?: ScoreSummary;
+  /** Latest worker AI prescreen `ai` from parent — keeps header aligned with interview operational score */
+  latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
   scoringDistribution?: ScoringDistribution | null;
   // New props for document access and additional data
   resume?: {
@@ -173,6 +176,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
   isStaffViewingOwnRecord = false,
   profileScore,
   scoreSummary,
+  latestPrescreenInterviewAi,
   scoringDistribution,
   resume,
   certifications = [],
@@ -264,6 +268,16 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     }
     return null;
   }, [createdAt]);
+
+  const recruiterPrimary = useMemo(
+    () =>
+      resolveRecruiterPrimaryDisplay({
+        scoreSummary,
+        latestPrescreenInterviewAi: latestPrescreenInterviewAi ?? null,
+      }),
+    [scoreSummary, latestPrescreenInterviewAi],
+  );
+
   const [gmailConnected, setGmailConnected] = useState<boolean>(false);
   const [hasTwilioNumber, setHasTwilioNumber] = useState<boolean>(false);
   const [messageDrawerOpen, setMessageDrawerOpen] = useState(false);
@@ -889,8 +903,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                const primary = getRecruiterPrimaryScore100FromSummary(scoreSummary);
-                const composite = getCanonicalStoredAiScore(scoreSummary);
+                const primary = recruiterPrimary.primaryScore100;
+                const composite = recruiterPrimary.secondaryProfileComposite100;
                 if (primary === null) {
                   return (
                     <Tooltip title="No stored score yet — same precedence as All Users table (operational prescreen when present).">
@@ -905,20 +919,35 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   );
                 }
                 const display = Math.round(primary);
-                const tip =
-                  composite != null && composite !== primary
-                    ? `Operational / primary: ${display}. Composite Hiring Score: ${Math.round(composite)}.`
-                    : `Operational / primary score: ${display}`;
+                const tipLines = [
+                  `Operational (primary): ${display} · ${recruiterPrimary.primaryGrade}`,
+                  composite != null ? `Legacy profile/composite: ${Math.round(composite)}` : null,
+                  recruiterPrimary.hasConflict && recruiterPrimary.conflictHint ? recruiterPrimary.conflictHint : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n');
                 return (
-                  <Tooltip title={tip}>
-                    <Chip
-                      icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                      label={`Score ${display}`}
-                      size="small"
-                      variant="outlined"
-                      sx={{ fontWeight: 700, flexShrink: 0 }}
-                    />
-                  </Tooltip>
+                  <Stack direction="column" alignItems="flex-end" spacing={0.25} sx={{ flexShrink: 0 }}>
+                    <Tooltip title={tipLines}>
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label={`Operational ${display} · ${recruiterPrimary.primaryGrade}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ fontWeight: 700, flexShrink: 0 }}
+                      />
+                    </Tooltip>
+                    {composite != null && composite !== primary ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right' }}>
+                        Profile {Math.round(composite)}
+                      </Typography>
+                    ) : null}
+                    {recruiterPrimary.hasConflict ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right', maxWidth: 200 }}>
+                        Using operational interview score
+                      </Typography>
+                    ) : null}
+                  </Stack>
                 );
               })()}
             </Box>
@@ -1510,8 +1539,8 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
               )}
 
               {isAdminView && (() => {
-                const primary = getRecruiterPrimaryScore100FromSummary(scoreSummary);
-                const composite = getCanonicalStoredAiScore(scoreSummary);
+                const primary = recruiterPrimary.primaryScore100;
+                const composite = recruiterPrimary.secondaryProfileComposite100;
                 if (primary === null) {
                   return (
                     <Tooltip
@@ -1533,23 +1562,38 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
                   );
                 }
                 const display = Math.round(primary);
-                const tip =
-                  composite != null && composite !== primary
-                    ? `Operational / primary: ${display}. Composite Hiring Score: ${Math.round(composite)}.`
-                    : `Operational / primary score: ${display}`;
+                const tipLines = [
+                  `Operational (primary): ${display} · ${recruiterPrimary.primaryGrade}`,
+                  composite != null ? `Legacy profile/composite: ${Math.round(composite)}` : null,
+                  recruiterPrimary.hasConflict && recruiterPrimary.conflictHint ? recruiterPrimary.conflictHint : null,
+                ]
+                  .filter(Boolean)
+                  .join('\n');
                 return (
-                  <Tooltip title={tip} componentsProps={recordHeaderTooltipComponentsProps}>
-                    <Chip
-                      icon={<InsightsIcon sx={{ fontSize: 18 }} />}
-                      label={`Score ${display}`}
-                      size="small"
-                      variant="outlined"
-                      sx={{
-                        fontWeight: 700,
-                        flexShrink: 0,
-                      }}
-                    />
-                  </Tooltip>
+                  <Stack direction="column" alignItems="flex-end" spacing={0.25} sx={{ flexShrink: 0 }}>
+                    <Tooltip title={tipLines} componentsProps={recordHeaderTooltipComponentsProps}>
+                      <Chip
+                        icon={<InsightsIcon sx={{ fontSize: 18 }} />}
+                        label={`Operational ${display} · ${recruiterPrimary.primaryGrade}`}
+                        size="small"
+                        variant="outlined"
+                        sx={{
+                          fontWeight: 700,
+                          flexShrink: 0,
+                        }}
+                      />
+                    </Tooltip>
+                    {composite != null && composite !== primary ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right' }}>
+                        Profile {Math.round(composite)}
+                      </Typography>
+                    ) : null}
+                    {recruiterPrimary.hasConflict ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2, textAlign: 'right', maxWidth: 220 }}>
+                        Using operational interview score
+                      </Typography>
+                    ) : null}
+                  </Stack>
                 );
               })()}
             </Box>

@@ -304,6 +304,7 @@ export const processApplyWizardReminders = onSchedule(
             applicationIdResolved: applicationIdResolved || null,
             tenantId,
             preferredLanguage,
+            messageBody: body,
           },
           timestamp: sentAt,
           createdAt: sentAt,

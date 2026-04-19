@@ -13,6 +13,8 @@ import {
   mergeRiskProfileIntoUserUpdateIfChanged,
 } from './workerRiskProfile';
 
+const RECRUITER_PRIMARY_SCORE_SOURCE_VERSION = 'recruiter_primary_v1';
+
 function computeAiScoreFromComponents(
   completeness: number,
   responsiveness: number,
@@ -81,6 +83,9 @@ export async function recomputeUserInterviewScoreSummary(
         : (lastInterview.score as number)
       : null;
 
+  const lastKind =
+    lastInterview != null ? String((lastInterview as Record<string, unknown>).interviewKind ?? '') : '';
+
   const userSnap = await db.collection('users').doc(uid).get();
   const userData = (userSnap.data() || {}) as Record<string, unknown>;
   const scoreSummary = (userData.scoreSummary as Record<string, unknown> | undefined) || {};
@@ -109,9 +114,10 @@ export async function recomputeUserInterviewScoreSummary(
     'scoreSummary.interviewCount': interviewCount,
     'scoreSummary.interviewLastAt': lastResolved ?? null,
     'scoreSummary.interviewLastScore10': lastScore10,
+    'scoreSummary.interviewLastInterviewKind': lastKind || null,
   };
 
-  const lastKind = lastInterview && String((lastInterview as Record<string, unknown>).interviewKind ?? '');
+  let prescreenOperational: number | null = null;
   if (lastKind === 'worker_ai_prescreen' && lastInterview) {
     const ai = (lastInterview as Record<string, unknown>).ai as Record<string, unknown> | undefined;
     if (ai && typeof ai === 'object') {
@@ -122,6 +128,7 @@ export async function recomputeUserInterviewScoreSummary(
             ? ai.overallScore
             : null;
       const adj = typeof ai.overrideAdjustedScore === 'number' ? ai.overrideAdjustedScore : base;
+      prescreenOperational = typeof adj === 'number' && Number.isFinite(adj) ? Math.round(adj) : null;
       const delta = typeof ai.overrideScoreDelta === 'number' ? ai.overrideScoreDelta : null;
       if (base != null) update['scoreSummary.baseInterviewScore'] = base;
       if (adj != null) update['scoreSummary.overrideAdjustedScore'] = adj;
@@ -144,6 +151,23 @@ export async function recomputeUserInterviewScoreSummary(
   if (newAiScore !== null) {
     update['scoreSummary.aiScore'] = newAiScore;
     update['scoreSummary.aiScoreUpdatedAt'] = admin.firestore.FieldValue.serverTimestamp();
+  }
+
+  update['scoreSummary.primaryRecruiterScoreUpdatedAt'] = admin.firestore.FieldValue.serverTimestamp();
+  update['scoreSummary.recruiterScoreSourceVersion'] = RECRUITER_PRIMARY_SCORE_SOURCE_VERSION;
+  if (prescreenOperational != null) {
+    update['scoreSummary.primaryRecruiterScoreSource'] = 'operational_prescreen';
+    if (newAiScore != null) {
+      update['scoreSummary.scoreConflictDetected'] = Math.abs(prescreenOperational - newAiScore) >= 15;
+    } else {
+      update['scoreSummary.scoreConflictDetected'] = false;
+    }
+  } else if (interviewCount > 0) {
+    update['scoreSummary.primaryRecruiterScoreSource'] = 'interview_quality_proxy';
+    update['scoreSummary.scoreConflictDetected'] = false;
+  } else {
+    update['scoreSummary.primaryRecruiterScoreSource'] = 'legacy_profile_composite';
+    update['scoreSummary.scoreConflictDetected'] = false;
   }
 
   try {

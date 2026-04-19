@@ -1,5 +1,6 @@
 import type { ScoreSummary } from '../../scoreSummary';
 import { getRecruiterPrimaryScore100FromSummary } from '../../scoring/recruiterOperationalScore';
+import { getRecruiterDecisionSummary } from '../../scoring/recruiterDecisionSummary';
 import type { ActionItem } from '../../../types/actionItems';
 import { makeActionItem } from '../actionItemFactory';
 import type { ActionItemsV1Input } from '../actionItemsV1Input';
@@ -51,7 +52,16 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
   }
 
   const operational = getRecruiterPrimaryScore100FromSummary(input.scoreSummary as ScoreSummary | null | undefined);
+  const prescreen = input.prescreenInterviewAi;
+  const decisionLine =
+    prescreen && prescreen.overallScore != null
+      ? getRecruiterDecisionSummary({ ai: prescreen, scoreSummary: input.scoreSummary as ScoreSummary | null })
+      : null;
+
   if (input.enabled && operational != null && operational < 60) {
+    const short =
+      decisionLine?.adjustmentSummaryLines[0] ??
+      `Operational score is ${Math.round(operational)}/100 — review the Score tab before the next candidate-facing step.`;
     out.push(
       makeActionItem({
         dedupeKey: 'user:score_low',
@@ -60,7 +70,7 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
         severity: 'medium',
         actor: 'recruiter',
         title: 'Operational score suggests review',
-        shortDescription: `Operational score is ${Math.round(operational)}/100 (prescreen trust when available). Spot-check the Score tab before the next candidate-facing step.`,
+        shortDescription: short,
         scope: { kind: 'global' },
         blocking: 'informational',
         sourceType: 'derived',
@@ -70,6 +80,38 @@ export function runProfileRules(input: ActionItemsV1Input): ActionItem[] {
         priority: 80,
       }),
     );
+  }
+
+  if (
+    input.enabled &&
+    prescreen &&
+    decisionLine &&
+    operational != null &&
+    operational >= 72 &&
+    decisionLine.autoAdvanceEligible === false &&
+    decisionLine.autoAdvanceBlockedReasons.length > 0
+  ) {
+    const one = decisionLine.autoAdvanceBlockedReasons[0] ?? '';
+    if (one) {
+      out.push(
+        makeActionItem({
+          dedupeKey: 'user:score_auto_advance_gate',
+          type: 'score_auto_advance_blocked',
+          category: 'watchout',
+          severity: 'low',
+          actor: 'recruiter',
+          title: 'Strong score — auto-advance blocked',
+          shortDescription: one,
+          scope: { kind: 'global' },
+          blocking: 'informational',
+          sourceType: 'derived',
+          sourceId: input.uid,
+          ctaLabel: 'Score',
+          ctaTarget: { kind: 'profileTab', tab: 'Score' },
+          priority: 78,
+        }),
+      );
+    }
   }
 
   return out;

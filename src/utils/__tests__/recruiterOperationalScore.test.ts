@@ -26,4 +26,31 @@ describe('recruiterOperationalScore', () => {
     } as ScoreSummary);
     expect(n).toBe(88);
   });
+
+  it('does not use interviewLastScore10×10 when latest interview was live recruiter (avoids 5/10 → 50)', () => {
+    const r = resolveRecruiterOperationalScore100({
+      scoreSummary: {
+        aiScore: 72,
+        interviewCount: 2,
+        interviewLastScore10: 5,
+        interviewLastInterviewKind: 'recruiter_live',
+      } as ScoreSummary,
+    });
+    expect(r.adjustedScore).toBe(72);
+    expect(r.adjustedSource).toBe('composite_ai');
+  });
+
+  it('uses interviewLastScore10×10 for worker_ai_prescreen when overrides missing', () => {
+    const r = resolveRecruiterOperationalScore100({
+      scoreSummary: {
+        aiScore: 40,
+        interviewCount: 1,
+        interviewLastScore10: 8.8,
+        interviewLastInterviewKind: 'worker_ai_prescreen',
+      } as ScoreSummary,
+    });
+    // finite() rounds score10 to an integer before ×10 (8.8 → 9 → 90)
+    expect(r.adjustedScore).toBe(90);
+    expect(r.adjustedSource).toBe('interview_last10_proxy');
+  });
 });

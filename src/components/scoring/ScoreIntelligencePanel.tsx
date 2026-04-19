@@ -18,6 +18,7 @@ import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import TuneIcon from '@mui/icons-material/Tune';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import type { ScoreIntelligence } from '../../types/scoreIntelligence';
+import ScoreProvenanceSummary from './ScoreProvenanceSummary';
 
 const BREAKDOWN_MAX = {
   experience: 25,
@@ -77,9 +78,16 @@ export type ScoreIntelligencePanelProps = {
   loading?: boolean;
   /** Shown when "Show raw scoring data" is enabled */
   rawDebugPayload?: unknown;
+  /** From `classifyScoreFreshness` — e.g. Fresh / Possibly stale / Refresh recommended */
+  freshnessHeadline?: string | null;
 };
 
-export default function ScoreIntelligencePanel({ intelligence, loading, rawDebugPayload }: ScoreIntelligencePanelProps) {
+export default function ScoreIntelligencePanel({
+  intelligence,
+  loading,
+  rawDebugPayload,
+  freshnessHeadline,
+}: ScoreIntelligencePanelProps) {
   const [showRaw, setShowRaw] = useState(false);
 
   return (
@@ -117,6 +125,49 @@ export default function ScoreIntelligencePanel({ intelligence, loading, rawDebug
           </Typography>
         ) : (
           <Stack spacing={2.5}>
+            <ScoreProvenanceSummary
+              operationalScore100={intelligence.summary.operationalScore}
+              interviewScore100={intelligence.summary.interviewScore}
+              profileComposite100={intelligence.summary.compositeHiringScore100}
+              showComposite={Boolean(intelligence.summary.compositeHiringScoreLabel)}
+              decisionSourceLabel={intelligence.summary.decisionSourceLabel}
+              lastUpdatedLabel={intelligence.summary.lastUpdatedLabel}
+              correctionApplied={intelligence.summary.correctionAppliedDisplay}
+            />
+            {freshnessHeadline ? (
+              <Typography variant="caption" color="text.secondary">
+                Score freshness: <strong>{freshnessHeadline}</strong>
+              </Typography>
+            ) : null}
+            {intelligence.summary.adjustmentSummaryLines.length > 0 ? (
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 0.5 }}>
+                  Adjustment summary
+                </Typography>
+                <Stack component="ul" spacing={0.25} sx={{ m: 0, pl: 2 }}>
+                  {intelligence.summary.adjustmentSummaryLines.map((line) => (
+                    <Typography key={line} component="li" variant="body2" color="text.primary">
+                      {line}
+                    </Typography>
+                  ))}
+                </Stack>
+              </Box>
+            ) : null}
+            {intelligence.summary.autoAdvanceEligible === false &&
+            intelligence.summary.autoAdvanceBlockedReasons.length > 0 ? (
+              <Alert severity="info" icon={false} sx={{ py: 0.75 }}>
+                <Typography variant="caption" fontWeight={700} display="block" gutterBottom>
+                  Why not auto-advance?
+                </Typography>
+                <Stack component="ul" spacing={0.25} sx={{ m: 0, pl: 2 }}>
+                  {intelligence.summary.autoAdvanceBlockedReasons.map((line) => (
+                    <Typography key={line} component="li" variant="body2">
+                      {line}
+                    </Typography>
+                  ))}
+                </Stack>
+              </Alert>
+            ) : null}
             {/* 1 — At a glance: scores + decision */}
             <Box>
               <Typography variant="subtitle2" sx={{ fontWeight: 800, mb: 1 }}>
@@ -218,6 +269,9 @@ export default function ScoreIntelligencePanel({ intelligence, loading, rawDebug
               ) : null}
             </Box>
 
+            <Typography variant="overline" color="text.secondary" sx={{ display: 'block' }}>
+              Recruiter interpretation
+            </Typography>
             {/* 2 — Strengths */}
             <Box>
               <Stack direction="row" alignItems="center" gap={0.75} sx={{ mb: 0.75 }}>

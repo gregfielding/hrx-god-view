@@ -29,21 +29,32 @@ import {
 import { RecruiterCategoryScoresPanel } from '../../../components/recruiter/RecruiterCategoryScoresReadOnly';
 import { useCategoryScoresCurrent } from '../../../hooks/useCategoryScoresCurrent';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
+import ScorePrimarySourceStrip from '../../../components/scoring/ScorePrimarySourceStrip';
 import { formatOneDecimal } from '../../../utils/scoreSummary';
 import ReviewsTab from './ReviewsTab';
 import ScoreIntelligencePanel from '../../../components/scoring/ScoreIntelligencePanel';
 import { deriveScoreIntelligence } from '../../../utils/scoring/scoreIntelligence';
 import type { ScoreIntelligenceInterviewInput } from '../../../utils/scoring/scoreIntelligence';
 import { resolveRecruiterOperationalScore100 } from '../../../utils/scoring/recruiterOperationalScore';
+import { classifyScoreFreshness } from '../../../utils/scoring/scoreFreshness';
 
 type Props = {
   uid: string;
   scoreSummary?: ScoreSummary;
+  scoreFreshnessMeta?: {
+    userUpdatedAt?: unknown;
+    categoryScoresCurrentUpdatedAt?: unknown;
+    riskProfileLastUpdatedAt?: unknown;
+    complianceTouchAt?: unknown;
+  };
   fallbackAiScore?: number;
   /** Profile-derived completeness (0–100) when scoreSummary.completenessScore is missing. */
   fallbackCompleteness?: number;
   /** Tenant distribution for relative AI score (0–100 vs pool). */
   scoringDistribution?: ScoringDistribution | null;
+  /** Same source as profile header — avoids stale mismatch vs interview tab */
+  latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
   onGoToInterview?: () => void;
 };
 
@@ -96,7 +107,16 @@ const snapshotFallbackIntro = (
   </Typography>
 );
 
-export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackCompleteness, scoringDistribution, onGoToInterview }: Props) {
+export default function ScoreTab({
+  uid,
+  scoreSummary,
+  scoreFreshnessMeta,
+  fallbackAiScore,
+  fallbackCompleteness,
+  scoringDistribution,
+  latestPrescreenInterviewAi,
+  onGoToInterview,
+}: Props) {
   const aiScore = scoreSummary?.aiScore ?? fallbackAiScore;
 
   const aiCalc = useMemo(() => {
@@ -218,6 +238,22 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
     [latestPrescreenFull, scoreSummary],
   );
 
+  const scoreFreshnessHeadline = useMemo(() => {
+    const raw = latestPrescreenFull as Record<string, unknown> | null;
+    const aiRaw = raw?.ai as Record<string, unknown> | undefined;
+    const aiComputed = aiRaw?.computedAt;
+    return classifyScoreFreshness({
+      interviewAt: raw?.createdAt ?? raw?.timestamp,
+      interviewAiComputedAt: aiComputed,
+      scoreSummaryAiUpdatedAt: scoreSummary?.aiScoreUpdatedAt,
+      scoreSummaryHiringComputedAt: scoreSummary?.hiringScoreComputedAt,
+      categoryScoresCurrentUpdatedAt: scoreFreshnessMeta?.categoryScoresCurrentUpdatedAt,
+      riskProfileLastUpdatedAt: scoreFreshnessMeta?.riskProfileLastUpdatedAt,
+      userUpdatedAt: scoreFreshnessMeta?.userUpdatedAt,
+      complianceTouchAt: scoreFreshnessMeta?.complianceTouchAt,
+    }).headline;
+  }, [latestPrescreenFull, scoreSummary, scoreFreshnessMeta]);
+
   const scoreIntelRawDebug = useMemo(
     () =>
       latestPrescreenFull
@@ -321,10 +357,16 @@ export default function ScoreTab({ uid, scoreSummary, fallbackAiScore, fallbackC
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <ScorePrimarySourceStrip
+        scoreSummary={scoreSummary}
+        latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
+        scoreFreshnessMeta={scoreFreshnessMeta}
+      />
       <ScoreIntelligencePanel
         intelligence={scoreIntelligence}
         loading={prescreenIntelLoading}
         rawDebugPayload={scoreIntelRawDebug}
+        freshnessHeadline={scoreIntelligence ? scoreFreshnessHeadline : null}
       />
 
       {/* A — Current category scores (primary) */}

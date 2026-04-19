@@ -1,4 +1,5 @@
 import type { ScoreSummary } from '../scoreSummary';
+import type { WorkerInterviewAiBlock } from '../../types/workerAiPrescreenInterview';
 import type { UserListEntityOnboardingItem } from '../userListEntityEmploymentStatus';
 import type { EntityEmploymentActionSignal } from './entitySignalsFromEmploymentDocs';
 
@@ -25,4 +26,6 @@ export type ActionItemsV1Input = {
    * before scoreSummary / header interview signals exist.
    */
   actionSignalsReady?: boolean;
+  /** Latest worker AI prescreen interview `ai` (optional — improves score copy alignment) */
+  prescreenInterviewAi?: WorkerInterviewAiBlock | null;
 };

@@ -38,6 +38,7 @@ import type { RecordHeaderEntitySlot } from '../../../utils/recruiterUsersEntity
 import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
 import RecordHeaderScoreSummaryBlock from './RecordHeaderScoreSummaryBlock';
 import type { ScoreSummary, ScoringDistribution } from '../../../utils/scoreSummary';
+import type { WorkerInterviewAiBlock } from '../../../types/workerAiPrescreenInterview';
 import type { PrescreenCategoryScoresV1 } from '../../../types/prescreenCategoryScores';
 import type { WorkerRiskProfileV1 } from '../../../types/workerRiskProfile';
 import type { AccusourceScreeningLineItem } from '../../../utils/accusourceScreeningLineItems';
@@ -99,6 +100,8 @@ export type RecruiterUserProfileTableHeaderProps = {
   isFavorite: (itemId: string) => boolean;
   toggleFavorite: (itemId: string) => string[];
   scoreSummary: ScoreSummary | undefined;
+  /** Latest prescreen `ai` block — aligns record header score with Interview tab */
+  latestPrescreenInterviewAi?: WorkerInterviewAiBlock | null;
   scoringDistribution: ScoringDistribution | null;
   categoryScores: PrescreenCategoryScoresV1 | null;
   riskProfile: WorkerRiskProfileV1 | null;
@@ -167,6 +170,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   isFavorite,
   toggleFavorite,
   scoreSummary,
+  latestPrescreenInterviewAi,
   scoringDistribution,
   categoryScores,
   riskProfile,
@@ -922,6 +926,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 <Box sx={{ mt: 0.35 }}>
                   <RecordHeaderScoreSummaryBlock
                     scoreSummary={scoreSummary}
+                    latestPrescreenInterviewAi={latestPrescreenInterviewAi ?? null}
                     scoringDistribution={scoringDistribution}
                     categoryScores={categoryScores}
                     riskProfile={riskProfile}

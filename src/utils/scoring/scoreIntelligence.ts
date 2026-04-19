@@ -5,7 +5,9 @@
 
 import type { ScoreSummary } from '../scoreSummary';
 import type { ScoreIntelligence } from '../../types/scoreIntelligence';
+import type { WorkerInterviewAiBlock } from '../../types/workerAiPrescreenInterview';
 import { resolveRecruiterOperationalScore100 } from './recruiterOperationalScore';
+import { buildRecruiterDecisionSummary } from './recruiterDecisionSummary';
 
 /** Minimal interview shape from `users/{uid}/interviews/{id}` (worker AI pre-screen). */
 export type ScoreIntelligenceInterviewInput = {
@@ -16,6 +18,7 @@ export type ScoreIntelligenceInterviewInput = {
     overallScore?: number;
     baseInterviewScore?: number;
     overrideAdjustedScore?: number;
+    computedAt?: unknown;
     recommendation?: string;
     flags?: string[];
     softBlocks?: string[];
@@ -355,6 +358,11 @@ export function deriveScoreIntelligence(
         ? scoreSummary.autoAdvanceEligible
         : null;
 
+  const recruiterCopy = buildRecruiterDecisionSummary({
+    ai: ai as unknown as WorkerInterviewAiBlock,
+    scoreSummary,
+  });
+
   return {
     summary: {
       interviewScore,
@@ -370,6 +378,17 @@ export function deriveScoreIntelligence(
       operationalCorrectionLines: uniqueStrings(operationalCorrectionLines, 6),
       overrideSuggested: overrideSuggested || undefined,
       suggestedDecision,
+      adjustmentSummaryLines: recruiterCopy.adjustmentSummaryLines,
+      autoAdvanceBlockedReasons: recruiterCopy.autoAdvanceBlockedReasons,
+      decisionSourceKey: recruiterCopy.decisionSourceKey,
+      decisionSourceLabel: recruiterCopy.decisionSourceLabel,
+      compositeHiringScoreLabel: recruiterCopy.compositeScoreLabel,
+      compositeHiringScore100:
+        typeof scoreSummary?.aiScore === 'number' && Number.isFinite(scoreSummary.aiScore)
+          ? Math.round(scoreSummary.aiScore)
+          : null,
+      lastUpdatedLabel: recruiterCopy.lastUpdatedLabel,
+      correctionAppliedDisplay: recruiterCopy.correctionApplied,
     },
     strengths: uniqueStrings(strengths, 5),
     risks: uniqueRisks,

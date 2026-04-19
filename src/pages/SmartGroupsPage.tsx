@@ -53,7 +53,8 @@ import StandardTablePagination from '../components/StandardTablePagination';
 import { formatPhoneNumber } from '../utils/formatPhone';
 import { toChipLabel } from '../utils/chipLabel';
 import { TABLE_AVATAR_SIZE } from '../utils/uiConstants';
-import { formatOneDecimal, getRelativeAiScore } from '../utils/scoreSummary';
+import { formatOneDecimal, getRelativeAiScore, normalizeScoreSummary } from '../utils/scoreSummary';
+import { getRecruiterPrimaryScore100FromSummary } from '../utils/scoring/recruiterOperationalScore';
 import { useScoringDistribution } from '../hooks/useScoringDistribution';
 import type { SmartGroupData, SmartGroupEntry, JobCategory } from '../services/smartGroupService';
 import {
@@ -393,7 +394,8 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
         const userName = [userData?.firstName, userData?.lastName].filter(Boolean).join(' ') || uid;
         const scoreSummary = userData?.scoreSummary;
         const interviewScore = scoreSummary?.interviewAvg != null ? Number(scoreSummary.interviewAvg) : undefined;
-        const aiScore = scoreSummary?.aiScore != null ? Number(scoreSummary.aiScore) : undefined;
+        const aiScoreRaw = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(scoreSummary));
+        const aiScore = aiScoreRaw != null && !Number.isNaN(aiScoreRaw) ? aiScoreRaw : undefined;
 
         for (const [applicationId, entry] of Object.entries(smartGroupData.byApplication)) {
           flatRows.push({
@@ -992,7 +994,7 @@ const SmartGroupsPage: React.FC<SmartGroupsPageProps> = ({ hideHeader = false })
     getWorkStatusColumnDisplay(row, { hasActiveAssignment: activeAssignmentUserIds.has(row.userId) });
 
   const renderResidenceAiScore = (row: ResidenceRow) => {
-    const rawScore = row.scoreSummary?.aiScore;
+    const rawScore = getRecruiterPrimaryScore100FromSummary(normalizeScoreSummary(row.scoreSummary));
     if (rawScore === undefined || rawScore === null || Number.isNaN(rawScore)) {
       return <Typography variant="body2" color="text.secondary">N/A</Typography>;
     }
