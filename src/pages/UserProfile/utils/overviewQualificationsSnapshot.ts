@@ -2,6 +2,13 @@ import { getWorkAuthorizedStatus, type WorkAuthorizedStatus } from '../../../uti
 import { extractAllSkillLabelsFromUserDoc } from './overviewDashboardComposer';
 import { toChipLabel } from '../../../utils/chipLabel';
 
+/** Normalize display lines so they don't start with accidental lowercase (e.g. degree types). */
+function capitalizeLineStart(s: string): string {
+  const t = s.trim();
+  if (!t) return t;
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
 export type OverviewCertificationLine = { label: string; fileUrl?: string };
 
 export type OverviewQualificationsData = {
@@ -69,7 +76,7 @@ export function buildOverviewQualificationsFromUserDoc(data: Record<string, unkn
     if (!item || typeof item !== 'object') return 'Education entry';
     const o = item as Record<string, unknown>;
     const line = [o.degreeType || o.degree, o.school || o.institution].filter(Boolean).join(' — ');
-    return line || 'Education entry';
+    return capitalizeLineStart(line || 'Education entry');
   });
 
   const certificationsArray = Array.isArray(data.certifications) ? data.certifications : [];

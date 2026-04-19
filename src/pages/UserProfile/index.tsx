@@ -80,7 +80,6 @@ import RecordHeaderActionIcon from './components/RecordHeaderActionIcon';
 import RecordHeaderLanguagePreferenceBadge from './components/RecordHeaderLanguagePreferenceBadge';
 import RecordHeaderTransportMethodIcon from './components/RecordHeaderTransportMethodIcon';
 import { recordHeaderActionIconButtonSx, recordHeaderTooltipComponentsProps } from './components/recordHeaderStyles';
-import UserGroupsTab from './components/UserGroupsTab';
 import SkillsTab from './components/SkillsTab';
 import BackgroundsComplianceTab from './components/BackgroundsComplianceTab';
 import SkillsOnlyTab from './components/SkillsOnlyTab';
@@ -90,7 +89,6 @@ import InterviewTab from './components/InterviewTab';
 import ScoreTab from './components/ScoreTab';
 import ReportsAndInsightsTab from './components/ReportsAndInsightsTab';
 import NotesTab from './components/NotesTab';
-import ActivityLogTab from './components/ActivityLogTab';
 import UserAssignmentsTab from './components/UserAssignmentsTab';
 import ProfileReadinessTabContent from './components/ProfileReadinessTabContent';
 import SystemAccessTab from './components/SystemAccessTab';
@@ -202,7 +200,6 @@ const UserProfilePage = () => {
   const [eVerifyComfortStatus, setEVerifyComfortStatus] = useState<EVerifyComfortStatus>('skipped');
   const [activeApplicationsCount, setActiveApplicationsCount] = useState<number>(0);
   const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
-  const [userGroupsCount, setUserGroupsCount] = useState<number>(0);
   const [notesCount, setNotesCount] = useState<number>(0);
   /** Staff onboarding queue deep-link: highlight a screening row on Backgrounds. */
   const [backgroundComplianceHighlightId, setBackgroundComplianceHighlightId] = useState<string | null>(null);
@@ -237,7 +234,6 @@ const UserProfilePage = () => {
   const [quickProfileDialogOpen, setQuickProfileDialogOpen] = useState(false);
   const [logActivityLoading, setLogActivityLoading] = useState(false);
   const [taskSubmitting, setTaskSubmitting] = useState(false);
-  const [activityLogRefreshKey, setActivityLogRefreshKey] = useState(0);
   const [headerUserGroups, setHeaderUserGroups] = useState<Array<{ id: string; title: string }>>([]);
   const [recordHeaderAssignmentLines, setRecordHeaderAssignmentLines] = useState<RecordHeaderAssignmentLine[]>([]);
   const [recordHeaderAvatarHover, setRecordHeaderAvatarHover] = useState(false);
@@ -342,7 +338,6 @@ const UserProfilePage = () => {
         }
         await updateDoc(userRef, patch);
         setHeaderUserGroups((prev) => prev.filter((g) => g.id !== groupId));
-        setUserGroupsCount((c) => Math.max(0, c - 1));
       } catch (err) {
         console.error('Failed to remove user from group:', err);
       }
@@ -396,7 +391,6 @@ const UserProfilePage = () => {
             a.title.localeCompare(b.title),
           ),
         );
-        setUserGroupsCount((c) => c + 1);
       } catch (err) {
         console.error('Failed to add user to group:', err);
       }
@@ -419,7 +413,6 @@ const UserProfilePage = () => {
       const result = await fn({ uid, tenantId: effectiveTenantIdForMessaging });
       const data = (result as any)?.data || {};
       setProfileUpdateReminderLastSentAt(data?.sentAt ? new Date(data.sentAt) : new Date());
-      setActivityLogRefreshKey((k) => k + 1);
       setMessageHistoryRefreshKey((k) => k + 1);
     } catch (error: any) {
       console.error('Failed to send profile update reminder:', error);
@@ -940,10 +933,6 @@ const UserProfilePage = () => {
           const applicationIds = Array.isArray(userData?.applicationIds) ? userData.applicationIds : [];
           setActiveApplicationsCount(applicationIds.length);
 
-          // User Groups count - from user's userGroupIds array
-          const userGroupIds = Array.isArray(userData?.userGroupIds) ? userData.userGroupIds : [];
-          setUserGroupsCount(userGroupIds.length);
-
           // Reviews count - from users/{uid}/reviews subcollection (admin-only tab)
           try {
             const reviewsRef = collection(db, 'users', uid, 'reviews');
@@ -1079,14 +1068,14 @@ const UserProfilePage = () => {
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
       { label: 'Readiness', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'User Groups', available: canViewAdminContent && !isWorkerRoute && !isWorkforceInternalTeamView, count: userGroupsCount },
+      { label: 'User Groups', available: false, count: undefined },
       { label: 'Onboarding', available: onboardingInProgress && canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Employment', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Certifications', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Backgrounds', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
       { label: 'Notes', available: canViewAdminContent && !isWorkforceInternalTeamView, count: notesCount },
       { label: 'Messages', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
-      { label: 'Activity Log', available: canViewAdminContent && !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Activity Log', available: false, count: undefined },
       { label: 'Reports & Insights', available: false, count: undefined },
       { label: 'Settings', available: (isAdminViewer && !isWorkerRoute) || isWorkforceInternalTeamView, count: undefined },
     ];
@@ -1109,7 +1098,6 @@ const UserProfilePage = () => {
     interviewsCount,
     activeApplicationsCount,
     assignmentsCount,
-    userGroupsCount,
     notesCount,
   ]);
 
@@ -1996,7 +1984,7 @@ const UserProfilePage = () => {
           } : undefined}
           onMessageApplicant={() => setSmsComposeOpen(true)}
           onViewTimeline={() => {
-            setTabValue('Activity Log');
+            setTabValue('Overview');
           }}
           hasPhone={!!phone}
           employeeOnboardStatus={employeeOnboardStatus}
@@ -2925,8 +2913,6 @@ const UserProfilePage = () => {
                     tenantId={tenantId || authTenantId || activeTenant?.id || null}
                   />
                 );
-              case 'User Groups':
-                return <UserGroupsTab uid={uid} tenantId={tenantId || authTenantId || activeTenant?.id || undefined} />;
               case 'Onboarding':
                 return <OnboardingTab uid={uid} tenantId={tenantId || ''} />;
               case 'Employment':
@@ -2979,8 +2965,6 @@ const UserProfilePage = () => {
                     }
                   />
                 );
-              case 'Activity Log':
-                return <ActivityLogTab uid={uid} user={user} refreshTrigger={activityLogRefreshKey} />;
               case 'Settings':
                 return <SystemAccessTab uid={uid} />;
               default:
@@ -3253,7 +3237,6 @@ const UserProfilePage = () => {
                 source: 'web',
                 metadata: { taskId: result?.taskId, loggedBy: user?.uid }
               });
-              setActivityLogRefreshKey((k) => k + 1);
             }
             setShowLogActivityDialog(false);
           } catch (error) {

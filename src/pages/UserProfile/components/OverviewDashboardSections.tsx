@@ -16,7 +16,6 @@ import {
   TableHead,
   TableRow,
   CircularProgress,
-  IconButton,
 } from '@mui/material';
 import {
   Login as LoginIcon,
@@ -105,6 +104,34 @@ export const overviewProfileFieldValueSx = {
   fontSize: '0.78rem',
   lineHeight: 1.45,
   color: 'text.secondary',
+} as const;
+
+/** Semibold label prefix on the same line as body copy (same font size as {@link overviewProfileFieldValueSx}). */
+export const overviewInlineLabelSx = {
+  fontWeight: 600,
+  color: 'text.primary',
+} as const;
+
+/** Text actions in card headers (More, Resume, Score) — same type scale as body, no extra font size tier. */
+export const overviewCardHeaderTextButtonSx = {
+  ...overviewProfileFieldValueSx,
+  minWidth: 0,
+  py: 0,
+  px: 0.35,
+  textTransform: 'none' as const,
+  fontWeight: 500,
+} as const;
+
+/** Skill / language chips aligned to overview body size (one visual rhythm with {@link overviewProfileFieldValueSx}). */
+export const overviewBodyChipSx = {
+  height: 'auto',
+  fontSize: '0.78rem',
+  lineHeight: 1.45,
+  py: 0.35,
+  '& .MuiChip-label': {
+    px: 0.75,
+    whiteSpace: 'normal',
+  },
 } as const;
 
 export type OverviewDeploymentSnapshotProps = {
@@ -299,49 +326,85 @@ export function OverviewQualificationsCard({
     q.hasResume ||
     q.bio.trim().length > 0 ||
     q.skillLabels.length > 0 ||
-    q.languageLabels.length > 0 ||
     q.workExperienceLines.length > 0 ||
     q.educationLines.length > 0 ||
     q.certifications.length > 0;
 
-  const eeocFieldLabelSx = {
-    display: 'block' as const,
-    mb: 0.25,
-    fontSize: '0.62rem',
-    fontWeight: 600,
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase' as const,
-    color: 'text.secondary',
-  };
+  const sponsorshipDisplay =
+    q.requireSponsorship === null ? '—' : q.requireSponsorship ? 'Yes' : 'No';
+
+  const eeocInlineLine = (
+    <Typography
+      variant="body2"
+      component="p"
+      sx={{
+        ...overviewProfileFieldValueSx,
+        m: 0,
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'baseline',
+        columnGap: 0.75,
+        rowGap: 0.5,
+      }}
+    >
+      <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+        <Box component="span" sx={overviewInlineLabelSx}>
+          Gender
+        </Box>
+        {' — '}
+        {q.gender.trim() ? q.gender : '—'}
+      </Box>
+      <Box component="span" aria-hidden sx={{ color: 'text.disabled', userSelect: 'none' }}>
+        ·
+      </Box>
+      <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+        <Box component="span" sx={overviewInlineLabelSx}>
+          Veteran
+        </Box>
+        {' — '}
+        {q.veteranStatus.trim() ? q.veteranStatus : '—'}
+      </Box>
+      <Box component="span" aria-hidden sx={{ color: 'text.disabled', userSelect: 'none' }}>
+        ·
+      </Box>
+      <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+        <Box component="span" sx={overviewInlineLabelSx}>
+          Disability
+        </Box>
+        {' — '}
+        {q.disabilityStatus.trim() ? q.disabilityStatus : '—'}
+      </Box>
+      <Box component="span" aria-hidden sx={{ color: 'text.disabled', userSelect: 'none' }}>
+        ·
+      </Box>
+      <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+        <Box component="span" sx={overviewInlineLabelSx}>
+          Sponsorship
+        </Box>
+        {' — '}
+        {sponsorshipDisplay}
+      </Box>
+    </Typography>
+  );
 
   return (
     <Card variant="outlined" sx={cardSx}>
-      <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
+      <CardContent sx={{ py: 1.25, px: 1.25, '&:last-child': { pb: 1.25 } }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1.25 }} flexWrap="wrap" gap={0.75}>
           <Typography {...overviewSectionTitleTypographyProps}>Qualifications</Typography>
-          <Stack direction="row" spacing={0} sx={{ gap: 0.15 }} alignItems="center">
+          <Stack direction="row" spacing={0} sx={{ gap: 0.25 }} alignItems="center">
             {onOpenQualificationsTab && (
-              <Button
-                size="small"
-                variant="text"
-                sx={{ fontSize: '0.68rem', minWidth: 0, py: 0, px: 0.35, color: 'text.secondary', fontWeight: 500 }}
-                onClick={onOpenQualificationsTab}
-              >
+              <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenQualificationsTab}>
                 More
               </Button>
             )}
             {onOpenQualificationsTab && onOpenResumeTab ? (
-              <Typography component="span" sx={{ color: 'text.disabled', fontSize: '0.65rem', userSelect: 'none' }}>
+              <Typography component="span" sx={{ ...overviewProfileFieldValueSx, userSelect: 'none', color: 'text.disabled' }}>
                 ·
               </Typography>
             ) : null}
             {onOpenResumeTab && (
-              <Button
-                size="small"
-                variant="text"
-                sx={{ fontSize: '0.68rem', minWidth: 0, py: 0, px: 0.35, color: 'text.secondary', fontWeight: 500 }}
-                onClick={onOpenResumeTab}
-              >
+              <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenResumeTab}>
                 Resume
               </Button>
             )}
@@ -349,160 +412,152 @@ export function OverviewQualificationsCard({
         </Stack>
 
         {!hasSubstance ? (
-          <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mb: 1 }}>
+          <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0, mb: 1.25 }}>
             No profile details on file yet. Add qualifications or a resume to build this section.
           </Typography>
         ) : null}
 
-        <Stack spacing={1.35}>
-          <Box>
-            <Typography {...overviewSubsectionHeadingTypographyProps}>Work authorization</Typography>
-            <WorkAuthorizedChip status={q.workAuthorizedStatus} />
-            <Stack spacing={0.65} sx={{ mt: 0.75 }}>
-              <Box>
-                <Typography variant="caption" sx={eeocFieldLabelSx}>
-                  Gender
-                </Typography>
-                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                  {q.gender.trim() ? q.gender : '—'}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" sx={eeocFieldLabelSx}>
-                  Veteran status
-                </Typography>
-                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                  {q.veteranStatus.trim() ? q.veteranStatus : '—'}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" sx={eeocFieldLabelSx}>
-                  Disability
-                </Typography>
-                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                  {q.disabilityStatus.trim() ? q.disabilityStatus : '—'}
-                </Typography>
-              </Box>
-              <Box>
-                <Typography variant="caption" sx={eeocFieldLabelSx}>
-                  Sponsorship required
-                </Typography>
-                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                  {q.requireSponsorship === null ? '—' : q.requireSponsorship ? 'Yes' : 'No'}
-                </Typography>
-              </Box>
-            </Stack>
-          </Box>
-
+        <Stack spacing={1.5}>
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Resume</Typography>
-            {q.hasResume && q.resumeUrl ? (
-              <Link href={q.resumeUrl} target="_blank" rel="noopener noreferrer" variant="body2" sx={overviewProfileFieldValueSx}>
-                View resume
-              </Link>
-            ) : q.hasResume ? (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                Resume on file.
-              </Typography>
-            ) : (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                No resume on file.
-              </Typography>
-            )}
+            <Box sx={{ mt: 0.5 }}>
+              {q.hasResume && q.resumeUrl ? (
+                <Link
+                  href={q.resumeUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  variant="body2"
+                  sx={{ ...overviewProfileFieldValueSx, fontWeight: 500 }}
+                >
+                  View resume
+                </Link>
+              ) : q.hasResume ? (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  Resume on file.
+                </Typography>
+              ) : (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  No resume on file.
+                </Typography>
+              )}
+            </Box>
           </Box>
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Bio</Typography>
-            {q.bio.trim() ? (
-              <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, whiteSpace: 'pre-wrap' }}>
-                {q.bio.trim()}
-              </Typography>
-            ) : (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                No bio.
-              </Typography>
-            )}
+            <Box sx={{ mt: 0.5 }}>
+              {q.bio.trim() ? (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0, whiteSpace: 'pre-wrap' }}>
+                  {q.bio.trim()}
+                </Typography>
+              ) : (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  No bio.
+                </Typography>
+              )}
+            </Box>
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Work authorization</Typography>
+            <Box sx={{ mt: 0.5 }}>
+              <WorkAuthorizedChip status={q.workAuthorizedStatus} />
+            </Box>
+            <Box sx={{ mt: 1 }}>{eeocInlineLine}</Box>
           </Box>
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Education</Typography>
-            {q.educationLines.length > 0 ? (
-              <Stack spacing={0.5}>
-                {q.educationLines.map((line, i) => (
-                  <Typography key={i} variant="body2" sx={overviewProfileFieldValueSx}>
+            <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+              {q.educationLines.length > 0 ? (
+                q.educationLines.map((line, i) => (
+                  <Typography key={i} variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
                     {line}
                   </Typography>
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                No education on file.
-              </Typography>
-            )}
+                ))
+              ) : (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  No education on file.
+                </Typography>
+              )}
+            </Stack>
           </Box>
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Certifications &amp; Licenses</Typography>
-            {q.certifications.length > 0 ? (
-              <Stack spacing={0.5}>
-                {q.certifications.map((c, i) => (
+            <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+              {q.certifications.length > 0 ? (
+                q.certifications.map((c, i) => (
                   <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                    <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                    <Typography variant="body2" component="span" sx={overviewProfileFieldValueSx}>
                       {c.label}
                     </Typography>
                     {c.fileUrl ? (
-                      <Link href={c.fileUrl} target="_blank" rel="noopener noreferrer" variant="body2" sx={overviewProfileFieldValueSx}>
+                      <Link
+                        href={c.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        variant="body2"
+                        sx={{ ...overviewProfileFieldValueSx, fontWeight: 500 }}
+                      >
                         View file
                       </Link>
                     ) : null}
                   </Box>
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                No certifications on file.
-              </Typography>
-            )}
+                ))
+              ) : (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  No certifications on file.
+                </Typography>
+              )}
+            </Stack>
           </Box>
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Work experience</Typography>
-            {q.workExperienceLines.length > 0 ? (
-              <Stack spacing={0.5}>
-                {q.workExperienceLines.map((line, i) => (
-                  <Typography key={i} variant="body2" sx={overviewProfileFieldValueSx}>
+            <Stack spacing={0.75} sx={{ mt: 0.5 }}>
+              {q.workExperienceLines.length > 0 ? (
+                q.workExperienceLines.map((line, i) => (
+                  <Typography key={i} variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
                     {line}
                   </Typography>
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                No work experience on file.
-              </Typography>
-            )}
+                ))
+              ) : (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  No work experience on file.
+                </Typography>
+              )}
+            </Stack>
           </Box>
 
           <Box>
-            <Typography {...overviewSubsectionHeadingTypographyProps}>Skills &amp; Languages</Typography>
-            {q.skillLabels.length > 0 || q.languageLabels.length > 0 ? (
-              <Stack direction="row" flexWrap="wrap" gap={0.4}>
-                {q.skillLabels.map((s, i) => (
-                  <Chip key={`s-${i}-${s}`} label={s} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.68rem' }} />
-                ))}
-                {q.languageLabels.map((lang, i) => (
-                  <Chip key={`l-${i}-${lang}`} label={lang} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.68rem' }} />
-                ))}
-              </Stack>
-            ) : (
-              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-                No skills or languages on file.
-              </Typography>
-            )}
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Skills</Typography>
+            <Box sx={{ mt: 0.5 }}>
+              {q.skillLabels.length > 0 ? (
+                <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5}>
+                  {q.skillLabels.map((s, i) => (
+                    <Chip
+                      key={`s-${i}-${s}`}
+                      label={s}
+                      size="small"
+                      variant="outlined"
+                      sx={overviewBodyChipSx}
+                    />
+                  ))}
+                </Stack>
+              ) : (
+                <Typography variant="body2" component="p" sx={{ ...overviewProfileFieldValueSx, m: 0 }}>
+                  No skills on file.
+                </Typography>
+              )}
+            </Box>
           </Box>
 
           <Box>
             <Typography {...overviewSubsectionHeadingTypographyProps}>Availability and preferences</Typography>
-            <ShiftPreferencesCard uid={uid} titleOverride="Availability and preferences" displayOnly />
+            <Box sx={{ mt: 0.5 }}>
+              <ShiftPreferencesCard uid={uid} titleOverride="Availability and preferences" displayOnly />
+            </Box>
           </Box>
         </Stack>
       </CardContent>
@@ -570,12 +625,7 @@ export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreT
         <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
           <Typography {...overviewSectionTitleTypographyProps}>Scoring</Typography>
           {onOpenScoreTab && (
-            <Button
-              size="small"
-              variant="text"
-              sx={{ fontSize: '0.68rem', minWidth: 0, py: 0, px: 0.35, color: 'text.secondary', fontWeight: 500 }}
-              onClick={onOpenScoreTab}
-            >
+            <Button size="small" variant="text" sx={overviewCardHeaderTextButtonSx} onClick={onOpenScoreTab}>
               Score
             </Button>
           )}
@@ -686,7 +736,7 @@ export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreT
   );
 }
 
-/** One row from `users/{uid}/activityLogs` — same shape as Activity Log tab. */
+/** One row from `users/{uid}/activityLogs`. */
 export type OverviewActivityLogEntry = {
   id: string;
   action: string;
@@ -757,50 +807,20 @@ export type OverviewRecentActivityProps = {
   activities: OverviewActivityLogEntry[];
   activitiesLoading: boolean;
   activitiesError?: string | null;
-  onOpenActivityTab?: () => void;
-  onOpenApplicationsTab?: () => void;
 };
 
-/** Section 5: Last 5 activity log entries (condensed table — same fields as Activity Log tab). */
+/** Section 5: Activity log entries (condensed table). */
 export function OverviewRecentActivityCard({
   activities,
   activitiesLoading,
   activitiesError,
-  onOpenActivityTab,
-  onOpenApplicationsTab,
 }: OverviewRecentActivityProps) {
   const cardSx = { borderRadius: 1, borderColor: 'divider', ...overviewCardFlatSx } as const;
 
-  const headerActions = (
-    <Stack direction="row" spacing={0} sx={{ gap: 0.25 }}>
-      {onOpenApplicationsTab && (
-        <Button
-          size="small"
-          variant="text"
-          sx={{ fontSize: '0.68rem', minWidth: 0, py: 0, px: 0.35, color: 'text.secondary', fontWeight: 500 }}
-          onClick={onOpenApplicationsTab}
-        >
-          Applications
-        </Button>
-      )}
-      {onOpenActivityTab && (
-        <Button
-          size="small"
-          variant="text"
-          sx={{ fontSize: '0.68rem', minWidth: 0, py: 0, px: 0.35, color: 'text.secondary', fontWeight: 500 }}
-          onClick={onOpenActivityTab}
-        >
-          Full log
-        </Button>
-      )}
-    </Stack>
-  );
-
   const titleRow = (
-    <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1} sx={{ mb: 1 }}>
+    <Box sx={{ mb: 1 }}>
       <Typography {...overviewSectionTitleTypographyProps}>Activity &amp; touchpoints</Typography>
-      {headerActions}
-    </Stack>
+    </Box>
   );
 
   const emptyState = (
@@ -815,7 +835,7 @@ export function OverviewRecentActivityCard({
       }}
     >
       <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.78rem', lineHeight: 1.45 }}>
-        No activity entries yet. Open Activity Log for the full history.
+        No activity entries yet.
       </Typography>
     </Box>
   );
@@ -842,9 +862,11 @@ export function OverviewRecentActivityCard({
               border: '1px solid',
               borderColor: 'divider',
               bgcolor: 'background.paper',
+              maxHeight: { xs: 360, sm: 420 },
+              overflow: 'auto',
             }}
           >
-            <Table size="small" sx={{ minWidth: 520 }}>
+            <Table size="small" stickyHeader sx={{ minWidth: 520 }}>
               <TableHead>
                 <TableRow>
                   {(['Action', 'Description', 'Severity', 'Source', 'Timestamp', 'Details'] as const).map((header) => (
@@ -860,6 +882,7 @@ export function OverviewRecentActivityCard({
                         borderColor: 'divider',
                         py: 0.5,
                         px: 0.75,
+                        bgcolor: 'background.paper',
                       }}
                     >
                       {header}
@@ -922,10 +945,10 @@ export function OverviewRecentActivityCard({
                     </TableCell>
                     <TableCell align="right" sx={{ width: 40, pr: 0.5 }}>
                       {activity.metadata && Object.keys(activity.metadata).length > 0 ? (
-                        <Tooltip title="Details on file — open Activity Log">
-                          <IconButton size="small" sx={{ p: 0.25 }} onClick={onOpenActivityTab}>
+                        <Tooltip title="This entry has additional details on file.">
+                          <Box component="span" sx={{ display: 'inline-flex', verticalAlign: 'middle' }}>
                             <InfoIcon sx={{ fontSize: 18 }} color="action" />
-                          </IconButton>
+                          </Box>
                         </Tooltip>
                       ) : null}
                     </TableCell>

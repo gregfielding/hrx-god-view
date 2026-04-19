@@ -312,7 +312,7 @@ const ProfileOverview: React.FC<Props> = ({
       setOverviewActivityLogsError(null);
       try {
         const activitiesRef = collection(db, 'users', uid, 'activityLogs');
-        const q = query(activitiesRef, orderBy('timestamp', 'desc'), limit(5));
+        const q = query(activitiesRef, orderBy('timestamp', 'desc'), limit(500));
         const snap = await getDocs(q);
         const rows: OverviewActivityLogEntry[] = [];
         snap.forEach((d) => {
@@ -1893,8 +1893,6 @@ const transportOptions: Array<{
                   activities={overviewActivityLogs}
                   activitiesLoading={overviewActivityLogsLoading}
                   activitiesError={overviewActivityLogsError}
-                  onOpenActivityTab={onTabChange ? () => onTabChange('Activity Log') : undefined}
-                  onOpenApplicationsTab={onTabChange ? () => onTabChange('Applications') : undefined}
                 />
               </Grid>
             </>

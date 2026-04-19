@@ -424,7 +424,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 flexWrap: 'wrap',
                 gap: '3px',
                 mt: 0.75,
-                pb: '6px',
+                pb: '8px',
               }}
             >
               {contactActionIcons}
@@ -433,7 +433,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               </Box>
             </Box>
           ) : (
-            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5, pb: '6px' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mt: 0.5, pb: '8px' }}>
               <UserTableIndeedFlexBadge user={userDocForTableIcons} compact />
             </Box>
           )}
@@ -806,8 +806,26 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
 
               {canManageGroupsSection && (headerUserGroups.length > 0 || showAddGroupControl) && (
                 <Box sx={{ mt: 1.25 }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.15, flexWrap: 'wrap' }}>
-                    <Typography component="span" sx={colTitleSx}>
+                  <Box
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 0.25,
+                      flexWrap: 'wrap',
+                      minHeight: 0,
+                      mb: 0.65,
+                    }}
+                  >
+                    <Typography
+                      component="span"
+                      sx={{
+                        ...colTitleSx,
+                        mb: 0,
+                        lineHeight: 1.15,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                      }}
+                    >
                       Groups
                     </Typography>
                     {showAddGroupControl ? (
@@ -820,18 +838,19 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                             setAddGroupModalOpen(true);
                           }}
                           sx={{
-                            p: 0.2,
-                            ml: 0.1,
+                            p: 0.25,
+                            ml: 0,
+                            alignSelf: 'center',
                             color: 'primary.main',
                             '&:hover': { bgcolor: 'action.hover' },
                           }}
                         >
-                          <AddIcon sx={{ fontSize: 16 }} />
+                          <AddIcon sx={{ fontSize: 16, display: 'block' }} />
                         </IconButton>
                       </Tooltip>
                     ) : null}
                   </Box>
-                  <Stack spacing={0.35} sx={{ mt: 0.35, width: '100%' }}>
+                  <Stack spacing={0.35} sx={{ width: '100%' }}>
                     {headerUserGroups.map((g) => (
                       <Box
                         key={g.id}

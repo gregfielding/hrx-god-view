@@ -72,17 +72,29 @@ const ShiftPreferencesCard: React.FC<Props> = ({ uid, titleOverride, displayOnly
     });
   };
 
+  /** Matches Overview Qualifications card body (`overviewProfileFieldValueSx`) — avoid importing parent to prevent cycles. */
+  const displayOnlyBodySx = { fontSize: '0.78rem', lineHeight: 1.45, color: 'text.secondary' } as const;
+  const displayOnlyChipSx = {
+    height: 'auto',
+    fontSize: '0.78rem',
+    lineHeight: 1.45,
+    py: 0.35,
+    '& .MuiChip-label': { px: 0.75, whiteSpace: 'normal' as const },
+  } as const;
+
   if (displayOnly) {
     return (
       <Box>
         {selectedShifts.length > 0 ? (
-          <Stack direction="row" flexWrap="wrap" gap={0.75}>
+          <Stack direction="row" flexWrap="wrap" useFlexGap gap={0.5}>
             {selectedShifts.map((shift: string) => (
-              <Chip key={shift} label={shiftLabel(shift)} size="small" variant="outlined" />
+              <Chip key={shift} label={shiftLabel(shift)} size="small" variant="outlined" sx={displayOnlyChipSx} />
             ))}
           </Stack>
         ) : (
-          <Typography variant="body2" color="text.secondary">No preferences selected.</Typography>
+          <Typography variant="body2" sx={displayOnlyBodySx}>
+            No preferences selected.
+          </Typography>
         )}
       </Box>
     );
