@@ -135,6 +135,23 @@ export function extractSkillLabelsFromUserDoc(skills: unknown): string[] {
   return out.slice(0, 16);
 }
 
+/** Same as {@link extractSkillLabelsFromUserDoc} without a cap — for Overview Qualifications snapshot. */
+export function extractAllSkillLabelsFromUserDoc(skills: unknown): string[] {
+  if (!Array.isArray(skills)) return [];
+  const out: string[] = [];
+  for (const s of skills) {
+    if (typeof s === 'string') {
+      const t = s.trim();
+      if (t) out.push(t);
+    } else if (s && typeof s === 'object') {
+      const o = s as Record<string, unknown>;
+      const label = String(o.label || o.name || o.language || o.value || '').trim();
+      if (label) out.push(label);
+    }
+  }
+  return out;
+}
+
 export function extractWorkHeadlinesFromUserDoc(workExperience: unknown): string[] {
   if (!Array.isArray(workExperience)) return [];
   const lines: string[] = [];

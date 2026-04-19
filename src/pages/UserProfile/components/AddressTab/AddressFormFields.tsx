@@ -1,148 +1,227 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Box, Grid, TextField, Button, Snackbar, Alert, Typography } from '@mui/material';
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
+import { Box, Grid, TextField, Button, Snackbar, Alert } from '@mui/material';
 import { Autocomplete } from '@react-google-maps/api';
 import { geocodeAddress, getGeocodingErrorMessage } from '../../../../utils/geocodeAddress';
+
+export type AddressFormFieldsHandle = {
+  getValues: () => Record<string, unknown>;
+  /** Run geocode when coords missing; returns fields ready for Firestore `addressInfo`. */
+  prepareAddressForSubmit: () => Promise<Record<string, unknown>>;
+  /** Call after a successful save so internal "dirty" state clears. */
+  markSaved: () => void;
+};
 
 type Props = {
   uid: string;
   formData: any; // Live Firestore data passed from AddressTab
   onFormChange: (updatedAddressInfo: any) => Promise<void>;
+  /** Hide Save / Geocode actions (e.g. when parent form provides a single Save). */
+  hideActions?: boolean;
+  /** Fires when unsaved edits differ from loaded data (for enabling parent Save). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Fires whenever the draft address fields change (e.g. map preview in parent). */
+  onDraftChange?: (draft: Record<string, unknown>) => void;
 };
 
-const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => {
-  const [form, setForm] = useState(formData);
-  const [originalForm, setOriginalForm] = useState(formData);
-  const [showToast, setShowToast] = useState(false);
-  const [message, setMessage] = useState('');
-  const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success');
-  const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
-  const autocompleteRef = useRef<any>(null);
-  const retryTimeoutRef = useRef<NodeJS.Timeout>();
+const AddressFormFields = forwardRef<AddressFormFieldsHandle, Props>(
+  (
+    {
+      uid: _uid,
+      formData,
+      onFormChange,
+      hideActions = false,
+      onDirtyChange,
+      onDraftChange,
+    },
+    ref,
+  ) => {
+    const [form, setForm] = useState(formData);
+    const [originalForm, setOriginalForm] = useState(formData);
+    const [showToast, setShowToast] = useState(false);
+    const [message, setMessage] = useState('');
+    const [toastSeverity, setToastSeverity] = useState<'success' | 'error'>('success');
+    const [isGoogleMapsLoaded, setIsGoogleMapsLoaded] = useState(false);
+    const autocompleteRef = useRef<any>(null);
+    const retryTimeoutRef = useRef<NodeJS.Timeout>();
 
-  // Check if Google Maps is loaded with retry logic
-  const checkGoogleMapsLoaded = useCallback(() => {
-    const isLoaded = !!(window as any).google?.maps?.places;
-    if (isLoaded) {
-      setIsGoogleMapsLoaded(true);
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = undefined;
-      }
-    } else {
-      // Retry after 100ms if not loaded
-      retryTimeoutRef.current = setTimeout(checkGoogleMapsLoaded, 100);
-    }
-  }, []);
-
-  useEffect(() => {
-    setForm(formData);
-    setOriginalForm(formData);
-    checkGoogleMapsLoaded();
-    
-    // Cleanup timeout on unmount
-    return () => {
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-      }
-    };
-  }, [formData, checkGoogleMapsLoaded]);
-
-  const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
-
-  const handleManualChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setForm((prev: typeof form) => ({ ...prev, [name]: value }));
-  };
-
-  const handlePlaceChanged = useCallback(() => {
-    if (!autocompleteRef.current?.getPlace) return;
-    
-    const place = autocompleteRef.current.getPlace();
-    if (!place || !place.address_components) return;
-    
-    const components = place.address_components;
-    const getComponent = (types: string[]) => {
-      const component = components.find((c: any) => 
-        types.every((t) => c.types?.includes(t))
-      );
-      return component?.long_name || '';
-    };
-
-    // Update only address fields to prevent clearing other form data
-    const newAddressData = {
-      streetAddress: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
-      city: getComponent(['locality']) || getComponent(['sublocality']) || getComponent(['postal_town']),
-      state: getComponent(['administrative_area_level_1']),
-      zip: getComponent(['postal_code']),
-      homeLat: place.geometry?.location?.lat?.(),
-      homeLng: place.geometry?.location?.lng?.(),
-    };
-
-    // Only update fields that have values from the place
-    const updatedData = { ...form };
-    Object.entries(newAddressData).forEach(([key, val]) => {
-      if (val !== undefined && val !== '') {
-        updatedData[key] = val;
-      }
-    });
-
-    setForm(updatedData);
-  }, [form]);
-
-  const handleAutocompleteLoad = useCallback((autocomplete: any) => {
-    autocompleteRef.current = autocomplete;
-  }, []);
-
-  const geocodeCurrentAddress = async (): Promise<{ lat: number; lng: number }> => {
-    const { streetAddress, city, state, zip } = form;
-    if (!streetAddress || !city || !state) {
-      throw new Error('Street, city, and state are required to geocode');
-    }
-    const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ');
-    return geocodeAddress(fullAddress);
-  };
-
-  const handleSave = async () => {
-    try {
-      let formToSave = form;
-      if (!form.homeLat || !form.homeLng) {
-        try {
-          const coordinates = await geocodeCurrentAddress();
-          formToSave = { ...form, homeLat: coordinates.lat, homeLng: coordinates.lng };
-          setForm(formToSave);
-          setMessage('Address updated and geocoded successfully');
-          setToastSeverity('success');
-        } catch (geoErr) {
-          formToSave = form;
-          setMessage('Address saved. ' + getGeocodingErrorMessage(geoErr, { hasAutocomplete: true }));
-          setToastSeverity('error');
+    const checkGoogleMapsLoaded = useCallback(() => {
+      const isLoaded = !!(window as any).google?.maps?.places;
+      if (isLoaded) {
+        setIsGoogleMapsLoaded(true);
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+          retryTimeoutRef.current = undefined;
         }
       } else {
-        setMessage('Address updated successfully');
-        setToastSeverity('success');
+        retryTimeoutRef.current = setTimeout(checkGoogleMapsLoaded, 100);
       }
-      await onFormChange(formToSave);
-      setShowToast(true);
-      setOriginalForm(formToSave);
-    } catch (error) {
-      console.error('Error saving address:', error);
-      setMessage('Error saving address');
-      setToastSeverity('error');
-      setShowToast(true);
-    }
-  };
+    }, []);
 
-  return (
-    <Box>
-      {isGoogleMapsLoaded ? (
-        <Autocomplete 
-          onLoad={handleAutocompleteLoad} 
-          onPlaceChanged={handlePlaceChanged}
-          options={{
-            componentRestrictions: { country: 'us' },
-            fields: ['address_components', 'formatted_address', 'geometry'],
-          }}
-        >
+    useEffect(() => {
+      setForm(formData);
+      setOriginalForm(formData);
+      checkGoogleMapsLoaded();
+
+      return () => {
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+        }
+      };
+    }, [formData, checkGoogleMapsLoaded]);
+
+    const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
+
+    useEffect(() => {
+      onDirtyChange?.(hasChanges);
+    }, [hasChanges, onDirtyChange]);
+
+    useEffect(() => {
+      onDraftChange?.(form);
+    }, [form, onDraftChange]);
+
+    const handleManualChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+      const { name, value } = e.target;
+      setForm((prev: typeof form) => ({ ...prev, [name]: value }));
+    };
+
+    const handlePlaceChanged = useCallback(() => {
+      if (!autocompleteRef.current?.getPlace) return;
+
+      const place = autocompleteRef.current.getPlace();
+      if (!place || !place.address_components) return;
+
+      const components = place.address_components;
+      const getComponent = (types: string[]) => {
+        const component = components.find((c: any) => types.every((t) => c.types?.includes(t)));
+        return component?.long_name || '';
+      };
+
+      const newAddressData = {
+        streetAddress: `${getComponent(['street_number'])} ${getComponent(['route'])}`.trim(),
+        city: getComponent(['locality']) || getComponent(['sublocality']) || getComponent(['postal_town']),
+        state: getComponent(['administrative_area_level_1']),
+        zip: getComponent(['postal_code']),
+        homeLat: place.geometry?.location?.lat?.(),
+        homeLng: place.geometry?.location?.lng?.(),
+      };
+
+      setForm((prev) => {
+        const updatedData = { ...prev };
+        Object.entries(newAddressData).forEach(([key, val]) => {
+          if (val !== undefined && val !== '') {
+            (updatedData as any)[key] = val;
+          }
+        });
+        return updatedData;
+      });
+    }, []);
+
+    const handleAutocompleteLoad = useCallback((autocomplete: any) => {
+      autocompleteRef.current = autocomplete;
+    }, []);
+
+    const geocodeCurrentAddress = async (f: typeof form): Promise<{ lat: number; lng: number }> => {
+      const { streetAddress, city, state, zip } = f;
+      if (!streetAddress || !city || !state) {
+        throw new Error('Street, city, and state are required to geocode');
+      }
+      const fullAddress = [streetAddress, city, state, zip].filter(Boolean).join(', ');
+      return geocodeAddress(fullAddress);
+    };
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        getValues: () => ({ ...form }),
+        markSaved: () => {
+          setOriginalForm(form);
+        },
+        prepareAddressForSubmit: async () => {
+          let formToSave = { ...form };
+          if (!formToSave.homeLat || !formToSave.homeLng) {
+            try {
+              const coordinates = await geocodeCurrentAddress(formToSave);
+              formToSave = { ...formToSave, homeLat: coordinates.lat, homeLng: coordinates.lng };
+              setForm(formToSave);
+            } catch {
+              formToSave = { ...form };
+            }
+          }
+          return formToSave;
+        },
+      }),
+      [form],
+    );
+
+    const handleSave = async () => {
+      try {
+        let formToSave = form;
+        if (!form.homeLat || !form.homeLng) {
+          try {
+            const coordinates = await geocodeCurrentAddress(form);
+            formToSave = { ...form, homeLat: coordinates.lat, homeLng: coordinates.lng };
+            setForm(formToSave);
+            setMessage('Address updated and geocoded successfully');
+            setToastSeverity('success');
+          } catch (geoErr) {
+            formToSave = form;
+            setMessage('Address saved. ' + getGeocodingErrorMessage(geoErr, { hasAutocomplete: true }));
+            setToastSeverity('error');
+          }
+        } else {
+          setMessage('Address updated successfully');
+          setToastSeverity('success');
+        }
+        await onFormChange(formToSave);
+        setShowToast(true);
+        setOriginalForm(formToSave);
+      } catch (error) {
+        console.error('Error saving address:', error);
+        setMessage('Error saving address');
+        setToastSeverity('error');
+        setShowToast(true);
+      }
+    };
+
+    return (
+      <Box>
+        {isGoogleMapsLoaded ? (
+          <Autocomplete
+            onLoad={handleAutocompleteLoad}
+            onPlaceChanged={handlePlaceChanged}
+            options={{
+              componentRestrictions: { country: 'us' },
+              fields: ['address_components', 'formatted_address', 'geometry', 'place_id'],
+              types: ['address'],
+            }}
+          >
+            <TextField
+              label="Street Address"
+              value={form.streetAddress || ''}
+              onChange={handleManualChange}
+              name="streetAddress"
+              fullWidth
+              sx={{ mb: 2 }}
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck="false"
+              inputProps={{
+                autoComplete: 'off',
+                autoCorrect: 'off',
+                autoCapitalize: 'off',
+                spellCheck: 'false',
+              }}
+            />
+          </Autocomplete>
+        ) : (
           <TextField
             label="Street Address"
             value={form.streetAddress || ''}
@@ -161,102 +240,87 @@ const AddressFormFields: React.FC<Props> = ({ uid, formData, onFormChange }) => 
               spellCheck: 'false',
             }}
           />
-        </Autocomplete>
-      ) : (
+        )}
         <TextField
-          label="Street Address"
-          value={form.streetAddress || ''}
+          label="Unit Number"
+          value={form.unitNumber || ''}
           onChange={handleManualChange}
-          name="streetAddress"
+          name="unitNumber"
           fullWidth
           sx={{ mb: 2 }}
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck="false"
-          inputProps={{
-            autoComplete: 'off',
-            autoCorrect: 'off',
-            autoCapitalize: 'off',
-            spellCheck: 'false',
-          }}
         />
-      )}
-      <TextField
-        label="Unit Number"
-        value={form.unitNumber || ''}
-        onChange={handleManualChange}
-        name="unitNumber"
-        fullWidth
-        sx={{ mb: 2 }}
-      />
-      <Grid container spacing={2}>
-        <Grid item xs={4}>
-          <TextField
-            label="City"
-            value={form.city || ''}
-            onChange={handleManualChange}
-            name="city"
-            fullWidth
-          />
+        <Grid container spacing={2}>
+          <Grid item xs={4}>
+            <TextField
+              label="City"
+              value={form.city || ''}
+              onChange={handleManualChange}
+              name="city"
+              fullWidth
+            />
+          </Grid>
+          <Grid item xs={4}>
+            <TextField
+              label="State"
+              value={form.state || ''}
+              onChange={handleManualChange}
+              name="state"
+              fullWidth
+            />
+          </Grid>
+          <Grid item xs={4}>
+            <TextField
+              label="Zip"
+              value={form.zip || ''}
+              onChange={handleManualChange}
+              name="zip"
+              fullWidth
+            />
+          </Grid>
         </Grid>
-        <Grid item xs={4}>
-          <TextField
-            label="State"
-            value={form.state || ''}
-            onChange={handleManualChange}
-            name="state"
-            fullWidth
-          />
-        </Grid>
-        <Grid item xs={4}>
-          <TextField
-            label="Zip"
-            value={form.zip || ''}
-            onChange={handleManualChange}
-            name="zip"
-            fullWidth
-          />
-        </Grid>
-      </Grid>
-      <Box sx={{ mt: 2, display: 'flex', gap: 2 }}>
-        {hasChanges && (
-          <Button variant="contained" onClick={handleSave}>
-            Save Changes
-          </Button>
+        {!hideActions && (
+          <Box sx={{ mt: 2, display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            {hasChanges && (
+              <Button variant="contained" onClick={handleSave}>
+                Save Changes
+              </Button>
+            )}
+            {form.streetAddress && form.city && form.state && (!form.homeLat || !form.homeLng) && (
+              <Button
+                variant="outlined"
+                onClick={async () => {
+                  try {
+                    const coordinates = await geocodeCurrentAddress(form);
+                    setForm((prev) => ({
+                      ...prev,
+                      homeLat: coordinates.lat,
+                      homeLng: coordinates.lng,
+                    }));
+                    setMessage('Address geocoded successfully');
+                    setToastSeverity('success');
+                    setShowToast(true);
+                  } catch (err) {
+                    setMessage(getGeocodingErrorMessage(err, { hasAutocomplete: true }));
+                    setToastSeverity('error');
+                    setShowToast(true);
+                  }
+                }}
+              >
+                Geocode Address
+              </Button>
+            )}
+          </Box>
         )}
-        {form.streetAddress && form.city && form.state && (!form.homeLat || !form.homeLng) && (
-          <Button
-            variant="outlined"
-            onClick={async () => {
-              try {
-                const coordinates = await geocodeCurrentAddress();
-                setForm(prev => ({
-                  ...prev,
-                  homeLat: coordinates.lat,
-                  homeLng: coordinates.lng
-                }));
-                setMessage('Address geocoded successfully');
-                setToastSeverity('success');
-                setShowToast(true);
-              } catch (err) {
-                setMessage(getGeocodingErrorMessage(err, { hasAutocomplete: true }));
-                setToastSeverity('error');
-                setShowToast(true);
-              }
-            }}
-          >
-            Geocode Address
-          </Button>
-        )}
+        <Snackbar open={showToast} autoHideDuration={6000} onClose={() => setShowToast(false)}>
+          <Alert onClose={() => setShowToast(false)} severity={toastSeverity} sx={{ width: '100%' }}>
+            {message}
+          </Alert>
+        </Snackbar>
       </Box>
-      <Snackbar open={showToast} autoHideDuration={6000} onClose={() => setShowToast(false)}>
-        <Alert onClose={() => setShowToast(false)} severity={toastSeverity} sx={{ width: '100%' }}>
-          {message}
-        </Alert>
-      </Snackbar>
-    </Box>
-  );
-};
+    );
+  },
+);
+
+AddressFormFields.displayName = 'AddressFormFields';
 
 export default AddressFormFields;

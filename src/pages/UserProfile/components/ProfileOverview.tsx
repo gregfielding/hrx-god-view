@@ -1,19 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useUserProfileEntityEmploymentChips } from '../../../hooks/useUserProfileEntityEmploymentChips';
 import { normalizeScoreSummary, type ScoreSummary } from '../../../utils/scoreSummary';
 import {
   OverviewDeploymentSnapshotCard,
-  OverviewSkillsExperienceCard,
+  OverviewQualificationsCard,
+  OverviewScoringCard,
   OverviewRecentActivityCard,
-  overviewSectionTitleTypographyProps,
   overviewSubsectionHeadingTypographyProps,
   overviewProfileFieldValueSx,
   type OverviewActivityLogEntry,
 } from './OverviewDashboardSections';
-import {
-  extractSkillLabelsFromUserDoc,
-  extractWorkHeadlinesFromUserDoc,
-} from '../utils/overviewDashboardComposer';
+import { buildOverviewQualificationsFromUserDoc } from '../utils/overviewQualificationsSnapshot';
+import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
 import { toChipLabel } from '../../../utils/chipLabel';
 import {
   Box,
@@ -93,11 +91,13 @@ import { persistScoreSummaryFromProfile } from '../../../utils/persistScoreSumma
 import { useAuth } from '../../../contexts/AuthContext';
 import { UserProfileForm, EmergencyContact } from '../../../types/UserProfile';
 
-import AddressFormFields from './AddressTab/AddressFormFields';
+import AddressFormFields, { type AddressFormFieldsHandle } from './AddressTab/AddressFormFields';
 import MapWithMarkers from './AddressTab/MapWithMarkers';
 type Props = {
   uid: string;
   onTabChange?: (tab: string) => void;
+  /** When set, Overview Scoring card shows a link to open the Score tab. Omit when that tab is not available. */
+  onOpenScoreTab?: () => void;
   autoOpenHomeAddress?: boolean;
   /**
    * When `quickProfileOnly`, render only the Quick profile & location card (for a modal).
@@ -109,6 +109,7 @@ type Props = {
 const ProfileOverview: React.FC<Props> = ({
   uid,
   onTabChange,
+  onOpenScoreTab,
   autoOpenHomeAddress = false,
   embeddedMode = 'full',
 }) => {
@@ -272,6 +273,12 @@ const ProfileOverview: React.FC<Props> = ({
   const [isEditingBasicIdentity, setIsEditingBasicIdentity] = useState(false);
   const [isEditingHomeAddress, setIsEditingHomeAddress] = useState(false);
   const homeAddressRef = useRef<HTMLDivElement | null>(null);
+  const quickProfileAddressFormRef = useRef<AddressFormFieldsHandle | null>(null);
+  const [quickProfileAddressDirty, setQuickProfileAddressDirty] = useState(false);
+  const [quickProfileAddressMapPreview, setQuickProfileAddressMapPreview] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
 
   const [overviewActivityLogs, setOverviewActivityLogs] = useState<OverviewActivityLogEntry[]>([]);
   const [overviewActivityLogsLoading, setOverviewActivityLogsLoading] = useState(false);
@@ -289,7 +296,13 @@ const ProfileOverview: React.FC<Props> = ({
     if (embeddedMode !== 'quickProfileOnly') return;
     setIsEditingBasicIdentity(true);
     setIsEditingHomeAddress(true);
+    setQuickProfileAddressMapPreview(null);
+    setQuickProfileAddressDirty(false);
   }, [embeddedMode]);
+
+  const noopAddressPersist = useCallback(async () => {}, []);
+
+  const quickProfileMapCoords = embeddedMode === 'quickProfileOnly' ? quickProfileAddressMapPreview ?? addressInfo : addressInfo;
 
   useEffect(() => {
     if (!uid) return;
@@ -345,9 +358,9 @@ const ProfileOverview: React.FC<Props> = ({
 
   const [scoreSummaryFromUser, setScoreSummaryFromUser] = useState<ScoreSummary | undefined>(undefined);
   const [riskProfileRaw, setRiskProfileRaw] = useState<unknown>(null);
-  const [overviewBio, setOverviewBio] = useState('');
-  const [overviewSkillLabels, setOverviewSkillLabels] = useState<string[]>([]);
-  const [overviewWorkLines, setOverviewWorkLines] = useState<string[]>([]);
+  const [overviewQualifications, setOverviewQualifications] = useState<OverviewQualificationsData>(() =>
+    buildOverviewQualificationsFromUserDoc({}),
+  );
 
   // Removed AI insights section
 
@@ -493,11 +506,7 @@ const transportOptions: Array<{
 
             setScoreSummaryFromUser(normalizeScoreSummary(data.scoreSummary));
             setRiskProfileRaw(data.riskProfile ?? null);
-            setOverviewBio(
-              String(data.professionalBio || data.bio || data.summary || (data as any).professionalSummary || '').trim(),
-            );
-            setOverviewSkillLabels(extractSkillLabelsFromUserDoc(data.skills));
-            setOverviewWorkLines(extractWorkHeadlinesFromUserDoc(data.workExperience));
+            setOverviewQualifications(buildOverviewQualificationsFromUserDoc(data as Record<string, unknown>));
 
             // Load Work Eligibility data
             setWorkEligibilityData({
@@ -710,7 +719,10 @@ const transportOptions: Array<{
     });
   };
 
-  const hasChanges = JSON.stringify(form) !== JSON.stringify(originalForm);
+  const formFieldsChanged = JSON.stringify(form) !== JSON.stringify(originalForm);
+  const hasChanges =
+    formFieldsChanged ||
+    (embeddedMode === 'quickProfileOnly' && quickProfileAddressDirty);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
@@ -1013,7 +1025,15 @@ const transportOptions: Array<{
       );
       
       console.log('Submitting update data:', finalUpdateData);
-      await updateDoc(userRef, finalUpdateData);
+
+      if (embeddedMode === 'quickProfileOnly' && quickProfileAddressFormRef.current) {
+        const addressPayload = await quickProfileAddressFormRef.current.prepareAddressForSubmit();
+        await updateDoc(userRef, { ...finalUpdateData, addressInfo: addressPayload });
+        quickProfileAddressFormRef.current.markSaved();
+        setQuickProfileAddressMapPreview(null);
+      } else {
+        await updateDoc(userRef, finalUpdateData);
+      }
 
       await persistScoreSummaryFromProfile(uid).catch((err) =>
         console.warn('ProfileOverview: persist scoreSummary failed', err)
@@ -1089,9 +1109,32 @@ const transportOptions: Array<{
   const hideNonQuickSections = embeddedMode === 'quickProfileOnly';
 
   return (
-    <Box sx={{ p: 0 }}>
-      <Box component="form" onSubmit={handleSubmit} noValidate>
-        <Grid container spacing={sectionSpacing} sx={{ alignItems: 'stretch' }}>
+    <Box
+      sx={{
+        p: 0,
+        ...(hideNonQuickSections
+          ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }
+          : {}),
+      }}
+    >
+      <Box
+        component="form"
+        onSubmit={handleSubmit}
+        noValidate
+        sx={
+          hideNonQuickSections
+            ? { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }
+            : {}
+        }
+      >
+        <Box
+          sx={
+            hideNonQuickSections
+              ? { flex: 1, minHeight: 0, overflow: 'auto', pr: 0.5 }
+              : {}
+          }
+        >
+        <Grid container spacing={sectionSpacing} sx={{ alignItems: 'stretch', pb: 2 }}>
           {/* Section 1: Deployment snapshot */}
           {showRecruiterDeployment && !hideNonQuickSections && (
             <Grid item xs={12}>
@@ -1112,61 +1155,11 @@ const transportOptions: Array<{
           {/* Quick profile & location: hidden on Overview tab; still rendered for quick-profile modal (`embeddedMode === 'quickProfileOnly'`). */}
           {embeddedMode === 'quickProfileOnly' && (
           <Grid item xs={12}>
-            <Card
-              variant="outlined"
+            <Box
               id="home-address"
               ref={homeAddressRef}
-              sx={{
-                px: cardPadding,
-                pt: cardPadding,
-                /** Slightly tighter bottom padding now that the map is shorter */
-                pb: cardPadding + 1,
-                borderColor: 'divider',
-                ...overviewCardSx,
-              }}
+              sx={{ width: '100%' }}
             >
-              <CardHeader 
-                title={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    <PersonIcon sx={{ fontSize: 20 }} color="primary" aria-hidden />
-                    <Typography {...overviewSectionTitleTypographyProps}>Quick profile &amp; location</Typography>
-                  </Box>
-                }
-                titleTypographyProps={{ component: 'div' }}
-                action={
-                  !hideNonQuickSections &&
-                  canEditProfile() && (
-                    <Stack direction="row" spacing={0.25} alignItems="center">
-                      <Tooltip title={isEditingBasicIdentity ? 'Done editing profile' : 'Edit profile'}>
-                        <IconButton
-                          size="small"
-                          onClick={() => setIsEditingBasicIdentity(!isEditingBasicIdentity)}
-                          sx={{ 
-                            color: isEditingBasicIdentity ? 'primary.main' : 'text.secondary',
-                            '&:hover': { bgcolor: 'action.hover' },
-                          }}
-                        >
-                          <EditIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title={isEditingHomeAddress ? 'Done editing location' : 'Edit location'}>
-                        <IconButton
-                          size="small"
-                          onClick={() => setIsEditingHomeAddress(!isEditingHomeAddress)}
-                          sx={{
-                            color: isEditingHomeAddress ? 'primary.main' : 'text.secondary',
-                            '&:hover': { bgcolor: 'action.hover' },
-                          }}
-                        >
-                          <LocationOnOutlinedIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                    </Stack>
-                  )
-                }
-                sx={{ pb: 0, ...cardHeaderPadding }}
-              />
-              <CardContent sx={{ p: cardContentPadding, pt: cardContentPadding }}>
                 {/* Missing Items Alerts for Basic Identity */}
                 {!isEditingBasicIdentity && (
                   <Box sx={{ mb: 2 }}>
@@ -1409,22 +1402,6 @@ const transportOptions: Array<{
                             size="small"
                           />
                         </Grid>
-                        {viewerSecurityLevel >= 5 && (
-                          <Grid item xs={12}>
-                            <FormControlLabel
-                              control={
-                                <Checkbox
-                                  checked={!!form.addedToIndeedFlex}
-                                  onChange={(_, checked) => {
-                                    setForm((prev) => ({ ...prev, addedToIndeedFlex: checked }));
-                                    void persistProfileField('addedToIndeedFlex', checked);
-                                  }}
-                                />
-                              }
-                              label="Added to Indeed Flex"
-                            />
-                          </Grid>
-                        )}
                         <Grid item xs={12}>
                           <Box>
                             <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
@@ -1457,6 +1434,41 @@ const transportOptions: Array<{
                         </Grid>
                       </Grid>
                     </Grid>
+                    {embeddedMode === 'quickProfileOnly' && (
+                      <Grid item xs={12}>
+                        <Typography
+                          {...overviewSubsectionHeadingTypographyProps}
+                          sx={{ ...overviewSubsectionHeadingTypographyProps.sx, mt: 1 }}
+                        >
+                          Home address
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
+                          Search for your street address to fill city, state, and ZIP. You can edit
+                          details below if needed.
+                        </Typography>
+                        <AddressFormFields
+                          ref={quickProfileAddressFormRef}
+                          uid={uid}
+                          formData={addressInfo}
+                          onFormChange={noopAddressPersist}
+                          hideActions
+                          onDirtyChange={setQuickProfileAddressDirty}
+                          onDraftChange={setQuickProfileAddressMapPreview}
+                        />
+                        <Box sx={{ mt: 1.5, borderRadius: 1, overflow: 'hidden', border: '1px solid', borderColor: 'divider' }}>
+                          <MapWithMarkers
+                            homeLat={quickProfileMapCoords.homeLat as number | null | undefined}
+                            homeLng={quickProfileMapCoords.homeLng as number | null | undefined}
+                            workLat={quickProfileMapCoords.workLat as number | null | undefined}
+                            workLng={quickProfileMapCoords.workLng as number | null | undefined}
+                            currentLat={quickProfileMapCoords.currentLat as number | null | undefined}
+                            currentLng={quickProfileMapCoords.currentLng as number | null | undefined}
+                            mapHeightPx={240}
+                            dense
+                          />
+                        </Box>
+                      </Grid>
+                    )}
                   </Grid>
                 ) : (
                   (() => {
@@ -1682,7 +1694,7 @@ const transportOptions: Array<{
                       </Box>
                     )}
 
-                    {form.addedToIndeedFlex && (
+                    {!hideNonQuickSections && form.addedToIndeedFlex && (
                       <Box sx={{ mb: 0 }}>
                         <Typography {...overviewSubsectionHeadingTypographyProps} sx={{ ...overviewSubsectionHeadingTypographyProps.sx, mb: 1.5 }}>
                           Indeed Flex
@@ -1855,8 +1867,7 @@ const transportOptions: Array<{
                     );
                   })()
                 )}
-              </CardContent>
-            </Card>
+            </Box>
           </Grid>
           )}
 
@@ -1864,12 +1875,17 @@ const transportOptions: Array<{
           {!hideNonQuickSections && (
             <>
               <Grid item xs={12}>
-                <OverviewSkillsExperienceCard
-                  bio={overviewBio}
-                  skillLabels={overviewSkillLabels}
-                  workExperienceHeadlines={overviewWorkLines}
+                <OverviewQualificationsCard
+                  uid={uid}
+                  qualifications={overviewQualifications}
                   onOpenResumeTab={onTabChange ? () => onTabChange('Resume Upload') : undefined}
-                  onOpenQualificationsTab={onTabChange ? () => onTabChange('Qualifications') : undefined}
+                />
+              </Grid>
+              <Grid item xs={12}>
+                <OverviewScoringCard
+                  scoreSummary={scoreSummaryFromUser}
+                  riskProfileRaw={riskProfileRaw}
+                  onOpenScoreTab={onOpenScoreTab}
                 />
               </Grid>
               <Grid item xs={12}>
@@ -2173,7 +2189,7 @@ const transportOptions: Array<{
           </Grid>
           )}
 
-          {hasChanges && canEditProfile() && (
+          {!hideNonQuickSections && hasChanges && canEditProfile() && (
             <Grid item xs={12}>
               <Button type="submit" variant="contained" size="large">
                 Save Changes
@@ -2181,6 +2197,32 @@ const transportOptions: Array<{
             </Grid>
           )}
         </Grid>
+        </Box>
+        {hideNonQuickSections && canEditProfile() && (
+          <Box
+            sx={{
+              flexShrink: 0,
+              pt: 2,
+              pb: 2,
+              mt: 'auto',
+              borderTop: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 1,
+            }}
+          >
+            <Button
+              type="submit"
+              variant="contained"
+              size="large"
+              disabled={!hasChanges}
+            >
+              Save Changes
+            </Button>
+          </Box>
+        )}
       </Box>
 
       <Snackbar open={showToast} autoHideDuration={3000} onClose={() => setShowToast(false)}>

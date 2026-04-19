@@ -1,13 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
+import { Link as RouterLink, useLocation } from 'react-router-dom';
 import {
+  Autocomplete,
   Avatar,
   Box,
+  Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Grid,
   IconButton,
+  Link,
   Snackbar,
   Stack,
+  TextField,
   Tooltip,
   Typography,
   Checkbox,
@@ -18,6 +27,8 @@ import CameraAltIcon from '@mui/icons-material/CameraAlt';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
+import CloseIcon from '@mui/icons-material/Close';
+import AddIcon from '@mui/icons-material/Add';
 import FavoriteButton from '../../../components/FavoriteButton';
 import UserTableIndeedFlexBadge from '../../../components/tables/UserTableIndeedFlexBadge';
 import { pickResumeFromUserDoc } from '../../../utils/userResumeOpen';
@@ -34,6 +45,10 @@ import { getCalendarDayLocal, parseCalendarDateLocal } from '../../../utils/date
 import { googleMapsSearchUrl } from '../../../utils/recordHeaderAddress';
 import type { EmergencyContact } from '../../../types/UserProfile';
 import type { RecordHeaderAssignmentLine } from '../../../utils/recordHeaderAssignments';
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../../../firebase';
+
+type TenantUserGroupOption = { id: string; title: string };
 
 const colTitleSx = {
   fontSize: '0.65rem',
@@ -121,6 +136,12 @@ export type RecruiterUserProfileTableHeaderProps = {
   onContactEditClick?: () => void;
   /** Up to 3 active / upcoming assignments (Employment column, above Groups) */
   assignmentLines?: RecordHeaderAssignmentLine[];
+  /** When set, each group row shows a remove control (managers+). */
+  onRemoveUserFromGroup?: (groupId: string) => void | Promise<void>;
+  /** Tenant used to list `tenants/{id}/userGroups` for the add-to-group modal. */
+  tenantIdForUserGroups?: string | null;
+  /** Persist adding the target user to a group (managers+). */
+  onAddUserToGroup?: (groupId: string) => void | Promise<void>;
 };
 
 function entityChipVisuals(slot: RecordHeaderEntitySlot): { color: 'success' | 'warning' | 'error' | 'default'; variant: 'filled' | 'outlined' } {
@@ -174,8 +195,81 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
   emergencyContact,
   onContactEditClick,
   assignmentLines = [],
+  onRemoveUserFromGroup,
+  tenantIdForUserGroups = null,
+  onAddUserToGroup,
 }: RecruiterUserProfileTableHeaderProps) => {
   const theme = useTheme();
+  const location = useLocation();
+  const [removingGroupId, setRemovingGroupId] = useState<string | null>(null);
+  const [addGroupModalOpen, setAddGroupModalOpen] = useState(false);
+  const [addGroupOptions, setAddGroupOptions] = useState<TenantUserGroupOption[]>([]);
+  const [addGroupOptionsLoading, setAddGroupOptionsLoading] = useState(false);
+  const [selectedGroupToAdd, setSelectedGroupToAdd] = useState<TenantUserGroupOption | null>(null);
+  const [addingToGroup, setAddingToGroup] = useState(false);
+  const userGroupHref = (groupId: string) =>
+    location.pathname.includes('/recruiter') ? `/recruiter/user-groups/${groupId}` : `/usergroups/${groupId}`;
+
+  const handleRemoveGroupClick = useCallback(
+    async (groupId: string) => {
+      if (!onRemoveUserFromGroup || removingGroupId) return;
+      setRemovingGroupId(groupId);
+      try {
+        await Promise.resolve(onRemoveUserFromGroup(groupId));
+      } finally {
+        setRemovingGroupId(null);
+      }
+    },
+    [onRemoveUserFromGroup, removingGroupId],
+  );
+
+  useEffect(() => {
+    if (!addGroupModalOpen || !tenantIdForUserGroups) return;
+    let cancelled = false;
+    (async () => {
+      setAddGroupOptionsLoading(true);
+      try {
+        const gq = collection(db, 'tenants', tenantIdForUserGroups, 'userGroups');
+        const snap = await getDocs(gq);
+        const memberIds = new Set(headerUserGroups.map((g) => g.id));
+        const opts: TenantUserGroupOption[] = snap.docs
+          .map((d) => {
+            const data = d.data() as Record<string, unknown>;
+            return {
+              id: d.id,
+              title: String(data?.title || data?.name || d.id),
+            };
+          })
+          .filter((g) => !memberIds.has(g.id))
+          .sort((a, b) => a.title.localeCompare(b.title));
+        if (!cancelled) setAddGroupOptions(opts);
+      } catch (e) {
+        console.error('Failed to load user groups for add modal:', e);
+        if (!cancelled) setAddGroupOptions([]);
+      } finally {
+        if (!cancelled) setAddGroupOptionsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [addGroupModalOpen, tenantIdForUserGroups, headerUserGroups]);
+
+  const handleConfirmAddToGroup = useCallback(async () => {
+    if (!onAddUserToGroup || !selectedGroupToAdd || addingToGroup) return;
+    setAddingToGroup(true);
+    try {
+      await Promise.resolve(onAddUserToGroup(selectedGroupToAdd.id));
+      setAddGroupModalOpen(false);
+      setSelectedGroupToAdd(null);
+    } finally {
+      setAddingToGroup(false);
+    }
+  }, [onAddUserToGroup, selectedGroupToAdd, addingToGroup]);
+
+  const canManageGroupsSection = viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7;
+  const showAddGroupControl = Boolean(tenantIdForUserGroups && onAddUserToGroup);
+
   /** Admin: five columns (Contact … Employment … Risk); otherwise four (no Risk). */
   const gridColMd = canViewAdminContent ? 2.4 : 3;
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
@@ -552,7 +646,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               <Typography component="span" sx={colTitleSx}>
                 Readiness
               </Typography>
-              {interviewSummaryLine ? (
+              {!canViewAdminContent && interviewSummaryLine ? (
                 <Typography variant="body2" sx={{ ...bodySx, fontWeight: 500, color: 'text.primary', mb: 0.5 }}>
                   {interviewSummaryLine}
                 </Typography>
@@ -580,7 +674,10 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
               )}
               <FormControlLabel
                 sx={{
-                  mt: readinessRows.length > 0 || interviewSummaryLine ? 1 : 0.75,
+                  mt:
+                    readinessRows.length > 0 || (!canViewAdminContent && interviewSummaryLine)
+                      ? 0.35
+                      : 0.75,
                   mr: 0,
                   ml: -0.75,
                   alignItems: 'center',
@@ -707,33 +804,93 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                 </Box>
               ) : null}
 
-              {headerUserGroups.length > 0 && viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7 && (
+              {canManageGroupsSection && (headerUserGroups.length > 0 || showAddGroupControl) && (
                 <Box sx={{ mt: 1.25 }}>
-                  <Typography component="span" sx={colTitleSx}>
-                    Groups
-                  </Typography>
-                  <Tooltip
-                    title={
-                      headerUserGroups.length <= 1 ? (
-                        headerUserGroups[0]?.title
-                      ) : (
-                        <Box component="span" sx={{ display: 'block', maxHeight: 320, overflowY: 'auto', py: 0.5 }}>
-                          {headerUserGroups.map((g) => (
-                            <Typography key={g.id} component="span" variant="body2" sx={{ display: 'block' }}>
-                              {g.title}
-                            </Typography>
-                          ))}
-                        </Box>
-                      )
-                    }
-                    placement="top"
-                    enterDelay={300}
-                  >
-                    <Typography variant="body2" sx={{ ...bodySx, cursor: 'default', fontWeight: 500, mt: 0.35 }}>
-                      {headerUserGroups[0]?.title}
-                      {headerUserGroups.length > 1 ? ` +${headerUserGroups.length - 1}` : ''}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.15, flexWrap: 'wrap' }}>
+                    <Typography component="span" sx={colTitleSx}>
+                      Groups
                     </Typography>
-                  </Tooltip>
+                    {showAddGroupControl ? (
+                      <Tooltip title="Add to group" placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
+                        <IconButton
+                          size="small"
+                          aria-label="Add user to a group"
+                          onClick={() => {
+                            setSelectedGroupToAdd(null);
+                            setAddGroupModalOpen(true);
+                          }}
+                          sx={{
+                            p: 0.2,
+                            ml: 0.1,
+                            color: 'primary.main',
+                            '&:hover': { bgcolor: 'action.hover' },
+                          }}
+                        >
+                          <AddIcon sx={{ fontSize: 16 }} />
+                        </IconButton>
+                      </Tooltip>
+                    ) : null}
+                  </Box>
+                  <Stack spacing={0.35} sx={{ mt: 0.35, width: '100%' }}>
+                    {headerUserGroups.map((g) => (
+                      <Box
+                        key={g.id}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 0.75,
+                          width: '100%',
+                          minWidth: 0,
+                        }}
+                      >
+                        <Tooltip title={g.title} placement="top" enterDelay={400} componentsProps={recordHeaderTooltipComponentsProps}>
+                          <Link
+                            component={RouterLink}
+                            to={userGroupHref(g.id)}
+                            underline="hover"
+                            variant="body2"
+                            sx={{
+                              ...bodySx,
+                              fontWeight: 500,
+                              color: 'primary.main',
+                              wordBreak: 'break-word',
+                              flex: 1,
+                              minWidth: 0,
+                            }}
+                          >
+                            {g.title}
+                          </Link>
+                        </Tooltip>
+                        {onRemoveUserFromGroup ? (
+                          <Tooltip title="Remove from group" placement="top" componentsProps={recordHeaderTooltipComponentsProps}>
+                            <IconButton
+                              size="small"
+                              aria-label={`Remove from ${g.title}`}
+                              disabled={removingGroupId !== null}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                void handleRemoveGroupClick(g.id);
+                              }}
+                              sx={{
+                                flexShrink: 0,
+                                p: 0.125,
+                                color: 'error.main',
+                                '&:hover': { bgcolor: 'action.hover' },
+                              }}
+                            >
+                              {removingGroupId === g.id ? (
+                                <CircularProgress size={14} color="inherit" />
+                              ) : (
+                                <CloseIcon sx={{ fontSize: 16 }} />
+                              )}
+                            </IconButton>
+                          </Tooltip>
+                        ) : null}
+                      </Box>
+                    ))}
+                  </Stack>
                 </Box>
               )}
             </Grid>
@@ -749,6 +906,7 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
                     scoringDistribution={scoringDistribution}
                     categoryScores={categoryScores}
                     riskProfile={riskProfile}
+                    interviewSummaryLine={interviewSummaryLine}
                   />
                 </Box>
               </Grid>
@@ -763,6 +921,62 @@ const RecruiterUserProfileTableHeader: React.FC<RecruiterUserProfileTableHeaderP
         message={copyNotice ?? ''}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       />
+
+      <Dialog
+        open={addGroupModalOpen}
+        onClose={() => {
+          if (addingToGroup) return;
+          setAddGroupModalOpen(false);
+          setSelectedGroupToAdd(null);
+        }}
+        maxWidth="sm"
+        fullWidth
+        scroll="paper"
+      >
+        <DialogTitle sx={{ fontSize: '1rem', fontWeight: 700 }}>Add to group</DialogTitle>
+        <DialogContent dividers sx={{ pt: 1.5 }}>
+          <Autocomplete
+            options={addGroupOptions}
+            loading={addGroupOptionsLoading}
+            value={selectedGroupToAdd}
+            onChange={(_, v) => setSelectedGroupToAdd(v)}
+            getOptionLabel={(o) => o.title}
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="Group"
+                placeholder="Search or pick a group"
+                size="small"
+                variant="outlined"
+              />
+            )}
+          />
+          {!addGroupOptionsLoading && addGroupOptions.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+              No additional groups available, or this user is already in all groups.
+            </Typography>
+          ) : null}
+        </DialogContent>
+        <DialogActions sx={{ px: 2, py: 1.5 }}>
+          <Button
+            onClick={() => {
+              setAddGroupModalOpen(false);
+              setSelectedGroupToAdd(null);
+            }}
+            disabled={addingToGroup}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!selectedGroupToAdd || addingToGroup || addGroupOptions.length === 0}
+            onClick={() => void handleConfirmAddToGroup()}
+          >
+            {addingToGroup ? 'Adding…' : 'Add'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

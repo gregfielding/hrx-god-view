@@ -31,7 +31,13 @@ import {
 } from '@mui/icons-material';
 import WarningAmberOutlinedIcon from '@mui/icons-material/WarningAmberOutlined';
 import GppMaybeOutlinedIcon from '@mui/icons-material/GppMaybeOutlined';
-import type { ScoreSummary } from '../../../utils/scoreSummary';
+import {
+  formatOneDecimal,
+  getCanonicalStoredAiScore,
+  type ScoreSummary,
+} from '../../../utils/scoreSummary';
+import { recruiterTableLetterGrade } from '../../../utils/recruiterUsersReadinessDisplay';
+import { overallRiskBandLabel } from '../utils/recordHeaderScoreHelpers';
 import UserEntityOnboardingStatusCell from '../../../components/tables/UserEntityOnboardingStatusCell';
 import type { UserListEntityOnboardingItem } from '../../../utils/userListEntityEmploymentStatus';
 import {
@@ -44,6 +50,9 @@ import {
   workerRiskTooltipContent,
 } from '../../../utils/workerRiskProfileDisplay';
 import { recordHeaderTooltipComponentsProps } from './recordHeaderStyles';
+import WorkAuthorizedChip from '../../../components/WorkAuthorizedChip';
+import ShiftPreferencesCard from './ShiftPreferencesCard';
+import type { OverviewQualificationsData } from '../utils/overviewQualificationsSnapshot';
 
 /** User-record overview only: flat cards, no hover elevation (jobs board etc. unchanged). */
 const overviewCardFlatSx = {
@@ -90,7 +99,7 @@ export const overviewSubsectionHeadingTypographyProps = {
 } as const;
 
 /**
- * Default body copy for profile field values — matches Skills & experience bio.
+ * Default body copy for profile field values — matches Qualifications / overview body text.
  */
 export const overviewProfileFieldValueSx = {
   fontSize: '0.78rem',
@@ -261,61 +270,55 @@ export function OverviewDeploymentSnapshotCard({
   );
 }
 
-export type OverviewSkillsExperienceProps = {
-  bio: string;
-  skillLabels: string[];
-  workExperienceHeadlines: string[];
+export type OverviewQualificationsCardProps = {
+  uid: string;
+  qualifications: OverviewQualificationsData;
   onOpenResumeTab?: () => void;
   onOpenQualificationsTab?: () => void;
 };
 
-/** Section 4: Skills + experience snapshot */
-export function OverviewSkillsExperienceCard({
-  bio,
-  skillLabels,
-  workExperienceHeadlines,
+/** Section 4: Full Qualifications snapshot (same sections as Qualifications tab, flat — no accordions). */
+export function OverviewQualificationsCard({
+  uid,
+  qualifications: q,
   onOpenResumeTab,
   onOpenQualificationsTab,
-}: OverviewSkillsExperienceProps) {
-  const hasAny = bio.trim() || skillLabels.length > 0 || workExperienceHeadlines.length > 0;
+}: OverviewQualificationsCardProps) {
   const cardSx = {
     borderRadius: 1,
     borderColor: 'divider',
     ...overviewCardFlatSx,
   } as const;
 
-  if (!hasAny) {
-    return (
-      <Card variant="outlined" sx={cardSx}>
-        <CardContent sx={{ py: 1, px: 1.25 }}>
-          <Typography {...overviewSectionTitleTypographyProps} sx={{ ...overviewSectionTitleTypographyProps.sx, mb: 0.35 }}>
-            Skills &amp; experience
-          </Typography>
-          <Typography variant="body2" sx={overviewProfileFieldValueSx}>
-            No summary on file yet. Add skills and experience in Qualifications or Resume.
-          </Typography>
-          <Stack direction="row" spacing={0.75} sx={{ mt: 1 }}>
-            {onOpenQualificationsTab && (
-              <Button size="small" variant="outlined" sx={{ fontSize: '0.75rem', py: 0.35 }} onClick={onOpenQualificationsTab}>
-                Qualifications
-              </Button>
-            )}
-            {onOpenResumeTab && (
-              <Button size="small" variant="outlined" sx={{ fontSize: '0.75rem', py: 0.35 }} onClick={onOpenResumeTab}>
-                Resume
-              </Button>
-            )}
-          </Stack>
-        </CardContent>
-      </Card>
-    );
-  }
+  const hasSubstance =
+    q.workAuthorizedStatus !== 'skipped' ||
+    q.gender.trim().length > 0 ||
+    q.veteranStatus.trim().length > 0 ||
+    q.disabilityStatus.trim().length > 0 ||
+    q.requireSponsorship !== null ||
+    q.hasResume ||
+    q.bio.trim().length > 0 ||
+    q.skillLabels.length > 0 ||
+    q.languageLabels.length > 0 ||
+    q.workExperienceLines.length > 0 ||
+    q.educationLines.length > 0 ||
+    q.certifications.length > 0;
+
+  const eeocFieldLabelSx = {
+    display: 'block' as const,
+    mb: 0.25,
+    fontSize: '0.62rem',
+    fontWeight: 600,
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase' as const,
+    color: 'text.secondary',
+  };
 
   return (
     <Card variant="outlined" sx={cardSx}>
       <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
-        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 0.65 }} flexWrap="wrap" gap={0.75}>
-          <Typography {...overviewSectionTitleTypographyProps}>Skills &amp; experience</Typography>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
+          <Typography {...overviewSectionTitleTypographyProps}>Qualifications</Typography>
           <Stack direction="row" spacing={0} sx={{ gap: 0.15 }} alignItems="center">
             {onOpenQualificationsTab && (
               <Button
@@ -344,50 +347,339 @@ export function OverviewSkillsExperienceCard({
             )}
           </Stack>
         </Stack>
-        {bio.trim() && (
-          <Typography
-            variant="body2"
-            sx={{
-              ...overviewProfileFieldValueSx,
-              maxWidth: 720,
-              mb: skillLabels.length || workExperienceHeadlines.length ? 0.75 : 0,
-              display: '-webkit-box',
-              WebkitLineClamp: 4,
-              WebkitBoxOrient: 'vertical',
-              overflow: 'hidden',
-            }}
-          >
-            {bio.trim()}
+
+        {!hasSubstance ? (
+          <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, mb: 1 }}>
+            No profile details on file yet. Add qualifications or a resume to build this section.
           </Typography>
-        )}
-        {skillLabels.length > 0 && (
-          <Box sx={{ mb: workExperienceHeadlines.length ? 0.75 : 0 }}>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.3, fontSize: '0.62rem', fontWeight: 600, letterSpacing: '0.05em' }}>
-              Top skills
-            </Typography>
-            <Stack direction="row" flexWrap="wrap" gap={0.3}>
-              {skillLabels.slice(0, 8).map((s) => (
-                <Chip key={s} label={s} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.68rem' }} />
-              ))}
-              {skillLabels.length > 8 && (
-                <Chip label={`+${skillLabels.length - 8}`} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.68rem' }} />
-              )}
-            </Stack>
-          </Box>
-        )}
-        {workExperienceHeadlines.length > 0 && (
+        ) : null}
+
+        <Stack spacing={1.35}>
           <Box>
-            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.3, fontSize: '0.62rem', fontWeight: 600, letterSpacing: '0.05em' }}>
-              Recent roles
-            </Typography>
-            <Stack spacing={0.3}>
-              {workExperienceHeadlines.slice(0, 3).map((line, i) => (
-                <Typography key={i} variant="body2" sx={{ fontSize: '0.78rem', lineHeight: 1.4, pl: 0.5, borderLeft: '2px solid', borderColor: 'divider' }}>
-                  {line}
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Work authorization</Typography>
+            <WorkAuthorizedChip status={q.workAuthorizedStatus} />
+            <Stack spacing={0.65} sx={{ mt: 0.75 }}>
+              <Box>
+                <Typography variant="caption" sx={eeocFieldLabelSx}>
+                  Gender
                 </Typography>
-              ))}
+                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                  {q.gender.trim() ? q.gender : '—'}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" sx={eeocFieldLabelSx}>
+                  Veteran status
+                </Typography>
+                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                  {q.veteranStatus.trim() ? q.veteranStatus : '—'}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" sx={eeocFieldLabelSx}>
+                  Disability
+                </Typography>
+                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                  {q.disabilityStatus.trim() ? q.disabilityStatus : '—'}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" sx={eeocFieldLabelSx}>
+                  Sponsorship required
+                </Typography>
+                <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                  {q.requireSponsorship === null ? '—' : q.requireSponsorship ? 'Yes' : 'No'}
+                </Typography>
+              </Box>
             </Stack>
           </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Resume</Typography>
+            {q.hasResume && q.resumeUrl ? (
+              <Link href={q.resumeUrl} target="_blank" rel="noopener noreferrer" variant="body2" sx={overviewProfileFieldValueSx}>
+                View resume
+              </Link>
+            ) : q.hasResume ? (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                Resume on file.
+              </Typography>
+            ) : (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                No resume on file.
+              </Typography>
+            )}
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Bio</Typography>
+            {q.bio.trim() ? (
+              <Typography variant="body2" sx={{ ...overviewProfileFieldValueSx, whiteSpace: 'pre-wrap' }}>
+                {q.bio.trim()}
+              </Typography>
+            ) : (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                No bio.
+              </Typography>
+            )}
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Education</Typography>
+            {q.educationLines.length > 0 ? (
+              <Stack spacing={0.5}>
+                {q.educationLines.map((line, i) => (
+                  <Typography key={i} variant="body2" sx={overviewProfileFieldValueSx}>
+                    {line}
+                  </Typography>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                No education on file.
+              </Typography>
+            )}
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Certifications &amp; Licenses</Typography>
+            {q.certifications.length > 0 ? (
+              <Stack spacing={0.5}>
+                {q.certifications.map((c, i) => (
+                  <Box key={i} sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                    <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                      {c.label}
+                    </Typography>
+                    {c.fileUrl ? (
+                      <Link href={c.fileUrl} target="_blank" rel="noopener noreferrer" variant="body2" sx={overviewProfileFieldValueSx}>
+                        View file
+                      </Link>
+                    ) : null}
+                  </Box>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                No certifications on file.
+              </Typography>
+            )}
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Work experience</Typography>
+            {q.workExperienceLines.length > 0 ? (
+              <Stack spacing={0.5}>
+                {q.workExperienceLines.map((line, i) => (
+                  <Typography key={i} variant="body2" sx={overviewProfileFieldValueSx}>
+                    {line}
+                  </Typography>
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                No work experience on file.
+              </Typography>
+            )}
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Skills &amp; Languages</Typography>
+            {q.skillLabels.length > 0 || q.languageLabels.length > 0 ? (
+              <Stack direction="row" flexWrap="wrap" gap={0.4}>
+                {q.skillLabels.map((s, i) => (
+                  <Chip key={`s-${i}-${s}`} label={s} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.68rem' }} />
+                ))}
+                {q.languageLabels.map((lang, i) => (
+                  <Chip key={`l-${i}-${lang}`} label={lang} size="small" variant="outlined" sx={{ height: 22, fontSize: '0.68rem' }} />
+                ))}
+              </Stack>
+            ) : (
+              <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+                No skills or languages on file.
+              </Typography>
+            )}
+          </Box>
+
+          <Box>
+            <Typography {...overviewSubsectionHeadingTypographyProps}>Availability and preferences</Typography>
+            <ShiftPreferencesCard uid={uid} titleOverride="Availability and preferences" displayOnly />
+          </Box>
+        </Stack>
+      </CardContent>
+    </Card>
+  );
+}
+
+export type OverviewScoringCardProps = {
+  scoreSummary: ScoreSummary | undefined;
+  riskProfileRaw: unknown;
+  onOpenScoreTab?: () => void;
+};
+
+/** Hiring score snapshot (grade, interviews, reviews, risk, recommendations) — opens Score tab for detail. */
+export function OverviewScoringCard({ scoreSummary, riskProfileRaw, onOpenScoreTab }: OverviewScoringCardProps) {
+  const cardSx = { borderRadius: 1, borderColor: 'divider', ...overviewCardFlatSx } as const;
+
+  const rawScore = getCanonicalStoredAiScore(scoreSummary);
+  const hasStoredAi = rawScore !== null && !Number.isNaN(rawScore);
+  const displayScore = hasStoredAi ? Math.round(rawScore!) : null;
+  const grade = displayScore != null ? recruiterTableLetterGrade(displayScore) : '—';
+
+  let scoreColor: 'success.main' | 'warning.main' | 'text.primary' = 'text.primary';
+  if (displayScore != null) {
+    if (displayScore >= 80) scoreColor = 'success.main';
+    else if (displayScore >= 60) scoreColor = 'warning.main';
+  }
+
+  const risk = normalizeRiskProfileFromUserDoc(riskProfileRaw);
+  const riskBand = overallRiskBandLabel(risk);
+  const topConcernLine = workerRiskPrimaryLine(risk);
+
+  const nextActions = (scoreSummary?.explainability?.nextActions ?? [])
+    .map((a) => String(a?.label || '').trim())
+    .filter(Boolean)
+    .slice(0, 3);
+  const firstGap = scoreSummary?.explainability?.missingFields?.[0];
+  const recommendationLines: string[] = [...nextActions];
+  if (recommendationLines.length < 3 && firstGap) {
+    recommendationLines.push(`Profile: add ${firstGap}`);
+  }
+
+  const comps = scoreSummary?.components;
+  const componentsLine =
+    comps &&
+    [comps.completeness, comps.depth, comps.reliability].some((n) => typeof n === 'number' && Number.isFinite(n))
+      ? `Completeness ${Math.round(comps.completeness)} · Depth ${Math.round(comps.depth)} · Reliability ${Math.round(comps.reliability)}`
+      : null;
+
+  const hasInterviewAvg = scoreSummary?.interviewAvg != null && !Number.isNaN(scoreSummary.interviewAvg!);
+  const hasReviewAvg = scoreSummary?.reviewAvg != null && !Number.isNaN(scoreSummary.reviewAvg!);
+
+  const hasAny =
+    hasStoredAi ||
+    hasInterviewAvg ||
+    hasReviewAvg ||
+    componentsLine ||
+    riskBand !== '—' ||
+    Boolean(topConcernLine) ||
+    recommendationLines.length > 0;
+
+  return (
+    <Card variant="outlined" sx={cardSx}>
+      <CardContent sx={{ py: 1, px: 1.25, '&:last-child': { pb: 1 } }}>
+        <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 1 }} flexWrap="wrap" gap={0.75}>
+          <Typography {...overviewSectionTitleTypographyProps}>Scoring</Typography>
+          {onOpenScoreTab && (
+            <Button
+              size="small"
+              variant="text"
+              sx={{ fontSize: '0.68rem', minWidth: 0, py: 0, px: 0.35, color: 'text.secondary', fontWeight: 500 }}
+              onClick={onOpenScoreTab}
+            >
+              Score
+            </Button>
+          )}
+        </Stack>
+
+        {!hasAny ? (
+          <Typography variant="body2" sx={overviewProfileFieldValueSx}>
+            No scoring data on file yet. Interviews, reviews, and profile signals populate this section.
+          </Typography>
+        ) : (
+          <Stack spacing={0.65} alignItems="flex-start">
+            {hasStoredAi && (
+              <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1 }}>
+                <Typography
+                  component="span"
+                  sx={{
+                    fontWeight: 800,
+                    color: scoreColor,
+                    fontSize: '1.75rem',
+                    lineHeight: 1,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {grade}
+                </Typography>
+                <Typography
+                  component="span"
+                  sx={{
+                    fontWeight: 700,
+                    color: 'text.primary',
+                    fontSize: '1.35rem',
+                    lineHeight: 1,
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {displayScore ?? '—'}
+                </Typography>
+              </Box>
+            )}
+
+            {componentsLine ? (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', fontWeight: 500, lineHeight: 1.35 }}>
+                {componentsLine}
+              </Typography>
+            ) : null}
+
+            {(hasInterviewAvg || hasReviewAvg) && (
+              <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.68rem', lineHeight: 1.35 }}>
+                {hasInterviewAvg ? <>Interview avg: {formatOneDecimal(scoreSummary!.interviewAvg)}/10</> : null}
+                {hasInterviewAvg && hasReviewAvg ? ' · ' : null}
+                {hasReviewAvg ? <>Reviews: {formatOneDecimal(scoreSummary!.reviewAvg)}/5</> : null}
+              </Typography>
+            )}
+
+            <Typography
+              variant="caption"
+              sx={{
+                fontSize: '0.68rem',
+                fontWeight: 600,
+                color:
+                  riskBand === 'High' ? 'error.main' : riskBand === 'Medium' ? 'warning.dark' : 'text.secondary',
+              }}
+            >
+              Risk: {riskBand}
+            </Typography>
+
+            {topConcernLine ? (
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.74rem', lineHeight: 1.4 }}>
+                {topConcernLine}
+              </Typography>
+            ) : null}
+
+            {recommendationLines.length > 0 && (
+              <Box sx={{ pt: 0.15, width: '100%' }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontSize: '0.6rem',
+                    fontWeight: 700,
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    color: 'text.secondary',
+                    display: 'block',
+                    mb: 0.35,
+                  }}
+                >
+                  Recommendations
+                </Typography>
+                <Stack spacing={0.35} component="ul" sx={{ m: 0, pl: 2 }}>
+                  {recommendationLines.map((line, i) => (
+                    <Typography
+                      key={i}
+                      component="li"
+                      variant="body2"
+                      color="text.secondary"
+                      sx={{ fontSize: '0.72rem', lineHeight: 1.4, display: 'list-item' }}
+                    >
+                      {line}
+                    </Typography>
+                  ))}
+                </Stack>
+              </Box>
+            )}
+          </Stack>
         )}
       </CardContent>
     </Card>
@@ -505,7 +797,7 @@ export function OverviewRecentActivityCard({
   );
 
   const titleRow = (
-    <Stack direction="row" justifyContent="space-between" alignItems="center" gap={1} sx={{ mb: 0.75 }}>
+    <Stack direction="row" justifyContent="space-between" alignItems="flex-start" gap={1} sx={{ mb: 1 }}>
       <Typography {...overviewSectionTitleTypographyProps}>Activity &amp; touchpoints</Typography>
       {headerActions}
     </Stack>

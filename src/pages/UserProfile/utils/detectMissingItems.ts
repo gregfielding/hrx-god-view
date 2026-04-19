@@ -187,7 +187,7 @@ export const detectMissingItems = (
             message: `Expired Certification: ${cert.name} (${daysAgo} days ago)`,
             action: onTabChange ? {
               label: 'Update Certification',
-              onClick: () => onTabChange('Qualifications'),
+              onClick: () => onTabChange('Certifications'),
             } : undefined,
           });
         } else {
@@ -202,7 +202,7 @@ export const detectMissingItems = (
               message: `Certification expiring soon: ${cert.name} (${daysUntilExpiration} days)`,
               action: onTabChange ? {
                 label: 'Update Certification',
-                onClick: () => onTabChange('Certs'),
+                onClick: () => onTabChange('Certifications'),
               } : undefined,
             });
           }

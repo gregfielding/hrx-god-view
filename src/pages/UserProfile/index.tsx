@@ -312,6 +312,98 @@ const UserProfilePage = () => {
     }
   }, [uid]);
 
+  /** Remove target user from a group — mirrors how header resolves `userGroupIds` (tenant + top-level). */
+  const handleRemoveUserFromGroup = useCallback(
+    async (groupId: string) => {
+      if (!uid) return;
+      try {
+        const userRef = doc(db, 'users', uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) return;
+        const data = userSnap.data() as Record<string, any>;
+        const effectiveTenantId = data.activeTenantId || data.tenantId || null;
+        const tenantData =
+          effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
+        const rawGroupIds =
+          (Array.isArray(tenantData?.userGroupIds) ? tenantData.userGroupIds : null) ||
+          (Array.isArray(data?.userGroupIds) ? data.userGroupIds : null) ||
+          (Array.isArray(data?.tenantIds?.[effectiveTenantId]?.userGroupIds)
+            ? data.tenantIds[effectiveTenantId].userGroupIds
+            : null) ||
+          [];
+        const current = Array.from(new Set((rawGroupIds as string[]).filter(Boolean)));
+        const newIds = current.filter((id) => id !== groupId);
+        const patch: Record<string, unknown> = {
+          userGroupIds: newIds,
+          updatedAt: new Date(),
+        };
+        if (effectiveTenantId) {
+          patch[`tenantIds.${effectiveTenantId}.userGroupIds`] = newIds;
+        }
+        await updateDoc(userRef, patch);
+        setHeaderUserGroups((prev) => prev.filter((g) => g.id !== groupId));
+        setUserGroupsCount((c) => Math.max(0, c - 1));
+      } catch (err) {
+        console.error('Failed to remove user from group:', err);
+      }
+    },
+    [uid],
+  );
+
+  const handleAddUserToGroup = useCallback(
+    async (groupId: string) => {
+      if (!uid) return;
+      const tid = (tenantId || authTenantId || activeTenant?.id || '').trim();
+      if (!tid) return;
+      try {
+        const userRef = doc(db, 'users', uid);
+        const userSnap = await getDoc(userRef);
+        if (!userSnap.exists()) return;
+        const data = userSnap.data() as Record<string, any>;
+        const effectiveTenantId = data.activeTenantId || data.tenantId || null;
+        const tenantData =
+          effectiveTenantId && data.tenantIds?.[effectiveTenantId] ? data.tenantIds[effectiveTenantId] : {};
+        const rawGroupIds =
+          (Array.isArray(tenantData?.userGroupIds) ? tenantData.userGroupIds : null) ||
+          (Array.isArray(data?.userGroupIds) ? data.userGroupIds : null) ||
+          (Array.isArray(data?.tenantIds?.[effectiveTenantId]?.userGroupIds)
+            ? data.tenantIds[effectiveTenantId].userGroupIds
+            : null) ||
+          [];
+        const current = Array.from(new Set((rawGroupIds as string[]).filter(Boolean)));
+        if (current.includes(groupId)) return;
+        const newIds = [...current, groupId];
+        const patch: Record<string, unknown> = {
+          userGroupIds: newIds,
+          updatedAt: new Date(),
+        };
+        if (effectiveTenantId) {
+          patch[`tenantIds.${effectiveTenantId}.userGroupIds`] = newIds;
+        }
+        await updateDoc(userRef, patch);
+        let title = groupId;
+        try {
+          const gSnap = await getDoc(doc(db, 'tenants', tid, 'userGroups', groupId));
+          if (gSnap.exists()) {
+            const g = gSnap.data() as Record<string, unknown>;
+            title = String(g?.title || g?.name || groupId);
+          }
+        } catch {
+          /* use groupId */
+        }
+        setHeaderUserGroups((prev) =>
+          [...prev.filter((g) => g.id !== groupId), { id: groupId, title }].sort((a, b) =>
+            a.title.localeCompare(b.title),
+          ),
+        );
+        setUserGroupsCount((c) => c + 1);
+      } catch (err) {
+        console.error('Failed to add user to group:', err);
+      }
+    },
+    [uid, tenantId, authTenantId, activeTenant?.id],
+  );
+
   const effectiveTenantIdForMessaging = tenantId || authTenantId || activeTenant?.id || '';
   const canSendProfileUpdateReminder = (() => {
     const level = Number.parseInt(String(currentClaimsSecurityLevel || securityLevel || '0'), 10) || 0;
@@ -982,7 +1074,7 @@ const UserProfilePage = () => {
       { label: 'Overview', available: true, count: undefined },
       { label: 'Interview', available: canViewAdminContent && !isWorkforceInternalTeamView, count: interviewsCount },
       { label: 'Score', available: canViewAdminContent && !isWorkforceInternalTeamView },
-      { label: 'Qualifications', available: !isWorkforceInternalTeamView, count: undefined },
+      { label: 'Qualifications', available: false, count: undefined },
       { label: 'Resume Upload', available: !isWorkforceInternalTeamView, count: undefined },
       { label: 'Applications', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: activeApplicationsCount },
       { label: 'Assignments', available: (isAdminViewer && !isWorkerRoute) && !isWorkforceInternalTeamView, count: assignmentsCount },
@@ -1977,6 +2069,15 @@ const UserProfilePage = () => {
                     viewerSecurityLevel >= 4 ? () => setQuickProfileDialogOpen(true) : undefined
                   }
                   assignmentLines={recordHeaderAssignmentLines}
+                  onRemoveUserFromGroup={
+                    viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7 ? handleRemoveUserFromGroup : undefined
+                  }
+                  tenantIdForUserGroups={effectiveTenantId ?? null}
+                  onAddUserToGroup={
+                    viewerSecurityLevel >= 4 && viewerSecurityLevel <= 7 && effectiveTenantId
+                      ? handleAddUserToGroup
+                      : undefined
+                  }
                   contactActionIcons={
                     <Stack direction="row" alignItems="center" flexWrap="wrap" sx={{ gap: '3px' }}>
                       {phone && (
@@ -2777,6 +2878,11 @@ const UserProfilePage = () => {
                     <ProfileOverview
                       uid={uid}
                       onTabChange={(tab: string) => handleTabChange({} as React.SyntheticEvent, tab)}
+                      onOpenScoreTab={
+                        availableTabLabels.includes('Score')
+                          ? () => handleTabChange({} as React.SyntheticEvent, 'Score')
+                          : undefined
+                      }
                       autoOpenHomeAddress={shouldAutoOpenHomeAddress}
                     />
                   </>
@@ -2960,6 +3066,13 @@ const UserProfilePage = () => {
           fullWidth
           maxWidth="lg"
           scroll="paper"
+          PaperProps={{
+            sx: {
+              maxHeight: 'min(90vh, 900px)',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          }}
         >
           <DialogTitle
             sx={{
@@ -2985,7 +3098,18 @@ const UserProfilePage = () => {
               <CloseIcon fontSize="small" />
             </IconButton>
           </DialogTitle>
-          <DialogContent dividers sx={{ pt: 1.5, pb: 2 }}>
+          <DialogContent
+            dividers
+            sx={{
+              pt: 1.5,
+              pb: 0,
+              flex: 1,
+              minHeight: 0,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
             <ProfileOverview
               uid={uid}
               embeddedMode="quickProfileOnly"

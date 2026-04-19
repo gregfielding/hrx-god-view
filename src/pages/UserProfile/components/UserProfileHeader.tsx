@@ -659,7 +659,7 @@ const UserProfileHeader: React.FC<UserProfileHeaderProps> = ({
     if (certifications && certifications.length > 0) {
       setShowCertificationsModal(true);
     } else if (onTabChange) {
-      onTabChange('Qualifications');
+      onTabChange('Certifications');
     }
   };
 

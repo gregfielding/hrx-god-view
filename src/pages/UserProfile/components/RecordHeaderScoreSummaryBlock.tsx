@@ -22,6 +22,8 @@ export type RecordHeaderScoreSummaryBlockProps = {
   scoringDistribution: ScoringDistribution | null;
   categoryScores: PrescreenCategoryScoresV1 | null;
   riskProfile: WorkerRiskProfileV1 | null;
+  /** e.g. "Interviewed Apr 17, 2026 · 7/10" — shown under Recommendations when admin Risk column is visible */
+  interviewSummaryLine?: string | null;
 };
 
 /**
@@ -32,6 +34,7 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
   scoringDistribution,
   categoryScores,
   riskProfile,
+  interviewSummaryLine,
 }) => {
   const rawScore = getCanonicalStoredAiScore(scoreSummary);
   const hasScore = rawScore !== null && !Number.isNaN(rawScore);
@@ -187,6 +190,27 @@ const RecordHeaderScoreSummaryBlock: React.FC<RecordHeaderScoreSummaryBlockProps
               </Stack>
             </Box>
           )}
+          {interviewSummaryLine ? (
+            <Box
+              sx={{
+                pt: '2px',
+                mt: recommendationLines.length > 0 ? 1.25 : 0.75,
+                width: '100%',
+              }}
+            >
+              <Typography
+                variant="body2"
+                color="text.secondary"
+                sx={{
+                  fontSize: '0.72rem',
+                  lineHeight: 1.4,
+                  fontWeight: 400,
+                }}
+              >
+                {interviewSummaryLine}
+              </Typography>
+            </Box>
+          ) : null}
         </Stack>
       </Box>
     </Tooltip>
